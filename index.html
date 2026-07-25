@@ -168,10 +168,24 @@
         
         let db = null;
         let auth = null;
+        // Статус офлайн-копии: 'off' — кэш не включён, 'on' — работает
+        window.cfPersistence = 'off';
         try {
           if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
           auth = firebase.auth();
           db = firebase.firestore();
+          // Офлайн-копия базы прямо на устройстве (IndexedDB).
+          // Читает из кэша без интернета, копит правки и сам досылает их,
+          // когда связь вернётся. Вызывать строго до первых запросов.
+          // synchronizeTabs — чтобы несколько вкладок делили один кэш.
+          db.enablePersistence({ synchronizeTabs: true })
+            .then(() => { window.cfPersistence = 'on'; })
+            .catch(err => {
+              // failed-precondition — открыто в нескольких вкладках старого браузера
+              // unimplemented — браузер не поддерживает (например, приватный режим)
+              // Приложение продолжает работать, просто без офлайн-кэша.
+              console.warn("Офлайн-кэш недоступен:", err && err.code);
+            });
         } catch (e) { console.warn("Локальный режим автономности:", e); }
 
         const compressImage = (base64Str, maxWidth, maxHeight, callback) => {
