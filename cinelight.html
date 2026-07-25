@@ -116,10 +116,56 @@
             return [clamp(rgb[0] * (1 - cut), 0, 1), g, clamp(rgb[2] * (1 - cut), 0, 1)];
         }
 
+        /* ── CIE 1931 x/y: координаты цвета цифрами, как в паспортах приборов ── */
+        const G = v => v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(Math.max(v, 0), 1 / 2.4) - 0.055;
+        const UNG = v => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        function xy2rgb(x, y) {
+            if (y <= 0.0001) return [0, 0, 0];
+            const Y = 1, X = (Y / y) * x, Z = (Y / y) * (1 - x - y);
+            let r = X * 3.2404542 + Y * -1.5371385 + Z * -0.4985314;
+            let g = X * -0.9692660 + Y * 1.8760108 + Z * 0.0415560;
+            let b = X * 0.0556434 + Y * -0.2040259 + Z * 1.0572252;
+            // цвет вне охвата sRGB — подтягиваем к белому, сохраняя оттенок
+            const mn = Math.min(r, g, b);
+            if (mn < 0) { r -= mn; g -= mn; b -= mn; }
+            const mx = Math.max(r, g, b, 0.000001);
+            return [G(r / mx), G(g / mx), G(b / mx)].map(v => clamp(v, 0, 1));
+        }
+        function rgb2xy(r, g, b) {
+            const R = UNG(r), Gc = UNG(g), B = UNG(b);
+            const X = R * 0.4124564 + Gc * 0.3575761 + B * 0.1804375;
+            const Y = R * 0.2126729 + Gc * 0.7151522 + B * 0.0721750;
+            const Z = R * 0.0193339 + Gc * 0.1191920 + B * 0.9503041;
+            const s = X + Y + Z;
+            if (s < 0.000001) return { x: 0.3127, y: 0.3290 };
+            return { x: X / s, y: Y / s };
+        }
+        /* точка чёрного тела: куда попадает заданная температура на диаграмме */
+        function kelvin2xy(k) {
+            k = clamp(k, 1667, 25000);
+            let x;
+            if (k <= 4000) x = -0.2661239e9 / (k * k * k) - 0.2343589e6 / (k * k) + 0.8776956e3 / k + 0.179910;
+            else x = -3.0258469e9 / (k * k * k) + 2.1070379e6 / (k * k) + 0.2226347e3 / k + 0.240390;
+            let y;
+            if (k <= 2222) y = -1.1063814 * x * x * x - 1.34811020 * x * x + 2.18555832 * x - 0.20219683;
+            else if (k <= 4000) y = -0.9549476 * x * x * x - 1.37418593 * x * x + 2.09137015 * x - 0.16748867;
+            else y = 3.0817580 * x * x * x - 5.87338670 * x * x + 3.75112997 * x - 0.37001483;
+            return { x, y };
+        }
+
+        /* ── шум для «живых» эффектов (огонь, мерцание) ── */
+        function hash1(n) { const s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
+        function noise1(t) {
+            const i = Math.floor(t), f = t - i;
+            const u = f * f * (3 - 2 * f);
+            return lerp(hash1(i), hash1(i + 1), u);
+        }
+
         /* ═══════════ профили приборов ═══════════ */
         const ROLES = {
-            dim: 'Диммер', r: 'Красный (R)', g: 'Зелёный (G)', b: 'Синий (B)', w: 'Белый (W)',
+            dim: 'Диммер', dimF: 'Диммер точно', r: 'Красный (R)', g: 'Зелёный (G)', b: 'Синий (B)', w: 'Белый (W)',
             a: 'Янтарный (A)', uv: 'УФ (UV)', cct: 'Температура (CCT)', gm: 'Тон G/M',
+            hue: 'Оттенок (Hue)', hueF: 'Оттенок точно', sat: 'Насыщенность (Sat)',
             pan: 'Pan', panF: 'Pan точно', tilt: 'Tilt', tiltF: 'Tilt точно',
             zoom: 'Зум', focus: 'Фокус', strobe: 'Строб', none: '— пусто —'
         };
@@ -135,6 +181,111 @@
             { id: 'drgbcct', name: 'Dim + RGB + CCT (5 каналов)', ch: ['dim','r','g','b','cct'] },
             { id: 'mover10', name: 'Мувинг Wash (10 каналов)',    ch: ['pan','tilt','dim','r','g','b','w','strobe','zoom','focus'] },
             { id: 'mover12', name: 'Мувинг Wash 16-бит (12 кан.)',ch: ['pan','panF','tilt','tiltF','dim','r','g','b','w','strobe','zoom','focus'] }
+        ];
+
+        /* Профиль может содержать пиксели: ch — общие каналы, px — каналы одного
+           пикселя, pixels — сколько пикселей. Footprint = ch + px*pixels. */
+        function footprint(p) { return (p.ch ? p.ch.length : 0) + (p.pixels ? p.pixels * p.px.length : 0); }
+
+        /* ═══════════ библиотека реальных приборов ═══════════
+           Порядок каналов соответствует типовым DMX-режимам этих приборов.
+           В меню самого прибора нужно выбрать режим с тем же числом и порядком
+           каналов — названия режимов у производителей отличаются. */
+        const CCT3 = ['dim','cct','gm'], HSI3 = ['dim','hue','sat'];
+        const FIXTURE_LIB = [
+            { brand: 'Базовые', models: [
+                { model: 'Стандартные профили', cct: [2700, 6500], modes: PROFILES }
+            ]},
+            { brand: 'Aputure', models: [
+                { model: 'LS 600d / 300d (дневной COB)', cct: [5600, 5600], modes: [
+                    { name: 'Диммер (1 кан.)', ch: ['dim'] },
+                    { name: 'Диммер 16-бит (2 кан.)', ch: ['dim','dimF'] }
+                ]},
+                { model: 'LS 600c / 1200 (цветной COB)', cct: [2300, 10000], modes: [
+                    { name: 'CCT: Dim, Dim т., CCT, G/M (4 кан.)', ch: ['dim','dimF','cct','gm'] },
+                    { name: 'HSI: Dim, Dim т., Hue, Hue т., Sat (5 кан.)', ch: ['dim','dimF','hue','hueF','sat'] },
+                    { name: 'RGBW: Dim, R, G, B, W (5 кан.)', ch: ['dim','r','g','b','w'] }
+                ]},
+                { model: 'Nova P300c / P600c', cct: [2000, 10000], modes: [
+                    { name: 'CCT: Dim, Dim т., CCT, G/M (4 кан.)', ch: ['dim','dimF','cct','gm'] },
+                    { name: 'HSI: Dim, Dim т., Hue, Hue т., Sat (5 кан.)', ch: ['dim','dimF','hue','hueF','sat'] },
+                    { name: 'RGBW: Dim, Dim т., R, G, B, W (6 кан.)', ch: ['dim','dimF','r','g','b','w'] }
+                ]},
+                { model: 'MC / MC Pro', cct: [3200, 6500], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 }
+                ]}
+            ]},
+            { brand: 'Amaran', models: [
+                { model: 'T2c / T4c (трубка)', cct: [2500, 7500], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 },
+                    { name: 'RGBWW (6 кан.)', ch: ['dim','r','g','b','w','a'] }
+                ]},
+                { model: 'F22c (гибкая панель)', cct: [2500, 7500], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 },
+                    { name: 'RGBWW (6 кан.)', ch: ['dim','r','g','b','w','a'] }
+                ]}
+            ]},
+            { brand: 'ARRI', models: [
+                { model: 'SkyPanel S60-C', cct: [2800, 10000], modes: [
+                    { name: 'CCT: Dim, CCT, G/M (3 кан.)', ch: CCT3 },
+                    { name: 'HSI: Dim, Hue, Sat (3 кан.)', ch: HSI3 },
+                    { name: 'RGBW (4 кан.)', ch: ['r','g','b','w'] }
+                ]}
+            ]},
+            { brand: 'Astera', models: [
+                { model: 'Titan Tube (16 пикс.)', cct: [3200, 6500], modes: [
+                    { name: 'RGB весь (3 кан.)', ch: ['r','g','b'] },
+                    { name: 'Dim + RGB (4 кан.)', ch: ['dim','r','g','b'] },
+                    { name: 'Пиксели: 16×RGB (48 кан.)', ch: [], px: ['r','g','b'], pixels: 16 },
+                    { name: 'Dim + пиксели 16×RGB (49 кан.)', ch: ['dim'], px: ['r','g','b'], pixels: 16 }
+                ]},
+                { model: 'Helios Tube (8 пикс.)', cct: [3200, 6500], modes: [
+                    { name: 'RGB весь (3 кан.)', ch: ['r','g','b'] },
+                    { name: 'Dim + RGB (4 кан.)', ch: ['dim','r','g','b'] },
+                    { name: 'Пиксели: 8×RGB (24 кан.)', ch: [], px: ['r','g','b'], pixels: 8 },
+                    { name: 'Dim + пиксели 8×RGB (25 кан.)', ch: ['dim'], px: ['r','g','b'], pixels: 8 }
+                ]}
+            ]},
+            { brand: 'Godox', models: [
+                { model: 'TL60 (трубка)', cct: [2700, 6500], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 },
+                    { name: 'Dim + RGB (4 кан.)', ch: ['dim','r','g','b'] }
+                ]}
+            ]},
+            { brand: 'Nanlite', models: [
+                { model: 'PavoTube II 30C', cct: [2700, 7500], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 },
+                    { name: 'Dim + RGB (4 кан.)', ch: ['dim','r','g','b'] }
+                ]}
+            ]},
+            { brand: 'Litepanels', models: [
+                { model: 'Gemini 2x1', cct: [2700, 10000], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 },
+                    { name: 'RGBW (5 кан.)', ch: ['dim','r','g','b','w'] }
+                ]}
+            ]},
+            { brand: 'Quasar Science', models: [
+                { model: 'Rainbow 2 (пиксельная)', cct: [2000, 6000], modes: [
+                    { name: 'CCT (3 кан.)', ch: CCT3 },
+                    { name: 'HSI (3 кан.)', ch: HSI3 },
+                    { name: 'Пиксели: 8×RGBW (32 кан.)', ch: [], px: ['r','g','b','w'], pixels: 8 },
+                    { name: 'Пиксели: 16×RGBW (64 кан.)', ch: [], px: ['r','g','b','w'], pixels: 16 }
+                ]}
+            ]},
+            { brand: 'Пиксельные (общие)', models: [
+                { model: 'Трубка / лента', cct: [2700, 6500], modes: [
+                    { name: 'Пиксели: 8×RGB (24 кан.)', ch: [], px: ['r','g','b'], pixels: 8 },
+                    { name: 'Пиксели: 16×RGB (48 кан.)', ch: [], px: ['r','g','b'], pixels: 16 },
+                    { name: 'Dim + пиксели 16×RGB (49 кан.)', ch: ['dim'], px: ['r','g','b'], pixels: 16 },
+                    { name: 'Пиксели: 32×RGB (96 кан.)', ch: [], px: ['r','g','b'], pixels: 32 }
+                ]}
+            ]}
         ];
 
         const DEF_PARAMS = { dim: 0, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, cct: 5600, gm: 0, pan: 0.5, tilt: 0.5, zoom: 0.5, focus: 0.5, strobe: 0 };
@@ -153,17 +304,128 @@
             { n: 'Розовый', rgb: [1, 0.35, 0.6] }, { n: 'Белый', rgb: [1, 1, 1] }
         ];
 
+        /* ═══════════ движок эффектов (пиксель-мэппинг) ═══════════
+           Эффект — это картинка, которая живёт во времени и в пространстве плана.
+           Для каждого пикселя каждого прибора берём его место на плане, проецируем
+           на ось эффекта (угол) и спрашиваем у эффекта цвет и яркость в этой точке. */
+        const FX_TYPES = [
+            { id: 'rainbow',  name: 'Радуга',    hint: 'Цвета плывут по плану' },
+            { id: 'wave',     name: 'Волна',     hint: 'Плавная волна яркости' },
+            { id: 'chase',    name: 'Бегущий',   hint: 'Огонёк бежит по приборам' },
+            { id: 'pulse',    name: 'Пульс',     hint: 'Всё дышит вместе' },
+            { id: 'sparkle',  name: 'Мерцание',  hint: 'Случайные вспышки' },
+            { id: 'fire',     name: 'Огонь',     hint: 'Живой огонь, свеча' },
+            { id: 'gradient', name: 'Градиент',  hint: 'Переливы двух цветов' },
+            { id: 'strobe',   name: 'Строб',     hint: 'Резкие вспышки' }
+        ];
+        const FX_MODES = { color: 'Только цвет', intensity: 'Только яркость', both: 'Цвет и яркость' };
+        const DEF_FX = { type: 'rainbow', on: true, level: 1, speed: 0.25, size: 1, angle: 0,
+                         mode: 'both', colorA: [1, 0.15, 0], colorB: [0, 0.3, 1], targets: [] };
+
+        function fxSample(fx, u, t, seed) {
+            const sp = fx.speed, sz = Math.max(0.02, fx.size);
+            const frac = v => ((v % 1) + 1) % 1;
+            switch (fx.type) {
+                case 'rainbow':
+                    return { rgb: hsv2rgb(frac(u / sz + t * sp) * 360, 1, 1), i: 1 };
+                case 'wave':
+                    return { rgb: fx.colorA, i: 0.5 + 0.5 * Math.sin(2 * Math.PI * (u / sz - t * sp)) };
+                case 'chase': {
+                    const pos = frac(t * sp);
+                    let d = Math.abs(frac(u / sz) - pos);
+                    d = Math.min(d, 1 - d);
+                    const v = clamp(1 - d / 0.18, 0, 1);
+                    return { rgb: fx.colorA, i: v * v };
+                }
+                case 'pulse':
+                    return { rgb: fx.colorA, i: 0.5 + 0.5 * Math.sin(2 * Math.PI * t * sp) };
+                case 'sparkle': {
+                    const n = noise1(t * sp * 6 + seed * 17.3);
+                    return { rgb: fx.colorA, i: clamp(Math.pow(clamp(n, 0, 1), 5) * 3.5, 0, 1) };
+                }
+                case 'fire': {
+                    const n = noise1(t * sp * 4 + u * 5 / sz + seed * 3.1);
+                    const n2 = noise1(t * sp * 7 + seed * 9.7 + 40);
+                    return { rgb: hsv2rgb(8 + n * 38, 1, 1), i: clamp(0.3 + n2 * 0.8, 0, 1) };
+                }
+                case 'gradient': {
+                    const k = 0.5 - 0.5 * Math.cos(2 * Math.PI * frac(u / sz + t * sp));
+                    return { rgb: [lerp(fx.colorA[0], fx.colorB[0], k), lerp(fx.colorA[1], fx.colorB[1], k), lerp(fx.colorA[2], fx.colorB[2], k)], i: 1 };
+                }
+                case 'strobe':
+                    return { rgb: fx.colorA, i: frac(t * sp * 4) < 0.25 ? 1 : 0 };
+            }
+            return { rgb: fx.colorA, i: 1 };
+        }
+
+        /* положение пикселя i прибора f на плане (0..1) */
+        function pixelPos(f, i, count) {
+            const x0 = f.x === undefined ? 0.5 : f.x;
+            const y0 = f.y === undefined ? 0.5 : f.y;
+            if (count <= 1) return [x0, y0];
+            const rot = (f.rot || 0) * Math.PI / 180;
+            const len = f.len === undefined ? 0.14 : f.len;
+            const off = (i / (count - 1) - 0.5) * len;
+            return [x0 + Math.cos(rot) * off, y0 + Math.sin(rot) * off];
+        }
+
+        function applyEffects(out, fxList, fixtures, t) {
+            const active = fxList.filter(fx => fx.on && fx.level > 0.001);
+            if (active.length === 0) return;
+            fixtures.forEach((f, fi) => {
+                const P = out[f.id];
+                if (!P) return;
+                const mine = active.filter(fx => !fx.targets || fx.targets.length === 0 || fx.targets.indexOf(f.id) >= 0);
+                if (mine.length === 0) return;
+                const prof = f.profile;
+                const N = prof.pixels || 0;
+                const count = Math.max(1, N);
+                const cols = [];
+                let sumI = 0;
+                for (let i = 0; i < count; i++) {
+                    const pos = pixelPos(f, i, count);
+                    let cr = P.r, cg = P.g, cb = P.b, ci = 1;
+                    mine.forEach(fx => {
+                        const a = (fx.angle || 0) * Math.PI / 180;
+                        const u = pos[0] * Math.cos(a) + pos[1] * Math.sin(a);
+                        const s = fxSample(fx, u, t, fi * 37 + i);
+                        const L = fx.level;
+                        if (fx.mode !== 'intensity') {
+                            cr = lerp(cr, s.rgb[0], L); cg = lerp(cg, s.rgb[1], L); cb = lerp(cb, s.rgb[2], L);
+                        }
+                        if (fx.mode !== 'color') ci *= lerp(1, s.i, L);
+                    });
+                    sumI += ci;
+                    cols.push([cr, cg, cb, ci]);
+                }
+                const avgI = sumI / count;
+                if (N > 0) {
+                    // яркость запекаем в сами пиксели — общего диммера у таких приборов обычно нет
+                    P.px = cols.map(c => [c[0] * c[3], c[1] * c[3], c[2] * c[3], P.w * c[3]]);
+                    P.r = cols[0][0]; P.g = cols[0][1]; P.b = cols[0][2];
+                    let ar = 0, ag = 0, ab = 0;
+                    P.px.forEach(c => { ar += c[0]; ag += c[1]; ab += c[2]; });
+                    P.rAvg = ar / count; P.gAvg = ag / count; P.bAvg = ab / count;
+                } else {
+                    P.r = cols[0][0]; P.g = cols[0][1]; P.b = cols[0][2];
+                    if ((prof.ch || []).includes('dim')) P.dim *= avgI;
+                    else { P.r *= avgI; P.g *= avgI; P.b *= avgI; P.w *= avgI; }
+                }
+            });
+        }
+
         /* ═══════════ DMX-математика ═══════════ */
-        function paramsToBytes(f, P) {
-            const ch = f.profile.ch;
-            const hasDim = ch.includes('dim');
-            const colScale = hasDim ? 1 : P.dim;
+        function roleBytes(f, P, roles, colScale) {
+            const b255 = v => Math.round(clamp(v, 0, 1) * 255);
             const pan16 = Math.round(clamp(P.pan, 0, 1) * 65535);
             const tilt16 = Math.round(clamp(P.tilt, 0, 1) * 65535);
-            const b255 = v => Math.round(clamp(v, 0, 1) * 255);
-            return ch.map(role => {
+            const dim16 = Math.round(clamp(P.dim, 0, 1) * 65535);
+            const hs = rgb2hsv(P.r, P.g, P.b);
+            const hue16 = Math.round(clamp(hs.h / 360, 0, 1) * 65535);
+            return roles.map(role => {
                 switch (role) {
-                    case 'dim': return b255(P.dim);
+                    case 'dim': return dim16 >> 8;
+                    case 'dimF': return dim16 & 255;
                     case 'r': return b255(P.r * colScale);
                     case 'g': return b255(P.g * colScale);
                     case 'b': return b255(P.b * colScale);
@@ -175,6 +437,9 @@
                         return b255((P.cct - mn) / Math.max(1, mx - mn));
                     }
                     case 'gm': return b255((P.gm + 1) / 2);
+                    case 'hue': return hue16 >> 8;
+                    case 'hueF': return hue16 & 255;
+                    case 'sat': return b255(hs.s);
                     case 'pan': return pan16 >> 8;
                     case 'panF': return pan16 & 255;
                     case 'tilt': return tilt16 >> 8;
@@ -185,6 +450,25 @@
                     default: return 0;
                 }
             });
+        }
+
+        function paramsToBytes(f, P) {
+            const prof = f.profile;
+            const ch = prof.ch || [];
+            // если у прибора нет отдельного диммера, яркость подмешиваем в цвет
+            const colScale = ch.includes('dim') ? 1 : P.dim;
+            const out = roleBytes(f, P, ch, colScale);
+            if (prof.pixels && prof.px && prof.px.length) {
+                // у пиксельных приборов общий диммер редко есть — гасим сами
+                const pxScale = ch.includes('dim') ? 1 : P.dim;
+                for (let i = 0; i < prof.pixels; i++) {
+                    const c = P.px && P.px[i] ? P.px[i] : null;
+                    const PP = c ? { ...P, r: c[0], g: c[1], b: c[2], w: c.length > 3 ? c[3] : P.w } : P;
+                    const arr = roleBytes(f, PP, prof.px, pxScale);
+                    for (let j = 0; j < arr.length; j++) out.push(arr[j]);
+                }
+            }
+            return out;
         }
 
         const EMPTY512 = new Uint8Array(512);
@@ -205,10 +489,11 @@
         }
 
         function displayColor(f, P, mul) {
-            const ch = f.profile.ch;
+            const prof = f.profile;
+            const ch = (prof.ch || []).concat(prof.px || []);
             let rgb;
             if (ch.includes('r') || ch.includes('g') || ch.includes('b')) {
-                rgb = [P.r, P.g, P.b];
+                rgb = P.rAvg !== undefined ? [P.rAvg, P.gAvg, P.bAvg] : [P.r, P.g, P.b];
                 if (ch.includes('w') && P.w > 0) rgb = [rgb[0] + P.w, rgb[1] + P.w * 0.95, rgb[2] + P.w * 0.85];
                 if (ch.includes('a') && P.a > 0) rgb = [rgb[0] + P.a, rgb[1] + P.a * 0.55, rgb[2]];
                 rgb = rgb.map(c => clamp(c, 0, 1));
@@ -226,27 +511,34 @@
             for (let i = 0; i < fixtures.length; i++) for (let j = i + 1; j < fixtures.length; j++) {
                 const a = fixtures[i], b = fixtures[j];
                 if (a.universe !== b.universe) continue;
-                const a2 = a.addr + a.profile.ch.length - 1, b2 = b.addr + b.profile.ch.length - 1;
+                const a2 = a.addr + footprint(a.profile) - 1, b2 = b.addr + footprint(b.profile) - 1;
                 if (a.addr <= b2 && b.addr <= a2) { bad.add(a.id); bad.add(b.id); }
             }
             return bad;
         }
         function nextFreeAddr(fixtures, universe) {
             let mx = 0;
-            fixtures.forEach(f => { if (f.universe === universe) mx = Math.max(mx, f.addr + f.profile.ch.length - 1); });
+            fixtures.forEach(f => { if (f.universe === universe) mx = Math.max(mx, f.addr + footprint(f.profile) - 1); });
             return Math.min(512, mx + 1);
         }
 
         /* ═══════════ стартовый проект (демо) ═══════════ */
         function seedProject() {
             const prof = id => JSON.parse(JSON.stringify(PROFILES.find(p => p.id === id)));
-            const mk = (name, profId, addr) => ({ id: uid() + addr, name, universe: 1, addr, profile: prof(profId), cctMin: 2700, cctMax: 6500 });
+            const mk = (name, profId, addr, x, y, extra) => ({
+                id: uid() + addr, name, universe: 1, addr, profile: prof(profId),
+                cctMin: 2700, cctMax: 6500, x, y, rot: 0, len: 0.14, ...(extra || {})
+            });
             const fixtures = [
-                mk('LED панель 1', 'drgbw', 1), mk('LED панель 2', 'drgbw', 6),
-                mk('LED панель 3', 'drgbw', 11), mk('LED панель 4', 'drgbw', 16),
-                mk('Би-колор 1', 'cct2', 21), mk('Би-колор 2', 'cct2', 23),
-                mk('Мувинг 1', 'mover10', 25), mk('Мувинг 2', 'mover10', 35)
+                mk('LED панель 1', 'drgbw', 1, 0.18, 0.25), mk('LED панель 2', 'drgbw', 6, 0.39, 0.25),
+                mk('LED панель 3', 'drgbw', 11, 0.61, 0.25), mk('LED панель 4', 'drgbw', 16, 0.82, 0.25),
+                mk('Би-колор 1', 'cct2', 21, 0.3, 0.55), mk('Би-колор 2', 'cct2', 23, 0.7, 0.55),
+                mk('Мувинг 1', 'mover10', 25, 0.25, 0.82), mk('Мувинг 2', 'mover10', 35, 0.75, 0.82)
             ];
+            const tube = { id: uid() + 'tube', name: 'Трубка 16 пикс.', universe: 1, addr: 45,
+                profile: { id: 'seedpx', name: 'Пиксели: 16×RGB (48 кан.)', ch: [], px: ['r', 'g', 'b'], pixels: 16 },
+                cctMin: 2700, cctMax: 6500, x: 0.5, y: 0.42, rot: 0, len: 0.6 };
+            fixtures.push(tube);
             const sceneAll = fn => { const s = {}; fixtures.forEach(f => { s[f.id] = { ...DEF_PARAMS, ...fn(f) }; }); return s; };
             const kelvinScene = (k, dim) => sceneAll(() => {
                 const [r, g, b] = kelvin2rgb(k);
@@ -429,18 +721,129 @@
             );
         }
 
+        /* ═══════════ план площадки ═══════════
+           Приборы можно двигать пальцем; пиксельные рисуются линией по своей длине
+           и повороту — именно по этим точкам считается пиксель-мэппинг. */
+        function LayoutView({ fixtures, outRef, selected, mul, onTap, onMove, editing }) {
+            const ref = useRef(null);
+            const drag = useRef(null);
+            const toLocal = e => {
+                const r = ref.current.getBoundingClientRect();
+                return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1)];
+            };
+            const down = (e, f) => {
+                e.preventDefault(); e.stopPropagation();
+                const p = toLocal(e);
+                drag.current = { id: f.id, moved: false, dx: (f.x || 0.5) - p[0], dy: (f.y || 0.5) - p[1] };
+                e.currentTarget.setPointerCapture(e.pointerId);
+            };
+            const move = e => {
+                const d = drag.current; if (!d || !editing) return;
+                const p = toLocal(e);
+                d.moved = true;
+                onMove(d.id, clamp(p[0] + d.dx, 0, 1), clamp(p[1] + d.dy, 0, 1));
+            };
+            const up = () => {
+                const d = drag.current; drag.current = null;
+                if (d && !d.moved) onTap(d.id);
+            };
+            return (
+                <div ref={ref} className="relative w-full h-full rounded-xl border border-[var(--border)] overflow-hidden"
+                     style={{ background: 'var(--panel-2)',
+                              backgroundImage: 'linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)',
+                              backgroundSize: '10% 10%' }}>
+                    {fixtures.map(f => {
+                        const P = (outRef.current || {})[f.id] || DEF_PARAMS;
+                        const N = f.profile.pixels || 0;
+                        const sel = selected.has(f.id);
+                        if (N > 0) {
+                            const px = P.px || [];
+                            return (
+                                <div key={f.id} onPointerDown={e => down(e, f)} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                                     className="absolute touch-none cursor-pointer flex flex-col items-center"
+                                     style={{ left: ((f.x === undefined ? 0.5 : f.x) * 100) + '%', top: ((f.y === undefined ? 0.5 : f.y) * 100) + '%',
+                                              width: ((f.len === undefined ? 0.14 : f.len) * 100) + '%',
+                                              transform: 'translate(-50%,-50%) rotate(' + (f.rot || 0) + 'deg)' }}>
+                                    <div className={"w-full flex rounded-md overflow-hidden border " + (sel ? 'border-[var(--accent)]' : 'border-black/50')}
+                                         style={{ height: 18 }}>
+                                        {new Array(N).fill(0).map((_, i) => {
+                                            const c = px[i] ? px[i].map(v => Math.round(clamp(v * mul, 0, 1) * 255)) : [20, 19, 18];
+                                            return <div key={i} className="flex-1" style={{ background: 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')' }}></div>;
+                                        })}
+                                    </div>
+                                    <div className="text-[9px] mt-0.5 px-1 rounded bg-black/50 whitespace-nowrap truncate max-w-full">{f.name}</div>
+                                </div>
+                            );
+                        }
+                        const c = displayColor(f, P, mul);
+                        const bright = (c[0] + c[1] + c[2]) / 3;
+                        return (
+                            <div key={f.id} onPointerDown={e => down(e, f)} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                                 className="absolute touch-none cursor-pointer flex flex-col items-center"
+                                 style={{ left: ((f.x === undefined ? 0.5 : f.x) * 100) + '%', top: ((f.y === undefined ? 0.5 : f.y) * 100) + '%',
+                                          transform: 'translate(-50%,-50%)' }}>
+                                <div className={"w-9 h-9 rounded-full border-2 " + (sel ? 'border-[var(--accent)]' : 'border-black/50')}
+                                     style={{ background: 'rgb(' + c.join(',') + ')',
+                                              boxShadow: bright > 30 ? '0 0 18px rgba(' + c.join(',') + ',0.7)' : 'none' }}></div>
+                                <div className="text-[9px] mt-0.5 px-1 rounded bg-black/50 whitespace-nowrap max-w-[80px] truncate">{f.name}</div>
+                            </div>
+                        );
+                    })}
+                    {fixtures.length === 0 && (
+                        <div className="absolute inset-0 flex items-center justify-center text-zinc-500 text-sm text-center px-6">
+                            Добавьте приборы на странице «Патч» — они появятся здесь, и их можно будет расставить как на площадке.
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        /* ═══════════ ввод цвета цифрами ═══════════ */
+        function NumField({ label, value, onCommit, step, hint }) {
+            const [txt, setTxt] = useState(String(value));
+            const focused = useRef(false);
+            useEffect(() => { if (!focused.current) setTxt(String(value)); }, [value]);
+            const commit = () => {
+                focused.current = false;
+                const v = parseFloat(txt.replace(',', '.'));
+                if (!isNaN(v)) onCommit(v); else setTxt(String(value));
+            };
+            return (
+                <div className="flex-1 min-w-0">
+                    <label className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">{label}</label>
+                    <input className="glass-input rounded-lg px-2 py-1.5 text-xs w-full mt-0.5 font-mono"
+                           inputMode="decimal" step={step} value={txt}
+                           onFocus={() => { focused.current = true; }}
+                           onChange={e => setTxt(e.target.value)}
+                           onBlur={commit}
+                           onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }} />
+                    {hint && <div className="text-[9px] text-zinc-600 mt-0.5">{hint}</div>}
+                </div>
+            );
+        }
+
         /* ═══════════ плитка прибора ═══════════ */
-        function FixtureTile({ f, sel, color, dim, hasProg, onTap }) {
+        function FixtureTile({ f, sel, color, dim, hasProg, onTap, pixels, mul }) {
             const bright = (color[0] + color[1] + color[2]) / 3;
+            const N = f.profile.pixels || 0;
             return (
                 <div onClick={onTap}
                      className={"relative rounded-xl p-2 cursor-pointer border transition-colors " +
                        (sel ? 'border-[var(--accent)] ring-1 ring-[var(--accent)] bg-[rgba(217,119,87,0.08)]' : 'border-[var(--border)] bg-[var(--panel)]')}>
                     {hasProg && <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--accent)]"></div>}
                     <div className="text-[11px] font-semibold truncate pr-3">{f.name}</div>
-                    <div className="text-[9px] font-mono text-zinc-500">U{f.universe} · {String(f.addr).padStart(3, '0')}</div>
-                    <div className="mt-1.5 h-9 rounded-lg border border-black/40"
-                         style={{ background: 'rgb(' + color.join(',') + ')', boxShadow: bright > 40 ? '0 0 16px rgba(' + color.join(',') + ',0.55)' : 'none' }}></div>
+                    <div className="text-[9px] font-mono text-zinc-500">U{f.universe} · {String(f.addr).padStart(3, '0')}{N ? ' · ' + N + ' пикс.' : ''}</div>
+                    {N > 0 && pixels && pixels.length ? (
+                        <div className="mt-1.5 h-9 rounded-lg border border-black/40 flex overflow-hidden">
+                            {pixels.map((c, i) => {
+                                const rgb = c.map(v => Math.round(clamp(v * mul, 0, 1) * 255));
+                                return <div key={i} className="flex-1" style={{ background: 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')' }}></div>;
+                            })}
+                        </div>
+                    ) : (
+                        <div className="mt-1.5 h-9 rounded-lg border border-black/40"
+                             style={{ background: 'rgb(' + color.join(',') + ')', boxShadow: bright > 40 ? '0 0 16px rgba(' + color.join(',') + ',0.55)' : 'none' }}></div>
+                    )}
                     <div className="mt-1 text-right text-[10px] font-mono text-zinc-400">{pct(dim)}</div>
                 </div>
             );
@@ -502,6 +905,73 @@
             );
         }
 
+        /* ═══════════ карточка эффекта ═══════════ */
+        function FxCard({ fx, selCount, onChange, onTarget, onDelete }) {
+            const [open, setOpen] = useState(true);
+            const rgbTxt = c => 'rgb(' + c.map(v => Math.round(clamp(v, 0, 1) * 255)).join(',') + ')';
+            const hexOf = c => '#' + c.map(v => Math.round(clamp(v, 0, 1) * 255).toString(16).padStart(2, '0')).join('');
+            const fromHex = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
+            const needsColor = ['wave', 'chase', 'pulse', 'sparkle', 'strobe', 'gradient'].includes(fx.type);
+            const needsB = fx.type === 'gradient';
+            const spatial = !['pulse', 'sparkle', 'strobe'].includes(fx.type);
+            const info = FX_TYPES.find(t => t.id === fx.type);
+            return (
+                <div className={"rounded-xl border p-2.5 " + (fx.on ? 'border-[var(--accent)] bg-[rgba(217,119,87,0.06)]' : 'border-[var(--border)] bg-[var(--panel-2)]')}>
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => onChange({ on: !fx.on })}
+                                className={"w-11 h-6 rounded-full relative shrink-0 " + (fx.on ? 'bg-[var(--accent)]' : 'bg-zinc-700')}>
+                            <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" style={{ left: fx.on ? 22 : 2 }}></span>
+                        </button>
+                        <select className="glass-input rounded-lg px-2 py-1.5 text-xs flex-1 min-w-0" value={fx.type}
+                                onChange={e => onChange({ type: e.target.value })}>
+                            {FX_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                        <button onClick={() => setOpen(o => !o)} className="px-2 py-1.5 text-[10px] font-bold text-zinc-400 border border-[var(--border)] rounded-lg">
+                            {open ? 'Свернуть' : 'Настройки'}
+                        </button>
+                        <button onClick={onDelete} className="p-1.5 text-zinc-500 hover:text-red-400"><Icons.X /></button>
+                    </div>
+                    <div className="text-[10px] text-zinc-500 mt-1">
+                        {info ? info.hint : ''} · {fx.targets && fx.targets.length ? 'приборов: ' + fx.targets.length : 'на всех приборах'}
+                    </div>
+                    {open && (
+                        <div className="mt-2 space-y-1.5">
+                            <HSlider label="Сила" frac={fx.level} text={pct(fx.level)} onFrac={v => onChange({ level: v })}
+                                     gradient="linear-gradient(to right,#141312,#d97757)" />
+                            <HSlider label="Скорость" frac={clamp(fx.speed / 2, 0, 1)} text={Math.round(fx.speed * 100) / 100 + '×'}
+                                     onFrac={v => onChange({ speed: v * 2 })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                            {spatial && (
+                                <React.Fragment>
+                                    <HSlider label="Размер" frac={clamp(fx.size / 3, 0, 1)} text={Math.round(fx.size * 100) / 100}
+                                             onFrac={v => onChange({ size: Math.max(0.05, v * 3) })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                                    <HSlider label="Направление" frac={fx.angle / 360} text={Math.round(fx.angle) + '°'}
+                                             onFrac={v => onChange({ angle: v * 360 })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                                </React.Fragment>
+                            )}
+                            <div className="flex items-center gap-2 pt-0.5">
+                                <select className="glass-input rounded-lg px-2 py-1.5 text-[11px] flex-1" value={fx.mode}
+                                        onChange={e => onChange({ mode: e.target.value })}>
+                                    {Object.entries(FX_MODES).map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+                                </select>
+                                {needsColor && (
+                                    <input type="color" value={hexOf(fx.colorA)} onChange={e => onChange({ colorA: fromHex(e.target.value) })}
+                                           className="w-9 h-9 rounded-lg border border-[var(--border)] bg-transparent p-0.5" title="Цвет эффекта" />
+                                )}
+                                {needsB && (
+                                    <input type="color" value={hexOf(fx.colorB)} onChange={e => onChange({ colorB: fromHex(e.target.value) })}
+                                           className="w-9 h-9 rounded-lg border border-[var(--border)] bg-transparent p-0.5" title="Второй цвет" />
+                                )}
+                            </div>
+                            <button onClick={onTarget}
+                                    className="w-full py-2 rounded-lg border border-[var(--border)] text-[11px] font-bold text-zinc-300">
+                                {selCount ? 'Только на выбранные приборы (' + selCount + ')' : 'Снять привязку — на все приборы'}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         /* ═══════════ модальное окно ═══════════ */
         function Modal({ title, onClose, children, wide }) {
             return (
@@ -524,10 +994,12 @@
             const [playbacks, setPlaybacks] = useState(init.playbacks);
             const [customSwatches, setCustomSwatches] = useState(init.customSwatches || []);
             const [customProfiles, setCustomProfiles] = useState(init.customProfiles || []);
+            const [effects, setEffects] = useState(init.effects || []);
             const [settings, setSettings] = useState({ serialUniverse: 1, artnetBase: 0, bridgeAddr: '', ...(init.settings || {}) });
 
-            const [view, setView] = useState('board');           // board | patch
-            const [tab, setTab] = useState('color');             // int | color | pos
+            const [view, setView] = useState('board');           // board | plan | patch
+            const [tab, setTab] = useState('color');             // int | color | pos | fx
+            const [planEdit, setPlanEdit] = useState(true);
             const [selected, setSelected] = useState(new Set());
             const [master, setMaster] = useState(1);
             const [blackout, setBlackout] = useState(false);
@@ -544,6 +1016,7 @@
             const fixturesRef = useRef(fixtures); fixturesRef.current = fixtures;
             const playbacksRef = useRef(playbacks); playbacksRef.current = playbacks;
             const settingsRef = useRef(settings); settingsRef.current = settings;
+            const effectsRef = useRef(effects); effectsRef.current = effects;
             const masterRef = useRef(master); masterRef.current = master;
             const blackoutRef = useRef(blackout); blackoutRef.current = blackout;
             const selectedRef = useRef(selected); selectedRef.current = selected;
@@ -601,6 +1074,16 @@
                         });
                     });
                 progRef.current.forEach((pv, fid) => { if (out[fid]) Object.assign(out[fid], pv); });
+
+                // эффекты сцен — с уровнем сцены, живые эффекты — поверх
+                const tSec = now / 1000;
+                playbacksRef.current.forEach(pb => {
+                    if (!pb || !pb.fx || !pb.fx.length) return;
+                    const lv = runs[pb.id] ? runs[pb.id].level : 0;
+                    if (lv <= 0.001) return;
+                    applyEffects(out, pb.fx.map(fx => ({ ...fx, level: fx.level * lv })), fixturesRef.current, tSec);
+                });
+                applyEffects(out, effectsRef.current, fixturesRef.current, tSec);
                 outRef.current = out;
 
                 const ws = wsRef.current;
@@ -705,11 +1188,11 @@
             useEffect(() => {
                 const t = setTimeout(() => {
                     try {
-                        localStorage.setItem('cl_project_v1', JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings }));
+                        localStorage.setItem('cl_project_v1', JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects }));
                     } catch (e) {}
                 }, 500);
                 return () => clearTimeout(t);
-            }, [fixtures, playbacks, customSwatches, customProfiles, settings]);
+            }, [fixtures, playbacks, customSwatches, customProfiles, settings, effects]);
 
             /* ── программер ── */
             const getVal = p => {
@@ -758,6 +1241,13 @@
                 lastColorRef.current = { rgb };
                 applyToSelection({ cct: k, gm, r: rgb[0], g: rgb[1], b: rgb[2] });
             };
+            const applyXY = (x, y) => {
+                const rgb = xy2rgb(x, y);
+                const hs = rgb2hsv(rgb[0], rgb[1], rgb[2]);
+                if (hs.s > 0.01) hsRef.current = { h: hs.h, s: hs.s };
+                lastColorRef.current = { rgb };
+                applyToSelection({ r: rgb[0], g: rgb[1], b: rgb[2] });
+            };
             const applySwatch = sw => {
                 if (sw.k !== undefined) { applyCCT(sw.k, 0); return; }
                 const [r, g, b] = sw.rgb;
@@ -777,6 +1267,27 @@
             const selNone = () => setSelected(new Set());
             const selInvert = () => setSelected(new Set(fixtures.filter(f => !selected.has(f.id)).map(f => f.id)));
 
+            const addEffect = () => {
+                const ids = Array.from(selected);
+                setEffects(list => [...list, { ...DEF_FX, id: uid(), targets: ids }]);
+                setTab('fx');
+                toast(ids.length ? 'Эффект добавлен на выбранные приборы' : 'Эффект добавлен на все приборы');
+            };
+
+            /* разложить приборы аккуратной сеткой — стартовая точка для плана */
+            const autoArrange = () => {
+                setFixtures(fx => {
+                    const cols = Math.ceil(Math.sqrt(fx.length)) || 1;
+                    const rows = Math.ceil(fx.length / cols) || 1;
+                    return fx.map((f, i) => ({
+                        ...f,
+                        x: ((i % cols) + 0.5) / cols,
+                        y: (Math.floor(i / cols) + 0.5) / rows
+                    }));
+                });
+                toast('Приборы расставлены рядами');
+            };
+
             /* ── плейбеки ── */
             const togglePb = pb => {
                 const r = pbRunRef.current[pb.id]; if (!r) return;
@@ -795,21 +1306,29 @@
                 const scene = {};
                 let cr = 0, cg = 0, cb = 0, cn = 0;
                 fixturesRef.current.forEach(f => {
-                    scene[f.id] = { ...(out[f.id] || DEF_PARAMS) };
-                    const c = displayColor(f, scene[f.id]);
-                    if (scene[f.id].dim > 0.03) { cr += c[0]; cg += c[1]; cb += c[2]; cn++; }
+                    const src = out[f.id] || DEF_PARAMS;
+                    const snap = {};
+                    Object.keys(DEF_PARAMS).forEach(k => { snap[k] = src[k]; });
+                    scene[f.id] = snap;
+                    const c = displayColor(f, src);
+                    if (snap.dim > 0.03) { cr += c[0]; cg += c[1]; cb += c[2]; cn++; }
                 });
+                const fxSnap = JSON.parse(JSON.stringify(effectsRef.current.filter(fx => fx.on)));
                 const tint = cn > 0 ? 'rgb(' + Math.round(cr / cn) + ',' + Math.round(cg / cn) + ',' + Math.round(cb / cn) + ')' : '#555';
                 setPlaybacks(pbs => {
                     const next = [...pbs];
                     const old = next[idx];
                     next[idx] = old
-                        ? { ...old, scene, tint }
-                        : { id: uid() + 'p' + idx, name: 'Сцена ' + (idx + 1), fade: 2, scene, tint };
+                        ? { ...old, scene, tint, fx: fxSnap }
+                        : { id: uid() + 'p' + idx, name: 'Сцена ' + (idx + 1), fade: 2, scene, tint, fx: fxSnap };
                     return next;
                 });
                 setRecMode(false);
-                toast('Сцена записана в слот ' + (idx + 1));
+                // живые эффекты гасим, иначе они наложатся на записанные в сцену вторым слоем
+                if (fxSnap.length) {
+                    setEffects(list => list.map(fx => ({ ...fx, on: false })));
+                    toast('Сцена записана в слот ' + (idx + 1) + ' вместе с эффектами');
+                } else toast('Сцена записана в слот ' + (idx + 1));
             };
 
             /* ── патч ── */
@@ -849,6 +1368,7 @@
 
             const noSel = selected.size === 0;
             const mul = blackout ? 0 : master;
+            const curXY = rgb2xy(getVal('r'), getVal('g'), getVal('b'));
             const cctGrad = 'linear-gradient(to right,#ff8912,#ffb46b,#ffcda1,#ffece0,#ffffff,#dfe5ff,#ccdcff)';
             const outActive = dmxStatus === 'on' || netStatus === 'on';
             const outLabel = dmxStatus === 'on' && netStatus === 'on' ? 'USB+NET'
@@ -864,10 +1384,10 @@
                         <h1 className="text-lg font-semibold mr-1">CineLight</h1>
                         <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[var(--panel-2)] border border-[var(--border)] text-zinc-400">DMX</span>
                         <div className="flex gap-1 ml-2">
-                            <button onClick={() => setView('board')}
-                                    className={"px-3 py-1.5 rounded-lg text-xs font-semibold " + (view === 'board' ? 'bg-[var(--accent)] text-white' : 'text-zinc-400 hover:bg-white/5')}>Пульт</button>
-                            <button onClick={() => setView('patch')}
-                                    className={"px-3 py-1.5 rounded-lg text-xs font-semibold " + (view === 'patch' ? 'bg-[var(--accent)] text-white' : 'text-zinc-400 hover:bg-white/5')}>Патч</button>
+                            {[['board', 'Пульт'], ['plan', 'План'], ['patch', 'Патч']].map(([id, nm]) => (
+                                <button key={id} onClick={() => setView(id)}
+                                        className={"px-3 py-1.5 rounded-lg text-xs font-semibold " + (view === id ? 'bg-[var(--accent)] text-white' : 'text-zinc-400 hover:bg-white/5')}>{nm}</button>
+                            ))}
                         </div>
                         <div className="flex-1"></div>
                         <button onClick={() => setModal({ type: 'settings' })}
@@ -889,7 +1409,36 @@
                         <button onClick={() => setModal({ type: 'settings' })} className="p-2 rounded-lg text-zinc-400 hover:bg-white/5"><Icons.Gear /></button>
                     </div>
 
-                    {view === 'patch' ? (
+                    {view === 'plan' ? (
+                        /* ═══ страница ПЛАН ═══ */
+                        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2">
+                            <div className="shrink-0 flex items-center gap-2 flex-wrap">
+                                <span className="text-[11px] text-zinc-400 font-semibold">План площадки · выбрано {selected.size}</span>
+                                <div className="flex-1"></div>
+                                <button onClick={() => setPlanEdit(p => !p)}
+                                        className={"px-2.5 py-1.5 rounded-lg text-[11px] font-bold border " +
+                                          (planEdit ? 'bg-[var(--accent)] border-[var(--accent)] text-white' : 'border-[var(--border)] text-zinc-400')}>
+                                    {planEdit ? 'Двигать: вкл' : 'Двигать: выкл'}
+                                </button>
+                                <button onClick={selNone} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Сброс</button>
+                                <button disabled={selected.size !== 1}
+                                        onClick={() => setModal({ type: 'editFixture', id: selected.values().next().value })}
+                                        className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300 disabled:opacity-35">
+                                    Настроить прибор
+                                </button>
+                                <button onClick={autoArrange} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Расставить рядами</button>
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <LayoutView fixtures={fixtures} outRef={outRef} selected={selected} mul={mul}
+                                            editing={planEdit} onTap={toggleSel}
+                                            onMove={(id, x, y) => setFixtures(fx => fx.map(f => f.id === id ? { ...f, x, y } : f))} />
+                            </div>
+                            <div className="shrink-0 text-[11px] text-zinc-500">
+                                Перетаскивайте приборы пальцем — расстановка задаёт, как по ним побегут эффекты.
+                                Тап без перетаскивания выбирает прибор. Длину и поворот пиксельных трубок задаёт кнопка «Настроить прибор».
+                            </div>
+                        </div>
+                    ) : view === 'patch' ? (
                         /* ═══ страница ПАТЧ ═══ */
                         <div className="flex-1 min-h-0 overflow-y-auto p-4">
                             <div className="max-w-3xl mx-auto">
@@ -915,7 +1464,7 @@
                                                        (conflicts.has(f.id) ? 'border-red-700 bg-red-950/30' : 'border-[var(--border)] bg-[var(--panel)]')}
                                                      onClick={() => setModal({ type: 'editFixture', id: f.id })}>
                                                     <span className="font-mono text-[11px] px-2 py-1 rounded-md bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300">
-                                                        {String(f.addr).padStart(3, '0')}–{String(f.addr + f.profile.ch.length - 1).padStart(3, '0')}
+                                                        {String(f.addr).padStart(3, '0')}–{String(f.addr + footprint(f.profile) - 1).padStart(3, '0')}
                                                     </span>
                                                     <span className="text-sm font-semibold flex-1 truncate">{f.name}</span>
                                                     <span className="text-[11px] text-zinc-500 hidden sm:block">{f.profile.name}</span>
@@ -951,6 +1500,7 @@
                                             return <FixtureTile key={f.id} f={f} sel={selected.has(f.id)}
                                                     color={displayColor(f, P, mul)} dim={P.dim}
                                                     hasProg={progRef.current.has(f.id)}
+                                                    pixels={P.px} mul={mul}
                                                     onTap={() => toggleSel(f.id)} />;
                                         })}
                                     </div>
@@ -990,10 +1540,12 @@
                             {/* правая панель: параметры + энкодеры */}
                             <div className="lg:w-[400px] w-full h-[46%] lg:h-auto shrink-0 border-t lg:border-t-0 lg:border-l border-[var(--border)] bg-[var(--panel)] flex flex-col min-h-0">
                                 <div className="shrink-0 flex p-2 gap-1">
-                                    {[['int', 'Яркость'], ['color', 'Цвет'], ['pos', 'Позиция']].map(([id, name]) => (
+                                    {[['int', 'Яркость'], ['color', 'Цвет'], ['pos', 'Позиция'], ['fx', 'Эффекты']].map(([id, name]) => (
                                         <button key={id} onClick={() => setTab(id)}
-                                                className={"flex-1 py-2 rounded-lg text-xs font-bold " +
-                                                  (tab === id ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>{name}</button>
+                                                className={"flex-1 py-2 rounded-lg text-[11px] font-bold " +
+                                                  (tab === id ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>
+                                            {name}{id === 'fx' && effects.filter(f => f.on).length > 0 ? ' ●' : ''}
+                                        </button>
                                     ))}
                                 </div>
                                 <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2 space-y-3">
@@ -1041,6 +1593,37 @@
                                                 <HSlider label="A" frac={getVal('a')} text={Math.round(getVal('a') * 255)} disabled={noSel}
                                                          onFrac={v => applyRGBDirect({ a: v })} gradient="linear-gradient(to right,#141312,#ffb400)" />
                                             </div>
+                                            <div className="rounded-xl border border-[var(--border)] p-2.5">
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Цвет цифрами</div>
+                                                <div className="flex gap-1.5 mb-2">
+                                                    <NumField label="CIE x" value={Math.round(curXY.x * 10000) / 10000} step="0.001"
+                                                              onCommit={v => applyXY(clamp(v, 0, 0.8), curXY.y)} />
+                                                    <NumField label="CIE y" value={Math.round(curXY.y * 10000) / 10000} step="0.001"
+                                                              onCommit={v => applyXY(curXY.x, clamp(v, 0.0001, 0.9))} />
+                                                    <NumField label="Кельвины" value={Math.round(getVal('cct'))} step="50"
+                                                              onCommit={v => applyCCT(clamp(v, 1000, 20000), getVal('gm'))} />
+                                                </div>
+                                                <div className="flex gap-1.5 mb-2">
+                                                    <NumField label="R 0-255" value={Math.round(getVal('r') * 255)} step="1"
+                                                              onCommit={v => applyRGBDirect({ r: clamp(v / 255, 0, 1) })} />
+                                                    <NumField label="G 0-255" value={Math.round(getVal('g') * 255)} step="1"
+                                                              onCommit={v => applyRGBDirect({ g: clamp(v / 255, 0, 1) })} />
+                                                    <NumField label="B 0-255" value={Math.round(getVal('b') * 255)} step="1"
+                                                              onCommit={v => applyRGBDirect({ b: clamp(v / 255, 0, 1) })} />
+                                                </div>
+                                                <div className="flex gap-1.5 items-end">
+                                                    <NumField label="Оттенок °" value={Math.round(hsRef.current.h)} step="1"
+                                                              onCommit={v => applyHS(((v % 360) + 360) % 360, hsRef.current.s)} />
+                                                    <NumField label="Насыщ. %" value={Math.round(hsRef.current.s * 100)} step="1"
+                                                              onCommit={v => applyHS(hsRef.current.h, clamp(v / 100, 0, 1))} />
+                                                    <NumField label="Тон G/M" value={Math.round(getVal('gm') * 100)} step="1"
+                                                              onCommit={v => applyCCT(getVal('cct'), clamp(v / 100, -1, 1))} />
+                                                </div>
+                                                <div className="text-[9px] text-zinc-600 mt-1.5 leading-relaxed">
+                                                    x/y — координаты цвета по CIE 1931, как в паспортах приборов и на векторскопе.
+                                                    Плюс/минус по «Тон G/M»: плюс — в зелень, минус — в пурпур.
+                                                </div>
+                                            </div>
                                             <div>
                                                 <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Температура света</div>
                                                 <div className="grid grid-cols-4 gap-1.5">
@@ -1084,6 +1667,38 @@
                                                     </button>
                                                 </div>
                                             </div>
+                                        </React.Fragment>
+                                    )}
+
+                                    {tab === 'fx' && (
+                                        <React.Fragment>
+                                            <div className="flex items-center gap-1.5">
+                                                <button onClick={addEffect}
+                                                        className="flex-1 py-2.5 rounded-lg bg-[var(--accent)] text-white text-xs font-bold flex items-center justify-center gap-1.5">
+                                                    <Icons.Plus />Новый эффект
+                                                </button>
+                                                {effects.length > 0 && (
+                                                    <button onClick={() => { setEffects([]); toast('Эффекты удалены'); }}
+                                                            className="px-3 py-2.5 rounded-lg border border-red-900 text-red-400 text-xs font-bold">Убрать все</button>
+                                                )}
+                                            </div>
+                                            {effects.length === 0 && (
+                                                <div className="text-[11px] text-zinc-500 leading-relaxed">
+                                                    Эффект — это движение света: радуга, волна, бегущий огонёк, живое пламя.
+                                                    Он бежит по приборам так, как они расставлены на странице «План».
+                                                    У пиксельных трубок эффект идёт по каждому пикселю отдельно.
+                                                </div>
+                                            )}
+                                            {effects.map((fx, i) => (
+                                                <FxCard key={fx.id} fx={fx} selCount={selected.size}
+                                                        onChange={upd => setEffects(list => list.map((e, j) => j === i ? { ...e, ...upd } : e))}
+                                                        onTarget={() => {
+                                                            const ids = Array.from(selected);
+                                                            setEffects(list => list.map((e, j) => j === i ? { ...e, targets: ids } : e));
+                                                            toast(ids.length ? 'Эффект теперь только на выбранных приборах' : 'Эффект на всех приборах');
+                                                        }}
+                                                        onDelete={() => setEffects(list => list.filter((_, j) => j !== i))} />
+                                            ))}
                                         </React.Fragment>
                                     )}
 
@@ -1141,12 +1756,13 @@
                         <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus}
                                        connectSerial={connectSerial} disconnectSerial={disconnectSerial}
                                        connectBridge={connectBridge} disconnectBridge={disconnectBridge}
-                                       fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles}
+                                       fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles} effects={effects}
                                        onImport={data => {
                                            setFixtures(data.fixtures || []);
                                            setPlaybacks(data.playbacks && data.playbacks.length === 10 ? data.playbacks : new Array(10).fill(null));
                                            setCustomSwatches(data.customSwatches || []);
                                            setCustomProfiles(data.customProfiles || []);
+                                           setEffects(data.effects || []);
                                            setSettings(data.settings || { serialUniverse: 1 });
                                            setSelected(new Set()); progRef.current.clear(); setProgDirty(false);
                                            toast('Проект загружен');
@@ -1155,7 +1771,7 @@
                                            localStorage.removeItem('cl_project_v1');
                                            const p = seedProject();
                                            setFixtures(p.fixtures); setPlaybacks(p.playbacks);
-                                           setCustomSwatches([]); setCustomProfiles([]); setSettings(p.settings);
+                                           setCustomSwatches([]); setCustomProfiles([]); setEffects([]); setSettings(p.settings);
                                            setSelected(new Set()); progRef.current.clear(); setProgDirty(false);
                                            setModal(null); toast('Проект сброшен');
                                        }}
@@ -1205,10 +1821,10 @@
         }
 
         /* ═══════════ настройки ═══════════ */
-        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, onImport, onReset, onClose }) {
+        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, onImport, onReset, onClose }) {
             const fileRef = useRef(null);
             const doExport = () => {
-                const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings }, null, 2);
+                const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects }, null, 2);
                 const blob = new Blob([data], { type: 'application/json' });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
@@ -1300,11 +1916,14 @@
                         <div>
                             <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Как пользоваться</div>
                             <ul className="text-[11px] text-zinc-400 leading-relaxed list-disc pl-4 space-y-1">
-                                <li>«Патч» — добавьте свои приборы и DMX-адреса.</li>
+                                <li>«Патч» — выберите приборы из библиотеки (производитель → модель → режим DMX) и задайте адреса.</li>
+                                <li>«План» — расставьте приборы пальцем так, как они стоят на площадке. По этой расстановке бегут эффекты.</li>
                                 <li>На пульте выберите приборы и задайте цвет: круг, температура (CCT), тон G/M, ползунки RGB.</li>
                                 <li>Энкодеры внизу крутятся пальцем по кругу; кнопка «Точно» — медленный ход.</li>
                                 <li>«● ЗАПИСЬ» и затем слот — сохранить текущую картинку как сцену. Тап по сцене — включить с фейдом, вертикальное движение — уровень, долгое нажатие — настройки сцены.</li>
                                 <li>«Очистить» — убрать ручные правки и вернуться к сценам. BLACKOUT — мгновенно всё в ноль.</li>
+                                <li>Вкладка «Эффекты» — движение света: радуга, волна, бегущий огонёк, пламя. У пиксельных трубок эффект идёт по каждому пикселю.</li>
+                                <li>Цвет можно задать цифрами: координаты CIE x/y, Кельвины, RGB 0–255 или оттенок с насыщенностью.</li>
                                 <li>Без интерфейса и моста пульт работает в демо-режиме: плитки приборов показывают свет, сцены можно готовить заранее.</li>
                             </ul>
                         </div>
@@ -1315,8 +1934,15 @@
 
         /* ═══════════ добавление прибора ═══════════ */
         function AddFixtureModal({ fixtures, customProfiles, onAdd, onClose }) {
-            const allProfiles = [...PROFILES, ...customProfiles];
-            const [profId, setProfId] = useState('drgbw');
+            const lib = useMemo(() => {
+                const l = FIXTURE_LIB.map(b => ({ ...b, models: b.models.slice() }));
+                if (customProfiles.length) l.push({ brand: 'Мои профили', models: [{ model: 'Сохранённые', cct: [2700, 6500], modes: customProfiles }] });
+                return l;
+            }, [customProfiles]);
+            const [bi, setBi] = useState(0);
+            const [mi, setMi] = useState(0);
+            const [mo, setMo] = useState(0);
+            const [custom, setCustom] = useState(false);
             const [name, setName] = useState('');
             const [count, setCount] = useState(1);
             const [universe, setUniverse] = useState(1);
@@ -1324,21 +1950,32 @@
             const [cctMin, setCctMin] = useState(2700);
             const [cctMax, setCctMax] = useState(6500);
             const [customCh, setCustomCh] = useState(['dim', 'r', 'g', 'b']);
+            const [customPx, setCustomPx] = useState(0);
             const [customName, setCustomName] = useState('Мой прибор');
-            const isCustom = profId === 'custom';
-            const profile = isCustom
-                ? { id: 'cp' + uid(), name: customName || 'Мой прибор', ch: customCh }
-                : allProfiles.find(p => p.id === profId);
-            const hasCct = profile && profile.ch.includes('cct');
-            const foot = profile ? profile.ch.length : 1;
+
+            const brand = lib[Math.min(bi, lib.length - 1)];
+            const model = brand.models[Math.min(mi, brand.models.length - 1)];
+            const mode = model.modes[Math.min(mo, model.modes.length - 1)];
+            const profile = custom
+                ? { id: 'cp' + uid(), name: customName || 'Мой прибор', ch: customCh,
+                    px: customPx > 0 ? ['r', 'g', 'b'] : undefined, pixels: customPx > 0 ? customPx : undefined }
+                : { ...mode, id: mode.id || 'lib' + uid(), name: model.model + ' · ' + mode.name };
+            const allCh = (profile.ch || []).concat(profile.px || []);
+            const hasCct = allCh.includes('cct');
+            const foot = footprint(profile);
 
             useEffect(() => { setAddr(nextFreeAddr(fixtures, universe)); }, [universe]);
+            useEffect(() => { setMi(0); setMo(0); }, [bi]);
+            useEffect(() => { setMo(0); }, [mi]);
+            useEffect(() => {
+                if (!custom && model.cct) { setCctMin(model.cct[0]); setCctMax(model.cct[1]); }
+            }, [bi, mi, custom]);
 
             const submit = () => {
-                if (!profile || profile.ch.length === 0) return;
+                if (foot === 0) { alert('У профиля нет ни одного канала'); return; }
                 const n = clamp(parseInt(count) || 1, 1, 64);
                 const a0 = clamp(parseInt(addr) || 1, 1, 512);
-                const base = (name || profile.name).trim();
+                const base = (name || (custom ? profile.name : model.model)).trim();
                 const list = [];
                 for (let i = 0; i < n; i++) {
                     const a = a0 + i * foot;
@@ -1347,27 +1984,60 @@
                         id: uid() + i, name: n > 1 ? base + ' ' + (i + 1) : base,
                         universe, addr: a,
                         profile: JSON.parse(JSON.stringify(profile)),
-                        cctMin: parseInt(cctMin) || 2700, cctMax: parseInt(cctMax) || 6500
+                        cctMin: parseInt(cctMin) || 2700, cctMax: parseInt(cctMax) || 6500,
+                        x: 0.1 + 0.8 * ((i + 0.5) / n), y: 0.5, rot: 0,
+                        len: profile.pixels ? 0.5 : 0.14
                     });
                 }
                 if (list.length === 0) { alert('Не хватает адресов в юниверсе (максимум 512 каналов)'); return; }
-                onAdd(list, isCustom ? JSON.parse(JSON.stringify(profile)) : null);
+                onAdd(list, custom ? JSON.parse(JSON.stringify(profile)) : null);
             };
 
             return (
                 <Modal title="Добавить прибор" onClose={onClose}>
                     <div className="space-y-3">
-                        <div>
-                            <label className="text-[11px] font-bold text-zinc-500">Тип прибора</label>
-                            <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={profId} onChange={e => setProfId(e.target.value)}>
-                                {allProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                <option value="custom">Свой профиль…</option>
-                            </select>
+                        <div className="flex gap-1">
+                            <button onClick={() => setCustom(false)}
+                                    className={"flex-1 py-2 rounded-lg text-xs font-bold " + (!custom ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>Из библиотеки</button>
+                            <button onClick={() => setCustom(true)}
+                                    className={"flex-1 py-2 rounded-lg text-xs font-bold " + (custom ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>Свой профиль</button>
                         </div>
-                        {isCustom && (
+                        {!custom && (
+                            <React.Fragment>
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">Производитель</label>
+                                    <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={bi} onChange={e => setBi(parseInt(e.target.value))}>
+                                        {lib.map((b, i) => <option key={b.brand} value={i}>{b.brand}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">Модель</label>
+                                    <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={mi} onChange={e => setMi(parseInt(e.target.value))}>
+                                        {brand.models.map((m, i) => <option key={m.model} value={i}>{m.model}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">Режим DMX</label>
+                                    <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={mo} onChange={e => setMo(parseInt(e.target.value))}>
+                                        {model.modes.map((m, i) => <option key={i} value={i}>{m.name}</option>)}
+                                    </select>
+                                    <div className="text-[10px] text-zinc-500 mt-1 leading-relaxed">
+                                        В меню самого прибора выберите режим с тем же числом каналов — у разных
+                                        производителей они называются по-своему. Если картинка на площадке не совпала,
+                                        поменяйте режим здесь или соберите свой профиль.
+                                    </div>
+                                </div>
+                            </React.Fragment>
+                        )}
+                        {custom && (
                             <div className="rounded-xl border border-[var(--border)] p-3 space-y-2">
                                 <input className="glass-input rounded-lg px-3 py-2 text-sm w-full" placeholder="Название профиля"
                                        value={customName} onChange={e => setCustomName(e.target.value)} />
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[11px] text-zinc-500 flex-1">Пикселей RGB после общих каналов</span>
+                                    <input type="number" min="0" max="170" className="glass-input rounded-lg px-2 py-1.5 text-xs w-20 font-mono"
+                                           value={customPx} onChange={e => setCustomPx(clamp(parseInt(e.target.value) || 0, 0, 170))} />
+                                </div>
                                 {customCh.map((role, i) => (
                                     <div key={i} className="flex items-center gap-2">
                                         <span className="text-[11px] font-mono text-zinc-500 w-14">Кан. {i + 1}</span>
@@ -1385,7 +2055,7 @@
                         )}
                         <div>
                             <label className="text-[11px] font-bold text-zinc-500">Название</label>
-                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" placeholder={profile ? profile.name : ''}
+                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" placeholder={custom ? profile.name : model.model}
                                    value={name} onChange={e => setName(e.target.value)} />
                         </div>
                         <div className="grid grid-cols-3 gap-2">
@@ -1421,7 +2091,10 @@
                                 </div>
                             </div>
                         )}
-                        <div className="text-[11px] text-zinc-500">Займёт каналы: {foot} на прибор.</div>
+                        <div className="text-[11px] text-zinc-500">
+                            Займёт каналов: {foot} на прибор{profile.pixels ? ' · пикселей: ' + profile.pixels : ''}.
+                            {count > 1 ? ' Адреса: ' + addr + '–' + (clamp(parseInt(addr) || 1, 1, 512) + foot * clamp(parseInt(count) || 1, 1, 64) - 1) + '.' : ''}
+                        </div>
                         <button onClick={submit} className="w-full py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Добавить</button>
                     </div>
                 </Modal>
@@ -1436,7 +2109,11 @@
             const [addr, setAddr] = useState(fixture.addr);
             const [cctMin, setCctMin] = useState(fixture.cctMin || 2700);
             const [cctMax, setCctMax] = useState(fixture.cctMax || 6500);
-            const hasCct = fixture.profile.ch.includes('cct');
+            const [rot, setRot] = useState(fixture.rot || 0);
+            const [len, setLen] = useState(fixture.len === undefined ? 0.14 : fixture.len);
+            const prof = fixture.profile;
+            const hasCct = (prof.ch || []).concat(prof.px || []).includes('cct');
+            const isPx = !!prof.pixels;
             return (
                 <Modal title="Прибор" onClose={onClose}>
                     <div className="space-y-3">
@@ -1444,7 +2121,22 @@
                             <label className="text-[11px] font-bold text-zinc-500">Название</label>
                             <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={name} onChange={e => setName(e.target.value)} />
                         </div>
-                        <div className="text-[11px] text-zinc-500">{fixture.profile.name} · {fixture.profile.ch.length} каналов</div>
+                        <div className="text-[11px] text-zinc-500">
+                            {prof.name} · каналов: {footprint(prof)}{isPx ? ' · пикселей: ' + prof.pixels : ''}
+                        </div>
+                        <div className="rounded-xl border border-[var(--border)] p-3 space-y-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Место на плане</div>
+                            <HSlider label="Поворот" frac={rot / 360} text={Math.round(rot) + '°'} onFrac={v => setRot(v * 360)}
+                                     gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                            {isPx && (
+                                <HSlider label="Длина" frac={clamp(len, 0, 1)} text={Math.round(len * 100) + '%'} onFrac={setLen}
+                                         gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                            )}
+                            <div className="text-[10px] text-zinc-500 leading-relaxed">
+                                {isPx ? 'Поворот и длина задают, как трубка лежит на плане — по этой линии и побегут пиксели.'
+                                      : 'Поворот пригодится, когда по прибору идёт эффект. Само место задаётся перетаскиванием на странице «План».'}
+                            </div>
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <label className="text-[11px] font-bold text-zinc-500">Юниверс</label>
@@ -1479,7 +2171,8 @@
                                         universe,
                                         addr: clamp(parseInt(addr) || 1, 1, 512),
                                         cctMin: parseInt(cctMin) || 2700,
-                                        cctMax: parseInt(cctMax) || 6500
+                                        cctMax: parseInt(cctMax) || 6500,
+                                        rot, len
                                     })}
                                     className="flex-1 py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Сохранить</button>
                             <button onClick={() => { if (window.confirm('Удалить прибор «' + fixture.name + '»?')) onDelete(); }}
