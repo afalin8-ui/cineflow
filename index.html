@@ -66,6 +66,9 @@
         ::-webkit-scrollbar-thumb:hover { background: #3d4954; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @media (max-width: 767px) {
+          .nav-scroll-hint { -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%); mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%); }
+        }
         .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
         h1, h2, h3 { font-family: 'Lora', Georgia, serif; letter-spacing: -0.01em; }
         .glass-panel {
@@ -148,7 +151,7 @@
         const initialDocs = [{ id: 'doc-1', title: 'Операторская концепция', content: 'Мрачно, контрастно, неоновые акценты в тенях. Мягкая оптика, использование анаморфотов.' }];
 
         const firebaseConfig = {
-          apiKey: "AQ.Ab8RN6LnTRYUXj4UA3FbcHSuo1MQUXo_LukcBGRhKrwZf7d50A",
+          apiKey: "AIzaSyAWRDxZr8ZEF_nu6PhCnyo2yQChJ9uAUoQ",
           authDomain: "prepflow-37284.firebaseapp.com",
           projectId: "prepflow-37284",
           storageBucket: "prepflow-37284.firebasestorage.app",
@@ -658,7 +661,8 @@
           }, [messages, showChat, clientId]);
 
           const [geminiKey, setGeminiKeyRaw] = useState(() => localStorage.getItem('cf_gemini_key') || '');
-          const saveGeminiKey = (v) => { setGeminiKeyRaw(v); localStorage.setItem('cf_gemini_key', v.trim()); }; 
+          const saveGeminiKey = (v) => { setGeminiKeyRaw(v); localStorage.setItem('cf_gemini_key', v.trim()); };
+          const [showGeminiKey, setShowGeminiKey] = useState(true);
           
           const callGeminiAI = async (promptText, isAgent = false) => {
             if (!geminiKey.trim()) { showToast("🔑 Укажите ключ Gemini API в меню «Проект»."); return null; }
@@ -907,7 +911,7 @@
                   <button onClick={() => setShowShareModal(true)} className="md:hidden bg-indigo-600/30 text-[11px] px-3 py-1.5 rounded-lg text-indigo-200 font-semibold flex items-center gap-1"><Icons.Link /> Доступ</button>
                 </div>
                 
-                <div className="flex bg-black/50 p-1 rounded-xl border border-white/10 w-full md:w-auto overflow-x-auto hide-scrollbar snap-x">
+                <div className="flex bg-black/50 p-1 rounded-xl border border-white/10 w-full md:w-auto overflow-x-auto hide-scrollbar snap-x nav-scroll-hint">
                   {[{id: 'notion', label: 'Сцены', icon: <Icons.Scene />}, {id: 'gallery', label: 'Галерея', icon: <Icons.Gallery />}, {id: 'master', label: 'Мастер-док', icon: <Icons.Master />}, {id: 'whiteboard', label: 'Доска', icon: <Icons.Board />}, {id: 'table', label: 'КПП / Смены', icon: <Icons.Table />}, {id: 'docs', label: 'Экспликации', icon: <Icons.Docs />}]
                     .map(tab => (
                     <button key={tab.id} onClick={() => setCurrentView(tab.id)} className={`snap-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 min-h-[34px] ${currentView === tab.id ? 'bg-indigo-600/80 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}>
@@ -1682,7 +1686,10 @@
                     <div className="space-y-3">
                       <div className="mb-2">
                         <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Ключ Gemini API (для ИИ-функций)</label>
-                        <input type="password" value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." className="w-full glass-input rounded-xl px-4 py-3 text-sm font-mono" />
+                        <div className="relative">
+                          <input type={showGeminiKey ? "text" : "password"} value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" data-lpignore="true" data-1p-ignore="true" name="cf-gemini-api-key" className="w-full glass-input rounded-xl px-4 py-3 pr-12 text-sm font-mono" />
+                          <button type="button" onClick={() => setShowGeminiKey(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-white/5 transition-colors">{showGeminiKey ? "Скрыть" : "Показать"}</button>
+                        </div>
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
                       </div>
                       <button onClick={() => {
