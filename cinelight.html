@@ -61,6 +61,7 @@
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+        .app-h { height: 100vh; height: 100dvh; }
         h1, h2, h3 { font-family: 'Lora', Georgia, serif; letter-spacing: -0.01em; }
         .glass-panel { background: var(--panel); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
         .glass-input { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
@@ -184,6 +185,23 @@
                     default: return 0;
                 }
             });
+        }
+
+        const EMPTY512 = new Uint8Array(512);
+        /* пакет Art-Net ArtDMX: его понимают ноды, радиопередатчики и визуализаторы */
+        function artDmxPacket(universe, data) {
+            const p = new Uint8Array(18 + 512);
+            const id = 'Art-Net';
+            for (let i = 0; i < 7; i++) p[i] = id.charCodeAt(i);
+            p[7] = 0;
+            p[8] = 0x00; p[9] = 0x50;      // OpDmx (little-endian)
+            p[10] = 0; p[11] = 14;         // версия протокола
+            p[12] = 0;                     // sequence выключен
+            p[13] = 0;                     // physical
+            p[14] = universe & 0xFF; p[15] = (universe >> 8) & 0x7F;
+            p[16] = 2; p[17] = 0;          // длина 512 (big-endian)
+            p.set(data, 18);
+            return p;
         }
 
         function displayColor(f, P, mul) {
@@ -506,7 +524,7 @@
             const [playbacks, setPlaybacks] = useState(init.playbacks);
             const [customSwatches, setCustomSwatches] = useState(init.customSwatches || []);
             const [customProfiles, setCustomProfiles] = useState(init.customProfiles || []);
-            const [settings, setSettings] = useState(init.settings || { serialUniverse: 1 });
+            const [settings, setSettings] = useState({ serialUniverse: 1, artnetBase: 0, bridgeAddr: '', ...(init.settings || {}) });
 
             const [view, setView] = useState('board');           // board | patch
             const [tab, setTab] = useState('color');             // int | color | pos
@@ -517,6 +535,7 @@
             const [recMode, setRecMode] = useState(false);
             const [progDirty, setProgDirty] = useState(false);
             const [dmxStatus, setDmxStatus] = useState('demo');  // demo | on
+            const [netStatus, setNetStatus] = useState('off');   // off | connecting | on
             const [toastMsg, setToastMsg] = useState(null);
             const [modal, setModal] = useState(null);            // {type:...}
             const [, setUiTick] = useState(0);
@@ -538,6 +557,9 @@
             const writerRef = useRef(null);
             const busyRef = useRef(false);
             const toastTRef = useRef(null);
+            const wsRef = useRef(null);
+            const wsWantRef = useRef(null);
+            const wsTimerRef = useRef(null);
 
             playbacks.forEach(pb => { if (pb && !pbRunRef.current[pb.id]) pbRunRef.current[pb.id] = { level: 0, target: 0, lastOn: 0 }; });
 
@@ -581,21 +603,30 @@
                 progRef.current.forEach((pv, fid) => { if (out[fid]) Object.assign(out[fid], pv); });
                 outRef.current = out;
 
-                if (writerRef.current) {
+                const ws = wsRef.current;
+                const wantSerial = !!writerRef.current;
+                const wantNet = !!(ws && ws.readyState === 1);
+                if (wantSerial || wantNet) {
                     const mul = blackoutRef.current ? 0 : masterRef.current;
-                    const su = settingsRef.current.serialUniverse || 1;
-                    const uni = new Uint8Array(512);
+                    const unis = {};
                     fixturesRef.current.forEach(f => {
-                        if (f.universe !== su) return;
+                        if (!unis[f.universe]) unis[f.universe] = new Uint8Array(512);
                         const P = { ...out[f.id] };
                         P.dim = P.dim * mul;
                         const bytes = paramsToBytes(f, P);
                         for (let i = 0; i < bytes.length; i++) {
                             const a = f.addr - 1 + i;
-                            if (a >= 0 && a < 512) uni[a] = bytes[i];
+                            if (a >= 0 && a < 512) unis[f.universe][a] = bytes[i];
                         }
                     });
-                    sendSerial(uni);
+                    if (wantSerial) sendSerial(unis[settingsRef.current.serialUniverse || 1] || EMPTY512);
+                    if (wantNet) {
+                        const base = settingsRef.current.artnetBase || 0;
+                        Object.entries(unis).forEach(([u, data]) => {
+                            const au = Math.max(0, parseInt(u) - 1 + base);
+                            try { ws.send(artDmxPacket(au, data)); } catch (e) {}
+                        });
+                    }
                 }
             };
             useEffect(() => {
@@ -632,6 +663,42 @@
                 try { if (portRef.current) await portRef.current.close(); } catch (e) {}
                 writerRef.current = null; portRef.current = null; busyRef.current = false;
                 setDmxStatus('demo');
+            }
+
+            /* ── Art-Net мост по Wi-Fi (работает и с iPad) ── */
+            function openWs(addr) {
+                let ws;
+                try { ws = new WebSocket('ws://' + addr); } catch (e) { setNetStatus('off'); wsWantRef.current = null; toast('Не получилось подключиться к мосту'); return; }
+                ws.binaryType = 'arraybuffer';
+                ws.onopen = () => { setNetStatus('on'); toast('Мост подключён — Art-Net уходит в сеть'); };
+                ws.onclose = () => {
+                    if (wsRef.current === ws) wsRef.current = null;
+                    if (wsWantRef.current) {
+                        setNetStatus('connecting');
+                        clearTimeout(wsTimerRef.current);
+                        wsTimerRef.current = setTimeout(() => { if (wsWantRef.current) openWs(wsWantRef.current); }, 2000);
+                    } else setNetStatus('off');
+                };
+                ws.onerror = () => { try { ws.close(); } catch (e) {} };
+                wsRef.current = ws;
+            }
+            function connectBridge() {
+                let addr = (settingsRef.current.bridgeAddr || '').trim();
+                // если пульт открыт с самого моста — адрес уже известен
+                if (!addr && location.protocol === 'http:' && location.port === '9070') addr = location.host;
+                if (!addr) { toast('Впишите адрес моста — он показан в его окне на компьютере'); return; }
+                if (!/:[0-9]+$/.test(addr)) addr += ':9070';
+                if (location.protocol === 'https:') toast('Откройте пульт по адресу моста (http://…) — со страницы https браузер блокирует связь с мостом');
+                wsWantRef.current = addr;
+                setNetStatus('connecting');
+                openWs(addr);
+            }
+            function disconnectBridge() {
+                wsWantRef.current = null;
+                clearTimeout(wsTimerRef.current);
+                const ws = wsRef.current; wsRef.current = null;
+                if (ws) { try { ws.close(); } catch (e) {} }
+                setNetStatus('off');
             }
 
             /* ── сохранение проекта ── */
@@ -783,10 +850,15 @@
             const noSel = selected.size === 0;
             const mul = blackout ? 0 : master;
             const cctGrad = 'linear-gradient(to right,#ff8912,#ffb46b,#ffcda1,#ffece0,#ffffff,#dfe5ff,#ccdcff)';
+            const outActive = dmxStatus === 'on' || netStatus === 'on';
+            const outLabel = dmxStatus === 'on' && netStatus === 'on' ? 'USB+NET'
+                : dmxStatus === 'on' ? 'USB U' + (settings.serialUniverse || 1)
+                : netStatus === 'on' ? 'ART-NET'
+                : netStatus === 'connecting' ? 'МОСТ…' : 'ДЕМО';
 
             /* ═══════════ вёрстка ═══════════ */
             return (
-                <div className="h-screen w-screen flex flex-col overflow-hidden">
+                <div className="app-h w-screen flex flex-col overflow-hidden">
                     {/* ── верхняя панель ── */}
                     <div className="h-[52px] shrink-0 flex items-center gap-2 px-3 border-b border-[var(--border)] bg-[var(--panel)]">
                         <h1 className="text-lg font-semibold mr-1">CineLight</h1>
@@ -800,8 +872,8 @@
                         <div className="flex-1"></div>
                         <button onClick={() => setModal({ type: 'settings' })}
                                 className={"flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold font-mono border " +
-                                  (dmxStatus === 'on' ? 'border-green-700 text-green-400' : 'border-[var(--border)] text-zinc-500')}>
-                            <Icons.Zap />{dmxStatus === 'on' ? 'DMX U' + (settings.serialUniverse || 1) : 'ДЕМО'}
+                                  (outActive ? 'border-green-700 text-green-400' : netStatus === 'connecting' ? 'border-yellow-700 text-yellow-500' : 'border-[var(--border)] text-zinc-500')}>
+                            <Icons.Zap />{outLabel}
                         </button>
                         <div className="hidden md:flex items-center gap-2 px-2">
                             <span className="text-[10px] font-bold text-zinc-400">МАСТЕР</span>
@@ -1066,8 +1138,9 @@
 
                     {/* ── модалки ── */}
                     {modal && modal.type === 'settings' && (
-                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus}
+                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus}
                                        connectSerial={connectSerial} disconnectSerial={disconnectSerial}
+                                       connectBridge={connectBridge} disconnectBridge={disconnectBridge}
                                        fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles}
                                        onImport={data => {
                                            setFixtures(data.fixtures || []);
@@ -1132,7 +1205,7 @@
         }
 
         /* ═══════════ настройки ═══════════ */
-        function SettingsModal({ settings, setSettings, dmxStatus, connectSerial, disconnectSerial, fixtures, playbacks, customSwatches, customProfiles, onImport, onReset, onClose }) {
+        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, onImport, onReset, onClose }) {
             const fileRef = useRef(null);
             const doExport = () => {
                 const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings }, null, 2);
@@ -1160,7 +1233,7 @@
                 <Modal title="Настройки" onClose={onClose}>
                     <div className="space-y-5">
                         <div>
-                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Выход DMX</div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Выход DMX · USB (Windows, Chrome/Edge)</div>
                             <div className="flex items-center gap-2 mb-2">
                                 {dmxStatus === 'on' ? (
                                     <button onClick={disconnectSerial} className="px-3 py-2 rounded-lg bg-[var(--panel-2)] border border-green-700 text-green-400 text-xs font-bold">Подключено · Отключить</button>
@@ -1174,10 +1247,40 @@
                                 </select>
                             </div>
                             <p className="text-[11px] text-zinc-500 leading-relaxed">
-                                Работает с USB-DMX интерфейсами, понимающими протокол Enttec DMX USB Pro
-                                (Enttec Pro, DMXKing и совместимые). Нужен Chrome или Edge на компьютере.
-                                Пульт шлёт выбранный юниверс 30 раз в секунду. Без интерфейса всё работает
-                                в демо-режиме: плитки приборов показывают цвет и яркость.
+                                Для USB-DMX интерфейсов с протоколом Enttec DMX USB Pro (Enttec Pro, DMXKing
+                                и совместимые). Работает в Chrome и Edge на компьютере; на iPad USB недоступен —
+                                используйте мост ниже.
+                            </p>
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Выход DMX · Art-Net мост (iPad и Windows, по Wi-Fi)</div>
+                            <div className="flex items-center gap-2 mb-2">
+                                <input className="glass-input rounded-lg px-3 py-2 text-xs flex-1 font-mono" placeholder="адрес моста, напр. 192.168.1.50:9070"
+                                       value={settings.bridgeAddr || ''}
+                                       onChange={e => setSettings(s => ({ ...s, bridgeAddr: e.target.value }))} />
+                                {netStatus === 'off' ? (
+                                    <button onClick={connectBridge} className="px-3 py-2 rounded-lg bg-[var(--accent)] text-white text-xs font-bold whitespace-nowrap">Подключить мост</button>
+                                ) : (
+                                    <button onClick={disconnectBridge} className={"px-3 py-2 rounded-lg bg-[var(--panel-2)] border text-xs font-bold whitespace-nowrap " +
+                                            (netStatus === 'on' ? 'border-green-700 text-green-400' : 'border-yellow-700 text-yellow-500')}>
+                                        {netStatus === 'on' ? 'Подключено · Отключить' : 'Подключаюсь… Отмена'}
+                                    </button>
+                                )}
+                            </div>
+                            <select className="glass-input rounded-lg px-2 py-2 text-xs mb-2"
+                                    value={settings.artnetBase || 0}
+                                    onChange={e => setSettings(s => ({ ...s, artnetBase: parseInt(e.target.value) }))}>
+                                <option value={0}>Юниверс 1 → Art-Net universe 0 (стандарт)</option>
+                                <option value={1}>Юниверс 1 → Art-Net universe 1</option>
+                            </select>
+                            <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                Мост — маленькая программа на компьютере в той же Wi-Fi сети (файлы
+                                cinelight-bridge.js и cinelight-bridge.bat лежат рядом с пультом). Один раз
+                                установите Node.js с nodejs.org, затем запускайте cinelight-bridge.bat —
+                                окно покажет адрес вида http://192.168.1.50:9070. Откройте этот адрес на iPad —
+                                пульт загрузится прямо с моста — и нажмите «Подключить мост». Дальше сигнал
+                                уходит в сеть как Art-Net: его понимают Art-Net ноды и радиопередатчики (CRMX
+                                и похожие). Мост шлёт все юниверсы, где есть приборы.
                             </p>
                         </div>
                         <div>
@@ -1202,6 +1305,7 @@
                                 <li>Энкодеры внизу крутятся пальцем по кругу; кнопка «Точно» — медленный ход.</li>
                                 <li>«● ЗАПИСЬ» и затем слот — сохранить текущую картинку как сцену. Тап по сцене — включить с фейдом, вертикальное движение — уровень, долгое нажатие — настройки сцены.</li>
                                 <li>«Очистить» — убрать ручные правки и вернуться к сценам. BLACKOUT — мгновенно всё в ноль.</li>
+                                <li>Без интерфейса и моста пульт работает в демо-режиме: плитки приборов показывают свет, сцены можно готовить заранее.</li>
                             </ul>
                         </div>
                     </div>
