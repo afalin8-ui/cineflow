@@ -14,7 +14,7 @@
 - Tailwind CDN с кастомной конфигурацией (палитра в `tailwind.config` в `<head>`)
 - Firebase (compat SDK 10.8): анонимная авторизация + Firestore для синхронизации в реальном времени
 - SheetJS (xlsx) — импорт КПП из Excel
-- Gemini API (модель gemini-2.5-flash) — ИИ-функции; ключ вводится пользователем
+- Gemini API (модель gemini-3.6-flash) — ИИ-функции; ключ вводится пользователем
   в меню «Проект», хранится в localStorage (`cf_gemini_key`)
 
 ## Дизайн
