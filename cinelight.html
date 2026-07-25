@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#1a1918">
+    <title>CineLight — DMX пульт</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+          theme: {
+            extend: {
+              colors: {
+                indigo: { 50:'#fdf5f1',100:'#f9e5db',200:'#f3ccb8',300:'#eba98a',400:'#e28a63',500:'#d97757',600:'#c65d3d',700:'#a54a30',800:'#863e2b',900:'#6d3527',950:'#3a1a12' },
+                zinc: { 50:'#fafaf9',100:'#f5f5f4',200:'#e7e5e4',300:'#d6d3d1',400:'#a8a29e',500:'#78716c',600:'#57534e',700:'#44403c',800:'#292524',900:'#1c1917',950:'#0c0a09' }
+              },
+              fontFamily: {
+                sans: ['Inter','-apple-system','BlinkMacSystemFont','Segoe UI','sans-serif'],
+                serif: ['Lora','Georgia','serif'],
+                mono: ['JetBrains Mono','ui-monospace','SFMono-Regular','monospace']
+              }
+            }
+          }
+        };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&family=Lora:wght@500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #1a1918;
+            --panel: #242322;
+            --panel-2: #1e1d1c;
+            --border: #363430;
+            --text: #f0eee6;
+            --muted: #a6a39a;
+            --accent: #d97757;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text);
+            touch-action: none;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+        }
+        ::selection { background: rgba(217,119,87,0.3); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3a3835; border-radius: 8px; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+        h1, h2, h3 { font-family: 'Lora', Georgia, serif; letter-spacing: -0.01em; }
+        .glass-panel { background: var(--panel); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+        .glass-input { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+        .glass-input::placeholder { color: #6b675f; }
+        .glass-input:focus, .glass-input:focus-within { border-color: var(--accent); outline: none; }
+        input[type=range] { accent-color: var(--accent); }
+        select.glass-input option { background: var(--panel-2); }
+    </style>
+</head>
+<body class="no-select">
+    <div id="root" class="relative z-10 w-full h-full"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        /* ═══════════ утилиты ═══════════ */
+        const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+        const lerp = (a, b, t) => a + (b - a) * t;
+        const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        const pct = v => Math.round(v * 100) + '%';
+
+        function hsv2rgb(h, s, v) {
+            h = ((h % 360) + 360) % 360;
+            const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+            let r = 0, g = 0, b = 0;
+            if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; }
+            else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+            return [r + m, g + m, b + m];
+        }
+        function rgb2hsv(r, g, b) {
+            const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+            let h = 0;
+            if (d > 0.0001) {
+                if (mx === r) h = 60 * (((g - b) / d) % 6);
+                else if (mx === g) h = 60 * ((b - r) / d + 2);
+                else h = 60 * ((r - g) / d + 4);
+            }
+            h = ((h % 360) + 360) % 360;
+            return { h, s: mx > 0 ? d / mx : 0, v: mx };
+        }
+        function kelvin2rgb(k) {
+            k = clamp(k, 1000, 12000) / 100;
+            let r, g, b;
+            if (k <= 66) { r = 255; g = 99.4708025861 * Math.log(k) - 161.1195681661; }
+            else { r = 329.698727446 * Math.pow(k - 60, -0.1332047592); g = 288.1221695283 * Math.pow(k - 60, -0.0755148492); }
+            if (k >= 66) b = 255; else if (k <= 19) b = 0; else b = 138.5177312231 * Math.log(k - 10) - 305.0447927307;
+            return [clamp(r, 0, 255) / 255, clamp(g, 0, 255) / 255, clamp(b, 0, 255) / 255];
+        }
+        function applyTint(rgb, gm) {
+            const g = clamp(rgb[1] * (1 + gm * 0.5), 0, 1);
+            const cut = Math.max(0, gm) * 0.12;
+            return [clamp(rgb[0] * (1 - cut), 0, 1), g, clamp(rgb[2] * (1 - cut), 0, 1)];
+        }
+
+        /* ═══════════ профили приборов ═══════════ */
+        const ROLES = {
+            dim: 'Диммер', r: 'Красный (R)', g: 'Зелёный (G)', b: 'Синий (B)', w: 'Белый (W)',
+            a: 'Янтарный (A)', uv: 'УФ (UV)', cct: 'Температура (CCT)', gm: 'Тон G/M',
+            pan: 'Pan', panF: 'Pan точно', tilt: 'Tilt', tiltF: 'Tilt точно',
+            zoom: 'Зум', focus: 'Фокус', strobe: 'Строб', none: '— пусто —'
+        };
+        const PROFILES = [
+            { id: 'dim1',    name: 'Диммер (1 канал)',            ch: ['dim'] },
+            { id: 'rgb',     name: 'RGB (3 канала)',              ch: ['r','g','b'] },
+            { id: 'drgb',    name: 'Dim + RGB (4 канала)',        ch: ['dim','r','g','b'] },
+            { id: 'rgbw',    name: 'RGBW (4 канала)',             ch: ['r','g','b','w'] },
+            { id: 'drgbw',   name: 'Dim + RGBW (5 каналов)',      ch: ['dim','r','g','b','w'] },
+            { id: 'rgba',    name: 'RGBA (4 канала)',             ch: ['r','g','b','a'] },
+            { id: 'cct2',    name: 'Би-колор: Dim + CCT (2 кан.)',ch: ['dim','cct'] },
+            { id: 'cct3',    name: 'Би-колор: Dim + CCT + G/M',   ch: ['dim','cct','gm'] },
+            { id: 'drgbcct', name: 'Dim + RGB + CCT (5 каналов)', ch: ['dim','r','g','b','cct'] },
+            { id: 'mover10', name: 'Мувинг Wash (10 каналов)',    ch: ['pan','tilt','dim','r','g','b','w','strobe','zoom','focus'] },
+            { id: 'mover12', name: 'Мувинг Wash 16-бит (12 кан.)',ch: ['pan','panF','tilt','tiltF','dim','r','g','b','w','strobe','zoom','focus'] }
+        ];
+
+        const DEF_PARAMS = { dim: 0, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, cct: 5600, gm: 0, pan: 0.5, tilt: 0.5, zoom: 0.5, focus: 0.5, strobe: 0 };
+
+        /* ═══════════ свотчи цвета ═══════════ */
+        const SWATCHES_K = [
+            { n: 'Свеча', k: 1900 }, { n: 'Лампа', k: 2700 }, { n: 'Галоген', k: 3200 },
+            { n: 'Тёплый', k: 4300 }, { n: 'Дневной', k: 5600 }, { n: 'Облачно', k: 6500 },
+            { n: 'Тень', k: 7500 }, { n: 'Небо', k: 9500 }
+        ];
+        const SWATCHES_C = [
+            { n: 'Красный', rgb: [1, 0, 0] }, { n: 'Оранж', rgb: [1, 0.35, 0] }, { n: 'Янтарь', rgb: [1, 0.6, 0] },
+            { n: 'Жёлтый', rgb: [1, 0.85, 0] }, { n: 'Лайм', rgb: [0.65, 1, 0] }, { n: 'Зелёный', rgb: [0, 1, 0.1] },
+            { n: 'Циан', rgb: [0, 1, 1] }, { n: 'Голубой', rgb: [0, 0.55, 1] }, { n: 'Синий', rgb: [0, 0.15, 1] },
+            { n: 'Конго', rgb: [0.25, 0, 1] }, { n: 'Лаванда', rgb: [0.6, 0.4, 1] }, { n: 'Маджента', rgb: [1, 0, 1] },
+            { n: 'Розовый', rgb: [1, 0.35, 0.6] }, { n: 'Белый', rgb: [1, 1, 1] }
+        ];
+
+        /* ═══════════ DMX-математика ═══════════ */
+        function paramsToBytes(f, P) {
+            const ch = f.profile.ch;
+            const hasDim = ch.includes('dim');
+            const colScale = hasDim ? 1 : P.dim;
+            const pan16 = Math.round(clamp(P.pan, 0, 1) * 65535);
+            const tilt16 = Math.round(clamp(P.tilt, 0, 1) * 65535);
+            const b255 = v => Math.round(clamp(v, 0, 1) * 255);
+            return ch.map(role => {
+                switch (role) {
+                    case 'dim': return b255(P.dim);
+                    case 'r': return b255(P.r * colScale);
+                    case 'g': return b255(P.g * colScale);
+                    case 'b': return b255(P.b * colScale);
+                    case 'w': return b255(P.w * colScale);
+                    case 'a': return b255(P.a * colScale);
+                    case 'uv': return b255(P.uv * colScale);
+                    case 'cct': {
+                        const mn = f.cctMin || 2700, mx = f.cctMax || 6500;
+                        return b255((P.cct - mn) / Math.max(1, mx - mn));
+                    }
+                    case 'gm': return b255((P.gm + 1) / 2);
+                    case 'pan': return pan16 >> 8;
+                    case 'panF': return pan16 & 255;
+                    case 'tilt': return tilt16 >> 8;
+                    case 'tiltF': return tilt16 & 255;
+                    case 'zoom': return b255(P.zoom);
+                    case 'focus': return b255(P.focus);
+                    case 'strobe': return b255(P.strobe);
+                    default: return 0;
+                }
+            });
+        }
+
+        function displayColor(f, P, mul) {
+            const ch = f.profile.ch;
+            let rgb;
+            if (ch.includes('r') || ch.includes('g') || ch.includes('b')) {
+                rgb = [P.r, P.g, P.b];
+                if (ch.includes('w') && P.w > 0) rgb = [rgb[0] + P.w, rgb[1] + P.w * 0.95, rgb[2] + P.w * 0.85];
+                if (ch.includes('a') && P.a > 0) rgb = [rgb[0] + P.a, rgb[1] + P.a * 0.55, rgb[2]];
+                rgb = rgb.map(c => clamp(c, 0, 1));
+            } else if (ch.includes('cct')) {
+                rgb = applyTint(kelvin2rgb(P.cct), P.gm);
+            } else {
+                rgb = [1, 0.85, 0.66];
+            }
+            const i = clamp(P.dim * (mul === undefined ? 1 : mul), 0, 1);
+            return rgb.map(c => Math.round(c * i * 255));
+        }
+
+        function findConflicts(fixtures) {
+            const bad = new Set();
+            for (let i = 0; i < fixtures.length; i++) for (let j = i + 1; j < fixtures.length; j++) {
+                const a = fixtures[i], b = fixtures[j];
+                if (a.universe !== b.universe) continue;
+                const a2 = a.addr + a.profile.ch.length - 1, b2 = b.addr + b.profile.ch.length - 1;
+                if (a.addr <= b2 && b.addr <= a2) { bad.add(a.id); bad.add(b.id); }
+            }
+            return bad;
+        }
+        function nextFreeAddr(fixtures, universe) {
+            let mx = 0;
+            fixtures.forEach(f => { if (f.universe === universe) mx = Math.max(mx, f.addr + f.profile.ch.length - 1); });
+            return Math.min(512, mx + 1);
+        }
+
+        /* ═══════════ стартовый проект (демо) ═══════════ */
+        function seedProject() {
+            const prof = id => JSON.parse(JSON.stringify(PROFILES.find(p => p.id === id)));
+            const mk = (name, profId, addr) => ({ id: uid() + addr, name, universe: 1, addr, profile: prof(profId), cctMin: 2700, cctMax: 6500 });
+            const fixtures = [
+                mk('LED панель 1', 'drgbw', 1), mk('LED панель 2', 'drgbw', 6),
+                mk('LED панель 3', 'drgbw', 11), mk('LED панель 4', 'drgbw', 16),
+                mk('Би-колор 1', 'cct2', 21), mk('Би-колор 2', 'cct2', 23),
+                mk('Мувинг 1', 'mover10', 25), mk('Мувинг 2', 'mover10', 35)
+            ];
+            const sceneAll = fn => { const s = {}; fixtures.forEach(f => { s[f.id] = { ...DEF_PARAMS, ...fn(f) }; }); return s; };
+            const kelvinScene = (k, dim) => sceneAll(() => {
+                const [r, g, b] = kelvin2rgb(k);
+                return { dim, cct: k, r, g, b };
+            });
+            const playbacks = new Array(10).fill(null);
+            playbacks[0] = { id: uid() + 'p0', name: 'Тёплый общий', fade: 2, scene: kelvinScene(3200, 0.8), tint: 'rgb(255,180,107)' };
+            playbacks[1] = { id: uid() + 'p1', name: 'Дневной', fade: 2, scene: kelvinScene(5600, 0.8), tint: 'rgb(255,236,224)' };
+            playbacks[2] = { id: uid() + 'p2', name: 'Синий фон', fade: 3, scene: sceneAll(() => ({ dim: 0.7, r: 0.05, g: 0.25, b: 1, cct: 6500 })), tint: 'rgb(30,70,255)' };
+            return { fixtures, playbacks, customSwatches: [], customProfiles: [], settings: { serialUniverse: 1 } };
+        }
+        function loadProject() {
+            try {
+                const s = localStorage.getItem('cl_project_v1');
+                if (s) { const p = JSON.parse(s); if (p && Array.isArray(p.fixtures)) return p; }
+            } catch (e) {}
+            return seedProject();
+        }
+
+        /* ═══════════ иконки ═══════════ */
+        const Icons = {
+            Gear: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>,
+            Plus: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
+            Pen: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>,
+            X: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
+            Zap: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+        };
+
+        /* ═══════════ энкодер (крутилка в стиле MagicQ) ═══════════ */
+        function arcPath(cx, cy, r, a0, a1) {
+            const rad = d => d * Math.PI / 180;
+            const p0 = [cx + r * Math.cos(rad(a0)), cy + r * Math.sin(rad(a0))];
+            const p1 = [cx + r * Math.cos(rad(a1)), cy + r * Math.sin(rad(a1))];
+            const large = (a1 - a0) > 180 ? 1 : 0;
+            return 'M ' + p0[0].toFixed(2) + ' ' + p0[1].toFixed(2) + ' A ' + r + ' ' + r + ' 0 ' + large + ' 1 ' + p1[0].toFixed(2) + ' ' + p1[1].toFixed(2);
+        }
+
+        function Encoder({ label, frac, text, onTurn, disabled }) {
+            const ref = useRef(null);
+            const drag = useRef(null);
+            useEffect(() => {
+                const el = ref.current;
+                const wheel = e => { e.preventDefault(); if (!disabled) onTurn((e.deltaY < 0 ? 1 : -1) * 0.02); };
+                el.addEventListener('wheel', wheel, { passive: false });
+                return () => el.removeEventListener('wheel', wheel);
+            });
+            const down = e => {
+                if (disabled) return;
+                e.preventDefault();
+                const rect = ref.current.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+                drag.current = { cx, cy, a: Math.atan2(e.clientY - cy, e.clientX - cx) };
+                ref.current.setPointerCapture(e.pointerId);
+            };
+            const move = e => {
+                const d = drag.current; if (!d) return;
+                const a = Math.atan2(e.clientY - d.cy, e.clientX - d.cx);
+                let da = a - d.a;
+                if (da > Math.PI) da -= 2 * Math.PI;
+                if (da < -Math.PI) da += 2 * Math.PI;
+                d.a = a;
+                onTurn(da / (2 * Math.PI));
+            };
+            const up = () => { drag.current = null; };
+            const v = clamp(frac, 0, 1);
+            const angle = 135 + 270 * v;
+            const rad = angle * Math.PI / 180;
+            return (
+                <div className="flex flex-col items-center gap-1">
+                    <div ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                         className={"touch-none cursor-grab active:cursor-grabbing " + (disabled ? 'opacity-35' : '')}
+                         style={{ width: 84, height: 84 }}>
+                        <svg width="84" height="84" viewBox="0 0 100 100">
+                            <path d={arcPath(50, 50, 44, 135, 405)} stroke="#363430" strokeWidth="6" fill="none" strokeLinecap="round" />
+                            {v > 0.002 && <path d={arcPath(50, 50, 44, 135, angle)} stroke="var(--accent)" strokeWidth="6" fill="none" strokeLinecap="round" />}
+                            <circle cx="50" cy="50" r="33" fill="var(--panel-2)" stroke="var(--border)" strokeWidth="1.5" />
+                            <line x1={50 + 20 * Math.cos(rad)} y1={50 + 20 * Math.sin(rad)}
+                                  x2={50 + 30 * Math.cos(rad)} y2={50 + 30 * Math.sin(rad)}
+                                  stroke="var(--accent)" strokeWidth="3.5" strokeLinecap="round" />
+                            <text x="50" y="55" textAnchor="middle" fill="var(--text)" fontSize="14" fontFamily="JetBrains Mono, monospace" fontWeight="600">{text}</text>
+                        </svg>
+                    </div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{label}</div>
+                </div>
+            );
+        }
+
+        /* ═══════════ горизонтальный слайдер ═══════════ */
+        function HSlider({ label, frac, text, onFrac, gradient, disabled }) {
+            const ref = useRef(null);
+            const dragging = useRef(false);
+            const set = e => {
+                const r = ref.current.getBoundingClientRect();
+                onFrac(clamp((e.clientX - r.left) / r.width, 0, 1));
+            };
+            const down = e => { if (disabled) return; e.preventDefault(); dragging.current = true; ref.current.setPointerCapture(e.pointerId); set(e); };
+            const move = e => { if (dragging.current) set(e); };
+            const up = () => { dragging.current = false; };
+            const v = clamp(frac, 0, 1);
+            return (
+                <div className={disabled ? 'opacity-35' : ''}>
+                    <div ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                         className="relative h-9 rounded-lg overflow-hidden touch-none cursor-pointer border border-[var(--border)]"
+                         style={{ background: gradient }}>
+                        <div className="absolute top-0 bottom-0 w-[3px] bg-white rounded-full shadow-[0_0_4px_rgba(0,0,0,0.8)]"
+                             style={{ left: 'calc(' + (v * 100) + '% - 1.5px)' }}></div>
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-bold" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>{label}</div>
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-mono font-semibold" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>{text}</div>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ═══════════ цветовой круг ═══════════ */
+        function ColorWheel({ size, hs, onPick, disabled }) {
+            const ref = useRef(null);
+            const dragging = useRef(false);
+            useEffect(() => {
+                const cvs = ref.current;
+                const ctx = cvs.getContext('2d');
+                const r = size / 2;
+                const img = ctx.createImageData(size, size);
+                for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+                    const dx = x - r, dy = y - r, d = Math.sqrt(dx * dx + dy * dy);
+                    const i = (y * size + x) * 4;
+                    if (d > r) { img.data[i + 3] = 0; continue; }
+                    const h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+                    const [rr, gg, bb] = hsv2rgb(h, clamp(d / r, 0, 1), 1);
+                    img.data[i] = rr * 255; img.data[i + 1] = gg * 255; img.data[i + 2] = bb * 255;
+                    img.data[i + 3] = Math.round(clamp((r - d) / 1.5, 0, 1) * 255);
+                }
+                ctx.putImageData(img, 0, 0);
+            }, [size]);
+            const pick = e => {
+                const rect = ref.current.getBoundingClientRect();
+                const r = rect.width / 2;
+                const dx = e.clientX - rect.left - r, dy = e.clientY - rect.top - r;
+                const h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+                onPick(h, clamp(Math.sqrt(dx * dx + dy * dy) / r, 0, 1));
+            };
+            const down = e => { if (disabled) return; e.preventDefault(); dragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); pick(e); };
+            const move = e => { if (dragging.current) pick(e); };
+            const up = () => { dragging.current = false; };
+            const mr = size / 2;
+            const mx = mr + Math.cos(hs.h * Math.PI / 180) * hs.s * (mr - 6);
+            const my = mr + Math.sin(hs.h * Math.PI / 180) * hs.s * (mr - 6);
+            return (
+                <div onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                     className={"relative mx-auto touch-none " + (disabled ? 'opacity-35' : '')}
+                     style={{ width: size, height: size }}>
+                    <canvas ref={ref} width={size} height={size} className="rounded-full" />
+                    <div className="absolute w-5 h-5 rounded-full border-2 border-white shadow-[0_0_6px_rgba(0,0,0,0.7)] pointer-events-none"
+                         style={{ left: mx - 10, top: my - 10, background: 'rgb(' + hsv2rgb(hs.h, hs.s, 1).map(c => Math.round(c * 255)).join(',') + ')' }}></div>
+                </div>
+            );
+        }
+
+        /* ═══════════ XY-пад (pan/tilt) ═══════════ */
+        function XYPad({ x, y, onXY, disabled }) {
+            const ref = useRef(null);
+            const dragging = useRef(false);
+            const set = e => {
+                const r = ref.current.getBoundingClientRect();
+                onXY(clamp((e.clientX - r.left) / r.width, 0, 1), clamp(1 - (e.clientY - r.top) / r.height, 0, 1));
+            };
+            const down = e => { if (disabled) return; e.preventDefault(); dragging.current = true; ref.current.setPointerCapture(e.pointerId); set(e); };
+            const move = e => { if (dragging.current) set(e); };
+            const up = () => { dragging.current = false; };
+            return (
+                <div ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                     className={"relative w-full rounded-xl border border-[var(--border)] touch-none " + (disabled ? 'opacity-35' : '')}
+                     style={{ height: 190, background: 'var(--panel-2)' }}>
+                    <div className="absolute left-1/2 top-0 bottom-0 w-px bg-[var(--border)]"></div>
+                    <div className="absolute top-1/2 left-0 right-0 h-px bg-[var(--border)]"></div>
+                    <div className="absolute w-6 h-6 rounded-full border-2 border-[var(--accent)] bg-[rgba(217,119,87,0.25)] pointer-events-none"
+                         style={{ left: 'calc(' + (x * 100) + '% - 12px)', top: 'calc(' + ((1 - y) * 100) + '% - 12px)' }}></div>
+                    <div className="absolute left-2 bottom-1 text-[10px] text-zinc-500 font-semibold">PAN →</div>
+                    <div className="absolute left-1 top-2 text-[10px] text-zinc-500 font-semibold" style={{ writingMode: 'vertical-rl' }}>← TILT</div>
+                </div>
+            );
+        }
+
+        /* ═══════════ плитка прибора ═══════════ */
+        function FixtureTile({ f, sel, color, dim, hasProg, onTap }) {
+            const bright = (color[0] + color[1] + color[2]) / 3;
+            return (
+                <div onClick={onTap}
+                     className={"relative rounded-xl p-2 cursor-pointer border transition-colors " +
+                       (sel ? 'border-[var(--accent)] ring-1 ring-[var(--accent)] bg-[rgba(217,119,87,0.08)]' : 'border-[var(--border)] bg-[var(--panel)]')}>
+                    {hasProg && <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--accent)]"></div>}
+                    <div className="text-[11px] font-semibold truncate pr-3">{f.name}</div>
+                    <div className="text-[9px] font-mono text-zinc-500">U{f.universe} · {String(f.addr).padStart(3, '0')}</div>
+                    <div className="mt-1.5 h-9 rounded-lg border border-black/40"
+                         style={{ background: 'rgb(' + color.join(',') + ')', boxShadow: bright > 40 ? '0 0 16px rgba(' + color.join(',') + ',0.55)' : 'none' }}></div>
+                    <div className="mt-1 text-right text-[10px] font-mono text-zinc-400">{pct(dim)}</div>
+                </div>
+            );
+        }
+
+        /* ═══════════ плитка плейбека (сцены) ═══════════ */
+        function PlaybackTile({ pb, idx, level, active, recMode, onRecord, onToggle, onLevel, onMenu }) {
+            const ref = useRef(null);
+            const st = useRef(null);
+            const down = e => {
+                e.preventDefault();
+                ref.current.setPointerCapture(e.pointerId);
+                st.current = {
+                    y: e.clientY, moved: false, long: false, lv: level,
+                    t: setTimeout(() => { const s = st.current; if (s && !s.moved && pb) { s.long = true; onMenu(); } }, 550)
+                };
+            };
+            const move = e => {
+                const s = st.current; if (!s) return;
+                const dy = e.clientY - s.y;
+                if (Math.abs(dy) > 8) {
+                    s.moved = true; clearTimeout(s.t);
+                    if (pb && !recMode) onLevel(clamp(s.lv - dy / 120, 0, 1));
+                }
+            };
+            const up = () => {
+                const s = st.current; st.current = null; if (!s) return;
+                clearTimeout(s.t);
+                if (s.moved || s.long) return;
+                if (recMode) { onRecord(); return; }
+                if (pb) onToggle();
+            };
+            return (
+                <div ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+                     className={"shrink-0 w-[100px] h-[86px] rounded-xl border p-2 flex flex-col touch-none cursor-pointer relative overflow-hidden " +
+                       (recMode ? 'border-red-500 animate-pulse ' : active ? 'border-[var(--accent)] bg-[rgba(217,119,87,0.1)] ' : pb ? 'border-[var(--border)] bg-[var(--panel)] ' : 'border-dashed border-[var(--border)] ')}>
+                    {pb ? (
+                        <React.Fragment>
+                            <div className="flex items-center gap-1.5">
+                                <div className="w-2.5 h-2.5 rounded-full border border-black/40 shrink-0" style={{ background: pb.tint || '#555' }}></div>
+                                <div className="text-[11px] font-semibold leading-tight truncate">{pb.name}</div>
+                            </div>
+                            <div className="text-[9px] text-zinc-500 font-mono mt-0.5">фейд {pb.fade}с</div>
+                            <div className="flex-1"></div>
+                            <div className="flex items-center gap-1.5">
+                                <div className="flex-1 h-1.5 rounded-full bg-black/40 overflow-hidden">
+                                    <div className="h-full bg-[var(--accent)]" style={{ width: (level * 100) + '%' }}></div>
+                                </div>
+                                <div className="text-[9px] font-mono text-zinc-400 w-7 text-right">{Math.round(level * 100)}</div>
+                            </div>
+                        </React.Fragment>
+                    ) : (
+                        <div className="m-auto text-center text-zinc-600">
+                            <div className="text-lg font-mono">{idx + 1}</div>
+                            <div className="text-[9px]">{recMode ? 'записать сюда' : 'пусто'}</div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        /* ═══════════ модальное окно ═══════════ */
+        function Modal({ title, onClose, children, wide }) {
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
+                    <div className={"glass-panel rounded-xl p-5 w-full max-h-[85vh] overflow-y-auto " + (wide ? 'max-w-2xl' : 'max-w-md')} onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold">{title}</h3>
+                            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400"><Icons.X /></button>
+                        </div>
+                        {children}
+                    </div>
+                </div>
+            );
+        }
+
+        /* ═══════════ главное приложение ═══════════ */
+        function App() {
+            const init = useMemo(loadProject, []);
+            const [fixtures, setFixtures] = useState(init.fixtures);
+            const [playbacks, setPlaybacks] = useState(init.playbacks);
+            const [customSwatches, setCustomSwatches] = useState(init.customSwatches || []);
+            const [customProfiles, setCustomProfiles] = useState(init.customProfiles || []);
+            const [settings, setSettings] = useState(init.settings || { serialUniverse: 1 });
+
+            const [view, setView] = useState('board');           // board | patch
+            const [tab, setTab] = useState('color');             // int | color | pos
+            const [selected, setSelected] = useState(new Set());
+            const [master, setMaster] = useState(1);
+            const [blackout, setBlackout] = useState(false);
+            const [fine, setFine] = useState(false);
+            const [recMode, setRecMode] = useState(false);
+            const [progDirty, setProgDirty] = useState(false);
+            const [dmxStatus, setDmxStatus] = useState('demo');  // demo | on
+            const [toastMsg, setToastMsg] = useState(null);
+            const [modal, setModal] = useState(null);            // {type:...}
+            const [, setUiTick] = useState(0);
+
+            /* refs для движка (живут вне рендера) */
+            const fixturesRef = useRef(fixtures); fixturesRef.current = fixtures;
+            const playbacksRef = useRef(playbacks); playbacksRef.current = playbacks;
+            const settingsRef = useRef(settings); settingsRef.current = settings;
+            const masterRef = useRef(master); masterRef.current = master;
+            const blackoutRef = useRef(blackout); blackoutRef.current = blackout;
+            const selectedRef = useRef(selected); selectedRef.current = selected;
+            const progRef = useRef(new Map());
+            const pbRunRef = useRef({});
+            const outRef = useRef({});
+            const hsRef = useRef({ h: 30, s: 0 });
+            const lastColorRef = useRef({ rgb: [1, 1, 1] });
+            const lastTickRef = useRef(performance.now());
+            const portRef = useRef(null);
+            const writerRef = useRef(null);
+            const busyRef = useRef(false);
+            const toastTRef = useRef(null);
+
+            playbacks.forEach(pb => { if (pb && !pbRunRef.current[pb.id]) pbRunRef.current[pb.id] = { level: 0, target: 0, lastOn: 0 }; });
+
+            const toast = msg => {
+                setToastMsg(msg);
+                clearTimeout(toastTRef.current);
+                toastTRef.current = setTimeout(() => setToastMsg(null), 2600);
+            };
+
+            /* ── DMX-движок: 30 кадров в секунду ── */
+            const tickFnRef = useRef(null);
+            tickFnRef.current = () => {
+                const now = performance.now();
+                const dt = Math.min(0.2, (now - lastTickRef.current) / 1000);
+                lastTickRef.current = now;
+                const runs = pbRunRef.current;
+                playbacksRef.current.forEach(pb => {
+                    if (!pb) return;
+                    const r = runs[pb.id]; if (!r) return;
+                    if (r.level !== r.target) {
+                        const step = dt / Math.max(0.05, pb.fade || 0.05);
+                        r.level = r.level < r.target ? Math.min(r.target, r.level + step) : Math.max(r.target, r.level - step);
+                    }
+                });
+                const out = {};
+                fixturesRef.current.forEach(f => { out[f.id] = { ...DEF_PARAMS }; });
+                playbacksRef.current
+                    .filter(pb => pb && pb.scene && runs[pb.id] && runs[pb.id].level > 0.001)
+                    .sort((a, b) => (runs[a.id].lastOn || 0) - (runs[b.id].lastOn || 0))
+                    .forEach(pb => {
+                        const lv = runs[pb.id].level;
+                        Object.entries(pb.scene).forEach(([fid, sp]) => {
+                            const o = out[fid]; if (!o) return;
+                            Object.keys(DEF_PARAMS).forEach(p => {
+                                if (sp[p] === undefined) return;
+                                if (p === 'dim') o.dim = Math.max(o.dim, sp.dim * lv);
+                                else o[p] = lerp(o[p], sp[p], lv);
+                            });
+                        });
+                    });
+                progRef.current.forEach((pv, fid) => { if (out[fid]) Object.assign(out[fid], pv); });
+                outRef.current = out;
+
+                if (writerRef.current) {
+                    const mul = blackoutRef.current ? 0 : masterRef.current;
+                    const su = settingsRef.current.serialUniverse || 1;
+                    const uni = new Uint8Array(512);
+                    fixturesRef.current.forEach(f => {
+                        if (f.universe !== su) return;
+                        const P = { ...out[f.id] };
+                        P.dim = P.dim * mul;
+                        const bytes = paramsToBytes(f, P);
+                        for (let i = 0; i < bytes.length; i++) {
+                            const a = f.addr - 1 + i;
+                            if (a >= 0 && a < 512) uni[a] = bytes[i];
+                        }
+                    });
+                    sendSerial(uni);
+                }
+            };
+            useEffect(() => {
+                const t1 = setInterval(() => tickFnRef.current(), 33);
+                const t2 = setInterval(() => setUiTick(t => t + 1), 100);
+                return () => { clearInterval(t1); clearInterval(t2); };
+            }, []);
+
+            /* ── Web Serial (Enttec DMX USB Pro и совместимые) ── */
+            function sendSerial(uni) {
+                const w = writerRef.current;
+                if (!w || busyRef.current) return;
+                const len = 513;
+                const pkt = new Uint8Array(4 + len + 1);
+                pkt[0] = 0x7E; pkt[1] = 6; pkt[2] = len & 0xFF; pkt[3] = len >> 8; pkt[4] = 0;
+                pkt.set(uni, 5); pkt[pkt.length - 1] = 0xE7;
+                busyRef.current = true;
+                w.write(pkt).then(() => { busyRef.current = false; })
+                    .catch(() => { busyRef.current = false; disconnectSerial(); toast('DMX-интерфейс отключился'); });
+            }
+            async function connectSerial() {
+                if (!('serial' in navigator)) { toast('Нужен Chrome или Edge на компьютере — там есть доступ к USB'); return; }
+                try {
+                    const port = await navigator.serial.requestPort();
+                    await port.open({ baudRate: 115200 });
+                    portRef.current = port;
+                    writerRef.current = port.writable.getWriter();
+                    setDmxStatus('on');
+                    toast('DMX-интерфейс подключён');
+                } catch (e) { /* пользователь закрыл окно выбора порта */ }
+            }
+            async function disconnectSerial() {
+                try { if (writerRef.current) writerRef.current.releaseLock(); } catch (e) {}
+                try { if (portRef.current) await portRef.current.close(); } catch (e) {}
+                writerRef.current = null; portRef.current = null; busyRef.current = false;
+                setDmxStatus('demo');
+            }
+
+            /* ── сохранение проекта ── */
+            useEffect(() => {
+                const t = setTimeout(() => {
+                    try {
+                        localStorage.setItem('cl_project_v1', JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings }));
+                    } catch (e) {}
+                }, 500);
+                return () => clearTimeout(t);
+            }, [fixtures, playbacks, customSwatches, customProfiles, settings]);
+
+            /* ── программер ── */
+            const getVal = p => {
+                const fid = selected.values().next().value;
+                if (fid === undefined) return DEF_PARAMS[p];
+                const pv = progRef.current.get(fid);
+                if (pv && pv[p] !== undefined) return pv[p];
+                const o = outRef.current[fid];
+                return o ? o[p] : DEF_PARAMS[p];
+            };
+            const applyToSelection = partial => {
+                const sel = selectedRef.current;
+                if (sel.size === 0) return;
+                sel.forEach(fid => {
+                    const cur = progRef.current.get(fid) || {};
+                    const merged = { ...cur, ...partial };
+                    // если задали цвет, а яркость на нуле — поднимаем, чтобы результат был виден
+                    if (merged.dim === undefined) {
+                        const liveDim = (outRef.current[fid] || DEF_PARAMS).dim;
+                        const touchedColor = ['r', 'cct', 'w', 'a'].some(k => partial[k] !== undefined);
+                        if (liveDim <= 0.001 && touchedColor) merged.dim = 1;
+                    }
+                    progRef.current.set(fid, merged);
+                });
+                setProgDirty(true);
+                setUiTick(t => t + 1);
+            };
+            const clearProg = () => { progRef.current.clear(); setProgDirty(false); setUiTick(t => t + 1); };
+            const locate = () => applyToSelection({ dim: 1, r: 1, g: 1, b: 1, w: 0, a: 0, cct: 5600, gm: 0, pan: 0.5, tilt: 0.5, zoom: 0.5, focus: 0.5, strobe: 0 });
+
+            const applyHS = (h, s) => {
+                hsRef.current = { h, s };
+                const [r, g, b] = hsv2rgb(h, s, 1);
+                lastColorRef.current = { rgb: [r, g, b] };
+                applyToSelection({ r, g, b });
+            };
+            const applyRGBDirect = partial => {
+                const cur = { r: getVal('r'), g: getVal('g'), b: getVal('b'), ...partial };
+                const hs = rgb2hsv(cur.r, cur.g, cur.b);
+                if (hs.s > 0.01) hsRef.current = { h: hs.h, s: hs.s };
+                lastColorRef.current = { rgb: [cur.r, cur.g, cur.b] };
+                applyToSelection(partial);
+            };
+            const applyCCT = (k, gm) => {
+                const rgb = applyTint(kelvin2rgb(k), gm);
+                lastColorRef.current = { rgb };
+                applyToSelection({ cct: k, gm, r: rgb[0], g: rgb[1], b: rgb[2] });
+            };
+            const applySwatch = sw => {
+                if (sw.k !== undefined) { applyCCT(sw.k, 0); return; }
+                const [r, g, b] = sw.rgb;
+                const hs = rgb2hsv(r, g, b);
+                hsRef.current = { h: hs.h, s: hs.s };
+                lastColorRef.current = { rgb: sw.rgb };
+                applyToSelection({ r, g, b });
+            };
+
+            /* ── выбор приборов ── */
+            const toggleSel = fid => {
+                const next = new Set(selected);
+                if (next.has(fid)) next.delete(fid); else next.add(fid);
+                setSelected(next);
+            };
+            const selAll = () => setSelected(new Set(fixtures.map(f => f.id)));
+            const selNone = () => setSelected(new Set());
+            const selInvert = () => setSelected(new Set(fixtures.filter(f => !selected.has(f.id)).map(f => f.id)));
+
+            /* ── плейбеки ── */
+            const togglePb = pb => {
+                const r = pbRunRef.current[pb.id]; if (!r) return;
+                r.target = r.target > 0 ? 0 : 1;
+                if (r.target > 0) r.lastOn = Date.now();
+                setUiTick(t => t + 1);
+            };
+            const setPbLevel = (pb, v) => {
+                const r = pbRunRef.current[pb.id]; if (!r) return;
+                if (r.level <= 0.001 && v > 0) r.lastOn = Date.now();
+                r.level = v; r.target = v;
+                setUiTick(t => t + 1);
+            };
+            const recordScene = idx => {
+                const out = outRef.current;
+                const scene = {};
+                let cr = 0, cg = 0, cb = 0, cn = 0;
+                fixturesRef.current.forEach(f => {
+                    scene[f.id] = { ...(out[f.id] || DEF_PARAMS) };
+                    const c = displayColor(f, scene[f.id]);
+                    if (scene[f.id].dim > 0.03) { cr += c[0]; cg += c[1]; cb += c[2]; cn++; }
+                });
+                const tint = cn > 0 ? 'rgb(' + Math.round(cr / cn) + ',' + Math.round(cg / cn) + ',' + Math.round(cb / cn) + ')' : '#555';
+                setPlaybacks(pbs => {
+                    const next = [...pbs];
+                    const old = next[idx];
+                    next[idx] = old
+                        ? { ...old, scene, tint }
+                        : { id: uid() + 'p' + idx, name: 'Сцена ' + (idx + 1), fade: 2, scene, tint };
+                    return next;
+                });
+                setRecMode(false);
+                toast('Сцена записана в слот ' + (idx + 1));
+            };
+
+            /* ── патч ── */
+            const conflicts = useMemo(() => findConflicts(fixtures), [fixtures]);
+
+            /* ── энкодеры по вкладкам ── */
+            const spd = fine ? 0.1 : 1;
+            const encoders = tab === 'color' ? [
+                { label: 'Оттенок', frac: hsRef.current.h / 360, text: Math.round(hsRef.current.h) + '°',
+                  onTurn: t => { let h = hsRef.current.h + t * 360 * spd; h = ((h % 360) + 360) % 360; applyHS(h, hsRef.current.s); } },
+                { label: 'Насыщ.', frac: hsRef.current.s, text: pct(hsRef.current.s),
+                  onTurn: t => applyHS(hsRef.current.h, clamp(hsRef.current.s + t * spd, 0, 1)) },
+                { label: 'CCT', frac: (getVal('cct') - 2000) / 8000, text: Math.round(getVal('cct') / 100) / 10 + 'K',
+                  onTurn: t => applyCCT(clamp(getVal('cct') + t * 5000 * spd, 2000, 10000), getVal('gm')) },
+                { label: 'Тон G/M', frac: (getVal('gm') + 1) / 2,
+                  text: Math.abs(getVal('gm')) < 0.005 ? '0' : (getVal('gm') > 0 ? 'G' : 'M') + Math.round(Math.abs(getVal('gm')) * 100),
+                  onTurn: t => applyCCT(getVal('cct'), clamp(getVal('gm') + t * 2 * spd, -1, 1)) }
+            ] : tab === 'pos' ? [
+                { label: 'Pan', frac: getVal('pan'), text: pct(getVal('pan')),
+                  onTurn: t => applyToSelection({ pan: clamp(getVal('pan') + t * 0.5 * spd, 0, 1) }) },
+                { label: 'Tilt', frac: getVal('tilt'), text: pct(getVal('tilt')),
+                  onTurn: t => applyToSelection({ tilt: clamp(getVal('tilt') + t * 0.5 * spd, 0, 1) }) },
+                { label: 'Зум', frac: getVal('zoom'), text: pct(getVal('zoom')),
+                  onTurn: t => applyToSelection({ zoom: clamp(getVal('zoom') + t * spd, 0, 1) }) },
+                { label: 'Фокус', frac: getVal('focus'), text: pct(getVal('focus')),
+                  onTurn: t => applyToSelection({ focus: clamp(getVal('focus') + t * spd, 0, 1) }) }
+            ] : [
+                { label: 'Диммер', frac: getVal('dim'), text: pct(getVal('dim')),
+                  onTurn: t => applyToSelection({ dim: clamp(getVal('dim') + t * spd, 0, 1) }) },
+                { label: 'Строб', frac: getVal('strobe'), text: getVal('strobe') < 0.01 ? 'выкл' : pct(getVal('strobe')),
+                  onTurn: t => applyToSelection({ strobe: clamp(getVal('strobe') + t * spd, 0, 1) }) },
+                { label: 'Белый', frac: getVal('w'), text: pct(getVal('w')),
+                  onTurn: t => applyRGBDirect({ w: clamp(getVal('w') + t * spd, 0, 1) }) },
+                { label: 'Янтарь', frac: getVal('a'), text: pct(getVal('a')),
+                  onTurn: t => applyRGBDirect({ a: clamp(getVal('a') + t * spd, 0, 1) }) }
+            ];
+
+            const noSel = selected.size === 0;
+            const mul = blackout ? 0 : master;
+            const cctGrad = 'linear-gradient(to right,#ff8912,#ffb46b,#ffcda1,#ffece0,#ffffff,#dfe5ff,#ccdcff)';
+
+            /* ═══════════ вёрстка ═══════════ */
+            return (
+                <div className="h-screen w-screen flex flex-col overflow-hidden">
+                    {/* ── верхняя панель ── */}
+                    <div className="h-[52px] shrink-0 flex items-center gap-2 px-3 border-b border-[var(--border)] bg-[var(--panel)]">
+                        <h1 className="text-lg font-semibold mr-1">CineLight</h1>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[var(--panel-2)] border border-[var(--border)] text-zinc-400">DMX</span>
+                        <div className="flex gap-1 ml-2">
+                            <button onClick={() => setView('board')}
+                                    className={"px-3 py-1.5 rounded-lg text-xs font-semibold " + (view === 'board' ? 'bg-[var(--accent)] text-white' : 'text-zinc-400 hover:bg-white/5')}>Пульт</button>
+                            <button onClick={() => setView('patch')}
+                                    className={"px-3 py-1.5 rounded-lg text-xs font-semibold " + (view === 'patch' ? 'bg-[var(--accent)] text-white' : 'text-zinc-400 hover:bg-white/5')}>Патч</button>
+                        </div>
+                        <div className="flex-1"></div>
+                        <button onClick={() => setModal({ type: 'settings' })}
+                                className={"flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold font-mono border " +
+                                  (dmxStatus === 'on' ? 'border-green-700 text-green-400' : 'border-[var(--border)] text-zinc-500')}>
+                            <Icons.Zap />{dmxStatus === 'on' ? 'DMX U' + (settings.serialUniverse || 1) : 'ДЕМО'}
+                        </button>
+                        <div className="hidden md:flex items-center gap-2 px-2">
+                            <span className="text-[10px] font-bold text-zinc-400">МАСТЕР</span>
+                            <input type="range" min="0" max="100" value={Math.round(master * 100)}
+                                   onChange={e => setMaster(e.target.value / 100)} className="w-32" />
+                            <span className="text-[10px] font-mono w-8 text-zinc-300">{pct(master)}</span>
+                        </div>
+                        <button onClick={() => setBlackout(b => !b)}
+                                className={"px-3 py-2 rounded-lg text-xs font-extrabold tracking-wide " +
+                                  (blackout ? 'bg-red-600 text-white animate-pulse' : 'bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300')}>
+                            BLACKOUT
+                        </button>
+                        <button onClick={() => setModal({ type: 'settings' })} className="p-2 rounded-lg text-zinc-400 hover:bg-white/5"><Icons.Gear /></button>
+                    </div>
+
+                    {view === 'patch' ? (
+                        /* ═══ страница ПАТЧ ═══ */
+                        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                            <div className="max-w-3xl mx-auto">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h2 className="text-xl font-semibold">Патч приборов</h2>
+                                    <button onClick={() => setModal({ type: 'addFixture' })}
+                                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--accent)] text-white text-xs font-bold">
+                                        <Icons.Plus />Добавить прибор
+                                    </button>
+                                </div>
+                                {conflicts.size > 0 && (
+                                    <div className="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/40 text-red-300 text-xs">
+                                        Внимание: адреса некоторых приборов пересекаются — они подсвечены красным.
+                                    </div>
+                                )}
+                                {[...new Set(fixtures.map(f => f.universe))].sort((a, b) => a - b).map(u => (
+                                    <div key={u} className="mb-4">
+                                        <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Юниверс {u}</div>
+                                        <div className="space-y-1.5">
+                                            {fixtures.filter(f => f.universe === u).sort((a, b) => a.addr - b.addr).map(f => (
+                                                <div key={f.id}
+                                                     className={"flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer hover:bg-white/[0.03] " +
+                                                       (conflicts.has(f.id) ? 'border-red-700 bg-red-950/30' : 'border-[var(--border)] bg-[var(--panel)]')}
+                                                     onClick={() => setModal({ type: 'editFixture', id: f.id })}>
+                                                    <span className="font-mono text-[11px] px-2 py-1 rounded-md bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300">
+                                                        {String(f.addr).padStart(3, '0')}–{String(f.addr + f.profile.ch.length - 1).padStart(3, '0')}
+                                                    </span>
+                                                    <span className="text-sm font-semibold flex-1 truncate">{f.name}</span>
+                                                    <span className="text-[11px] text-zinc-500 hidden sm:block">{f.profile.name}</span>
+                                                    <span className="text-zinc-500"><Icons.Pen /></span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                                {fixtures.length === 0 && (
+                                    <div className="text-center text-zinc-500 py-16 text-sm">
+                                        Приборов пока нет. Нажмите «Добавить прибор», выберите тип и DMX-адрес.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        /* ═══ страница ПУЛЬТ ═══ */
+                        <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+                            {/* левая часть: приборы + сцены */}
+                            <div className="flex-1 min-h-0 min-w-0 flex flex-col">
+                                <div className="shrink-0 flex items-center gap-2 px-3 py-2">
+                                    <span className="text-[11px] text-zinc-400 font-semibold">Приборы · выбрано {selected.size}</span>
+                                    <div className="flex-1"></div>
+                                    <button onClick={selAll} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Все</button>
+                                    <button onClick={selNone} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Сброс</button>
+                                    <button onClick={selInvert} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Инверт</button>
+                                </div>
+                                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2">
+                                    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))' }}>
+                                        {fixtures.map(f => {
+                                            const P = outRef.current[f.id] || DEF_PARAMS;
+                                            return <FixtureTile key={f.id} f={f} sel={selected.has(f.id)}
+                                                    color={displayColor(f, P, mul)} dim={P.dim}
+                                                    hasProg={progRef.current.has(f.id)}
+                                                    onTap={() => toggleSel(f.id)} />;
+                                        })}
+                                    </div>
+                                    {fixtures.length === 0 && (
+                                        <div className="text-center text-zinc-500 pt-14 text-sm">
+                                            Сначала добавьте приборы на странице «Патч».
+                                        </div>
+                                    )}
+                                </div>
+                                {/* сцены (плейбеки) */}
+                                <div className="shrink-0 border-t border-[var(--border)] bg-[var(--panel-2)]">
+                                    {recMode && (
+                                        <div className="px-3 pt-2 text-[11px] text-red-400 font-semibold">
+                                            Режим записи: нажмите на слот, куда сохранить текущую картинку света.
+                                            <button onClick={() => setRecMode(false)} className="ml-2 underline">Отмена</button>
+                                        </div>
+                                    )}
+                                    <div className="flex items-stretch gap-2 px-3 py-2 overflow-x-auto hide-scrollbar">
+                                        <button onClick={() => setRecMode(r => !r)}
+                                                className={"shrink-0 w-[64px] rounded-xl border text-[11px] font-extrabold " +
+                                                  (recMode ? 'border-red-500 bg-red-600/20 text-red-400 animate-pulse' : 'border-[var(--border)] bg-[var(--panel)] text-zinc-300')}>
+                                            ● ЗАПИСЬ
+                                        </button>
+                                        {playbacks.map((pb, idx) => {
+                                            const run = pb ? pbRunRef.current[pb.id] : null;
+                                            return <PlaybackTile key={pb ? pb.id : 'empty' + idx} pb={pb} idx={idx}
+                                                    level={run ? run.level : 0} active={run ? run.target > 0 : false} recMode={recMode}
+                                                    onRecord={() => recordScene(idx)}
+                                                    onToggle={() => togglePb(pb)}
+                                                    onLevel={v => setPbLevel(pb, v)}
+                                                    onMenu={() => setModal({ type: 'pbMenu', idx })} />;
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* правая панель: параметры + энкодеры */}
+                            <div className="lg:w-[400px] w-full h-[46%] lg:h-auto shrink-0 border-t lg:border-t-0 lg:border-l border-[var(--border)] bg-[var(--panel)] flex flex-col min-h-0">
+                                <div className="shrink-0 flex p-2 gap-1">
+                                    {[['int', 'Яркость'], ['color', 'Цвет'], ['pos', 'Позиция']].map(([id, name]) => (
+                                        <button key={id} onClick={() => setTab(id)}
+                                                className={"flex-1 py-2 rounded-lg text-xs font-bold " +
+                                                  (tab === id ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>{name}</button>
+                                    ))}
+                                </div>
+                                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2 space-y-3">
+                                    {noSel && <div className="text-[11px] text-zinc-500 px-1 pt-1">Выберите приборы слева, чтобы управлять ими.</div>}
+
+                                    {tab === 'int' && (
+                                        <React.Fragment>
+                                            <HSlider label="Диммер" frac={getVal('dim')} text={pct(getVal('dim'))} disabled={noSel}
+                                                     onFrac={v => applyToSelection({ dim: v })}
+                                                     gradient="linear-gradient(to right,#141312,#ffd9a0)" />
+                                            <div className="flex gap-1.5">
+                                                {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                                                    <button key={v} disabled={noSel} onClick={() => applyToSelection({ dim: v })}
+                                                            className="flex-1 py-2.5 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-mono font-bold text-zinc-300 disabled:opacity-35">
+                                                        {Math.round(v * 100)}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <HSlider label="Строб" frac={getVal('strobe')} text={getVal('strobe') < 0.01 ? 'выкл' : pct(getVal('strobe'))} disabled={noSel}
+                                                     onFrac={v => applyToSelection({ strobe: v })}
+                                                     gradient="linear-gradient(to right,#141312,#e7e5e4)" />
+                                        </React.Fragment>
+                                    )}
+
+                                    {tab === 'color' && (
+                                        <React.Fragment>
+                                            <ColorWheel size={216} hs={hsRef.current} onPick={applyHS} disabled={noSel} />
+                                            <HSlider label="CCT" frac={(getVal('cct') - 2000) / 8000} text={Math.round(getVal('cct')) + 'K'} disabled={noSel}
+                                                     onFrac={v => applyCCT(2000 + v * 8000, getVal('gm'))} gradient={cctGrad} />
+                                            <HSlider label="Тон G/M"
+                                                     frac={(getVal('gm') + 1) / 2}
+                                                     text={Math.abs(getVal('gm')) < 0.005 ? '0' : (getVal('gm') > 0 ? 'G+' : 'M+') + Math.round(Math.abs(getVal('gm')) * 100)}
+                                                     disabled={noSel}
+                                                     onFrac={v => applyCCT(getVal('cct'), v * 2 - 1)}
+                                                     gradient="linear-gradient(to right,#e858c8,#242322,#3dbb52)" />
+                                            <div className="grid grid-cols-1 gap-1.5">
+                                                <HSlider label="R" frac={getVal('r')} text={Math.round(getVal('r') * 255)} disabled={noSel}
+                                                         onFrac={v => applyRGBDirect({ r: v })} gradient="linear-gradient(to right,#141312,#f43f3f)" />
+                                                <HSlider label="G" frac={getVal('g')} text={Math.round(getVal('g') * 255)} disabled={noSel}
+                                                         onFrac={v => applyRGBDirect({ g: v })} gradient="linear-gradient(to right,#141312,#3ddc55)" />
+                                                <HSlider label="B" frac={getVal('b')} text={Math.round(getVal('b') * 255)} disabled={noSel}
+                                                         onFrac={v => applyRGBDirect({ b: v })} gradient="linear-gradient(to right,#141312,#3b6bff)" />
+                                                <HSlider label="W" frac={getVal('w')} text={Math.round(getVal('w') * 255)} disabled={noSel}
+                                                         onFrac={v => applyRGBDirect({ w: v })} gradient="linear-gradient(to right,#141312,#ffffff)" />
+                                                <HSlider label="A" frac={getVal('a')} text={Math.round(getVal('a') * 255)} disabled={noSel}
+                                                         onFrac={v => applyRGBDirect({ a: v })} gradient="linear-gradient(to right,#141312,#ffb400)" />
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Температура света</div>
+                                                <div className="grid grid-cols-4 gap-1.5">
+                                                    {SWATCHES_K.map(sw => {
+                                                        const c = kelvin2rgb(sw.k).map(x => Math.round(x * 255));
+                                                        return (
+                                                            <button key={sw.n} disabled={noSel} onClick={() => applySwatch(sw)}
+                                                                    className="h-11 rounded-lg border border-black/40 text-[9px] font-bold text-black/70 disabled:opacity-35"
+                                                                    style={{ background: 'rgb(' + c.join(',') + ')' }}>
+                                                                {sw.n}<br />{sw.k}K
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Цвета</div>
+                                                <div className="grid grid-cols-7 gap-1.5">
+                                                    {SWATCHES_C.map(sw => (
+                                                        <button key={sw.n} disabled={noSel} onClick={() => applySwatch(sw)} title={sw.n}
+                                                                className="h-9 rounded-lg border border-black/40 disabled:opacity-35"
+                                                                style={{ background: 'rgb(' + sw.rgb.map(x => Math.round(x * 255)).join(',') + ')' }}></button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Мои цвета</div>
+                                                <div className="grid grid-cols-7 gap-1.5">
+                                                    {customSwatches.map((sw, i) => (
+                                                        <button key={i} disabled={noSel} onClick={() => applySwatch(sw)}
+                                                                onDoubleClick={() => { setCustomSwatches(list => list.filter((_, j) => j !== i)); toast('Свотч удалён'); }}
+                                                                className="h-9 rounded-lg border border-black/40 disabled:opacity-35"
+                                                                style={{ background: 'rgb(' + sw.rgb.map(x => Math.round(x * 255)).join(',') + ')' }}></button>
+                                                    ))}
+                                                    <button onClick={() => {
+                                                                setCustomSwatches(list => [...list.slice(-13), { n: 'Мой', rgb: lastColorRef.current.rgb }]);
+                                                                toast('Текущий цвет сохранён (двойной тап по свотчу — удалить)');
+                                                            }}
+                                                            className="h-9 rounded-lg border border-dashed border-[var(--border)] text-zinc-500 flex items-center justify-center">
+                                                        <Icons.Plus />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </React.Fragment>
+                                    )}
+
+                                    {tab === 'pos' && (
+                                        <React.Fragment>
+                                            <XYPad x={getVal('pan')} y={getVal('tilt')} disabled={noSel}
+                                                   onXY={(x, y) => applyToSelection({ pan: x, tilt: y })} />
+                                            <div className="flex gap-1.5">
+                                                <button disabled={noSel} onClick={() => applyToSelection({ pan: 0.5, tilt: 0.5 })}
+                                                        className="flex-1 py-2.5 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-bold text-zinc-300 disabled:opacity-35">
+                                                    В центр
+                                                </button>
+                                            </div>
+                                            <HSlider label="Зум" frac={getVal('zoom')} text={pct(getVal('zoom'))} disabled={noSel}
+                                                     onFrac={v => applyToSelection({ zoom: v })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                                            <HSlider label="Фокус" frac={getVal('focus')} text={pct(getVal('focus'))} disabled={noSel}
+                                                     onFrac={v => applyToSelection({ focus: v })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                                        </React.Fragment>
+                                    )}
+                                </div>
+
+                                {/* энкодеры */}
+                                <div className="shrink-0 border-t border-[var(--border)] px-3 pt-2 pb-3">
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                        <button onClick={locate} disabled={noSel}
+                                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300 disabled:opacity-35">Locate</button>
+                                        <button onClick={clearProg}
+                                                className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
+                                                  (progDirty ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-zinc-500')}>Очистить</button>
+                                        <div className="flex-1"></div>
+                                        <button onClick={() => setFine(f => !f)}
+                                                className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
+                                                  (fine ? 'bg-[var(--accent)] border-[var(--accent)] text-white' : 'border-[var(--border)] text-zinc-400')}>Точно</button>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        {encoders.map(enc => (
+                                            <Encoder key={tab + enc.label} label={enc.label} frac={enc.frac} text={enc.text}
+                                                     onTurn={enc.onTurn} disabled={noSel} />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── тост ── */}
+                    {toastMsg && (
+                        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] px-4 py-2.5 rounded-xl glass-panel text-sm shadow-xl">
+                            {toastMsg}
+                        </div>
+                    )}
+
+                    {/* ── модалки ── */}
+                    {modal && modal.type === 'settings' && (
+                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus}
+                                       connectSerial={connectSerial} disconnectSerial={disconnectSerial}
+                                       fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles}
+                                       onImport={data => {
+                                           setFixtures(data.fixtures || []);
+                                           setPlaybacks(data.playbacks && data.playbacks.length === 10 ? data.playbacks : new Array(10).fill(null));
+                                           setCustomSwatches(data.customSwatches || []);
+                                           setCustomProfiles(data.customProfiles || []);
+                                           setSettings(data.settings || { serialUniverse: 1 });
+                                           setSelected(new Set()); progRef.current.clear(); setProgDirty(false);
+                                           toast('Проект загружен');
+                                       }}
+                                       onReset={() => {
+                                           localStorage.removeItem('cl_project_v1');
+                                           const p = seedProject();
+                                           setFixtures(p.fixtures); setPlaybacks(p.playbacks);
+                                           setCustomSwatches([]); setCustomProfiles([]); setSettings(p.settings);
+                                           setSelected(new Set()); progRef.current.clear(); setProgDirty(false);
+                                           setModal(null); toast('Проект сброшен');
+                                       }}
+                                       onClose={() => setModal(null)} />
+                    )}
+                    {modal && modal.type === 'addFixture' && (
+                        <AddFixtureModal fixtures={fixtures} customProfiles={customProfiles}
+                                         onAdd={(list, newProfile) => {
+                                             setFixtures(fx => [...fx, ...list]);
+                                             if (newProfile) setCustomProfiles(ps => [...ps, newProfile]);
+                                             setModal(null);
+                                             toast(list.length > 1 ? 'Добавлено приборов: ' + list.length : 'Прибор добавлен');
+                                         }}
+                                         onClose={() => setModal(null)} />
+                    )}
+                    {modal && modal.type === 'editFixture' && (
+                        <EditFixtureModal fixture={fixtures.find(f => f.id === modal.id)}
+                                          onSave={upd => {
+                                              setFixtures(fx => fx.map(f => f.id === modal.id ? { ...f, ...upd } : f));
+                                              setModal(null);
+                                          }}
+                                          onDelete={() => {
+                                              setFixtures(fx => fx.filter(f => f.id !== modal.id));
+                                              setSelected(s => { const n = new Set(s); n.delete(modal.id); return n; });
+                                              progRef.current.delete(modal.id);
+                                              setModal(null); toast('Прибор удалён');
+                                          }}
+                                          onClose={() => setModal(null)} />
+                    )}
+                    {modal && modal.type === 'pbMenu' && playbacks[modal.idx] && (
+                        <PlaybackMenuModal pb={playbacks[modal.idx]}
+                                           onSave={upd => {
+                                               setPlaybacks(pbs => pbs.map((p, i) => i === modal.idx ? { ...p, ...upd } : p));
+                                               setModal(null);
+                                           }}
+                                           onRerecord={() => { recordScene(modal.idx); setModal(null); }}
+                                           onDelete={() => {
+                                               const pb = playbacks[modal.idx];
+                                               if (pb) delete pbRunRef.current[pb.id];
+                                               setPlaybacks(pbs => pbs.map((p, i) => i === modal.idx ? null : p));
+                                               setModal(null); toast('Сцена удалена');
+                                           }}
+                                           onClose={() => setModal(null)} />
+                    )}
+                </div>
+            );
+        }
+
+        /* ═══════════ настройки ═══════════ */
+        function SettingsModal({ settings, setSettings, dmxStatus, connectSerial, disconnectSerial, fixtures, playbacks, customSwatches, customProfiles, onImport, onReset, onClose }) {
+            const fileRef = useRef(null);
+            const doExport = () => {
+                const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings }, null, 2);
+                const blob = new Blob([data], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'cinelight-project.json';
+                a.click();
+                URL.revokeObjectURL(a.href);
+            };
+            const doImport = e => {
+                const file = e.target.files[0]; if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    try {
+                        const data = JSON.parse(reader.result);
+                        if (!Array.isArray(data.fixtures)) throw new Error('bad');
+                        onImport(data); onClose();
+                    } catch (err) { alert('Не получилось прочитать файл проекта'); }
+                };
+                reader.readAsText(file);
+                e.target.value = '';
+            };
+            return (
+                <Modal title="Настройки" onClose={onClose}>
+                    <div className="space-y-5">
+                        <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Выход DMX</div>
+                            <div className="flex items-center gap-2 mb-2">
+                                {dmxStatus === 'on' ? (
+                                    <button onClick={disconnectSerial} className="px-3 py-2 rounded-lg bg-[var(--panel-2)] border border-green-700 text-green-400 text-xs font-bold">Подключено · Отключить</button>
+                                ) : (
+                                    <button onClick={connectSerial} className="px-3 py-2 rounded-lg bg-[var(--accent)] text-white text-xs font-bold">Подключить USB-DMX</button>
+                                )}
+                                <select className="glass-input rounded-lg px-2 py-2 text-xs"
+                                        value={settings.serialUniverse || 1}
+                                        onChange={e => setSettings(s => ({ ...s, serialUniverse: parseInt(e.target.value) }))}>
+                                    {[1, 2, 3, 4].map(u => <option key={u} value={u}>Юниверс {u}</option>)}
+                                </select>
+                            </div>
+                            <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                Работает с USB-DMX интерфейсами, понимающими протокол Enttec DMX USB Pro
+                                (Enttec Pro, DMXKing и совместимые). Нужен Chrome или Edge на компьютере.
+                                Пульт шлёт выбранный юниверс 30 раз в секунду. Без интерфейса всё работает
+                                в демо-режиме: плитки приборов показывают цвет и яркость.
+                            </p>
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Проект</div>
+                            <div className="flex flex-wrap gap-2">
+                                <button onClick={doExport} className="px-3 py-2 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-bold text-zinc-300">Экспорт в файл</button>
+                                <button onClick={() => fileRef.current.click()} className="px-3 py-2 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-bold text-zinc-300">Импорт из файла</button>
+                                <button onClick={() => { if (window.confirm('Удалить все приборы и сцены и начать заново?')) onReset(); }}
+                                        className="px-3 py-2 rounded-lg bg-[var(--panel-2)] border border-red-900 text-xs font-bold text-red-400">Сбросить всё</button>
+                                <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={doImport} />
+                            </div>
+                            <p className="text-[11px] text-zinc-500 mt-2">
+                                Проект сохраняется в этом браузере автоматически. Файл нужен, чтобы перенести
+                                настройку на другой компьютер или планшет.
+                            </p>
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Как пользоваться</div>
+                            <ul className="text-[11px] text-zinc-400 leading-relaxed list-disc pl-4 space-y-1">
+                                <li>«Патч» — добавьте свои приборы и DMX-адреса.</li>
+                                <li>На пульте выберите приборы и задайте цвет: круг, температура (CCT), тон G/M, ползунки RGB.</li>
+                                <li>Энкодеры внизу крутятся пальцем по кругу; кнопка «Точно» — медленный ход.</li>
+                                <li>«● ЗАПИСЬ» и затем слот — сохранить текущую картинку как сцену. Тап по сцене — включить с фейдом, вертикальное движение — уровень, долгое нажатие — настройки сцены.</li>
+                                <li>«Очистить» — убрать ручные правки и вернуться к сценам. BLACKOUT — мгновенно всё в ноль.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        }
+
+        /* ═══════════ добавление прибора ═══════════ */
+        function AddFixtureModal({ fixtures, customProfiles, onAdd, onClose }) {
+            const allProfiles = [...PROFILES, ...customProfiles];
+            const [profId, setProfId] = useState('drgbw');
+            const [name, setName] = useState('');
+            const [count, setCount] = useState(1);
+            const [universe, setUniverse] = useState(1);
+            const [addr, setAddr] = useState(() => nextFreeAddr(fixtures, 1));
+            const [cctMin, setCctMin] = useState(2700);
+            const [cctMax, setCctMax] = useState(6500);
+            const [customCh, setCustomCh] = useState(['dim', 'r', 'g', 'b']);
+            const [customName, setCustomName] = useState('Мой прибор');
+            const isCustom = profId === 'custom';
+            const profile = isCustom
+                ? { id: 'cp' + uid(), name: customName || 'Мой прибор', ch: customCh }
+                : allProfiles.find(p => p.id === profId);
+            const hasCct = profile && profile.ch.includes('cct');
+            const foot = profile ? profile.ch.length : 1;
+
+            useEffect(() => { setAddr(nextFreeAddr(fixtures, universe)); }, [universe]);
+
+            const submit = () => {
+                if (!profile || profile.ch.length === 0) return;
+                const n = clamp(parseInt(count) || 1, 1, 64);
+                const a0 = clamp(parseInt(addr) || 1, 1, 512);
+                const base = (name || profile.name).trim();
+                const list = [];
+                for (let i = 0; i < n; i++) {
+                    const a = a0 + i * foot;
+                    if (a + foot - 1 > 512) break;
+                    list.push({
+                        id: uid() + i, name: n > 1 ? base + ' ' + (i + 1) : base,
+                        universe, addr: a,
+                        profile: JSON.parse(JSON.stringify(profile)),
+                        cctMin: parseInt(cctMin) || 2700, cctMax: parseInt(cctMax) || 6500
+                    });
+                }
+                if (list.length === 0) { alert('Не хватает адресов в юниверсе (максимум 512 каналов)'); return; }
+                onAdd(list, isCustom ? JSON.parse(JSON.stringify(profile)) : null);
+            };
+
+            return (
+                <Modal title="Добавить прибор" onClose={onClose}>
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-[11px] font-bold text-zinc-500">Тип прибора</label>
+                            <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={profId} onChange={e => setProfId(e.target.value)}>
+                                {allProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                <option value="custom">Свой профиль…</option>
+                            </select>
+                        </div>
+                        {isCustom && (
+                            <div className="rounded-xl border border-[var(--border)] p-3 space-y-2">
+                                <input className="glass-input rounded-lg px-3 py-2 text-sm w-full" placeholder="Название профиля"
+                                       value={customName} onChange={e => setCustomName(e.target.value)} />
+                                {customCh.map((role, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <span className="text-[11px] font-mono text-zinc-500 w-14">Кан. {i + 1}</span>
+                                        <select className="glass-input rounded-lg px-2 py-1.5 text-xs flex-1" value={role}
+                                                onChange={e => setCustomCh(ch => ch.map((r, j) => j === i ? e.target.value : r))}>
+                                            {Object.entries(ROLES).map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+                                        </select>
+                                        <button onClick={() => setCustomCh(ch => ch.filter((_, j) => j !== i))}
+                                                className="p-1.5 text-zinc-500 hover:text-red-400"><Icons.X /></button>
+                                    </div>
+                                ))}
+                                <button onClick={() => setCustomCh(ch => [...ch, 'none'])}
+                                        className="w-full py-2 rounded-lg border border-dashed border-[var(--border)] text-xs text-zinc-400">+ канал</button>
+                            </div>
+                        )}
+                        <div>
+                            <label className="text-[11px] font-bold text-zinc-500">Название</label>
+                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" placeholder={profile ? profile.name : ''}
+                                   value={name} onChange={e => setName(e.target.value)} />
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                            <div>
+                                <label className="text-[11px] font-bold text-zinc-500">Кол-во</label>
+                                <input type="number" min="1" max="64" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1"
+                                       value={count} onChange={e => setCount(e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="text-[11px] font-bold text-zinc-500">Юниверс</label>
+                                <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={universe}
+                                        onChange={e => setUniverse(parseInt(e.target.value))}>
+                                    {[1, 2, 3, 4].map(u => <option key={u} value={u}>{u}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[11px] font-bold text-zinc-500">Адрес</label>
+                                <input type="number" min="1" max="512" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                       value={addr} onChange={e => setAddr(e.target.value)} />
+                            </div>
+                        </div>
+                        {hasCct && (
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">CCT мин, K</label>
+                                    <input type="number" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                           value={cctMin} onChange={e => setCctMin(e.target.value)} />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">CCT макс, K</label>
+                                    <input type="number" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                           value={cctMax} onChange={e => setCctMax(e.target.value)} />
+                                </div>
+                            </div>
+                        )}
+                        <div className="text-[11px] text-zinc-500">Займёт каналы: {foot} на прибор.</div>
+                        <button onClick={submit} className="w-full py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Добавить</button>
+                    </div>
+                </Modal>
+            );
+        }
+
+        /* ═══════════ правка прибора ═══════════ */
+        function EditFixtureModal({ fixture, onSave, onDelete, onClose }) {
+            if (!fixture) return null;
+            const [name, setName] = useState(fixture.name);
+            const [universe, setUniverse] = useState(fixture.universe);
+            const [addr, setAddr] = useState(fixture.addr);
+            const [cctMin, setCctMin] = useState(fixture.cctMin || 2700);
+            const [cctMax, setCctMax] = useState(fixture.cctMax || 6500);
+            const hasCct = fixture.profile.ch.includes('cct');
+            return (
+                <Modal title="Прибор" onClose={onClose}>
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-[11px] font-bold text-zinc-500">Название</label>
+                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={name} onChange={e => setName(e.target.value)} />
+                        </div>
+                        <div className="text-[11px] text-zinc-500">{fixture.profile.name} · {fixture.profile.ch.length} каналов</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-[11px] font-bold text-zinc-500">Юниверс</label>
+                                <select className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={universe}
+                                        onChange={e => setUniverse(parseInt(e.target.value))}>
+                                    {[1, 2, 3, 4].map(u => <option key={u} value={u}>{u}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[11px] font-bold text-zinc-500">Адрес</label>
+                                <input type="number" min="1" max="512" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                       value={addr} onChange={e => setAddr(e.target.value)} />
+                            </div>
+                        </div>
+                        {hasCct && (
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">CCT мин, K</label>
+                                    <input type="number" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                           value={cctMin} onChange={e => setCctMin(e.target.value)} />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-zinc-500">CCT макс, K</label>
+                                    <input type="number" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                           value={cctMax} onChange={e => setCctMax(e.target.value)} />
+                                </div>
+                            </div>
+                        )}
+                        <div className="flex gap-2 pt-1">
+                            <button onClick={() => onSave({
+                                        name: name.trim() || fixture.name,
+                                        universe,
+                                        addr: clamp(parseInt(addr) || 1, 1, 512),
+                                        cctMin: parseInt(cctMin) || 2700,
+                                        cctMax: parseInt(cctMax) || 6500
+                                    })}
+                                    className="flex-1 py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Сохранить</button>
+                            <button onClick={() => { if (window.confirm('Удалить прибор «' + fixture.name + '»?')) onDelete(); }}
+                                    className="px-4 py-3 rounded-xl border border-red-900 text-red-400 text-sm font-bold">Удалить</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        }
+
+        /* ═══════════ меню сцены ═══════════ */
+        function PlaybackMenuModal({ pb, onSave, onRerecord, onDelete, onClose }) {
+            const [name, setName] = useState(pb.name);
+            const [fade, setFade] = useState(pb.fade);
+            return (
+                <Modal title="Сцена" onClose={onClose}>
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-[11px] font-bold text-zinc-500">Название</label>
+                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={name} onChange={e => setName(e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="text-[11px] font-bold text-zinc-500">Время фейда, секунды</label>
+                            <input type="number" min="0" max="120" step="0.5" className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1 font-mono"
+                                   value={fade} onChange={e => setFade(e.target.value)} />
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                            <button onClick={() => onSave({ name: name.trim() || pb.name, fade: clamp(parseFloat(fade) || 0, 0, 120) })}
+                                    className="flex-1 py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Сохранить</button>
+                            <button onClick={() => { if (window.confirm('Перезаписать сцену текущей картинкой света?')) onRerecord(); }}
+                                    className="px-3 py-3 rounded-xl border border-[var(--border)] text-zinc-300 text-sm font-bold">Перезаписать</button>
+                            <button onClick={() => { if (window.confirm('Удалить сцену «' + pb.name + '»?')) onDelete(); }}
+                                    className="px-3 py-3 rounded-xl border border-red-900 text-red-400 text-sm font-bold">Удалить</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
