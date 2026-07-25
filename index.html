@@ -66,6 +66,9 @@
         ::-webkit-scrollbar-thumb:hover { background: #3d4954; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .wb-color-well::-webkit-color-swatch-wrapper { padding: 0; }
+        .wb-color-well::-webkit-color-swatch { border: none; border-radius: 9999px; }
+        .wb-color-well::-moz-color-swatch { border: none; border-radius: 9999px; }
         @media (max-width: 767px) {
           .nav-scroll-hint { -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 24px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 24px), transparent 100%); }
         }
@@ -1400,7 +1403,15 @@
                           const rect = paintCanvasRef.current.getBoundingClientRect(); const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
                           const press = e.pressure !== undefined && e.pressure > 0 ? e.pressure : 0.5;
                           setIsPainting(true); lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
-                          const ctx = paintCanvasRef.current.getContext('2d'); ctx.beginPath(); ctx.arc(coords.x, coords.y, (brushSize * (0.4 + press * 1.2)) / 2, 0, Math.PI * 2); if (wbMode !== 'erase') { ctx.fillStyle = brushColor; ctx.fill(); }
+                          const ctx = paintCanvasRef.current.getContext('2d');
+                          ctx.save();
+                          if (wbMode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; }
+                          else {
+                              ctx.fillStyle = brushColor; ctx.globalAlpha = brushType === 'marker' ? 0.3 : (brushType === 'soft' ? 0.45 : 1.0);
+                          }
+                          const dotSize = wbMode === 'erase' ? brushSize * 2.5 : (brushType === 'soft' ? brushSize * 1.6 : brushSize);
+                          ctx.beginPath(); ctx.arc(coords.x, coords.y, (dotSize * (0.4 + press * 1.2)) / 2, 0, Math.PI * 2); ctx.fill();
+                          ctx.restore();
                         }} onPointerMove={(e) => {
                           if (isPanning && wbMode === 'pan') { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
                           if (!isPainting || wbMode === 'select') return;
@@ -1408,8 +1419,10 @@
                           const cT = Date.now(); const dist = Math.hypot(coords.x - lastPoint.current.x, coords.y - lastPoint.current.y);
                           let press = e.pressure !== undefined && e.pressure > 0 ? e.pressure : 0.5; if (e.pointerType === 'touch' || e.pointerType === 'mouse') press = Math.max(0.1, 1 - (dist / (cT - lastPoint.current.time || 1)) * 0.15);
                           ctx.save();
-                          if (wbMode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = 40; ctx.strokeStyle = 'rgba(0,0,0,1)'; } else {
-                              ctx.strokeStyle = brushColor; ctx.lineWidth = brushSize * (0.3 + press * 1.4); ctx.globalAlpha = brushType === 'marker' ? 0.3 : 1.0; ctx.globalCompositeOperation = brushType === 'marker' ? 'screen' : 'source-over';
+                          if (wbMode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = brushSize * (0.3 + press * 1.4) * 2.5; ctx.strokeStyle = 'rgba(0,0,0,1)'; } else {
+                              ctx.strokeStyle = brushColor; ctx.lineWidth = brushSize * (0.3 + press * 1.4) * (brushType === 'soft' ? 1.6 : 1);
+                              ctx.globalAlpha = brushType === 'marker' ? 0.3 : (brushType === 'soft' ? 0.45 : 1.0);
+                              ctx.globalCompositeOperation = brushType === 'marker' ? 'screen' : 'source-over';
                           }
                           ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(lastPoint.current.x, lastPoint.current.y); ctx.quadraticCurveTo(lastPoint.current.x, lastPoint.current.y, (lastPoint.current.x + coords.x) / 2, (lastPoint.current.y + coords.y) / 2); ctx.lineTo(coords.x, coords.y); ctx.stroke(); ctx.restore();
                           lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: cT };
@@ -1472,6 +1485,7 @@
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-xl flex flex-col space-y-4 z-30 w-52 border-t border-white/10">
                           <div className="flex bg-black/50 p-1.5 rounded-xl border border-white/5">
                               <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
+                              <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
                               <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
                           </div>
                           <div className="space-y-2">
@@ -1480,8 +1494,9 @@
                           </div>
                           <div className="space-y-2">
                             <span className="text-[11px] text-zinc-400 font-bold uppercase tracking-wider block">Цвет</span>
-                            <div className="grid grid-cols-6 gap-2">
+                            <div className="grid grid-cols-6 gap-2 items-center">
                               {['#d97757', '#fbbf24', '#fb7185', '#34d399', '#38bdf8', '#f4f4f5'].map(color => (<button key={color} onClick={() => setBrushColor(color)} style={{ backgroundColor: color }} className={`w-6 h-6 rounded-full border-2 ${brushColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />))}
+                              <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} title="Свой цвет" className="wb-color-well w-6 h-6 rounded-full border-2 border-white/30 cursor-pointer bg-transparent" />
                             </div>
                           </div>
                         </div>
