@@ -1,0 +1,1818 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#1a1918">
+    <title>CineFlow Prep — Doppler Studio</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+          theme: {
+            extend: {
+              colors: {
+                indigo: { 50:'#fdf5f1',100:'#f9e5db',200:'#f3ccb8',300:'#eba98a',400:'#e28a63',500:'#d97757',600:'#c65d3d',700:'#a54a30',800:'#863e2b',900:'#6d3527',950:'#3a1a12' },
+                zinc: { 50:'#fafaf9',100:'#f5f5f4',200:'#e7e5e4',300:'#d6d3d1',400:'#a8a29e',500:'#78716c',600:'#57534e',700:'#44403c',800:'#292524',900:'#1c1917',950:'#0c0a09' }
+              },
+              fontFamily: {
+                sans: ['Inter','-apple-system','BlinkMacSystemFont','Segoe UI','sans-serif'],
+                serif: ['Lora','Georgia','serif'],
+                mono: ['JetBrains Mono','ui-monospace','SFMono-Regular','monospace']
+              }
+            }
+          }
+        };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&family=Lora:wght@500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        :root {
+            --bg: #1a1918;
+            --panel: #242322;
+            --panel-2: #1e1d1c;
+            --border: #363430;
+            --text: #f0eee6;
+            --muted: #a6a39a;
+            --accent: #d97757;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text);
+            touch-action: none;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+        }
+        ::selection { background: rgba(217,119,87,0.3); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2c353e; border-radius: 8px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3d4954; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+        h1, h2, h3 { font-family: 'Lora', Georgia, serif; letter-spacing: -0.01em; }
+        .glass-panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+        }
+        .glass-input {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        .glass-input::placeholder { color: #5c6a75; }
+        .glass-input:focus, .glass-input:focus-within {
+            border-color: var(--accent);
+            outline: none;
+        }
+        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(217,119,87,0.4); }
+        #print-area { display: none; }
+        @media print {
+            body { background: white !important; color: black !important; overflow: auto; touch-action: auto; }
+            body * { visibility: hidden; }
+            #print-area { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 24px; background: white !important; color: black !important; }
+            #print-area, #print-area * { visibility: visible !important; }
+            #print-area img { max-width: 100%; }
+            .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
+        }
+    </style>
+</head>
+<body class="no-select">
+    <div id="root" class="relative z-10 w-full h-full"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        const Icons = {
+            Scene: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>,
+            Master: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>,
+            Board: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 3v18"/></svg>,
+            Table: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>,
+            Docs: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
+            Gallery: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+            Pointer: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg>,
+            Pen: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>,
+            Eraser: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>,
+            Move: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="9 19 12 22 15 19"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>,
+            Sticky: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></svg>,
+            Trash: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>,
+            User: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+            Link: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
+            Folder: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>,
+            Chat: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
+            Bot: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="14" x="3" y="7" rx="2" ry="2"/><path d="M12 7V3"/><path d="M9 3h6"/><path d="M9 13v2"/><path d="M15 13v2"/></svg>,
+            Print: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
+            Tag: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>,
+            Image: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+            Lightbulb: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>,
+            Square: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>,
+            Circle: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>,
+            Triangle: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 22h20L12 2z"/></svg>,
+            TextIcon: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>,
+            Video: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4z"/><rect x="3" y="6" width="12" height="12" rx="2" ry="2"/></svg>
+        };
+
+        const DEFAULT_GEAR = {
+          steadicam: { label: 'Стедикам' },
+          crane: { label: 'Кран' },
+          drone: { label: 'Коптер' }
+        };
+
+        const DEFAULT_LIGHT_GEAR = {
+          arri600: { label: 'ARRI Skypanel 600' },
+          astera: { label: 'Astera Titan Tube' },
+          aputure: { label: 'Aputure 300d' }
+        };
+
+        const initialScenes = [
+          { id: 'scene-1', number: '1', title: 'ИНТ. КАБИНЕТ - ДЕНЬ', content: 'Контровой жесткий свет, легкое задымление, динамический проезд на стедикаме.', x: 150, y: 180, date: '2026-06-29', gear: { steadicam: 1 }, lightGear: { arri600: 2, astera: 4 }, lightSchemeId: null },
+        ];
+        const initialDocs = [{ id: 'doc-1', title: 'Операторская концепция', content: 'Мрачно, контрастно, неоновые акценты в тенях. Мягкая оптика, использование анаморфотов.' }];
+
+        const firebaseConfig = {
+          apiKey: "AQ.Ab8RN6LnTRYUXj4UA3FbcHSuo1MQUXo_LukcBGRhKrwZf7d50A",
+          authDomain: "prepflow-37284.firebaseapp.com",
+          projectId: "prepflow-37284",
+          storageBucket: "prepflow-37284.firebasestorage.app",
+          messagingSenderId: "1056447066293",
+          appId: "1:1056447066293:web:c29cb639b3a3cdc3d0cefc"
+        };
+        const appId = localStorage.getItem('cf_room') || 'cineflow-room-3';
+        
+        let db = null;
+        let auth = null;
+        try {
+          if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+          auth = firebase.auth();
+          db = firebase.firestore();
+        } catch (e) { console.warn("Локальный режим автономности:", e); }
+
+        const compressImage = (base64Str, maxWidth, maxHeight, callback) => {
+          const img = new Image();
+          img.onerror = () => callback(base64Str);
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width; let height = img.height;
+            if (width > height) { if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; } } 
+            else { if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; } }
+            canvas.width = width; canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+            callback(canvas.toDataURL('image/jpeg', 0.8)); 
+          };
+          img.src = base64Str;
+        };
+
+        class ErrorBoundary extends React.Component {
+          constructor(props) { super(props); this.state = { hasError: false }; }
+          static getDerivedStateFromError(error) { return { hasError: true }; }
+          render() {
+            if (this.state.hasError) {
+              return (
+                <div className="flex flex-col items-center justify-center h-screen bg-[#1a1918] text-zinc-200 p-6">
+                  <div className="glass-panel p-8 rounded-xl max-w-md text-center border-t border-red-500/30">
+                    <h1 className="text-xl font-bold text-red-400 mb-4">Что-то пошло не так</h1>
+                    <p className="text-sm text-zinc-400 mb-6">Произошла ошибка интерфейса. Перезагрузите приложение — ваши данные сохранены.</p>
+                    <button onClick={() => window.location.reload()} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl text-sm font-medium w-full transition-colors">Перезагрузить приложение</button>
+                    <button onClick={() => { if (confirm('Удалить ВСЕ локальные данные проекта? Это действие необратимо.')) { localStorage.clear(); window.location.reload(); } }} className="mt-3 bg-transparent border border-red-500/40 text-red-400 hover:bg-red-500/10 px-6 py-3 rounded-xl text-sm font-medium w-full transition-colors">Сбросить данные и перезагрузить</button>
+                  </div>
+                </div>
+              );
+            }
+            return this.props.children;
+          }
+        }
+
+        const ConfirmModal = ({ action, onCancel }) => {
+            if (!action) return null;
+            return (
+                <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+                    <div className="glass-panel p-6 rounded-xl max-w-sm w-full text-center border-t border-red-500/50">
+                        <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
+                        <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
+                        <p className="text-sm text-zinc-400 mb-6">{action.message}</p>
+                        <div className="flex gap-3">
+                            <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-xl text-sm font-bold transition-colors">Отмена</button>
+                            <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl text-sm font-bold transition-colors">Подтвердить</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const WelcomeModal = ({ onComplete }) => {
+            const [name, setName] = useState('');
+            const [role, setRole] = useState('Оператор-постановщик');
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!name.trim()) return;
+                localStorage.setItem('cf_user_name', name.trim());
+                localStorage.setItem('cf_user_role', role);
+                onComplete(name.trim(), role);
+            };
+            return (
+                <div className="fixed inset-0 bg-black/85 backdrop-blur-lg flex items-center justify-center z-[500] p-4">
+                    <div className="glass-panel p-8 rounded-xl w-full max-w-sm">
+                        <div className="flex justify-center mb-4 text-indigo-400"><Icons.User /></div>
+                        <h2 className="text-2xl font-extrabold text-white mb-2 text-center">Профиль Оператора</h2>
+                        <p className="text-zinc-400 text-xs text-center mb-6">Введите имя и роль в департаменте для чата команды.</p>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="text-xs text-zinc-400 mb-1 block ml-1">Имя и Фамилия</label>
+                                <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Иван Иванов" className="w-full glass-input rounded-xl px-4 py-3 text-sm transition-colors" required />
+                            </div>
+                            <div>
+                                <label className="text-xs text-zinc-400 mb-1 block ml-1">Роль в съемочной группе</label>
+                                <select value={role} onChange={e => setRole(e.target.value)} className="w-full glass-input rounded-xl px-4 py-3 text-sm transition-colors appearance-none bg-zinc-900">
+                                    <option value="Оператор-постановщик">Оператор-постановщик (DoP)</option>
+                                    <option value="Гаффер">Гаффер (Gaffer)</option>
+                                    <option value="Режиссер">Режиссер-постановщик</option>
+                                    <option value="Продюсер">Продюсер</option>
+                                    <option value="Художник-постановщик">Художник-постановщик</option>
+                                    <option value="Второй режиссер">Второй режиссер (1st AD)</option>
+                                    <option value="Специалист">Механик / Стедикамист</option>
+                                </select>
+                            </div>
+                            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl mt-4 transition-all">Открыть проект</button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const DrawingModal = ({ onSave, onClose }) => {
+            const canvasRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [color, setColor] = useState('#ffffff');
+            const [brushSize, setBrushSize] = useState(4);
+            const [tool, setTool] = useState('brush'); 
+            const lastPoint = useRef({ x: 0, y: 0, pressure: 0.5, time: 0 });
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if(canvas) {
+                    canvas.width = 1920; canvas.height = 1080;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#262624'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                }
+            }, []);
+
+            const getPos = (e) => {
+                const canvas = canvasRef.current; const rect = canvas.getBoundingClientRect();
+                return { x: (e.clientX - rect.left) * (canvas.width / rect.width), y: (e.clientY - rect.top) * (canvas.height / rect.height), pressure: e.pressure !== undefined && e.pressure !== 0 ? e.pressure : 0.5 };
+            };
+
+            const startDrawing = (e) => {
+                e.target.setPointerCapture(e.pointerId);
+                setIsDrawing(true); const pos = getPos(e); lastPoint.current = { ...pos, time: Date.now() };
+                const ctx = canvasRef.current.getContext('2d'); ctx.beginPath();
+                const baseBrush = brushSize * (canvasRef.current.width / 800);
+                ctx.arc(pos.x, pos.y, (baseBrush * (0.5 + pos.pressure)) / 2, 0, Math.PI * 2);
+                ctx.fillStyle = tool === 'eraser' ? '#262624' : color; ctx.fill();
+            };
+
+            const draw = (e) => {
+                if (!isDrawing) return; const pos = getPos(e); const ctx = canvasRef.current.getContext('2d');
+                const cT = Date.now(); const dist = Math.hypot(pos.x - lastPoint.current.x, pos.y - lastPoint.current.y);
+                let press = pos.pressure;
+                if (e.pointerType === 'touch' || e.pointerType === 'mouse') { press = Math.max(0.1, 1 - (dist / (cT - lastPoint.current.time || 1)) * 0.15); }
+
+                ctx.beginPath(); ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
+                ctx.quadraticCurveTo(lastPoint.current.x, lastPoint.current.y, (lastPoint.current.x + pos.x) / 2, (lastPoint.current.y + pos.y) / 2);
+                ctx.lineTo(pos.x, pos.y);
+                
+                ctx.strokeStyle = tool === 'eraser' ? '#262624' : color;
+                const baseBrush = brushSize * (canvasRef.current.width / 800);
+                ctx.lineWidth = baseBrush * (0.5 + press * 1.5); ctx.stroke();
+                lastPoint.current = { ...pos, time: cT };
+            };
+
+            const stopDrawing = (e) => {
+                if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
+                    e.target.releasePointerCapture(e.pointerId);
+                }
+                setIsDrawing(false);
+            };
+
+            return (
+                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col">
+                    <div className="flex justify-between items-center p-4 glass-panel border-b-0 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <span className="text-white font-bold text-sm flex items-center gap-2"><Icons.Pen /> Модуль быстрого скетча</span>
+                            <div className="flex gap-1 bg-black/50 p-1 rounded-lg">
+                                <button onClick={() => setTool('brush')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'brush' ? 'bg-indigo-600 text-white' : 'text-zinc-400'}`}><Icons.Pen /> Кисть</button>
+                                <button onClick={() => setTool('eraser')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'eraser' ? 'bg-zinc-700 text-white' : 'text-zinc-400'}`}><Icons.Eraser /> Ластик</button>
+                            </div>
+                            <input type="range" min="1" max="20" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} className="w-24 accent-indigo-500" />
+                            <div className="gap-1 ml-4 hidden sm:flex">
+                                {['#ffffff', '#f87171', '#60a5fa', '#34d399', '#facc15'].map(c => (
+                                    <button key={c} onClick={() => {setColor(c); setTool('brush');}} style={{background: c}} className={`w-6 h-6 rounded-full border-2 ${color === c && tool === 'brush' ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />
+                                ))}
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => { const ctx = canvasRef.current.getContext('2d'); ctx.fillStyle = '#262624'; ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs rounded-lg hover:bg-zinc-700 flex items-center gap-1"><Icons.Trash /> Очистить</button>
+                            <button onClick={() => onSave(canvasRef.current.toDataURL('image/jpeg', 0.8))} className="px-4 py-2 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-500 font-bold">Сохранить</button>
+                            <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Отмена</button>
+                        </div>
+                    </div>
+                    <div className="flex-1 p-4 md:p-12 flex justify-center items-center overflow-hidden">
+                        <div className="w-full max-w-5xl aspect-video relative rounded-xl overflow-hidden border border-zinc-800">
+                            <canvas ref={canvasRef} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={stopDrawing} onPointerCancel={stopDrawing} className="absolute inset-0 w-full h-full cursor-crosshair touch-none" />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Lightbox = ({ refs, initialId, onClose }) => {
+            const [currentId, setCurrentId] = useState(initialId);
+            const currentIndex = refs.findIndex(r => r.id === currentId);
+            const currentRef = refs[currentIndex];
+            if (!currentRef) return null;
+
+            return (
+                <div className="fixed inset-0 z-[350] bg-[#1a1918]/95 backdrop-blur-md flex flex-col justify-center items-center p-4">
+                    <button onClick={onClose} className="absolute top-6 right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
+                    <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
+                        {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
+                        <img src={currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+                        {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
+                    </div>
+                    {currentRef.label && <div className="absolute bottom-6 px-6 py-2 glass-panel rounded-full text-sm font-medium text-white max-w-md text-center truncate">{currentRef.label}</div>}
+                </div>
+            );
+        };
+
+        const LightSchemeEditor = ({ scheme, onSave, onClose }) => {
+            const [elements, setElements] = useState(scheme?.elements || []);
+            const [mode, setMode] = useState('select'); 
+            const [selectedId, setSelectedId] = useState(null);
+            const [drawData, setDrawData] = useState(scheme?.drawData || null);
+            const canvasRef = useRef(null);
+            const containerRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [brushColor, setBrushColor] = useState('#facc15');
+            const [brushSize, setBrushSize] = useState(10);
+            const lastPt = useRef({x:0, y:0});
+            
+            const [draggingEl, setDraggingEl] = useState(null);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if(canvas) {
+                    canvas.width = 1600; canvas.height = 900;
+                    const ctx = canvas.getContext('2d');
+                    if (drawData) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = drawData; }
+                }
+            }, []);
+
+            const handlePointerDown = (e) => {
+                if (mode === 'select' || mode === 'text' || mode === 'rect' || mode === 'circle' || mode === 'triangle') {
+                    if (e.target.closest('.scheme-el')) return;
+                    if (['rect', 'circle', 'text', 'triangle'].includes(mode)) {
+                        const rect = containerRef.current.getBoundingClientRect();
+                        const x = (e.clientX - rect.left) * (1600 / rect.width);
+                        const y = (e.clientY - rect.top) * (900 / rect.height);
+                        const newEl = { id: `el-${Date.now()}`, type: mode, x, y, w: 100, h: 100, color: brushColor, text: mode === 'text' ? 'Текст' : '', label: '' };
+                        if(mode === 'text') { newEl.w = 200; newEl.h = 50; }
+                        setElements([...elements, newEl]);
+                        setMode('select'); setSelectedId(newEl.id);
+                    } else { setSelectedId(null); }
+                    return;
+                }
+                e.currentTarget.setPointerCapture(e.pointerId);
+                setIsDrawing(true);
+                const rect = canvasRef.current.getBoundingClientRect();
+                lastPt.current = { x: (e.clientX - rect.left) * (1600 / rect.width), y: (e.clientY - rect.top) * (900 / rect.height) };
+                const ctx = canvasRef.current.getContext('2d'); ctx.beginPath(); ctx.arc(lastPt.current.x, lastPt.current.y, brushSize/2, 0, Math.PI*2); ctx.fillStyle = mode==='erase' ? 'rgba(0,0,0,1)' : brushColor;
+                if(mode==='erase') ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.5; }
+                ctx.fill(); ctx.globalAlpha = 1.0; ctx.globalCompositeOperation = 'source-over';
+            };
+
+            const handlePointerMove = (e) => {
+                if (draggingEl) {
+                    const rect = containerRef.current.getBoundingClientRect();
+                    const nx = (e.clientX - rect.left) * (1600 / rect.width) - draggingEl.ox;
+                    const ny = (e.clientY - rect.top) * (900 / rect.height) - draggingEl.oy;
+                    setElements(elements.map(el => el.id === draggingEl.id ? {...el, x: nx, y: ny} : el));
+                    return;
+                }
+                if (!isDrawing) return;
+                const rect = canvasRef.current.getBoundingClientRect();
+                const pos = { x: (e.clientX - rect.left) * (1600 / rect.width), y: (e.clientY - rect.top) * (900 / rect.height) };
+                const ctx = canvasRef.current.getContext('2d');
+                ctx.save();
+                if (mode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = brushSize*2; ctx.strokeStyle = 'rgba(0,0,0,1)'; }
+                else { ctx.strokeStyle = brushColor; ctx.lineWidth = brushSize; ctx.globalAlpha = 0.5; ctx.globalCompositeOperation = 'screen'; }
+                ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(lastPt.current.x, lastPt.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke(); ctx.restore();
+                lastPt.current = pos;
+            };
+
+            const handlePointerUp = (e) => { 
+                if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
+                    e.target.releasePointerCapture(e.pointerId);
+                }
+                setIsDrawing(false); setDraggingEl(null); 
+            };
+
+            const updateSelected = (updates) => { setElements(elements.map(el => el.id === selectedId ? {...el, ...updates} : el)); };
+
+            return (
+                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col">
+                    <div className="flex justify-between items-center p-4 glass-panel border-b-0 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <span className="text-amber-400 font-bold text-sm flex items-center gap-2"><Icons.Lightbulb /> Интерактивная Схема Света</span>
+                            <div className="flex gap-1 bg-black/50 p-1 rounded-lg">
+                                <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Pointer/></button>
+                                <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Pen/></button>
+                                <button onClick={() => setMode('erase')} className={`px-2 py-1 text-xs rounded ${mode==='erase'?'bg-zinc-700 text-white':'text-zinc-400'}`}><Icons.Eraser/></button>
+                                <div className="w-[1px] h-4 bg-white/20 my-auto mx-1"></div>
+                                <button onClick={() => setMode('rect')} className={`px-2 py-1 text-xs rounded ${mode==='rect'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Square/></button>
+                                <button onClick={() => setMode('circle')} className={`px-2 py-1 text-xs rounded ${mode==='circle'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Circle/></button>
+                                <button onClick={() => setMode('triangle')} className={`px-2 py-1 text-xs rounded ${mode==='triangle'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Triangle/></button>
+                                <button onClick={() => setMode('text')} className={`px-2 py-1 text-xs rounded ${mode==='text'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.TextIcon/></button>
+                            </div>
+                            <div className="flex gap-1 ml-2">
+                                {['#facc15', '#60a5fa', '#f87171', '#34d399', '#ffffff'].map(c => (
+                                    <button key={c} onClick={() => {setBrushColor(c); if(selectedId) updateSelected({color: c});}} style={{background: c}} className={`w-5 h-5 rounded-full border-2 ${brushColor === c ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />
+                                ))}
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => {
+                                const pc = document.createElement('canvas'); pc.width = 1600; pc.height = 900;
+                                const pctx = pc.getContext('2d');
+                                pctx.fillStyle = '#262624'; pctx.fillRect(0, 0, 1600, 900);
+                                pctx.globalAlpha = 0.85; pctx.drawImage(canvasRef.current, 0, 0); pctx.globalAlpha = 1;
+                                elements.forEach(el => {
+                                    pctx.fillStyle = el.color || '#facc15';
+                                    if (el.type === 'rect') { pctx.fillRect(el.x, el.y, el.w, el.h); }
+                                    else if (el.type === 'circle') { pctx.beginPath(); pctx.ellipse(el.x + el.w/2, el.y + el.h/2, el.w/2, el.h/2, 0, 0, Math.PI*2); pctx.fill(); }
+                                    else if (el.type === 'triangle') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x, el.y + el.h); pctx.lineTo(el.x + el.w, el.y + el.h); pctx.closePath(); pctx.fill(); }
+                                    else if (el.type === 'text') { pctx.font = 'bold 30px Inter, sans-serif'; pctx.fillText(el.text || '', el.x + 8, el.y + 36); }
+                                    if (el.label) { pctx.font = '22px Inter, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
+                                });
+                                onSave(scheme.id, elements, canvasRef.current.toDataURL('image/png'), pc.toDataURL('image/jpeg', 0.85));
+                            }} className="px-4 py-2 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-500 font-bold">Сохранить схему</button>
+                            <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Закрыть</button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 flex overflow-hidden">
+                        <div className="flex-1 relative p-4 flex justify-center items-center" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
+                            <div ref={containerRef} onPointerDown={handlePointerDown} className="relative w-full max-w-5xl aspect-video bg-zinc-950 rounded-xl overflow-hidden border border-white/10 cursor-crosshair">
+                                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
+                                {elements.map(el => (
+                                    <div key={el.id} className={`scheme-el absolute pointer-events-auto ${selectedId === el.id ? 'ring-2 ring-indigo-400' : ''}`} 
+                                        style={{ left: `${(el.x/1600)*100}%`, top: `${(el.y/900)*100}%`, width: `${(el.w/1600)*100}%`, height: `${(el.h/900)*100}%` }}
+                                        onPointerDown={(e) => { e.stopPropagation(); setSelectedId(el.id); setMode('select'); setDraggingEl({id: el.id, ox: (e.clientX - e.currentTarget.getBoundingClientRect().left)*(1600/containerRef.current.getBoundingClientRect().width), oy: (e.clientY - e.currentTarget.getBoundingClientRect().top)*(900/containerRef.current.getBoundingClientRect().height)}); }}>
+                                        {el.type === 'rect' && <div className="w-full h-full rounded-md border-2 border-white/20" style={{backgroundColor: el.color}}/>}
+                                        {el.type === 'circle' && <div className="w-full h-full rounded-full border-2 border-white/20" style={{backgroundColor: el.color}}/>}
+                                        {el.type === 'triangle' && <div className="w-full h-full border-2 border-transparent" style={{backgroundColor: el.color, clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)'}}/>}
+                                        {el.type === 'text' && <textarea value={el.text} onChange={e => {setElements(elements.map(x=>x.id===el.id?{...x, text:e.target.value}:x))}} className="w-full h-full bg-black/60 border border-white/20 text-white font-bold p-1 resize-none focus:outline-none rounded-md text-xs" style={{color: el.color}} />}
+                                        {el.label && (
+                                            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-black/90 text-white font-medium text-[11px] px-2 py-1 rounded border border-white/20 whitespace-nowrap z-50 pointer-events-none">
+                                                {el.label}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        {selectedId && elements.find(e=>e.id===selectedId) && (
+                            <div className="w-64 glass-panel border-l border-white/10 p-4 space-y-4 shrink-0 flex flex-col">
+                                <span className="text-xs font-bold text-zinc-400 uppercase">Свойства прибора / формы</span>
+                                <div className="space-y-2">
+                                    <label className="text-[11px] text-zinc-400">Маркировка (Модель/Прибор)</label>
+                                    <input type="text" value={elements.find(e=>e.id===selectedId).label || ''} onChange={e=>updateSelected({label: e.target.value})} className="w-full glass-input rounded px-2 py-1.5 text-xs" placeholder="Напр: ARRI SkyPanel S60" />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[11px] text-zinc-400">Ширина</label>
+                                    <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).w} onChange={e=>updateSelected({w: Number(e.target.value)})} className="w-full accent-indigo-500" />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[11px] text-zinc-400">Высота</label>
+                                    <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).h} onChange={e=>updateSelected({h: Number(e.target.value)})} className="w-full accent-indigo-500" />
+                                </div>
+                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-xl text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        function AppCore() {
+          const [user, setUser] = useState(null);
+          const [userName, setUserName] = useState('');
+          const [userRole, setUserRole] = useState('');
+          const [showWelcome, setShowWelcome] = useState(false);
+          const clientId = useMemo(() => { let cid = localStorage.getItem('cf_client_id'); if (!cid) { cid = 'u-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); localStorage.setItem('cf_client_id', cid); } return cid; }, []);
+          const [isOnline, setIsOnline] = useState(navigator.onLine);
+          
+          const safeLoad = (key, fallback, isArray = true) => {
+            try { 
+              const saved = localStorage.getItem(key); if (!saved) return fallback; 
+              const parsed = JSON.parse(saved); 
+              if (isArray) return Array.isArray(parsed) ? parsed : fallback;
+              return (parsed !== null && typeof parsed === 'object') ? parsed : fallback;
+            } catch (e) { return fallback; }
+          };
+
+          const [scenes, setScenes] = useState(() => safeLoad('cf_scenes', initialScenes, true));
+          const [storyboard, setStoryboard] = useState(() => safeLoad('cf_storyboard', [], true));
+          const [references, setReferences] = useState(() => safeLoad('cf_references', [], true));
+          const [stickies, setStickies] = useState(() => safeLoad('cf_stickies', [], true));
+          const [docs, setDocs] = useState(() => safeLoad('cf_docs', initialDocs, true));
+          const [crew, setCrew] = useState(() => safeLoad('cf_crew', [], true));
+          const [projectFiles, setProjectFiles] = useState(() => safeLoad('cf_files', [], true));
+          
+          const [gearTypes, setGearTypes] = useState(() => safeLoad('cf_geartypes', DEFAULT_GEAR, false));
+          const [lightGearTypes, setLightGearTypes] = useState(() => safeLoad('cf_lightgeartypes', DEFAULT_LIGHT_GEAR, false));
+          const [lightSchemes, setLightSchemes] = useState(() => safeLoad('cf_lightschemes', [], true));
+
+          const [messages, setMessages] = useState([]); 
+
+          const [currentView, setCurrentView] = useState('notion'); 
+          const [activeSceneId, setActiveSceneId] = useState('scene-1');
+          const [activeDocId, setActiveDocId] = useState('doc-1');
+          const [showImages, setShowImages] = useState(true); 
+          const [showProjectModal, setShowProjectModal] = useState(false);
+          const [showShareModal, setShowShareModal] = useState(false);
+          const [showChat, setShowChat] = useState(false); 
+          const [chatInput, setChatInput] = useState('');
+          const [tableSubView, setTableSubView] = useState('grouped');
+          const [toast, setToast] = useState(null);
+          const [isAILoading, setIsAILoading] = useState(false);
+          
+          const [confirmAction, setConfirmAction] = useState(null); 
+          const [drawingFrameId, setDrawingFrameId] = useState(null);
+          const [lightboxData, setLightboxData] = useState(null);
+          const [showAgentModal, setShowAgentModal] = useState(false);
+          const [manualJsonInput, setManualJsonInput] = useState('');
+          const [tagSearch, setTagSearch] = useState('');
+          
+          const [activeSchemeId, setActiveSchemeId] = useState(null);
+          const [drawingSchemeId, setDrawingSchemeId] = useState(null);
+          const [expandedLightSceneId, setExpandedLightSceneId] = useState(null);
+
+          const [lastReadChat, setLastReadChat] = useState(() => Number(localStorage.getItem('cf_last_read')) || Date.now());
+          const [newGearName, setNewGearName] = useState('');
+          const [newLightGearName, setNewLightGearName] = useState('');
+
+          const [wbMode, setWbMode] = useState('select'); 
+          const [brushColor, setBrushColor] = useState('#d97757'); 
+          const [brushType, setBrushType] = useState('pen'); 
+          const [brushSize, setBrushSize] = useState(4); 
+          const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 }); 
+          const [zoom, setZoom] = useState(1.0);
+          const [isPainting, setIsPainting] = useState(false);
+          const [isPanning, setIsPanning] = useState(false);
+          const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+          const lastPoint = useRef({ x: 0, y: 0, pressure: 0.5, time: 0 });
+          const [linkingFromRefId, setLinkingFromRefId] = useState(null);
+          const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+          const [hoveredSceneId, setHoveredSceneId] = useState(null);
+          
+          const [selectedWbItems, setSelectedWbItems] = useState([]);
+          const [selectionBox, setSelectionBox] = useState(null);
+          const [draggingWbItems, setDraggingWbItems] = useState(null);
+
+          const canvasRef = useRef(null);
+          const paintCanvasRef = useRef(null);
+
+          const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
+
+          // Авторизация Firebase
+          useEffect(() => {
+            if (auth) {
+              auth.signInAnonymously().catch(err => console.warn("Firebase auth warning:", err));
+              const unsub = auth.onAuthStateChanged(u => setUser(u));
+              return () => unsub();
+            }
+          }, []);
+
+          useEffect(() => {
+            const handleOnline = () => setIsOnline(true);
+            const handleOffline = () => setIsOnline(false);
+            window.addEventListener('online', handleOnline);
+            window.addEventListener('offline', handleOffline);
+            const handleMouseMove = (e) => {
+                setMousePos({ x: e.clientX, y: e.clientY });
+                if (linkingFromRefId) {
+                    const el = document.elementFromPoint(e.clientX, e.clientY);
+                    const targetScene = el?.closest('[data-scene-id]');
+                    setHoveredSceneId(targetScene ? targetScene.getAttribute('data-scene-id') : null);
+                }
+            };
+            window.addEventListener('pointermove', handleMouseMove);
+            return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); window.removeEventListener('pointermove', handleMouseMove); };
+          }, [linkingFromRefId]);
+
+          useEffect(() => {
+              const savedName = localStorage.getItem('cf_user_name');
+              const savedRole = localStorage.getItem('cf_user_role');
+              if (!savedName) { setShowWelcome(true); } else { setUserName(savedName); setUserRole(savedRole || 'Оператор-постановщик'); }
+          }, []);
+
+          useEffect(() => { if (showChat) { const now = Date.now(); setLastReadChat(now); localStorage.setItem('cf_last_read', now); } }, [showChat, messages]);
+
+          const unreadCount = useMemo(() => messages.filter(m => m.timestamp > lastReadChat && (m.senderId ? m.senderId !== clientId : m.senderName !== userName)).length, [messages, lastReadChat, userName, clientId]);
+
+          // Счётчик непрочитанных в заголовке вкладки
+          useEffect(() => { document.title = (unreadCount > 0 ? '(' + unreadCount + ') ' : '') + 'CineFlow Prep'; }, [unreadCount]);
+
+          // Браузерные уведомления о новых сообщениях (когда вкладка в фоне или чат закрыт)
+          const prevMsgCount = useRef(null);
+          useEffect(() => {
+            if (prevMsgCount.current === null) { prevMsgCount.current = messages.length; return; }
+            const fresh = messages.slice(prevMsgCount.current).filter(m => m.senderId !== clientId);
+            prevMsgCount.current = messages.length;
+            if (!fresh.length) return;
+            if ((document.hidden || !showChat) && 'Notification' in window && Notification.permission === 'granted') {
+              const m = fresh[fresh.length - 1];
+              try { new Notification(m.senderName + ' — ' + (m.senderRole || ''), { body: m.text, tag: 'cineflow-chat' }); } catch (e) {}
+            }
+          }, [messages, showChat, clientId]);
+
+          const [geminiKey, setGeminiKeyRaw] = useState(() => localStorage.getItem('cf_gemini_key') || '');
+          const saveGeminiKey = (v) => { setGeminiKeyRaw(v); localStorage.setItem('cf_gemini_key', v.trim()); }; 
+          
+          const callGeminiAI = async (promptText, isAgent = false) => {
+            if (!geminiKey.trim()) { showToast("🔑 Укажите ключ Gemini API в меню «Проект»."); return null; }
+            try {
+              const systemInstruction = isAgent 
+                ? "Ты ИИ-агент Второго Режиссера. Твоя задача — распарсить текст КПП и выдать ТОЛЬКО чистый массив JSON. Ищи дату съемки и переводи в формат YYYY-MM-DD. Дата применяется ко всем сценам ниже. Ищи номер сцены. Объект и время суток ставь в title. Описание ставь в content. Никакого текста кроме JSON массива [{}]." 
+                : "Ты голливудский сценарист и оператор-постановщик. Помогай описывать сцены и световой сетап.";
+
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey.trim()}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }], systemInstruction: { parts: [{ text: systemInstruction }] } })
+              });
+              const result = await response.json();
+              if (!response.ok) { console.error(result); showToast("❌ Ошибка ИИ: " + (result?.error?.message || response.status)); return null; }
+              return result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            } catch (err) { console.error(err); showToast("Ошибка сети при вызове ИИ."); return null; }
+          };
+
+          const handleAIAgentFile = async (e) => {
+            const file = e.target.files[0]; if (!file) return;
+            setIsAILoading(true); showToast("🤖 Агент читает документ КПП...");
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+              let textContent = "";
+              try {
+                if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv')) {
+                  const data = new Uint8Array(event.target.result); const workbook = XLSX.read(data, {type: 'array'});
+                  const rawArray = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1, defval: ""});
+                  const cleanArray = rawArray.filter(row => row.some(cell => String(cell).trim() !== ""));
+                  textContent = JSON.stringify(cleanArray);
+                } else { textContent = new TextDecoder("utf-8").decode(event.target.result); }
+                if (!textContent.trim() || textContent === "[]") throw new Error("Empty file");
+                showToast("✨ Агент структурирует сцены...");
+                const promptText = `Распарси этот 2D-массив (строки таблицы Excel). \nФормат нужного JSON:\n[ { "number": "2-1", "title": "ИНТ. ОФИС - ДЕНЬ", "date": "2026-06-29", "content": "Описание" } ]\n\nДанные:\n${textContent.substring(0, 15000)}`;
+                const aiResponse = await callGeminiAI(promptText, true);
+                if (aiResponse) {
+                  const match = aiResponse.match(/\[[\s\S]*\]/); 
+                  if (match) {
+                    const parsed = JSON.parse(match[0]);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
+                      setScenes([...scenes, ...newScenes]); newScenes.forEach(ns => syncDoc('scenes', ns.id, ns)); showToast(`✅ Агент успешно импортировал ${newScenes.length} сцен!`);
+                    } else { showToast("❌ Агент не обнаружил сцен."); }
+                  } else { showToast("❌ Ошибка ответа ИИ."); }
+                }
+              } catch (err) { showToast("❌ Ошибка чтения файла."); }
+              setIsAILoading(false); e.target.value = '';
+            }; reader.readAsArrayBuffer(file);
+          };
+
+          const enhanceSceneWithAI = async (sceneId, currentContent, title) => {
+            setIsAILoading(true); showToast("✨ ИИ расширяет экспликацию...");
+            const prompt = `Разверни и профессионально улучши операторское описание этой сцены. Название: ${title}. Исходный набросок: ${currentContent || 'Пусто'}`;
+            const aiText = await callGeminiAI(prompt, false);
+            if (aiText) { updateScene(sceneId, 'content', aiText); showToast("✨ Экспликация обновлена!"); }
+            setIsAILoading(false);
+          };
+
+          const seededRef = useRef({});
+          useEffect(() => {
+            if (!db || !user) return;
+            const baseRef = db.collection('artifacts').doc(appId).collection('public').doc('data');
+            const subList = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
+              const list = []; snap.forEach(d => list.push(d.data()));
+              if (snap.empty && !seededRef.current[coll]) {
+                seededRef.current[coll] = true;
+                if (seed && seed.length) { seed.forEach(item => syncDoc(coll, item.id, item)); return; }
+              }
+              setter(list);
+            }, err => console.warn('sync ' + coll, err));
+            const subMap = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
+              const obj = {}; snap.forEach(d => { obj[d.id] = d.data(); });
+              if (snap.empty && !seededRef.current[coll]) {
+                seededRef.current[coll] = true;
+                if (seed && Object.keys(seed).length) { Object.entries(seed).forEach(([k, v]) => syncDoc(coll, k, v)); return; }
+              }
+              if (Object.keys(obj).length) setter(obj);
+            }, err => console.warn('sync ' + coll, err));
+            const unsubs = [
+              subList('scenes', setScenes, scenes),
+              subList('storyboard', setStoryboard, storyboard),
+              subList('references', setReferences, references),
+              subList('stickies', setStickies, stickies),
+              subList('docs', setDocs, docs),
+              subList('crew', setCrew, crew),
+              subList('projectFiles', setProjectFiles, projectFiles),
+              subList('lightSchemes', setLightSchemes, lightSchemes),
+              subMap('gearTypes', setGearTypes, gearTypes),
+              subMap('lightGearTypes', setLightGearTypes, lightGearTypes),
+              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err)),
+              baseRef.collection('canvas').doc('globalDraw').onSnapshot(doc => {
+                if (doc.exists && doc.data().lastDrawBy !== user.uid && paintCanvasRef.current) {
+                  const ctx = paintCanvasRef.current.getContext('2d'); const img = new Image();
+                  img.onload = () => { ctx.clearRect(0, 0, 4000, 4000); ctx.drawImage(img, 0, 0); }; img.src = doc.data().dataUrl;
+                }
+              })
+            ]; return () => unsubs.forEach(u => u());
+          }, [user]);
+
+          // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака)
+          useEffect(() => {
+            const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('localStorage переполнен:', k); } };
+            save('cf_scenes', scenes); save('cf_storyboard', storyboard);
+            save('cf_references', references); save('cf_stickies', stickies);
+            save('cf_docs', docs); save('cf_crew', crew);
+            save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
+            save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
+          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes]);
+
+          const syncTimers = useRef({});
+          const dataRef = () => db.collection('artifacts').doc(appId).collection('public').doc('data');
+          const syncDoc = (coll, id, data) => {
+            if (!db || !user) return;
+            const key = coll + '/' + id;
+            clearTimeout(syncTimers.current[key]);
+            syncTimers.current[key] = setTimeout(() => {
+              delete syncTimers.current[key];
+              dataRef().collection(coll).doc(id).set(data, { merge: true })
+                .catch(err => { console.warn('syncDoc', err); showToast('⚠️ Не удалось сохранить в облако'); });
+            }, 400);
+          };
+          const deleteNetDoc = (coll, id) => {
+            if (!db || !user) return;
+            const key = coll + '/' + id;
+            clearTimeout(syncTimers.current[key]); delete syncTimers.current[key];
+            dataRef().collection(coll).doc(id).delete().catch(err => console.warn('deleteNetDoc', err));
+          };
+
+          const updateScene = (id, field, val) => { const up = scenes.map(s => s.id === id ? { ...s, [field]: val } : s); setScenes(up); const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t); };
+          
+          const deleteScene = (id) => {
+             const up = scenes.filter(s => s.id !== id);
+             setScenes(up); deleteNetDoc('scenes', id);
+             if (activeSceneId === id) setActiveSceneId(up.length > 0 ? up[0].id : null);
+             showToast("Сцена удалена");
+          };
+
+          const updateSceneNested = (id, parentField, childKey, inc) => {
+            const up = scenes.map(s => {
+              if (s.id === id) {
+                const g = s[parentField] || {}; const v = Math.max(0, (g[childKey] || 0) + inc);
+                const nextGear = { ...g, [childKey]: v }; if (v === 0) delete nextGear[childKey];
+                return { ...s, [parentField]: nextGear };
+              } return s;
+            });
+            setScenes(up); const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t);
+          };
+
+          const handleMultiFileUpload = async (files, sceneId = null) => {
+              const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+              if(imageFiles.length === 0) return;
+              showToast(`Оптимизация ${imageFiles.length} изображений...`);
+              const newRefs = await Promise.all(imageFiles.map((file, idx) => new Promise(resolve => {
+                  const r = new FileReader();
+                  r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => resolve({ id: `ref-${Date.now()}-${idx}`, sceneId: sceneId || '', url: c, x: (250 - canvasOffset.x) / zoom + (idx*20), y: (250 - canvasOffset.y) / zoom + (idx*20), label: file.name, tags: [] }));
+                  r.readAsDataURL(file);
+              })));
+              setReferences(prev => { const up = [...prev, ...newRefs]; newRefs.forEach(nr => syncDoc('references', nr.id, nr)); return up; });
+          };
+
+          const addCustomGear = (isLight) => {
+              const name = isLight ? newLightGearName : newGearName;
+              if (!name.trim()) return;
+              const key = name.toLowerCase().replace(/\s+/g, '_');
+              const payload = { label: name };
+              if (isLight) { setLightGearTypes(prev => { const up = {...prev, [key]: payload}; syncDoc('lightGearTypes', key, payload); return up; }); setNewLightGearName(''); }
+              else { setGearTypes(prev => { const up = {...prev, [key]: payload}; syncDoc('gearTypes', key, payload); return up; }); setNewGearName(''); }
+          };
+
+          const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
+
+          // --- Групповое перетаскивание на Whiteboard ---
+          const handleDragMove = (e) => {
+              if (!draggingWbItems || draggingWbItems.pointerId !== e.pointerId) return;
+              const dx = (e.clientX - draggingWbItems.startX) / zoom;
+              const dy = (e.clientY - draggingWbItems.startY) / zoom;
+              
+              let updatedScenes = [...scenes], changedS = false;
+              let updatedRefs = [...references], changedR = false;
+              let updatedStickies = [...stickies], changedSt = false;
+
+              draggingWbItems.items.forEach(item => {
+                  const nx = Math.round((item.ox + dx) / 24) * 24;
+                  const ny = Math.round((item.oy + dy) / 24) * 24;
+                  if (item.type === 'scene') { updatedScenes = updatedScenes.map(sc => sc.id === item.id ? {...sc, x: nx, y: ny} : sc); changedS = true; }
+                  else if (item.type === 'ref') { updatedRefs = updatedRefs.map(r => r.id === item.id ? {...r, x: nx, y: ny} : r); changedR = true; }
+                  else if (item.type === 'sticky') { updatedStickies = updatedStickies.map(st => st.id === item.id ? {...st, x: nx, y: ny} : st); changedSt = true; }
+              });
+
+              if (changedS) setScenes(updatedScenes);
+              if (changedR) setReferences(updatedRefs);
+              if (changedSt) setStickies(updatedStickies);
+          };
+
+          const handleDragUp = (e) => {
+              if (!draggingWbItems || draggingWbItems.pointerId !== e.pointerId) return;
+              if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+              draggingWbItems.items.forEach(item => {
+                  if (item.type === 'scene') { const f = scenes.find(x=>x.id===item.id); if(f) syncDoc('scenes', item.id, f); }
+                  else if (item.type === 'ref') { const f = references.find(x=>x.id===item.id); if(f) syncDoc('references', item.id, f); }
+                  else if (item.type === 'sticky') { const f = stickies.find(x=>x.id===item.id); if(f) syncDoc('stickies', item.id, f); }
+              });
+              setDraggingWbItems(null);
+          };
+
+          const handleElementPointerDown = (e, id, type) => {
+              if (wbMode !== 'select') return;
+              if (['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName) || e.target.closest('.node-handle')) return;
+              e.stopPropagation();
+              
+              let currentSelected = selectedWbItems;
+              if (!currentSelected.includes(id)) {
+                  currentSelected = e.shiftKey ? [...currentSelected, id] : [id];
+                  setSelectedWbItems(currentSelected);
+              }
+              
+              const itemsToDrag = [];
+              currentSelected.forEach(sId => {
+                  const sc = scenes.find(x => x.id === sId); if (sc) itemsToDrag.push({id: sId, type: 'scene', ox: sc.x, oy: sc.y});
+                  const r = references.find(x => x.id === sId); if (r) itemsToDrag.push({id: sId, type: 'ref', ox: r.x, oy: r.y});
+                  const st = stickies.find(x => x.id === sId); if (st) itemsToDrag.push({id: sId, type: 'sticky', ox: st.x, oy: st.y});
+              });
+
+              setDraggingWbItems({ pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, items: itemsToDrag });
+              e.currentTarget.setPointerCapture(e.pointerId);
+          };
+          
+          if (showWelcome) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
+
+          return (
+            <div className="flex flex-col h-screen w-screen relative overflow-hidden bg-transparent">
+              <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
+              {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
+
+              {/* ХЕДЕР ПРИЛОЖЕНИЯ */}
+              <header className="flex flex-col md:flex-row items-center justify-between px-4 md:px-6 py-2.5 glass-panel border-b border-white/10 z-40 shrink-0 gap-3 md:gap-0">
+                <div className="flex items-center justify-between w-full md:w-auto">
+                  <div className="flex items-center space-x-3">
+                    <span className="font-serif text-base font-bold tracking-[0.2em] text-white uppercase">CineFlow <span className="text-indigo-400 font-mono text-xs font-normal">PREP</span></span>
+                    <div className="flex gap-2 items-center">
+                      <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-zinc-500'}`} title={isOnline ? 'В сети' : 'Офлайн'}></div>
+                      <button onClick={() => setShowProjectModal(true)} className="bg-black/40 hover:bg-black/60 border border-white/10 text-[11px] px-3 py-1.5 rounded-lg text-zinc-300 transition-colors flex items-center gap-1.5"><Icons.Folder /> Проект</button>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowShareModal(true)} className="md:hidden bg-indigo-600/30 text-[11px] px-3 py-1.5 rounded-lg text-indigo-200 font-semibold flex items-center gap-1"><Icons.Link /> Доступ</button>
+                </div>
+                
+                <div className="flex bg-black/50 p-1 rounded-xl border border-white/10 w-full md:w-auto overflow-x-auto hide-scrollbar snap-x">
+                  {[{id: 'notion', label: 'Сцены', icon: <Icons.Scene />}, {id: 'gallery', label: 'Галерея', icon: <Icons.Gallery />}, {id: 'master', label: 'Мастер-док', icon: <Icons.Master />}, {id: 'whiteboard', label: 'Доска', icon: <Icons.Board />}, {id: 'table', label: 'КПП / Смены', icon: <Icons.Table />}, {id: 'docs', label: 'Экспликации', icon: <Icons.Docs />}]
+                    .map(tab => (
+                    <button key={tab.id} onClick={() => setCurrentView(tab.id)} className={`snap-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 min-h-[34px] ${currentView === tab.id ? 'bg-indigo-600/80 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}>
+                      {tab.icon} {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-end overflow-x-auto hide-scrollbar">
+                  <button onClick={() => setShowAgentModal(true)} className="bg-emerald-900/30 hover:bg-emerald-800/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"><Icons.Bot /> Агент КПП</button>
+                  <button onClick={() => { setShowChat(!showChat); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }} className={`relative px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all shrink-0 flex items-center gap-1.5 ${showChat ? 'bg-indigo-600 border-indigo-500 text-white' : 'glass-panel text-zinc-300 hover:bg-white/5'}`}>
+                    <Icons.Chat /> Чат
+                    {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full font-bold">{unreadCount}</span>}
+                  </button>
+                  <button onClick={() => setShowShareModal(true)} className="hidden md:flex bg-indigo-600/30 hover:bg-indigo-600/50 text-[11px] px-3.5 py-1.5 rounded-xl text-indigo-200 font-semibold transition-colors items-center gap-1.5"><Icons.Link /> Поделиться</button>
+                </div>
+              </header>
+
+              <div className="flex flex-1 overflow-hidden relative z-10">
+                <div className="flex-1 overflow-hidden relative">
+                  
+                  {/* СЦЕНЫ И РАСКАДРОВКА */}
+                  <div className={`h-full w-full ${currentView === 'notion' ? 'block' : 'hidden'}`}>
+                    <div className="flex flex-col md:flex-row h-full max-w-7xl mx-auto p-2 md:p-6 gap-3 md:gap-6 overflow-hidden">
+                      <div className="w-full md:w-64 glass-panel p-2 md:p-4 rounded-xl flex flex-row md:flex-col space-x-2 md:space-x-0 md:space-y-1.5 overflow-x-auto md:overflow-y-auto shrink-0 hide-scrollbar snap-x">
+                        {scenes.map(s => (
+                          <button key={s.id} onClick={() => setActiveSceneId(s.id)} className={`snap-center whitespace-nowrap md:whitespace-normal shrink-0 md:w-full text-left px-3.5 py-2.5 rounded-xl text-sm transition-all border ${activeSceneId === s.id ? 'bg-indigo-600/30 text-white border-indigo-500/40 font-bold' : 'bg-transparent text-zinc-400 border-transparent hover:bg-white/5'}`}>
+                            <span className="font-mono text-indigo-400 mr-2 text-xs">#{s.number}</span> {s.title || 'Без названия'}
+                          </button>
+                        ))}
+                        <button onClick={() => { const num = scenes.length + 1; const newS = { id: `sc-${Date.now()}`, number: String(num), title: `СЦЕНА ${num}. НОВАЯ`, content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-xl text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
+                      </div>
+
+                      {activeSceneId && scenes.find(s => s.id === activeSceneId) && (() => {
+                        const s = scenes.find(sc => sc.id === activeSceneId);
+                        const frames = storyboard.filter(f => f.sceneId === s.id);
+                        const sceneRefs = references.filter(r => r.sceneId === s.id);
+                        return (
+                          <div className="flex-1 glass-panel p-5 md:p-8 rounded-xl overflow-y-auto space-y-6 border-t border-white/10">
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-white/10 pb-4 gap-3">
+                              <div className="flex items-center gap-3">
+                                  <span className="text-xs font-mono font-bold text-indigo-300 bg-indigo-950/60 px-3 py-1.5 rounded-lg">СЦЕНА #{s.number}</span>
+                                  <input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)} className="glass-input px-3 py-1.5 rounded-lg text-sm w-full sm:w-auto font-mono text-zinc-300" />
+                              </div>
+                              <button onClick={() => setConfirmAction({title: 'Удалить сцену?', message: 'Это действие удалит сцену и отвяжет ее кадры.', onConfirm: () => deleteScene(s.id)})} className="text-xs text-red-400 hover:text-white hover:bg-red-500/20 px-3 py-1.5 rounded-lg transition-colors border border-transparent font-semibold flex items-center gap-1 self-end sm:self-auto"><Icons.Trash /> Удалить сцену</button>
+                            </div>
+                            <input type="text" value={s.title} onChange={(e) => updateScene(s.id, 'title', e.target.value)} className="font-serif bg-transparent text-2xl md:text-3xl font-bold text-white focus:outline-none w-full placeholder-zinc-600" placeholder="Название объекта / сцены" />
+                            
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-zinc-400 uppercase tracking-widest font-bold ml-1">Операторская и режиссерская экспликация</span>
+                                <button onClick={() => enhanceSceneWithAI(s.id, s.content, s.title)} disabled={isAILoading} className="text-xs text-purple-300 bg-purple-900/30 hover:bg-purple-800/50 px-3 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1"><Icons.Bot /> Расширить с ИИ</button>
+                              </div>
+                              <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} className="w-full h-32 glass-input rounded-xl p-4 text-sm resize-none leading-relaxed" placeholder="Опишите характер движения камеры, тональность света, атмосферику..." />
+                            </div>
+
+                            {/* Световая схема и сетап */}
+                            <div className="bg-black/30 p-5 rounded-xl border border-white/10 space-y-4">
+                              <button onClick={() => setExpandedLightSceneId(expandedLightSceneId === s.id ? null : s.id)} className="w-full flex justify-between items-center text-xs font-bold text-amber-300 uppercase tracking-widest hover:text-amber-200 transition-colors">
+                                <span className="flex items-center gap-2"><Icons.Lightbulb/> Световой сетап и приборы {expandedLightSceneId === s.id ? '▲' : '▼'}</span>
+                              </button>
+                              {expandedLightSceneId === s.id && (
+                                <div className="space-y-5 pt-3 border-t border-white/10">
+                                  <div className="flex items-center gap-3">
+                                      <select value={s.lightSchemeId || ''} onChange={e => updateScene(s.id, 'lightSchemeId', e.target.value)} className="glass-input rounded-xl px-3 py-2 text-sm flex-1 bg-zinc-900">
+                                          <option value="">-- Интерактивная схема света --</option>
+                                          {lightSchemes.map(sch => (<option key={sch.id} value={sch.id}>{sch.title}</option>))}
+                                      </select>
+                                      {s.lightSchemeId && <button onClick={() => { setActiveSchemeId(s.lightSchemeId); setActiveDocId(null); setCurrentView('docs'); }} className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 px-4 py-2 rounded-xl text-xs font-bold transition-colors">Открыть схему</button>}
+                                  </div>
+                                  <div>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                                        {Object.entries(lightGearTypes || DEFAULT_LIGHT_GEAR).map(([key, item]) => {
+                                        const count = (s.lightGear && s.lightGear[key]) || 0;
+                                        return (
+                                            <div key={key} className="glass-panel p-3 rounded-xl flex flex-col items-center space-y-3 relative group hover:bg-white/5 transition-all">
+                                            <button onClick={() => setConfirmAction({title:'Удалить прибор?', message:'Удалить позицию из каталога света?', onConfirm:()=> { const up={...lightGearTypes}; delete up[key]; setLightGearTypes(up); deleteNetDoc('lightGearTypes', key); }})} className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-all text-[11px] rounded-md w-6 h-6 flex items-center justify-center bg-black/60">✕</button>
+                                            <span className="text-[11px] md:text-xs font-medium truncate max-w-full text-center px-1 text-zinc-300">
+                                                <span className="inline-block align-middle mr-1 w-3.5 h-3.5 text-amber-400"><Icons.Lightbulb/></span>
+                                                {item.label}
+                                            </span>
+                                            <div className="flex items-center space-x-2 bg-black/50 rounded-lg p-1 border border-white/5">
+                                                <button onClick={() => updateSceneNested(s.id, 'lightGear', key, -1)} className="w-7 h-7 glass-panel rounded-md flex items-center justify-center hover:bg-white/10 text-zinc-300 font-bold transition-colors">-</button>
+                                                <span className="text-xs font-mono font-bold w-4 text-center text-white">{count}</span>
+                                                <button onClick={() => updateSceneNested(s.id, 'lightGear', key, 1)} className="w-7 h-7 glass-panel rounded-md flex items-center justify-center hover:bg-white/10 text-zinc-300 font-bold transition-colors">+</button>
+                                            </div>
+                                            </div>
+                                        );
+                                        })}
+                                    </div>
+                                    <div className="mt-3 flex gap-2">
+                                        <input type="text" placeholder="Новый прибор в каталог..." value={newLightGearName} onChange={e => setNewLightGearName(e.target.value)} className="glass-input px-3 py-2 rounded-xl text-xs flex-1" />
+                                        <button onClick={() => addCustomGear(true)} className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-xs px-3 py-2 rounded-xl font-semibold transition-colors">+ В каталог света</button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Камерная техника */}
+                            <div className="bg-black/30 p-5 rounded-xl border border-white/10 space-y-4">
+                              <label className="text-xs font-bold text-indigo-300 uppercase tracking-widest block ml-1">Съемочная техника и операторский грип</label>
+                              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                                {Object.entries(gearTypes || DEFAULT_GEAR).map(([key, item]) => {
+                                  const count = (s.gear && s.gear[key]) || 0;
+                                  return (
+                                    <div key={key} className="glass-panel p-3 rounded-xl flex flex-col items-center space-y-3 relative group hover:bg-white/5 transition-all">
+                                      <button onClick={() => setConfirmAction({title:'Удалить технику?', message:'Удалить позицию из каталога техники?', onConfirm:()=> { const up={...gearTypes}; delete up[key]; setGearTypes(up); deleteNetDoc('gearTypes', key); }})} className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-all text-[11px] rounded-md w-6 h-6 flex items-center justify-center bg-black/60">✕</button>
+                                      <span className="text-[11px] md:text-xs font-medium truncate max-w-full text-center px-1 text-zinc-300">
+                                          <span className="inline-block align-middle mr-1 w-3.5 h-3.5 text-indigo-400"><Icons.Video/></span>
+                                          {item.label}
+                                      </span>
+                                      <div className="flex items-center space-x-2 bg-black/50 rounded-lg p-1 border border-white/5">
+                                        <button onClick={() => updateSceneNested(s.id, 'gear', key, -1)} className="w-7 h-7 glass-panel rounded-md flex items-center justify-center hover:bg-white/10 text-zinc-300 font-bold transition-colors">-</button>
+                                        <span className="text-xs font-mono font-bold w-4 text-center text-white">{count}</span>
+                                        <button onClick={() => updateSceneNested(s.id, 'gear', key, 1)} className="w-7 h-7 glass-panel rounded-md flex items-center justify-center hover:bg-white/10 text-zinc-300 font-bold transition-colors">+</button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-2 pt-4 border-t border-white/5 flex flex-col sm:flex-row gap-3 sm:items-center">
+                                <span className="text-xs text-zinc-400 font-semibold sm:mr-2 ml-1">Добавить позицию:</span>
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                  <input type="text" placeholder="Напр: Легкий кран..." value={newGearName} onChange={e => setNewGearName(e.target.value)} className="glass-input px-3 py-2 rounded-xl text-sm flex-1 min-w-[140px]" />
+                                  <button onClick={() => addCustomGear(false)} className="bg-indigo-600/40 hover:bg-indigo-600/60 text-white text-xs px-4 py-2 rounded-xl font-semibold transition-colors shrink-0">+ В каталог</button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Раскадровка / Шотлист */}
+                            <div className="space-y-4">
+                              <div className="flex justify-between items-center flex-wrap gap-2">
+                                <div className="flex items-center space-x-4">
+                                  <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest ml-1">Кадры и Раскадровка</span>
+                                  <button onClick={() => setShowImages(!showImages)} className="text-[11px] glass-panel hover:bg-white/10 px-3 py-1.5 rounded-lg text-zinc-300 font-semibold transition-colors">{showImages ? '📝 Только текст' : '🖼️ Показать эскизы'}</button>
+                                </div>
+                                <button onClick={() => {
+                                  const newF = { id: `sb-${Date.now()}`, sceneId: s.id, frameNum: `${s.number}.${frames.length + 1}`, description: '', image: '' };
+                                  setStoryboard([...storyboard, newF]); syncDoc('storyboard', newF.id, newF);
+                                }} className="text-xs text-indigo-300 hover:text-white bg-indigo-600/30 font-bold px-3 py-1.5 rounded-lg transition-colors">+ Добавить кадр</button>
+                              </div>
+
+                              {showImages ? (
+                                <div className="flex space-x-4 overflow-x-auto pb-4 hide-scrollbar snap-x">
+                                  {frames.map(frame => (
+                                    <div key={frame.id} className="snap-center w-52 bg-black/40 rounded-xl border border-white/10 p-3 shrink-0 space-y-2.5 relative group hover:border-indigo-500/40 transition-colors">
+                                      <button onClick={() => setConfirmAction({title:'Удалить кадр?', message:'Отменить действие невозможно.', onConfirm:()=>{ setStoryboard(storyboard.filter(f => f.id !== frame.id)); deleteNetDoc('storyboard', frame.id); }})} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg text-xs z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"><Icons.Trash/></button>
+                                      <div className="aspect-video bg-black/70 rounded-xl flex items-center justify-center overflow-hidden relative border border-white/10">
+                                        {frame.image ? <img src={frame.image} className="w-full h-full object-cover pointer-events-none" /> : (
+                                          <div className="flex w-full h-full">
+                                            <label className="flex-1 border-r border-white/10 hover:bg-white/5 cursor-pointer flex flex-col items-center justify-center transition-colors">
+                                              <span className="text-zinc-400 mb-1"><Icons.Image /></span><span className="text-[10px] text-zinc-400 font-semibold">Файл</span>
+                                              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>{ compressImage(r.result,600,450,(c)=>{ const up=storyboard.map(x=>x.id===frame.id?{...x,image:c}:x); setStoryboard(up); syncDoc('storyboard',frame.id,up.find(x=>x.id===frame.id)); }); }; r.readAsDataURL(f); } }} />
+                                            </label>
+                                            <button onClick={() => setDrawingFrameId(frame.id)} className="flex-1 hover:bg-white/5 flex flex-col items-center justify-center transition-colors">
+                                                <span className="text-zinc-400 mb-1"><Icons.Pen /></span><span className="text-[10px] text-zinc-400 font-semibold">Скетч</span>
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="px-1 pb-1">
+                                          <input type="text" value={frame.description} onChange={(e) => { const up=storyboard.map(x=>x.id===frame.id?{...x,description:e.target.value}:x); setStoryboard(up); syncDoc('storyboard',frame.id,up.find(x=>x.id===frame.id)); }} className="bg-transparent text-xs font-medium text-zinc-200 w-full focus:outline-none border-b border-transparent focus:border-indigo-500 transition-colors pb-1" placeholder="Крупность / План..." />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="flex flex-col space-y-2 bg-black/30 p-2 rounded-xl border border-white/10">
+                                  {frames.map(frame => (
+                                    <div key={frame.id} className="w-full glass-panel rounded-xl border-white/5 px-4 py-3 flex items-center space-x-3 text-sm">
+                                      <span className="font-mono text-indigo-400 font-bold w-12 shrink-0 bg-black/50 px-2 py-1 rounded-lg text-center border border-white/10">{frame.frameNum}</span>
+                                      <input type="text" value={frame.description} onChange={(e) => { const up=storyboard.map(x=>x.id===frame.id?{...x,description:e.target.value}:x); setStoryboard(up); syncDoc('storyboard',frame.id,up.find(x=>x.id===frame.id)); }} className="bg-transparent text-zinc-200 font-medium focus:outline-none flex-1 border-b border-transparent focus:border-indigo-400 transition-colors py-1" placeholder="Детальное описание кадра..." />
+                                      <button onClick={() => setConfirmAction({title:'Удалить кадр?', message:'Отменить действие невозможно.', onConfirm:()=>{ setStoryboard(storyboard.filter(f => f.id !== frame.id)); deleteNetDoc('storyboard', frame.id); }})} className="text-zinc-500 hover:text-red-400 w-8 h-8 rounded-lg bg-black/50 flex items-center justify-center transition-colors"><Icons.Trash/></button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Связанные референсы */}
+                            <div className="space-y-4 pt-4 border-t border-white/10">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Референсы для сцены</label>
+                                <label className="text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                  <span><Icons.Gallery /></span> Загрузить картинки
+                                  <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, s.id)} />
+                                </label>
+                              </div>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                                {sceneRefs.map(ref => (
+                                  <div key={ref.id} className="glass-panel rounded-xl overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, currentId: ref.id })}>
+                                    <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={{backgroundImage: `url(${ref.url})`}}></div>
+                                    <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                    <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-10" draggable="false" />
+                                    <div className="absolute bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md p-1.5 border-t border-white/10 z-20" onClick={e=>e.stopPropagation()}>
+                                        <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-[11px] font-bold text-center text-zinc-300 truncate focus:outline-none placeholder-zinc-600" placeholder="Подпись..." />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* ГАЛЕРЕЯ РЕФЕРЕНСОВ */}
+                  <div className={`h-full w-full overflow-y-auto ${currentView === 'gallery' ? 'block' : 'hidden'}`}>
+                    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6 pb-24">
+                        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-white/10 pb-5 gap-4">
+                            <h2 className="text-xl font-extrabold text-white flex items-center gap-2"><Icons.Gallery /> Общая Галерея Референсов</h2>
+                            <div className="flex gap-3 w-full sm:w-auto">
+                                <div className="glass-input rounded-xl px-4 py-2 flex items-center gap-2 w-full sm:w-64">
+                                    <span className="text-zinc-400"><Icons.Tag /></span>
+                                    <input type="text" placeholder="Поиск по тегам..." value={tagSearch} onChange={e => setTagSearch(e.target.value)} className="bg-transparent border-none text-sm text-white focus:outline-none w-full" />
+                                </div>
+                                <label className="text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-xl transition-colors flex items-center justify-center shrink-0">
+                                    + Загрузить
+                                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                                </label>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                            {references.filter(r => !tagSearch || (r.tags && r.tags.some(t => t.toLowerCase().includes(tagSearch.toLowerCase())))).map(ref => (
+                                <div key={ref.id} className="glass-panel rounded-xl overflow-hidden flex flex-col group border-t border-white/10">
+                                    <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => setLightboxData({ sceneId: null, currentId: ref.id })}>
+                                        <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={{backgroundImage: `url(${ref.url})`}}></div>
+                                        <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                        <img src={ref.url} className="w-full h-full object-contain relative z-10" draggable="false" />
+                                    </div>
+                                    <div className="p-3 space-y-2 bg-black/30">
+                                        <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
+                                        <div className="flex flex-wrap gap-1">
+                                            {(ref.tags || []).map((tag, idx) => (
+                                                <span key={idx} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                    {tag} <button onClick={() => { const up = references.map(r => r.id === ref.id ? {...r, tags: r.tags.filter((_, i) => i !== idx)} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="hover:text-white">✕</button>
+                                                </span>
+                                            ))}
+                                            <input type="text" placeholder="+ тег" onKeyDown={e => { if(e.key === 'Enter' && e.target.value.trim()){ const nt = e.target.value.trim().toLowerCase(); const currentTags = ref.tags || []; if(!currentTags.includes(nt)){ const up = references.map(r => r.id === ref.id ? {...r, tags: [...currentTags, nt]} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); } e.target.value = ''; } }} className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-16" />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                  </div>
+
+                  {/* МАСТЕР-ДОК */}
+                  <div className={`h-full w-full overflow-y-auto ${currentView === 'master' ? 'block' : 'hidden'}`}>
+                    <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6 pb-24">
+                      {scenes.map(s => {
+                        const sceneFrames = storyboard.filter(f => f.sceneId === s.id);
+                        return (
+                          <div key={s.id} className="glass-panel p-6 md:p-8 rounded-xl space-y-5">
+                            <div className="flex justify-between items-center border-b border-white/10 pb-4 relative z-10">
+                              <span className="font-mono text-white font-extrabold text-sm md:text-lg">СЦЕНА #{s.number} | {s.title}</span>
+                              <span className="text-[11px] md:text-xs text-zinc-400 font-mono bg-black/50 px-3 py-1 rounded-lg border border-white/10 font-semibold">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
+                            </div>
+                            <p className="text-sm text-zinc-300 bg-black/30 p-4 rounded-xl border border-white/5 leading-relaxed relative z-10 font-medium">{s.content || 'Описание отсутствует'}</p>
+                            
+                            {sceneFrames.length > 0 && (
+                              <div className="space-y-3 pt-3 relative z-10">
+                                <span className="text-[11px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest block ml-1">Раскадровка / План смены:</span>
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+                                  {sceneFrames.map(frame => (
+                                    <div key={frame.id} className="bg-black/40 rounded-xl border border-white/10 p-2.5 flex flex-col space-y-2">
+                                      {frame.image && (<div className="aspect-video bg-black/60 rounded-xl overflow-hidden border border-white/5"><img src={frame.image} className="w-full h-full object-cover pointer-events-none" draggable="false" /></div>)}
+                                      <div className="text-[11px] md:text-xs leading-tight flex flex-col space-y-1.5 p-1">
+                                        <span className="font-mono text-indigo-400 font-bold bg-indigo-500/10 self-start px-2 py-0.5 rounded-md">{frame.frameNum}</span>
+                                        <span className="text-zinc-400 font-medium line-clamp-4">{frame.description || '...'}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ИНТЕРАКТИВНАЯ ДОСКА (WHITEBOARD) */}
+                  <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'block' : 'hidden'}`}>
+                    <div id="whiteboard-canvas" className="w-full h-full bg-[radial-gradient(rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:24px_24px] relative overflow-hidden" 
+                    onWheel={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                        const nz = Math.min(2.0, Math.max(0.3, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+                        const k = nz / zoom;
+                        setCanvasOffset({ x: mx - (mx - canvasOffset.x) * k, y: my - (my - canvasOffset.y) * k });
+                        setZoom(nz);
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); handleMultiFileUpload(e.dataTransfer.files, null); }}
+                    onPointerDown={(e) => {
+                        if (wbMode === 'select' && e.target.id === 'wb-container') {
+                            const rect = canvasRef.current.getBoundingClientRect();
+                            const x = (e.clientX - rect.left) / zoom;
+                            const y = (e.clientY - rect.top) / zoom;
+                            setSelectionBox({ startX: x, startY: y, currentX: x, currentY: y, pointerId: e.pointerId });
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                        }
+                    }}
+                    onPointerMove={(e) => {
+                        if (selectionBox && selectionBox.pointerId === e.pointerId) {
+                            const rect = canvasRef.current.getBoundingClientRect();
+                            const x = (e.clientX - rect.left) / zoom;
+                            const y = (e.clientY - rect.top) / zoom;
+                            setSelectionBox({ ...selectionBox, currentX: x, currentY: y });
+                        }
+                        handleDragMove(e);
+                    }}
+                    onPointerUp={(e) => {
+                        if (selectionBox && selectionBox.pointerId === e.pointerId) {
+                            if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                e.currentTarget.releasePointerCapture(e.pointerId);
+                            }
+                            if (Math.abs(selectionBox.startX - selectionBox.currentX) < 5 && Math.abs(selectionBox.startY - selectionBox.currentY) < 5) {
+                                setSelectedWbItems([]);
+                            } else {
+                                const minX = Math.min(selectionBox.startX, selectionBox.currentX);
+                                const maxX = Math.max(selectionBox.startX, selectionBox.currentX);
+                                const minY = Math.min(selectionBox.startY, selectionBox.currentY);
+                                const maxY = Math.max(selectionBox.startY, selectionBox.currentY);
+                                
+                                const newSelected = [];
+                                const checkInt = (item, w, h) => {
+                                    if (item.x < maxX && item.x + w > minX && item.y < maxY && item.y + h > minY) newSelected.push(item.id);
+                                };
+                                scenes.forEach(s => checkInt(s, 288, 150));
+                                references.forEach(r => checkInt(r, 192, 150));
+                                stickies.forEach(st => checkInt(st, 224, 100));
+                                setSelectedWbItems(newSelected);
+                            }
+                            setSelectionBox(null);
+                        }
+                        handleDragUp(e);
+                        if (linkingFromRefId) {
+                            if (hoveredSceneId) { const up = references.map(r => r.id === linkingFromRefId ? { ...r, sceneId: hoveredSceneId } : r); setReferences(up); syncDoc('references', linkingFromRefId, up.find(r => r.id === linkingFromRefId)); }
+                            setLinkingFromRefId(null);
+                        }
+                    }}>
+                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px' }}>
+                        
+                        {selectionBox && (
+                            <div className="absolute border border-indigo-500 bg-indigo-500/20 z-50 pointer-events-none" style={{
+                                left: Math.min(selectionBox.startX, selectionBox.currentX),
+                                top: Math.min(selectionBox.startY, selectionBox.currentY),
+                                width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                                height: Math.abs(selectionBox.currentY - selectionBox.startY)
+                            }} />
+                        )}
+
+                        <svg className="absolute inset-0 pointer-events-none w-[4000px] h-[4000px] z-0">
+                          {references.map(ref => {
+                            if (!ref.sceneId) return null; const t = scenes.find(s => s.id === ref.sceneId); if (!t) return null;
+                            const sx = ref.x + 192; const sy = ref.y + 60; const ex = t.x; const ey = t.y + 50;
+                            return (<path key={`link-${ref.id}`} d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "#d97757" : "rgba(217,119,87,0.6)"} strokeWidth={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "4" : "3"} strokeDasharray="6 6" />);
+                          })}
+                          {linkingFromRefId && references.find(r => r.id === linkingFromRefId) && (() => {
+                             const r = references.find(x => x.id === linkingFromRefId); const sx = r.x + 192; const sy = r.y + 60;
+                             let ex = (mousePos.x - canvasRef.current?.getBoundingClientRect().left) / zoom; let ey = (mousePos.y - canvasRef.current?.getBoundingClientRect().top) / zoom;
+                             return <path d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#d97757" strokeWidth="4" />;
+                          })()}
+                        </svg>
+
+                        <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
+                          if (wbMode === 'select') return;
+                          if (wbMode === 'pan') { 
+                              e.currentTarget.setPointerCapture(e.pointerId);
+                              setIsPanning(true); 
+                              setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y }); 
+                              return; 
+                          }
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          const rect = paintCanvasRef.current.getBoundingClientRect(); const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
+                          const press = e.pressure !== undefined && e.pressure > 0 ? e.pressure : 0.5;
+                          setIsPainting(true); lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
+                          const ctx = paintCanvasRef.current.getContext('2d'); ctx.beginPath(); ctx.arc(coords.x, coords.y, (brushSize * (0.4 + press * 1.2)) / 2, 0, Math.PI * 2); if (wbMode !== 'erase') { ctx.fillStyle = brushColor; ctx.fill(); }
+                        }} onPointerMove={(e) => {
+                          if (isPanning && wbMode === 'pan') { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
+                          if (!isPainting || wbMode === 'select') return;
+                          const ctx = paintCanvasRef.current.getContext('2d'); const rect = paintCanvasRef.current.getBoundingClientRect(); const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
+                          const cT = Date.now(); const dist = Math.hypot(coords.x - lastPoint.current.x, coords.y - lastPoint.current.y);
+                          let press = e.pressure !== undefined && e.pressure > 0 ? e.pressure : 0.5; if (e.pointerType === 'touch' || e.pointerType === 'mouse') press = Math.max(0.1, 1 - (dist / (cT - lastPoint.current.time || 1)) * 0.15);
+                          ctx.save();
+                          if (wbMode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = 40; ctx.strokeStyle = 'rgba(0,0,0,1)'; } else {
+                              ctx.strokeStyle = brushColor; ctx.lineWidth = brushSize * (0.3 + press * 1.4); ctx.globalAlpha = brushType === 'marker' ? 0.3 : 1.0; ctx.globalCompositeOperation = brushType === 'marker' ? 'screen' : 'source-over';
+                          }
+                          ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(lastPoint.current.x, lastPoint.current.y); ctx.quadraticCurveTo(lastPoint.current.x, lastPoint.current.y, (lastPoint.current.x + coords.x) / 2, (lastPoint.current.y + coords.y) / 2); ctx.lineTo(coords.x, coords.y); ctx.stroke(); ctx.restore();
+                          lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: cT };
+                        }} onPointerUp={(e) => { 
+                          if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
+                            e.target.releasePointerCapture(e.pointerId);
+                          }
+                          setIsPainting(false); setIsPanning(false); 
+                          if (paintCanvasRef.current) { const dU = paintCanvasRef.current.toDataURL(); localStorage.setItem('cf_canvas_draw', dU); if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc('globalDraw').set({ dataUrl: dU, lastDrawBy: user.uid }); } 
+                        }} onPointerCancel={() => { setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-10 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
+
+                        <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
+                            {scenes.map(s => (
+                            <div key={s.id} data-scene-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-xl cursor-move overflow-hidden pointer-events-auto hover:border-indigo-500/50 transition-all group ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
+                                <div className="bg-white/5 px-4 py-2.5 border-b border-white/10 flex justify-between items-center"><span className="text-[11px] font-mono text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1"><Icons.Scene/> Сцена #{s.number}</span></div>
+                                <div className="p-4 space-y-2">
+                                <input type="text" value={s.title} onChange={(e) => updateScene(s.id, 'title', e.target.value)} className="w-full bg-transparent text-sm font-black text-white focus:outline-none" />
+                                <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} rows="2" className="w-full bg-black/50 border border-white/10 rounded-xl p-2.5 text-[11px] text-zinc-300 resize-none focus:outline-none focus:border-indigo-500/50 transition-colors font-medium" />
+                                </div>
+                            </div>
+                            ))}
+
+                            {references.map(ref => (
+                            <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, position: 'absolute' }} className={`w-48 glass-panel p-2.5 rounded-xl cursor-move pointer-events-auto group hover:border-indigo-500/50 transition-all ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'}`}>
+                                <div className="relative aspect-video bg-black/60 rounded-xl overflow-hidden border border-white/10">
+                                <button onClick={() => setConfirmAction({title:'Удалить референс?', message:'Убрать с доски?', onConfirm:()=> { setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
+                                {ref.url ? <img src={ref.url} className="w-full h-full object-cover pointer-events-none" draggable="false" /> : (
+                                    <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
+                                    <span className="mb-1"><Icons.Gallery/></span><span>Загрузить</span>
+                                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                                    </label>
+                                )}
+                                </div>
+                                <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r => r.id === ref.id ? { ...r, label: e.target.value } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }} className="w-full bg-transparent text-[11px] text-center font-bold text-zinc-300 focus:outline-none mt-2 placeholder-zinc-600" placeholder="Подпись..." />
+                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFromRefId(ref.id); }} className="node-handle absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
+                            </div>
+                            ))}
+
+                            {stickies.map(st => (
+                            <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')} style={{ left: `${st.x}px`, top: `${st.y}px`, position: 'absolute', backgroundColor: st.color }} className={`w-56 p-4 rounded-xl cursor-move pointer-events-auto z-20 text-zinc-900 transform rotate-1 hover:rotate-0 transition-all group ${selectedWbItems.includes(st.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : ' border border-white/20'}`}>
+                                <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors opacity-0 group-hover:opacity-100">✕</button>
+                                <textarea value={st.text} onChange={(e) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: e.target.value } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }} className="w-full bg-transparent border-none text-[13px] focus:outline-none h-20 resize-none font-bold text-zinc-900 leading-tight placeholder-black/50" placeholder="Текст заметки..." />
+                            </div>
+                            ))}
+                        </div>
+                      </div>
+
+                      <div className="absolute top-2 md:top-6 left-2 md:left-6 glass-panel p-2 rounded-xl flex flex-row md:flex-col gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar">
+                        <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
+                        <button onClick={() => setWbMode('draw')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
+                        <button onClick={() => setWbMode('erase')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
+                        <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
+                        <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1"></div>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-xl shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-xl shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на холсте будут стираться.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); localStorage.removeItem('cf_canvas_draw'); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-xl shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                      </div>
+
+                      {wbMode === 'draw' && (
+                        <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-xl flex flex-col space-y-4 z-30 w-52 border-t border-white/10">
+                          <div className="flex bg-black/50 p-1.5 rounded-xl border border-white/5">
+                              <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
+                              <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Размер</span><span>{brushSize}px</span></div>
+                            <input type="range" min="2" max="32" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
+                          </div>
+                          <div className="space-y-2">
+                            <span className="text-[11px] text-zinc-400 font-bold uppercase tracking-wider block">Цвет</span>
+                            <div className="grid grid-cols-6 gap-2">
+                              {['#d97757', '#fbbf24', '#fb7185', '#34d399', '#38bdf8', '#f4f4f5'].map(color => (<button key={color} onClick={() => setBrushColor(color)} style={{ backgroundColor: color }} className={`w-6 h-6 rounded-full border-2 ${brushColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-xl flex items-center space-x-3 z-30 border-t border-white/10">
+                        <button onClick={() => setZoom(prev => Math.max(0.3, prev - 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-xl text-lg font-bold transition-colors">-</button>
+                        <span className="text-xs font-bold font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
+                        <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-xl text-lg font-bold transition-colors">+</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ТАБЛИЦА СМЕН И КПП */}
+                  <div className={`h-full w-full overflow-y-auto ${currentView === 'table' ? 'block' : 'hidden'}`}>
+                    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 pb-24">
+                      <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-white/10 pb-5 gap-4">
+                        <h2 className="text-xl font-bold text-white flex items-center gap-2"><Icons.Table/> Таблица Планирования и Смен</h2>
+                        <div className="flex glass-panel p-1.5 rounded-xl border border-white/5">
+                          <button onClick={() => setTableSubView('list')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${tableSubView === 'list' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Общий список</button>
+                          <button onClick={() => setTableSubView('grouped')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Группировка по сменам</button>
+                        </div>
+                      </div>
+
+                      {tableSubView === 'list' ? (
+                        <div className="glass-panel rounded-xl overflow-x-auto border border-white/10">
+                          <table className="w-full min-w-[700px] text-left border-collapse text-sm">
+                            <thead><tr className="bg-white/5 border-b border-white/10 text-zinc-400 uppercase tracking-widest text-[11px] font-bold"><th className="p-5 w-20 text-center">Сцена</th><th className="p-5 w-44">Дата съемки</th><th className="p-5 w-1/3">Объект / Заголовок</th><th className="p-5">Камерный сетап</th></tr></thead>
+                            <tbody className="divide-y divide-white/5 text-zinc-200">
+                              {scenes.map(s => (
+                                <tr key={s.id} className="hover:bg-white/5 transition-colors">
+                                  <td className="p-5 font-mono text-center text-indigo-400 font-extrabold bg-black/30">#{s.number}</td>
+                                  <td className="p-5"><input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)} className="glass-input rounded-lg px-3 py-1.5 font-mono transition-colors text-xs" /></td>
+                                  <td className="p-5 font-bold">{s.title}</td>
+                                  <td className="p-5">
+                                    <div className="flex flex-wrap gap-2">
+                                      {Object.entries(gearTypes || DEFAULT_GEAR).map(([key, item]) => {
+                                        const count = (s.gear && s.gear[key]) || 0;
+                                        if (count === 0) return null;
+                                        return (
+                                          <div key={key} className="flex items-center space-x-2 bg-black/50 px-2.5 py-1.5 rounded-lg border border-white/5">
+                                            <span className="text-[11px] text-indigo-400"><Icons.Video/></span>
+                                            <span className="text-xs text-zinc-300 font-medium">{item.label}:</span>
+                                            <span className="font-mono text-xs font-bold text-white">{count}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (() => {
+                        const grouped = {}; scenes.forEach(s => { const dk = s.date || ''; if (!grouped[dk]) grouped[dk] = []; grouped[dk].push(s); });
+                        const sortedDates = Object.keys(grouped).sort((a, b) => { if (!a) return 1; if (!b) return -1; return new Date(a) - new Date(b); });
+                        return (
+                          <div className="space-y-8">
+                            {sortedDates.map(dateKey => {
+                              const dayScenes = grouped[dateKey]; const summary = {}; Object.keys(gearTypes || DEFAULT_GEAR).forEach(k => { summary[k] = 0; });
+                              dayScenes.forEach(s => { const gear = s.gear || {}; Object.keys(gear).forEach(k => { if (summary[k] !== undefined) summary[k] += (gear[k] || 0); else summary[k] = (gear[k] || 0); }); });
+                              const hasSummary = Object.values(summary).some(v => v > 0);
+                              return (
+                                <div key={dateKey || 'unassigned'} className="glass-panel rounded-xl overflow-hidden border-t border-white/10">
+                                  <div className="bg-white/5 px-6 py-4 border-b border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                    <div className="flex items-center space-x-4">
+                                      <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `СМЕНА: ${formatDateDisplay(dateKey)}` : 'СЦЕНЫ ВНЕ СМЕН'}</span>
+                                      <span className="text-zinc-600">|</span>
+                                      <span className="text-xs font-bold text-zinc-300 bg-black/50 px-3 py-1 rounded-full border border-white/10">{dayScenes.length} сцен</span>
+                                    </div>
+                                    {hasSummary && (<div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-2">Итого техника:</span>{Object.entries(summary).map(([key, totalQty]) => { if (totalQty === 0) return null; const item = (gearTypes || DEFAULT_GEAR)[key] || { label: key }; return (<span key={key} className="bg-indigo-950/60 text-indigo-200 text-xs px-3 py-1 rounded-xl font-mono font-semibold flex items-center space-x-2"><span className="text-indigo-400"><Icons.Video/></span><span>{item.label}</span><span className="font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md">{totalQty}</span></span>); })}</div>)}
+                                  </div>
+                                  <div className="divide-y divide-white/5">
+                                    {dayScenes.map(s => (
+                                      <div key={s.id} className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white/5 transition-colors">
+                                        <div className="flex items-start space-x-4 flex-1">
+                                          <span className="font-mono text-indigo-400 font-black text-sm shrink-0 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg mt-0.5">#{s.number}</span>
+                                          <div className="space-y-1.5">
+                                            <h4 className="text-sm font-bold text-white tracking-wide">{s.title || 'Без названия'}</h4>
+                                            <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || '...'}</p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* ЭКСПЛИКАЦИИ И ДОКУМЕНТЫ */}
+                  <div className={`h-full w-full ${currentView === 'docs' ? 'block' : 'hidden'}`}>
+                    <div className="flex flex-col lg:flex-row h-full max-w-7xl mx-auto p-4 md:p-6 gap-6 overflow-y-auto lg:overflow-hidden">
+                      <div className="w-full lg:w-72 glass-panel p-5 rounded-xl flex flex-col shrink-0 relative border-t border-white/10 overflow-hidden">
+                        <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
+                          <div>
+                              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Операторские Гайды</span>
+                              {docs.map(doc => (
+                                <div key={doc.id} className="group relative mb-2">
+                                  <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null);}} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}>{doc.title}</button>
+                                  {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>)}
+                                </div>
+                              ))}
+                              <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
+                          </div>
+                          <div className="pt-4 border-t border-white/10">
+                              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Схемы Света</span>
+                              {lightSchemes.map(sch => (
+                                <div key={sch.id} className="group relative mb-2">
+                                  <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
+                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
+                                </div>
+                              ))}
+                              <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Текстовый документ */}
+                      {activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
+                        const activeDoc = docs.find(d => d.id === activeDocId);
+                        return (
+                          <div className="flex-1 glass-panel p-6 md:p-8 rounded-xl flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-white/10">
+                            <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
+                            <textarea value={activeDoc.content} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="w-full flex-1 glass-input rounded-xl p-6 text-sm md:text-base min-h-[300px] lg:min-h-0 transition-shadow leading-relaxed resize-none font-medium border border-white/10" placeholder="Содержание документа..." />
+                            
+                            <div className="space-y-4 border-t border-white/10 pt-6">
+                              <div className="flex justify-between items-center px-1">
+                                <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
+                                <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
+                              </div>
+                              <div className="glass-panel rounded-xl overflow-x-auto border border-white/5">
+                                <table className="w-full min-w-[500px] text-left text-sm border-collapse">
+                                  <thead><tr className="bg-white/5 text-zinc-400 text-[11px] uppercase tracking-widest font-bold border-b border-white/10"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
+                                  <tbody className="divide-y divide-white/5 text-zinc-200">
+                                    {crew.map(c => (
+                                      <tr key={c.id} className="hover:bg-white/5 transition-colors">
+                                        <td className="p-2"><input type="text" value={c.name} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,name:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-white focus:outline-none font-bold placeholder-zinc-600" placeholder="ФИО" /></td>
+                                        <td className="p-2"><input type="text" value={c.role} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,role:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-zinc-400 font-medium focus:outline-none placeholder-zinc-600" placeholder="Роль" /></td>
+                                        <td className="p-2"><input type="text" value={c.phone} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,phone:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 font-mono font-medium focus:outline-none placeholder-zinc-600" placeholder="+7..." /></td>
+                                        <td className="p-2 text-center"><button onClick={() => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); }} className="w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      
+                      {/* Схема света */}
+                      {activeSchemeId && lightSchemes.find(s=>s.id === activeSchemeId) && (() => {
+                          const sch = lightSchemes.find(s=>s.id === activeSchemeId);
+                          return (
+                            <div className="flex-1 glass-panel p-6 md:p-8 rounded-xl flex flex-col space-y-6 lg:overflow-y-auto relative">
+                                <div className="flex justify-between items-center gap-4">
+                                    <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
+                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-xl font-bold transition-colors shrink-0">Открыть графический редактор</button>
+                                </div>
+                                <div className="w-full aspect-video bg-black/70 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden">
+                                    {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
+                                </div>
+                                <div className="pt-4 border-t border-white/10">
+                                    <span className="text-xs text-zinc-400 font-bold block mb-2">Привязано к сценам:</span>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {scenes.filter(s=>s.lightSchemeId===sch.id).length > 0 
+                                            ? scenes.filter(s=>s.lightSchemeId===sch.id).map(s=>(<span key={s.id} className="bg-indigo-950/60 px-3 py-1 rounded-lg text-xs font-mono text-indigo-300">Сцена #{s.number}</span>))
+                                            : <span className="text-xs text-zinc-600">Схема не привязана ни к одной сцене</span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                          );
+                      })()}
+
+                      {/* Правая колонка: Файлы */}
+                      <div className="w-full lg:w-80 glass-panel p-6 rounded-xl shrink-0 space-y-8 relative border-t border-white/10">
+                        <div className="space-y-3">
+                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Экспорт / Печать</span>
+                          <button onClick={() => window.print()} className="w-full py-4 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-white text-sm font-bold tracking-wide transition-all flex items-center justify-center space-x-2 border border-white/10">
+                            <span><Icons.Print/></span><span>Сформировать PDF</span>
+                          </button>
+                        </div>
+                        <div className="space-y-4 pt-6 border-t border-white/10">
+                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Файлы и документы проекта</span>
+                          <div className="border border-dashed border-white/20 hover:border-indigo-500/50 rounded-xl p-6 text-center bg-black/30 hover:bg-indigo-500/10 transition-all group">
+                            <label className="text-xs font-bold text-zinc-400 group-hover:text-indigo-300 cursor-pointer block w-full h-full flex flex-col items-center gap-2">
+                              <span className="opacity-60 group-hover:opacity-100 transition-opacity"><Icons.Folder/></span>
+                              <span>Загрузить КПП или доки</span>
+                              <input type="file" onChange={(e) => { const f = e.target.files[0]; if (!f) return; if (f.size > 4 * 1024 * 1024) { showToast('❌ Файл больше 4 МБ'); e.target.value = ''; return; } const r = new FileReader(); r.onloadend = () => { const nF = { id: `file-${Date.now()}`, name: f.name, size: `${(f.size / 1024).toFixed(1)} KB`, data: r.result }; setProjectFiles([...projectFiles, nF]); if (r.result.length < 900 * 1024) { syncDoc('projectFiles', nF.id, nF); showToast(`Загружен: ${f.name}`); } else { showToast(`📁 Сохранён локально — слишком большой для облака: ${f.name}`); } }; r.readAsDataURL(f); }} accept=".pdf,.xlsx,.csv,.txt,.png,.jpg" className="hidden" />
+                            </label>
+                          </div>
+                          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 hide-scrollbar">
+                            {projectFiles.map(file => (
+                              <div key={file.id} className="glass-panel p-4 rounded-xl flex flex-col space-y-3 group hover:border-indigo-500/30 transition-colors border border-white/5">
+                                <div className="truncate flex flex-col">
+                                  <span className="text-sm text-zinc-200 truncate font-bold tracking-wide" title={file.name}>{file.name}</span>
+                                  <span className="text-[11px] font-mono text-zinc-500 mt-0.5">{file.size}</span>
+                                </div>
+                                <div className="flex gap-2 justify-end">
+                                  {file.data !== '#' && (<a href={file.data} download={file.name} className="flex-1 text-emerald-400 font-bold px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-all text-center text-xs">Скачать</a>)}
+                                  <button onClick={() => setConfirmAction({title:'Удалить файл?', message: '', onConfirm:()=>{ setProjectFiles(projectFiles.filter(f=>f.id!==file.id)); deleteNetDoc('projectFiles', file.id); }})} className="w-10 flex items-center justify-center text-zinc-500 hover:text-red-400 font-bold rounded-lg bg-black/50 hover:bg-white/10 transition-colors text-xs border border-white/5"><Icons.Trash/></button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* ЧАТ КОМАНДЫ */}
+                {showChat && <div className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-sm" onClick={() => setShowChat(false)}></div>}
+                <div className={`fixed inset-y-0 right-0 z-50 md:relative md:z-10 glass-panel flex flex-col h-full transition-transform duration-300 ease-out md:shadow-none md:border-l border-white/10 ${showChat ? 'translate-x-0 w-[85%] sm:w-80' : 'translate-x-full md:translate-x-0 w-0 border-none'}`}>
+                  
+                  <div className="p-5 border-b border-white/10 space-y-4 bg-white/5 relative">
+                    <button onClick={() => setShowChat(false)} className="md:hidden absolute top-4 right-4 w-8 h-8 flex items-center justify-center glass-panel rounded-full text-zinc-400 font-bold">✕</button>
+                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block">Профиль участника</span>
+                    <div className="flex flex-col gap-3">
+                      <div className="glass-panel rounded-xl px-4 py-3 flex items-center border border-white/10">
+                        <span className="text-zinc-300 mr-3"><Icons.User/></span>
+                        <div className="flex flex-col">
+                            <span className="text-sm font-extrabold text-white">{userName}</span>
+                            <span className="text-xs text-indigo-400 font-bold">{userRole}</span>
+                        </div>
+                      </div>
+                      <button onClick={() => setShowWelcome(true)} className="text-xs font-semibold text-zinc-500 hover:text-indigo-400 transition-colors text-left pl-1 underline decoration-zinc-700 hover:decoration-indigo-500 underline-offset-4">Изменить имя/роль</button>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 p-5 overflow-y-auto space-y-4 hide-scrollbar flex flex-col relative bg-black/30">
+                    {messages.map(msg => {
+                        const isMe = msg.senderId ? msg.senderId === clientId : (msg.senderName === userName && msg.senderRole === userRole);
+                        return (
+                          <div key={msg.id} className={`flex flex-col max-w-[85%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
+                            <div className={`flex items-baseline space-x-1.5 mb-1 ${isMe ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                              <span className="text-[11px] font-extrabold text-zinc-400">{msg.senderName}</span>
+                              <span className="text-[10px] text-zinc-500 font-mono font-semibold">{msg.senderRole}</span>
+                            </div>
+                            <div className={`px-4 py-2.5 rounded-xl text-[13px] font-medium leading-relaxed border ${isMe ? 'bg-indigo-600 text-white border-indigo-500/50 rounded-tr-sm' : 'glass-panel text-zinc-200 rounded-tl-sm border-white/10'}`}>
+                              {msg.text}
+                            </div>
+                          </div>
+                        );
+                    })}
+                    {messages.length === 0 && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-600">
+                            <span className="mb-2"><Icons.Chat/></span>
+                            <span className="text-xs font-bold uppercase tracking-widest">Чат цеха</span>
+                        </div>
+                    )}
+                  </div>
+
+                  <div className="p-4 border-t border-white/10 bg-black/50">
+                    <div className="flex glass-input rounded-xl p-1.5 transition-all">
+                        <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && chatInput.trim()){ const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); } }} className="flex-1 bg-transparent px-3 text-sm font-medium text-white focus:outline-none placeholder-zinc-500" placeholder="Сообщение..." />
+                        <button onClick={() => { if(!chatInput.trim()) return; const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); }} className="bg-indigo-600 hover:bg-indigo-500 text-white w-10 h-10 rounded-xl flex items-center justify-center transition-colors font-bold">↑</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* МОДАЛЬНЫЕ ОКНА */}
+              {showShareModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                  <div className="glass-panel rounded-xl p-8 max-w-md w-full relative">
+                    <button onClick={() => setShowShareModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
+                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-4 mb-6">
+                      <p>Для совместной работы в реальном времени разверните этот файл на хостинге.</p>
+                      <div className="bg-black/40 p-4 rounded-xl border border-white/10 text-xs">
+                          <span className="font-extrabold text-indigo-400 block mb-2">Публикация (за 1 минуту):</span>
+                          <ol className="list-decimal pl-4 space-y-1.5 text-zinc-300">
+                              <li>Сохраните этот код как <span className="font-mono font-bold text-white bg-white/10 px-1 py-0.5 rounded border border-white/20">index.html</span>.</li>
+                              <li>Откройте сервис <a href="https://app.netlify.com/drop" target="_blank" className="text-indigo-400 hover:underline font-extrabold">Netlify Drop</a>.</li>
+                              <li>Перетащите файл в браузер и отправьте полученный URL команде!</li>
+                          </ol>
+                      </div>
+                    </div>
+                    <div className="mb-4">
+                      <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Код комнаты проекта</label>
+                      <div className="flex gap-2">
+                        <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-xl px-4 py-2.5 text-sm font-mono" />
+                        <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 rounded-xl transition-colors">Войти</button>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">У всех участников проекта должен быть одинаковый код комнаты.</p>
+                    </div>
+                    <div className="bg-black/50 p-2 pl-4 rounded-xl border border-white/10 flex items-center justify-between gap-3">
+                      <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{window.location.href}</span>
+                      <button onClick={() => { navigator.clipboard.writeText(window.location.href).then(() => showToast('Ссылка скопирована!')).catch(() => { const t = document.createElement('input'); t.value = window.location.href; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка скопирована!'); }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showProjectModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                  <div className="glass-panel rounded-xl p-8 max-w-md w-full relative">
+                    <button onClick={() => setShowProjectModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                    <h3 className="text-xl font-extrabold text-white mb-6 flex items-center gap-2"><Icons.Folder/> Управление проектом</h3>
+                    <div className="space-y-3">
+                      <div className="mb-2">
+                        <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Ключ Gemini API (для ИИ-функций)</label>
+                        <input type="password" value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." className="w-full glass-input rounded-xl px-4 py-3 text-sm font-mono" />
+                        <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
+                      </div>
+                      <button onClick={() => {
+                        const d = { scenes, storyboard, references, stickies, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvasData: localStorage.getItem('cf_canvas_draw') || '' };
+                        const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                        showToast("Резервная копия проекта сохранена!");
+                      }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-xl text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
+                      
+                      <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-xl text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
+                        <span>📂 Импортировать из JSON</span>
+                        <input type="file" accept=".json" onChange={(e) => {
+                          const f = e.target.files[0]; if (!f) return; const r = new FileReader();
+                          r.onload = (ev) => {
+                            try { const d = JSON.parse(ev.target.result); if (d.scenes) setScenes(d.scenes); if (d.storyboard) setStoryboard(d.storyboard); if (d.references) setReferences(d.references); if (d.stickies) setStickies(d.stickies); if (d.docs) setDocs(d.docs); if (d.crew) setCrew(d.crew); if (d.gearTypes) setGearTypes(d.gearTypes); if(d.lightGearTypes) setLightGearTypes(d.lightGearTypes); if(d.lightSchemes) setLightSchemes(d.lightSchemes); if (d.projectFiles) setProjectFiles(d.projectFiles); if (d.canvasData) { localStorage.setItem('cf_canvas_draw', d.canvasData); const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = d.canvasData; } } setShowProjectModal(false); showToast("Проект успешно восстановлен!"); } catch (err) { showToast("Ошибка структуры файла JSON!"); }
+                          }; r.readAsText(f);
+                        }} className="hidden" />
+                      </label>
+                      
+                      <button onClick={() => setConfirmAction({title:'Сбросить все данные?', message:'Создать абсолютно новый чистый проект?', onConfirm:()=>{
+                        setScenes(initialScenes); setStoryboard([]); setReferences([]); setStickies([]); setDocs(initialDocs); setCrew([]); setGearTypes({ steadicam: { label: 'Стедикам' }, crane: { label: 'Кран' }, drone: { label: 'Коптер' } }); setLightGearTypes({ arri600: { label: 'ARRI Skypanel 600' }, astera: { label: 'Astera Titan Tube' }, aputure: { label: 'Aputure 300d' } }); setLightSchemes([]); setProjectFiles([]); const c = paintCanvasRef.current; if (c) { c.getContext('2d').clearRect(0, 0, c.width, c.height); localStorage.removeItem('cf_canvas_draw'); } setShowProjectModal(false); showToast("Создан чистый проект");
+                      }})} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-xl text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showAgentModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                  <div className="glass-panel rounded-xl p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
+                    <button onClick={() => setShowAgentModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> ИИ-Агент импорта КПП</h3>
+                    
+                    <div className="space-y-6">
+                      <div className="bg-black/40 p-4 rounded-xl border border-white/10">
+                        <h4 className="text-sm font-bold text-indigo-300 mb-2">Загрузка файла таблицы (.xlsx / .csv)</h4>
+                        <p className="text-xs text-zinc-400 mb-3">Загрузите файл КПП от Второго Режиссера, и ИИ распарсит матрицу смен и сцен.</p>
+                        <label className="w-full bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 px-4 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
+                          {isAILoading ? '⏳ Обработка нейросетью...' : '📁 Выбрать КПП (.xlsx / .csv)'}
+                          <input type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => { handleAIAgentFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
+                        </label>
+                      </div>
+
+                      <div className="bg-black/40 p-4 rounded-xl border border-white/10">
+                        <h4 className="text-sm font-bold text-emerald-400 mb-2">Ручной импорт JSON</h4>
+                        <p className="text-xs text-zinc-400 mb-3">Скопируйте массив сцен и вставьте в поле ниже:</p>
+                        <textarea value={manualJsonInput} onChange={(e) => setManualJsonInput(e.target.value)} placeholder='[{"number":"1","title":"ИНТ. ОФИС - ДЕНЬ","date":"2026-06-29","content":"Описание..."}]' className="w-full h-24 glass-input rounded-xl p-3 text-xs resize-none mb-3 font-mono text-zinc-300" />
+                        <button 
+                          onClick={() => {
+                            try {
+                              let text = manualJsonInput.trim(); if (!text) return;
+                              const match = text.match(/\[[\s\S]*\]/); if (match) text = match[0];
+                              const parsed = JSON.parse(text);
+                              if (Array.isArray(parsed) && parsed.length > 0) {
+                                const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
+                                setScenes([...scenes, ...newScenes]); newScenes.forEach(ns => syncDoc('scenes', ns.id, ns)); showToast(`✅ Импортировано ${newScenes.length} сцен!`); setShowAgentModal(false); setManualJsonInput('');
+                              } else { showToast("❌ Массив сцен пуст."); }
+                            } catch (e) { showToast("❌ Ошибка формата JSON."); }
+                          }}
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                        >Импортировать сцены</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {drawingFrameId && (
+                  <DrawingModal onClose={() => setDrawingFrameId(null)} onSave={(dataUrl) => {
+                        const up = storyboard.map(x=>x.id===drawingFrameId?{...x,image:dataUrl}:x); 
+                        setStoryboard(up); syncDoc('storyboard', drawingFrameId, up.find(x=>x.id===drawingFrameId));
+                        setDrawingFrameId(null);
+                  }} />
+              )}
+              
+              {drawingSchemeId && currentView === 'docs' && lightSchemes.find(s=>s.id === drawingSchemeId) && (
+                  <LightSchemeEditor scheme={lightSchemes.find(s=>s.id === drawingSchemeId)} onClose={() => setDrawingSchemeId(null)} onSave={(id, els, draw, preview) => {
+                      const up = lightSchemes.map(s=>s.id===id?{...s, elements: els, drawData: draw, preview: preview}:s);
+                      setLightSchemes(up); syncDoc('lightSchemes', id, up.find(s=>s.id===id));
+                      setDrawingSchemeId(null);
+                  }} />
+              )}
+
+              {lightboxData && (
+                  <Lightbox refs={references.filter(r => lightboxData.sceneId ? r.sceneId === lightboxData.sceneId : true)} initialId={lightboxData.currentId} onClose={() => setLightboxData(null)} />
+              )}
+
+              {/* Печатная версия (кнопка «Сформировать PDF») */}
+              <div id="print-area">
+                <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>CineFlow — План подготовки к съёмкам</h1>
+                <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Сформировано: {new Date().toLocaleDateString('ru-RU')} · Сцен: {scenes.length}</p>
+                {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
+                  const pFrames = storyboard.filter(f => f.sceneId === s.id);
+                  return (
+                    <div key={s.id} className="print-scene">
+                      <h2 style={{fontSize: '14pt', fontWeight: 800, margin: '0 0 4pt'}}>Сцена #{s.number} — {s.title || 'Без названия'}</h2>
+                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 6pt'}}>Смена: {s.date ? formatDateDisplay(s.date) : 'не назначена'}</p>
+                      {s.content && <p style={{fontSize: '11pt', margin: '0 0 8pt', whiteSpace: 'pre-wrap'}}>{s.content}</p>}
+                      {Object.keys(s.gear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 4pt'}}><b>Техника:</b> {Object.entries(s.gear).map(([k, v]) => `${((gearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}
+                      {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>Свет:</b> {Object.entries(s.lightGear).map(([k, v]) => `${((lightGearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}
+                      {pFrames.length > 0 && (
+                        <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt'}}>
+                          {pFrames.map(f => (
+                            <div key={f.id} style={{width: '30%', fontSize: '9pt'}}>
+                              {f.image && <img src={f.image} style={{width: '100%', border: '1px solid #ccc'}} />}
+                              <div><b>{f.frameNum}</b> {f.description}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {crew.length > 0 && (
+                  <div style={{marginTop: '16pt'}}>
+                    <h2 style={{fontSize: '14pt', fontWeight: 800}}>Съёмочная группа</h2>
+                    <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '10pt'}}>
+                      <tbody>
+                        {crew.map(c => (<tr key={c.id}><td style={{border: '1px solid #ccc', padding: '4pt'}}>{c.name}</td><td style={{border: '1px solid #ccc', padding: '4pt'}}>{c.role}</td><td style={{border: '1px solid #ccc', padding: '4pt'}}>{c.phone}</td></tr>))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ErrorBoundary><AppCore /></ErrorBoundary>);
+    </script>
+</body>
+</html>
