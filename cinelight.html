@@ -905,6 +905,62 @@
             );
         }
 
+        /* ═══════════ карточка-кнопка (группа или палитра) ═══════════
+           Везде одинаково: тап — применить, долгое нажатие — меню. */
+        function Chip({ label, sub, tint, active, onTap, onHold, wide }) {
+            const st = useRef(null);
+            const ref = useRef(null);
+            const down = e => {
+                e.preventDefault();
+                ref.current.setPointerCapture(e.pointerId);
+                st.current = { long: false, t: setTimeout(() => { const s = st.current; if (s) { s.long = true; onHold(); } }, 550) };
+            };
+            const up = () => {
+                const s = st.current; st.current = null; if (!s) return;
+                clearTimeout(s.t);
+                if (!s.long) onTap();
+            };
+            const cancel = () => { const s = st.current; st.current = null; if (s) clearTimeout(s.t); };
+            return (
+                <button ref={ref} onPointerDown={down} onPointerUp={up} onPointerCancel={cancel}
+                        className={"shrink-0 rounded-lg border px-2.5 py-1.5 text-left touch-none " + (wide ? 'min-w-[92px] ' : '') +
+                          (active ? 'border-[var(--accent)] bg-[rgba(217,119,87,0.12)]' : 'border-[var(--border)] bg-[var(--panel)]')}>
+                    <div className="flex items-center gap-1.5">
+                        {tint && <span className="w-2.5 h-2.5 rounded-full border border-black/40 shrink-0" style={{ background: tint }}></span>}
+                        <span className="text-[11px] font-semibold truncate">{label}</span>
+                    </div>
+                    {sub && <div className="text-[9px] text-zinc-500 mt-0.5">{sub}</div>}
+                </button>
+            );
+        }
+
+        /* ═══════════ полоса палитр ═══════════ */
+        function PaletteStrip({ kind, palettes, onApply, onSave, onHold }) {
+            const list = palettes.filter(p => p.kind === kind);
+            return (
+                <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">
+                        {kind === 'color' ? 'Палитры цвета' : 'Палитры позиции'}
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar pb-0.5">
+                        {list.map(p => (
+                            <Chip key={p.id} label={p.name} tint={p.tint} onTap={() => onApply(p)} onHold={() => onHold(p)} />
+                        ))}
+                        <button onClick={onSave}
+                                className="shrink-0 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-zinc-500 flex items-center gap-1">
+                            <Icons.Plus /><span className="text-[10px] font-bold">запомнить</span>
+                        </button>
+                    </div>
+                    {list.length === 0 && (
+                        <div className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+                            Палитра — это запомненный {kind === 'color' ? 'цвет' : 'разворот'}, который можно
+                            ставить одним тапом. Поменяете палитру — все сцены, где она стоит, поедут за ней.
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         /* ═══════════ карточка эффекта ═══════════ */
         function FxCard({ fx, selCount, onChange, onTarget, onDelete }) {
             const [open, setOpen] = useState(true);
@@ -995,6 +1051,8 @@
             const [customSwatches, setCustomSwatches] = useState(init.customSwatches || []);
             const [customProfiles, setCustomProfiles] = useState(init.customProfiles || []);
             const [effects, setEffects] = useState(init.effects || []);
+            const [groups, setGroups] = useState(init.groups || []);
+            const [palettes, setPalettes] = useState(init.palettes || []);
             const [settings, setSettings] = useState({ serialUniverse: 1, artnetBase: 0, bridgeAddr: '', ...(init.settings || {}) });
 
             const [view, setView] = useState('board');           // board | plan | patch
@@ -1006,6 +1064,9 @@
             const [fine, setFine] = useState(false);
             const [recMode, setRecMode] = useState(false);
             const [progDirty, setProgDirty] = useState(false);
+            const [blind, setBlind] = useState(false);
+            const [highlight, setHighlight] = useState(false);
+            const [undoLabel, setUndoLabel] = useState(null);
             const [dmxStatus, setDmxStatus] = useState('demo');  // demo | on
             const [netStatus, setNetStatus] = useState('off');   // off | connecting | on
             const [toastMsg, setToastMsg] = useState(null);
@@ -1017,12 +1078,18 @@
             const playbacksRef = useRef(playbacks); playbacksRef.current = playbacks;
             const settingsRef = useRef(settings); settingsRef.current = settings;
             const effectsRef = useRef(effects); effectsRef.current = effects;
+            const palettesRef = useRef(palettes); palettesRef.current = palettes;
+            const groupsRef = useRef(groups); groupsRef.current = groups;
+            const blindRef = useRef(blind); blindRef.current = blind;
+            const highlightRef = useRef(highlight); highlightRef.current = highlight;
+            const undoStackRef = useRef([]);
             const masterRef = useRef(master); masterRef.current = master;
             const blackoutRef = useRef(blackout); blackoutRef.current = blackout;
             const selectedRef = useRef(selected); selectedRef.current = selected;
             const progRef = useRef(new Map());
             const pbRunRef = useRef({});
-            const outRef = useRef({});
+            const outRef = useRef({});      // что видно на экране (с ручными правками)
+            const dmxRef = useRef({});     // что уходит в кабель (в слепом режиме — без правок)
             const hsRef = useRef({ h: 30, s: 0 });
             const lastColorRef = useRef({ rgb: [1, 1, 1] });
             const lastTickRef = useRef(performance.now());
@@ -1042,6 +1109,41 @@
                 toastTRef.current = setTimeout(() => setToastMsg(null), 2600);
             };
 
+            /* ── отмена: перед каждым изменением кладём снимок всего проекта ── */
+            const snapshot = () => ({
+                fixtures: JSON.parse(JSON.stringify(fixturesRef.current)),
+                playbacks: JSON.parse(JSON.stringify(playbacksRef.current)),
+                groups: JSON.parse(JSON.stringify(groupsRef.current)),
+                palettes: JSON.parse(JSON.stringify(palettesRef.current)),
+                effects: JSON.parse(JSON.stringify(effectsRef.current)),
+                prog: Array.from(progRef.current.entries()).map(([k, v]) => [k, { ...v }])
+            });
+            const pushUndo = label => {
+                undoStackRef.current.push({ label, state: snapshot() });
+                if (undoStackRef.current.length > 40) undoStackRef.current.shift();
+                setUndoLabel(label);
+            };
+            const undo = () => {
+                const last = undoStackRef.current.pop();
+                if (!last) return;
+                const s = last.state;
+                setFixtures(s.fixtures);
+                setPlaybacks(s.playbacks);
+                setGroups(s.groups);
+                setPalettes(s.palettes);
+                setEffects(s.effects);
+                progRef.current = new Map(s.prog);
+                setProgDirty(s.prog.length > 0);
+                // сцены могли исчезнуть — чистим их «бегунки»
+                const live = {};
+                s.playbacks.forEach(pb => { if (pb) live[pb.id] = pbRunRef.current[pb.id] || { level: 0, target: 0, lastOn: 0 }; });
+                pbRunRef.current = live;
+                const next = undoStackRef.current[undoStackRef.current.length - 1];
+                setUndoLabel(next ? next.label : null);
+                setUiTick(t => t + 1);
+                toast('Отменено: ' + last.label.toLowerCase());
+            };
+
             /* ── DMX-движок: 30 кадров в секунду ── */
             const tickFnRef = useRef(null);
             tickFnRef.current = () => {
@@ -1057,34 +1159,70 @@
                         r.level = r.level < r.target ? Math.min(r.target, r.level + step) : Math.max(r.target, r.level - step);
                     }
                 });
-                const out = {};
-                fixturesRef.current.forEach(f => { out[f.id] = { ...DEF_PARAMS }; });
-                playbacksRef.current
-                    .filter(pb => pb && pb.scene && runs[pb.id] && runs[pb.id].level > 0.001)
-                    .sort((a, b) => (runs[a.id].lastOn || 0) - (runs[b.id].lastOn || 0))
-                    .forEach(pb => {
-                        const lv = runs[pb.id].level;
-                        Object.entries(pb.scene).forEach(([fid, sp]) => {
-                            const o = out[fid]; if (!o) return;
-                            Object.keys(DEF_PARAMS).forEach(p => {
-                                if (sp[p] === undefined) return;
-                                if (p === 'dim') o.dim = Math.max(o.dim, sp.dim * lv);
-                                else o[p] = lerp(o[p], sp[p], lv);
+                const tSec = now / 1000;
+                const palMap = {};
+                palettesRef.current.forEach(p => { palMap[p.id] = p; });
+
+                /* базовый слой: сцены. Собирается один раз и переиспользуется
+                   для «в кабель» и «на экран» — в слепом режиме они расходятся. */
+                const buildBase = () => {
+                    const o = {};
+                    fixturesRef.current.forEach(f => { o[f.id] = { ...DEF_PARAMS }; });
+                    playbacksRef.current
+                        .filter(pb => pb && pb.scene && runs[pb.id] && runs[pb.id].level > 0.001)
+                        .sort((a, b) => (runs[a.id].lastOn || 0) - (runs[b.id].lastOn || 0))
+                        .forEach(pb => {
+                            const lv = runs[pb.id].level;
+                            Object.entries(pb.scene).forEach(([fid, sp]) => {
+                                const t = o[fid]; if (!t) return;
+                                // ссылка на палитру: берём её сегодняшнее значение, а не запечённое
+                                const rc = sp.palC && palMap[sp.palC] ? palMap[sp.palC].values : null;
+                                const rp = sp.palP && palMap[sp.palP] ? palMap[sp.palP].values : null;
+                                Object.keys(DEF_PARAMS).forEach(p => {
+                                    const ref = (rc && rc[p] !== undefined) ? rc : (rp && rp[p] !== undefined) ? rp : null;
+                                    const v = ref ? ref[p] : sp[p];
+                                    if (v === undefined) return;
+                                    if (p === 'dim') t.dim = Math.max(t.dim, v * lv);
+                                    else t[p] = lerp(t[p], v, lv);
+                                });
                             });
                         });
+                    playbacksRef.current.forEach(pb => {
+                        if (!pb || !pb.fx || !pb.fx.length) return;
+                        const lv = runs[pb.id] ? runs[pb.id].level : 0;
+                        if (lv <= 0.001) return;
+                        applyEffects(o, pb.fx.map(fx => ({ ...fx, level: fx.level * lv })), fixturesRef.current, tSec);
                     });
-                progRef.current.forEach((pv, fid) => { if (out[fid]) Object.assign(out[fid], pv); });
+                    return o;
+                };
 
-                // эффекты сцен — с уровнем сцены, живые эффекты — поверх
-                const tSec = now / 1000;
-                playbacksRef.current.forEach(pb => {
-                    if (!pb || !pb.fx || !pb.fx.length) return;
-                    const lv = runs[pb.id] ? runs[pb.id].level : 0;
-                    if (lv <= 0.001) return;
-                    applyEffects(out, pb.fx.map(fx => ({ ...fx, level: fx.level * lv })), fixturesRef.current, tSec);
-                });
-                applyEffects(out, effectsRef.current, fixturesRef.current, tSec);
-                outRef.current = out;
+                const addLive = o => {
+                    progRef.current.forEach((pv, fid) => {
+                        if (!o[fid]) return;
+                        Object.keys(DEF_PARAMS).forEach(p => { if (pv[p] !== undefined) o[fid][p] = pv[p]; });
+                    });
+                    applyEffects(o, effectsRef.current, fixturesRef.current, tSec);
+                    return o;
+                };
+
+                const view = addLive(buildBase());
+                // в слепом режиме ручные правки видны на экране, но не уходят в приборы
+                const dmx = blindRef.current ? buildBase() : view;
+
+                // подсветка: найти прибор глазами в риге, ничего не меняя в программере
+                if (highlightRef.current && selectedRef.current.size) {
+                    [view, dmx].forEach(o => {
+                        Object.keys(o).forEach(fid => {
+                            if (selectedRef.current.has(fid)) {
+                                Object.assign(o[fid], { dim: 1, r: 1, g: 1, b: 1, w: 1, a: 0, cct: 5600, gm: 0 });
+                                delete o[fid].px;
+                            } else o[fid].dim = 0;
+                        });
+                    });
+                }
+
+                outRef.current = view;
+                dmxRef.current = dmx;
 
                 const ws = wsRef.current;
                 const wantSerial = !!writerRef.current;
@@ -1094,7 +1232,7 @@
                     const unis = {};
                     fixturesRef.current.forEach(f => {
                         if (!unis[f.universe]) unis[f.universe] = new Uint8Array(512);
-                        const P = { ...out[f.id] };
+                        const P = { ...dmx[f.id] };
                         P.dim = P.dim * mul;
                         const bytes = paramsToBytes(f, P);
                         for (let i = 0; i < bytes.length; i++) {
@@ -1188,11 +1326,11 @@
             useEffect(() => {
                 const t = setTimeout(() => {
                     try {
-                        localStorage.setItem('cl_project_v1', JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects }));
+                        localStorage.setItem('cl_project_v1', JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects, groups, palettes }));
                     } catch (e) {}
                 }, 500);
                 return () => clearTimeout(t);
-            }, [fixtures, playbacks, customSwatches, customProfiles, settings, effects]);
+            }, [fixtures, playbacks, customSwatches, customProfiles, settings, effects, groups, palettes]);
 
             /* ── программер ── */
             const getVal = p => {
@@ -1203,12 +1341,20 @@
                 const o = outRef.current[fid];
                 return o ? o[p] : DEF_PARAMS[p];
             };
-            const applyToSelection = partial => {
+            const COLOR_KEYS = ['r', 'g', 'b', 'w', 'a', 'uv', 'cct', 'gm'];
+            const POS_KEYS = ['pan', 'tilt', 'zoom', 'focus'];
+            const applyToSelection = (partial, palId) => {
                 const sel = selectedRef.current;
                 if (sel.size === 0) return;
                 sel.forEach(fid => {
                     const cur = progRef.current.get(fid) || {};
                     const merged = { ...cur, ...partial };
+                    // палитра держится, пока её не «переехали» руками
+                    if (palId === undefined) {
+                        if (COLOR_KEYS.some(k => partial[k] !== undefined)) delete merged.palC;
+                        if (POS_KEYS.some(k => partial[k] !== undefined)) delete merged.palP;
+                    } else if (palId.kind === 'color') merged.palC = palId.id;
+                    else merged.palP = palId.id;
                     // если задали цвет, а яркость на нуле — поднимаем, чтобы результат был виден
                     if (merged.dim === undefined) {
                         const liveDim = (outRef.current[fid] || DEF_PARAMS).dim;
@@ -1220,7 +1366,7 @@
                 setProgDirty(true);
                 setUiTick(t => t + 1);
             };
-            const clearProg = () => { progRef.current.clear(); setProgDirty(false); setUiTick(t => t + 1); };
+            const clearProg = () => { if (progRef.current.size) pushUndo('Очистка правок'); progRef.current.clear(); setProgDirty(false); setUiTick(t => t + 1); };
             const locate = () => applyToSelection({ dim: 1, r: 1, g: 1, b: 1, w: 0, a: 0, cct: 5600, gm: 0, pan: 0.5, tilt: 0.5, zoom: 0.5, focus: 0.5, strobe: 0 });
 
             const applyHS = (h, s) => {
@@ -1267,8 +1413,76 @@
             const selNone = () => setSelected(new Set());
             const selInvert = () => setSelected(new Set(fixtures.filter(f => !selected.has(f.id)).map(f => f.id)));
 
+            /* ── группы: сохранённый набор приборов ── */
+            const saveGroup = () => {
+                if (selected.size === 0) { toast('Сначала выберите приборы'); return; }
+                const ids = Array.from(selected);
+                const name = window.prompt('Название группы', 'Группа ' + (groups.length + 1));
+                if (name === null) return;
+                pushUndo('Создание группы');
+                setGroups(g => [...g, { id: uid(), name: name.trim() || 'Группа', ids }]);
+                toast('Группа сохранена: приборов ' + ids.length);
+            };
+            const applyGroup = (g, add) => {
+                const live = new Set(fixtures.map(f => f.id));
+                const ids = g.ids.filter(id => live.has(id));
+                setSelected(prev => add ? new Set([...prev, ...ids]) : new Set(ids));
+            };
+
+            /* ── палитры: цвет или позиция как многоразовая ссылка ── */
+            const savePalette = kind => {
+                if (selected.size === 0) { toast('Сначала выберите прибор с нужным светом'); return; }
+                const fid = selected.values().next().value;
+                const src = outRef.current[fid] || DEF_PARAMS;
+                const keys = kind === 'color' ? COLOR_KEYS : POS_KEYS;
+                const values = {};
+                keys.forEach(k => { values[k] = src[k]; });
+                const def = kind === 'color' ? 'Цвет ' : 'Позиция ';
+                const list = palettes.filter(p => p.kind === kind);
+                const name = window.prompt('Название палитры', def + (list.length + 1));
+                if (name === null) return;
+                const f = fixtures.find(x => x.id === fid);
+                const c = f ? displayColor(f, { ...src, dim: 1 }) : [200, 200, 200];
+                const id = uid();
+                pushUndo('Создание палитры');
+                setPalettes(p => [...p, { id, kind, name: name.trim() || def, values, tint: 'rgb(' + c.join(',') + ')' }]);
+                // выбранные приборы сразу начинают светить «из палитры»,
+                // чтобы записанная дальше сцена сослалась на неё, а не запекла цвет
+                selectedRef.current.forEach(fx => {
+                    const cur = progRef.current.get(fx) || {};
+                    progRef.current.set(fx, { ...cur, ...values, ...(kind === 'color' ? { palC: id } : { palP: id }) });
+                });
+                setProgDirty(true);
+                setUiTick(t => t + 1);
+                toast('Палитра сохранена и поставлена на выбранные приборы');
+            };
+            const applyPalette = pal => {
+                if (selected.size === 0) { toast('Сначала выберите приборы'); return; }
+                if (pal.kind === 'color') {
+                    const v = pal.values;
+                    const hs = rgb2hsv(v.r || 0, v.g || 0, v.b || 0);
+                    if (hs.s > 0.01) hsRef.current = { h: hs.h, s: hs.s };
+                    lastColorRef.current = { rgb: [v.r || 0, v.g || 0, v.b || 0] };
+                }
+                applyToSelection({ ...pal.values }, { kind: pal.kind, id: pal.id });
+            };
+            const updatePalette = pal => {
+                if (selected.size === 0) { toast('Выберите прибор с нужным светом'); return; }
+                const fid = selected.values().next().value;
+                const src = outRef.current[fid] || DEF_PARAMS;
+                const keys = pal.kind === 'color' ? COLOR_KEYS : POS_KEYS;
+                const values = {};
+                keys.forEach(k => { values[k] = src[k]; });
+                const f = fixtures.find(x => x.id === fid);
+                const c = f ? displayColor(f, { ...src, dim: 1 }) : [200, 200, 200];
+                pushUndo('Изменение палитры');
+                setPalettes(list => list.map(p => p.id === pal.id ? { ...p, values, tint: 'rgb(' + c.join(',') + ')' } : p));
+                toast('Палитра обновлена — сцены, где она стоит, поедут за ней');
+            };
+
             const addEffect = () => {
                 const ids = Array.from(selected);
+                pushUndo('Новый эффект');
                 setEffects(list => [...list, { ...DEF_FX, id: uid(), targets: ids }]);
                 setTab('fx');
                 toast(ids.length ? 'Эффект добавлен на выбранные приборы' : 'Эффект добавлен на все приборы');
@@ -1276,6 +1490,7 @@
 
             /* разложить приборы аккуратной сеткой — стартовая точка для плана */
             const autoArrange = () => {
+                pushUndo('Расстановка рядами');
                 setFixtures(fx => {
                     const cols = Math.ceil(Math.sqrt(fx.length)) || 1;
                     const rows = Math.ceil(fx.length / cols) || 1;
@@ -1302,6 +1517,7 @@
                 setUiTick(t => t + 1);
             };
             const recordScene = idx => {
+                pushUndo('Запись сцены');
                 const out = outRef.current;
                 const scene = {};
                 let cr = 0, cg = 0, cb = 0, cn = 0;
@@ -1309,6 +1525,10 @@
                     const src = out[f.id] || DEF_PARAMS;
                     const snap = {};
                     Object.keys(DEF_PARAMS).forEach(k => { snap[k] = src[k]; });
+                    // если свет пришёл из палитры — запоминаем ссылку, а не только значение
+                    const pv = progRef.current.get(f.id);
+                    if (pv && pv.palC) snap.palC = pv.palC;
+                    if (pv && pv.palP) snap.palP = pv.palP;
                     scene[f.id] = snap;
                     const c = displayColor(f, src);
                     if (snap.dim > 0.03) { cr += c[0]; cg += c[1]; cb += c[2]; cn++; }
@@ -1390,6 +1610,17 @@
                             ))}
                         </div>
                         <div className="flex-1"></div>
+                        <button onClick={undo} disabled={!undoLabel}
+                                title={undoLabel ? 'Отменить: ' + undoLabel : 'Отменять нечего'}
+                                className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--border)] text-zinc-300 disabled:opacity-30">
+                            ↶ Отменить
+                        </button>
+                        <button onClick={() => setBlind(b => !b)}
+                                title="Готовить свет, не трогая то, что идёт в приборы"
+                                className={"px-2.5 py-1.5 rounded-lg text-[11px] font-bold border whitespace-nowrap " +
+                                  (blind ? 'bg-sky-600 border-sky-600 text-white' : 'border-[var(--border)] text-zinc-400')}>
+                            {blind ? 'Слепой · в приборы не идёт' : 'Слепой'}
+                        </button>
                         <button onClick={() => setModal({ type: 'settings' })}
                                 className={"flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold font-mono border " +
                                   (outActive ? 'border-green-700 text-green-400' : netStatus === 'connecting' ? 'border-yellow-700 text-yellow-500' : 'border-[var(--border)] text-zinc-500')}>
@@ -1486,12 +1717,26 @@
                         <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
                             {/* левая часть: приборы + сцены */}
                             <div className="flex-1 min-h-0 min-w-0 flex flex-col">
-                                <div className="shrink-0 flex items-center gap-2 px-3 py-2">
+                                <div className="shrink-0 flex items-center gap-2 px-3 pt-2">
                                     <span className="text-[11px] text-zinc-400 font-semibold">Приборы · выбрано {selected.size}</span>
                                     <div className="flex-1"></div>
                                     <button onClick={selAll} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Все</button>
                                     <button onClick={selNone} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Сброс</button>
                                     <button onClick={selInvert} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Инверт</button>
+                                </div>
+                                {/* группы */}
+                                <div className="shrink-0 flex items-center gap-1.5 px-3 py-2 overflow-x-auto hide-scrollbar">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 shrink-0 pr-1">Группы</span>
+                                    {groups.map(g => (
+                                        <Chip key={g.id} label={g.name} sub={g.ids.length + ' приб.'}
+                                              active={g.ids.length > 0 && g.ids.every(id => selected.has(id))}
+                                              onTap={() => applyGroup(g, false)}
+                                              onHold={() => setModal({ type: 'groupMenu', id: g.id })} />
+                                    ))}
+                                    <button onClick={saveGroup}
+                                            className="shrink-0 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-zinc-500 flex items-center gap-1">
+                                        <Icons.Plus /><span className="text-[10px] font-bold">из выбора</span>
+                                    </button>
                                 </div>
                                 <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2">
                                     <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))' }}>
@@ -1572,6 +1817,9 @@
 
                                     {tab === 'color' && (
                                         <React.Fragment>
+                                            <PaletteStrip kind="color" palettes={palettes} onApply={applyPalette}
+                                                          onSave={() => savePalette('color')}
+                                                          onHold={p => setModal({ type: 'palMenu', id: p.id })} />
                                             <ColorWheel size={216} hs={hsRef.current} onPick={applyHS} disabled={noSel} />
                                             <HSlider label="CCT" frac={(getVal('cct') - 2000) / 8000} text={Math.round(getVal('cct')) + 'K'} disabled={noSel}
                                                      onFrac={v => applyCCT(2000 + v * 8000, getVal('gm'))} gradient={cctGrad} />
@@ -1678,7 +1926,7 @@
                                                     <Icons.Plus />Новый эффект
                                                 </button>
                                                 {effects.length > 0 && (
-                                                    <button onClick={() => { setEffects([]); toast('Эффекты удалены'); }}
+                                                    <button onClick={() => { pushUndo('Удаление эффектов'); setEffects([]); toast('Эффекты удалены'); }}
                                                             className="px-3 py-2.5 rounded-lg border border-red-900 text-red-400 text-xs font-bold">Убрать все</button>
                                                 )}
                                             </div>
@@ -1704,6 +1952,9 @@
 
                                     {tab === 'pos' && (
                                         <React.Fragment>
+                                            <PaletteStrip kind="pos" palettes={palettes} onApply={applyPalette}
+                                                          onSave={() => savePalette('pos')}
+                                                          onHold={p => setModal({ type: 'palMenu', id: p.id })} />
                                             <XYPad x={getVal('pan')} y={getVal('tilt')} disabled={noSel}
                                                    onXY={(x, y) => applyToSelection({ pan: x, tilt: y })} />
                                             <div className="flex gap-1.5">
@@ -1725,6 +1976,10 @@
                                     <div className="flex items-center gap-2 mb-1.5">
                                         <button onClick={locate} disabled={noSel}
                                                 className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300 disabled:opacity-35">Locate</button>
+                                        <button onClick={() => setHighlight(h => !h)} disabled={noSel}
+                                                title="Гасит всё кроме выбранных — чтобы найти прибор глазами"
+                                                className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border disabled:opacity-35 " +
+                                                  (highlight ? 'bg-yellow-500 border-yellow-500 text-black' : 'bg-[var(--panel-2)] border-[var(--border)] text-zinc-300')}>Найти</button>
                                         <button onClick={clearProg}
                                                 className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
                                                   (progDirty ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-zinc-500')}>Очистить</button>
@@ -1744,6 +1999,14 @@
                         </div>
                     )}
 
+                    {/* ── слепой режим: рамка, чтобы это нельзя было забыть ── */}
+                    {blind && <div className="pointer-events-none fixed inset-0 z-40 border-2 border-sky-600"></div>}
+                    {highlight && (
+                        <div className="pointer-events-none fixed bottom-4 left-4 z-40 px-3 py-1.5 rounded-lg bg-yellow-500 text-black text-[10px] font-bold">
+                            ПОИСК ПРИБОРА · остальные погашены
+                        </div>
+                    )}
+
                     {/* ── тост ── */}
                     {toastMsg && (
                         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] px-4 py-2.5 rounded-xl glass-panel text-sm shadow-xl">
@@ -1756,13 +2019,15 @@
                         <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus}
                                        connectSerial={connectSerial} disconnectSerial={disconnectSerial}
                                        connectBridge={connectBridge} disconnectBridge={disconnectBridge}
-                                       fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles} effects={effects}
+                                       fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles} effects={effects} groups={groups} palettes={palettes}
                                        onImport={data => {
                                            setFixtures(data.fixtures || []);
                                            setPlaybacks(data.playbacks && data.playbacks.length === 10 ? data.playbacks : new Array(10).fill(null));
                                            setCustomSwatches(data.customSwatches || []);
                                            setCustomProfiles(data.customProfiles || []);
                                            setEffects(data.effects || []);
+                                           setGroups(data.groups || []);
+                                           setPalettes(data.palettes || []);
                                            setSettings(data.settings || { serialUniverse: 1 });
                                            setSelected(new Set()); progRef.current.clear(); setProgDirty(false);
                                            toast('Проект загружен');
@@ -1771,7 +2036,7 @@
                                            localStorage.removeItem('cl_project_v1');
                                            const p = seedProject();
                                            setFixtures(p.fixtures); setPlaybacks(p.playbacks);
-                                           setCustomSwatches([]); setCustomProfiles([]); setEffects([]); setSettings(p.settings);
+                                           setCustomSwatches([]); setCustomProfiles([]); setEffects([]); setGroups([]); setPalettes([]); setSettings(p.settings);
                                            setSelected(new Set()); progRef.current.clear(); setProgDirty(false);
                                            setModal(null); toast('Проект сброшен');
                                        }}
@@ -1780,6 +2045,7 @@
                     {modal && modal.type === 'addFixture' && (
                         <AddFixtureModal fixtures={fixtures} customProfiles={customProfiles}
                                          onAdd={(list, newProfile) => {
+                                             pushUndo('Добавление приборов');
                                              setFixtures(fx => [...fx, ...list]);
                                              if (newProfile) setCustomProfiles(ps => [...ps, newProfile]);
                                              setModal(null);
@@ -1790,15 +2056,37 @@
                     {modal && modal.type === 'editFixture' && (
                         <EditFixtureModal fixture={fixtures.find(f => f.id === modal.id)}
                                           onSave={upd => {
+                                              pushUndo('Настройка прибора');
                                               setFixtures(fx => fx.map(f => f.id === modal.id ? { ...f, ...upd } : f));
                                               setModal(null);
                                           }}
                                           onDelete={() => {
+                                              pushUndo('Удаление прибора');
                                               setFixtures(fx => fx.filter(f => f.id !== modal.id));
                                               setSelected(s => { const n = new Set(s); n.delete(modal.id); return n; });
                                               progRef.current.delete(modal.id);
                                               setModal(null); toast('Прибор удалён');
                                           }}
+                                          onClose={() => setModal(null)} />
+                    )}
+                    {modal && modal.type === 'groupMenu' && groups.find(g => g.id === modal.id) && (
+                        <GroupMenuModal group={groups.find(g => g.id === modal.id)} selCount={selected.size}
+                                        onRename={nm => { pushUndo('Переименование группы'); setGroups(l => l.map(g => g.id === modal.id ? { ...g, name: nm } : g)); setModal(null); }}
+                                        onAddTo={() => { applyGroup(groups.find(g => g.id === modal.id), true); setModal(null); }}
+                                        onReplace={() => {
+                                            pushUndo('Изменение группы');
+                                            setGroups(l => l.map(g => g.id === modal.id ? { ...g, ids: Array.from(selected) } : g));
+                                            setModal(null); toast('Группа перезаписана выбором');
+                                        }}
+                                        onDelete={() => { pushUndo('Удаление группы'); setGroups(l => l.filter(g => g.id !== modal.id)); setModal(null); toast('Группа удалена'); }}
+                                        onClose={() => setModal(null)} />
+                    )}
+                    {modal && modal.type === 'palMenu' && palettes.find(p => p.id === modal.id) && (
+                        <PaletteMenuModal pal={palettes.find(p => p.id === modal.id)} selCount={selected.size}
+                                          usedIn={playbacks.filter(pb => pb && pb.scene && Object.values(pb.scene).some(s => s.palC === modal.id || s.palP === modal.id)).map(pb => pb.name)}
+                                          onRename={nm => { pushUndo('Переименование палитры'); setPalettes(l => l.map(p => p.id === modal.id ? { ...p, name: nm } : p)); setModal(null); }}
+                                          onUpdate={() => { updatePalette(palettes.find(p => p.id === modal.id)); setModal(null); }}
+                                          onDelete={() => { pushUndo('Удаление палитры'); setPalettes(l => l.filter(p => p.id !== modal.id)); setModal(null); toast('Палитра удалена'); }}
                                           onClose={() => setModal(null)} />
                     )}
                     {modal && modal.type === 'pbMenu' && playbacks[modal.idx] && (
@@ -1809,6 +2097,7 @@
                                            }}
                                            onRerecord={() => { recordScene(modal.idx); setModal(null); }}
                                            onDelete={() => {
+                                               pushUndo('Удаление сцены');
                                                const pb = playbacks[modal.idx];
                                                if (pb) delete pbRunRef.current[pb.id];
                                                setPlaybacks(pbs => pbs.map((p, i) => i === modal.idx ? null : p));
@@ -1821,10 +2110,10 @@
         }
 
         /* ═══════════ настройки ═══════════ */
-        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, onImport, onReset, onClose }) {
+        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, groups, palettes, onImport, onReset, onClose }) {
             const fileRef = useRef(null);
             const doExport = () => {
-                const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects }, null, 2);
+                const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects, groups, palettes }, null, 2);
                 const blob = new Blob([data], { type: 'application/json' });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
@@ -2176,6 +2465,65 @@
                                     })}
                                     className="flex-1 py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Сохранить</button>
                             <button onClick={() => { if (window.confirm('Удалить прибор «' + fixture.name + '»?')) onDelete(); }}
+                                    className="px-4 py-3 rounded-xl border border-red-900 text-red-400 text-sm font-bold">Удалить</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        }
+
+        /* ═══════════ меню группы ═══════════ */
+        function GroupMenuModal({ group, selCount, onRename, onAddTo, onReplace, onDelete, onClose }) {
+            const [name, setName] = useState(group.name);
+            return (
+                <Modal title="Группа" onClose={onClose}>
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-[11px] font-bold text-zinc-500">Название</label>
+                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm w-full mt-1" value={name} onChange={e => setName(e.target.value)} />
+                        </div>
+                        <div className="text-[11px] text-zinc-500">Приборов в группе: {group.ids.length}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button onClick={onAddTo} className="py-2.5 rounded-lg border border-[var(--border)] text-zinc-300 text-xs font-bold">Добавить к выбору</button>
+                            <button disabled={selCount === 0} onClick={onReplace}
+                                    className="py-2.5 rounded-lg border border-[var(--border)] text-zinc-300 text-xs font-bold disabled:opacity-35">
+                                Перезаписать выбором ({selCount})
+                            </button>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                            <button onClick={() => onRename(name.trim() || group.name)}
+                                    className="flex-1 py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Сохранить</button>
+                            <button onClick={() => { if (window.confirm('Удалить группу «' + group.name + '»?')) onDelete(); }}
+                                    className="px-4 py-3 rounded-xl border border-red-900 text-red-400 text-sm font-bold">Удалить</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        }
+
+        /* ═══════════ меню палитры ═══════════ */
+        function PaletteMenuModal({ pal, selCount, usedIn, onRename, onUpdate, onDelete, onClose }) {
+            const [name, setName] = useState(pal.name);
+            return (
+                <Modal title={pal.kind === 'color' ? 'Палитра цвета' : 'Палитра позиции'} onClose={onClose}>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                            <span className="w-8 h-8 rounded-lg border border-black/40 shrink-0" style={{ background: pal.tint }}></span>
+                            <input className="glass-input rounded-lg px-3 py-2.5 text-sm flex-1" value={name} onChange={e => setName(e.target.value)} />
+                        </div>
+                        <div className="text-[11px] text-zinc-500 leading-relaxed">
+                            {usedIn.length
+                                ? 'Стоит в сценах: ' + usedIn.join(', ') + '. Обновите палитру — эти сцены поедут за ней.'
+                                : 'Пока не используется ни в одной сцене.'}
+                        </div>
+                        <button disabled={selCount === 0} onClick={onUpdate}
+                                className="w-full py-2.5 rounded-lg border border-[var(--border)] text-zinc-300 text-xs font-bold disabled:opacity-35">
+                            Запомнить заново с выбранного прибора
+                        </button>
+                        <div className="flex gap-2 pt-1">
+                            <button onClick={() => onRename(name.trim() || pal.name)}
+                                    className="flex-1 py-3 rounded-xl bg-[var(--accent)] text-white text-sm font-bold">Сохранить</button>
+                            <button onClick={() => { if (window.confirm('Удалить палитру «' + pal.name + '»?')) onDelete(); }}
                                     className="px-4 py-3 rounded-xl border border-red-900 text-red-400 text-sm font-bold">Удалить</button>
                         </div>
                     </div>
