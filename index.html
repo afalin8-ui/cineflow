@@ -672,6 +672,15 @@
           const [showWelcome, setShowWelcome] = useState(false);
           const clientId = useMemo(() => { let cid = localStorage.getItem('cf_client_id'); if (!cid) { cid = 'u-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); localStorage.setItem('cf_client_id', cid); } return cid; }, []);
           const [isOnline, setIsOnline] = useState(navigator.onLine);
+          // Сколько правок ещё не подтверждено облаком. Офлайн запись в
+          // Firestore не отклоняется, а ждёт связи — по этому счётчику видно,
+          // всё ли уже уехало на сервер (можно ли закрывать ноутбук).
+          const [pendingWrites, setPendingWrites] = useState(0);
+          const trackWrite = (p) => {
+            setPendingWrites(n => n + 1);
+            p.finally(() => setPendingWrites(n => Math.max(0, n - 1)));
+            return p;
+          };
           
           const safeLoad = (key, fallback, isArray = true) => {
             try { 
@@ -919,15 +928,17 @@
             clearTimeout(syncTimers.current[key]);
             syncTimers.current[key] = setTimeout(() => {
               delete syncTimers.current[key];
-              dataRef().collection(coll).doc(id).set(data, { merge: true })
-                .catch(err => { console.warn('syncDoc', err); showToast('⚠️ Не удалось сохранить в облако'); });
+              trackWrite(
+                dataRef().collection(coll).doc(id).set(data, { merge: true })
+                  .catch(err => { console.warn('syncDoc', err); showToast('⚠️ Не удалось сохранить в облако'); })
+              );
             }, 400);
           };
           const deleteNetDoc = (coll, id) => {
             if (!db || !user) return;
             const key = coll + '/' + id;
             clearTimeout(syncTimers.current[key]); delete syncTimers.current[key];
-            dataRef().collection(coll).doc(id).delete().catch(err => console.warn('deleteNetDoc', err));
+            trackWrite(dataRef().collection(coll).doc(id).delete().catch(err => console.warn('deleteNetDoc', err)));
           };
 
           const updateScene = (id, field, val) => { const up = scenes.map(s => s.id === id ? { ...s, [field]: val } : s); setScenes(up); const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t); };
@@ -1044,7 +1055,20 @@
                   <div className="flex items-center space-x-3">
                     <span className="font-serif text-base font-bold tracking-[0.2em] text-white uppercase">CineFlow <span className="text-indigo-400 font-mono text-xs font-normal">PREP</span></span>
                     <div className="flex gap-2 items-center">
-                      <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-zinc-500'}`} title={isOnline ? 'В сети' : 'Офлайн'}></div>
+                      {(() => {
+                        const syncing = pendingWrites > 0;
+                        const dot = !isOnline ? 'bg-amber-500' : (syncing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500');
+                        const label = !isOnline
+                          ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
+                          : (syncing ? `Отправка в облако · ${pendingWrites}` : 'Всё сохранено в облаке');
+                        const short = !isOnline ? 'Офлайн' : (syncing ? 'Отправка…' : 'Синхронизировано');
+                        return (
+                          <div className="flex items-center gap-1.5" title={label}>
+                            <div className={`w-2 h-2 rounded-full ${dot}`}></div>
+                            <span className="hidden lg:inline text-[10px] text-zinc-400 font-semibold">{short}</span>
+                          </div>
+                        );
+                      })()}
                       <button onClick={() => setShowProjectModal(true)} className="bg-black/40 hover:bg-black/60 border border-white/10 text-[11px] px-3 py-1.5 rounded-lg text-zinc-300 transition-colors flex items-center gap-1.5"><Icons.Folder /> Проект</button>
                     </div>
                   </div>
