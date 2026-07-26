@@ -57,10 +57,20 @@ CSS-переменные — в `:root` в `<style>`.
 ## Второе приложение: cinelight.html (CineLight — DMX-пульт)
 Отдельный однофайловый DMX-пульт в том же стеке и стиле (React UMD + Babel + Tailwind CDN,
 та же палитра). Три страницы: Пульт / План / Патч.
-- Библиотека приборов `FIXTURE_LIB` (производитель → модель → режим DMX): Aputure, Amaran,
-  ARRI, Astera, Godox, Nanlite, Litepanels, Quasar + базовые и пиксельные профили.
+- Библиотеки приборов, три источника (производитель → модель → режим DMX, есть поиск):
+  1. `FIXTURE_LIB` — выверенный вручную киносвет (Aputure, Amaran, ARRI, Astera, Godox,
+     Nanlite, Litepanels, Quasar + базовые и пиксельные профили). Идёт первым в списке.
+  2. `OFL_LIB` — 574 прибора / 2534 режима из Open Fixture Library (лицензия MIT).
+     Лежит в `<script type="application/json" id="cl-fixture-lib">` — так Babel её не
+     разбирает, читается через JSON.parse. Пересобирается `tools-build-fixture-library.js`.
+  3. Импорт файлов GDTF: `unzipFind` распаковывает zip силами браузера
+     (DecompressionStream, без библиотек), `parseGdtf` читает description.xml
+     и переводит атрибуты GDTF в наши роли.
   Плюс конструктор своего профиля с назначением роли каждому каналу.
-- Профиль: `{ch:[роли], px:[роли пикселя], pixels:N}`; footprint = ch + px*pixels.
+- Профиль может иметь `dv`/`dv2` — байты для каналов, которыми мы не управляем.
+  Для шторки это значение «открыто»: без него ~187 приборов OFL молча не зажигаются.
+- Профиль: `{ch:[роли], px:[роли пикселя], pixels:N, ch2:[роли после пикселей]}`;
+  footprint = ch + px*pixels + ch2.
   Роли включают 16-битные пары (dim/dimF, hue/hueF, pan/panF, tilt/tiltF) и sat —
   это покрывает режимы CCT/HSI у киношных приборов.
 - Программер с поворотными энкодерами (стиль MagicQ: круговое вращение пальцем, режим «Точно»),
