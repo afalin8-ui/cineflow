@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /*
- * CineLight — мост Art-Net.
+ * CineLight — сетевой мост (Art-Net и sACN).
  * Принимает DMX-пакеты от пульта (cinelight.html) по WebSocket и рассылает их
- * в локальную сеть как Art-Net (UDP, порт 6454). Заодно раздаёт сам пульт по
- * адресу http://<ip-компьютера>:9070 — удобно открывать на iPad.
+ * в локальную сеть: Art-Net на UDP 6454, sACN (E1.31) на UDP 5568. Протокол
+ * определяется по самому пакету. Заодно раздаёт пульт по адресу
+ * http://<ip-компьютера>:9070 — удобно открывать на iPad.
  *
- * Запуск:  node cinelight-bridge.js            → Art-Net всем в сети (broadcast)
- *          node cinelight-bridge.js 192.168.1.60 → Art-Net только на этот IP
+ * Запуск:  node cinelight-bridge.js            → всем в сети
+ *          node cinelight-bridge.js 192.168.1.60 → только на этот IP
  * Зависимостей нет — нужен только Node.js (nodejs.org).
  */
 const http = require('http');
@@ -18,11 +19,33 @@ const os = require('os');
 
 const PORT = 9070;
 const ARTNET_PORT = 6454;
+const SACN_PORT = 5568;
 const target = process.argv[2] || '255.255.255.255';
 
-const udp = dgram.createSocket('udp4');
-udp.bind(() => { try { udp.setBroadcast(true); } catch (e) {} });
+const udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+udp.bind(() => {
+    try { udp.setBroadcast(true); } catch (e) {}
+    try { udp.setMulticastTTL(16); } catch (e) {}
+});
 udp.on('error', () => {});
+
+/* Пульт шлёт готовые пакеты: Art-Net или sACN. Различаем по первым байтам
+   и отправляем каждый по своим правилам — sACN идёт в мультикаст-группу,
+   номер которой зависит от юниверса. */
+function routePacket(buf) {
+    if (buf.length >= 8 && buf.toString('ascii', 0, 7) === 'Art-Net') {
+        udp.send(buf, ARTNET_PORT, target);
+        return 'artnet';
+    }
+    if (buf.length >= 126 && buf.readUInt16BE(0) === 0x0010 && buf.toString('ascii', 4, 13) === 'ASC-E1.17') {
+        const universe = buf.readUInt16BE(113);
+        // если задан конкретный приёмник — шлём ему, иначе в стандартный мультикаст
+        const addr = process.argv[2] ? target : '239.255.' + ((universe >> 8) & 255) + '.' + (universe & 255);
+        udp.send(buf, SACN_PORT, addr);
+        return 'sacn';
+    }
+    return null;
+}
 
 function log(msg) { console.log(new Date().toLocaleTimeString() + '  ' + msg); }
 
@@ -54,7 +77,7 @@ server.on('upgrade', (req, socket) => {
     log('Пульт подключился (' + (req.socket.remoteAddress || '?') + ')');
 
     let buf = Buffer.alloc(0);
-    let gotFirst = false;
+    let gotFirst = null;
     socket.on('data', chunk => {
         buf = Buffer.concat([buf, chunk]);
         while (true) {
@@ -80,8 +103,13 @@ server.on('upgrade', (req, socket) => {
                 continue;
             }
             if (op === 2 && payload.length > 0) {
-                udp.send(payload, ARTNET_PORT, target);
-                if (!gotFirst) { gotFirst = true; log('Пошли DMX-кадры → ' + target + ':' + ARTNET_PORT); }
+                const kind = routePacket(payload);
+                if (kind && kind !== gotFirst) {
+                    gotFirst = kind;
+                    log(kind === 'sacn'
+                        ? 'Пошли кадры sACN → ' + (process.argv[2] ? target : 'мультикаст 239.255.x.x') + ':' + SACN_PORT
+                        : 'Пошли кадры Art-Net → ' + target + ':' + ARTNET_PORT);
+                }
             }
         }
     });
@@ -100,16 +128,21 @@ server.on('error', err => {
 
 server.listen(PORT, () => {
     console.log('');
-    console.log('  CineLight — мост Art-Net');
-    console.log('  ------------------------');
+    console.log('  CineLight — сетевой мост (Art-Net / sACN)');
+    console.log('  -----------------------------------------');
     const ips = [];
     Object.values(os.networkInterfaces()).forEach(list => (list || []).forEach(i => {
         if (i.family === 'IPv4' && !i.internal) ips.push(i.address);
     }));
     if (ips.length === 0) ips.push('localhost');
     ips.forEach(ip => console.log('  Откройте на iPad или компьютере:  http://' + ip + ':' + PORT));
-    console.log('  Art-Net уходит на: ' + target + ':' + ARTNET_PORT +
-        (process.argv[2] ? '' : '  (всем в сети; свой IP приёмника: node cinelight-bridge.js 192.168.1.60)'));
+    if (process.argv[2]) {
+        console.log('  Art-Net и sACN уходят на: ' + target);
+    } else {
+        console.log('  Art-Net уходит всем в сети (' + target + ':' + ARTNET_PORT + ')');
+        console.log('  sACN уходит в мультикаст 239.255.x.x:' + SACN_PORT + ' — как требует стандарт');
+        console.log('  Нужен конкретный приёмник? node cinelight-bridge.js 192.168.1.60');
+    }
     console.log('  В пульте: Настройки → «Подключить мост». Окно не закрывайте.');
     console.log('');
 });
