@@ -7,8 +7,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#1a1918">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="./icon.svg">
+    <link rel="apple-touch-icon" href="./icon.svg">
     <title>CineFlow Prep — Doppler Studio</title>
-    
+    <script>
+        // Service worker: кэширует оболочку приложения и библиотеки с CDN,
+        // чтобы приложение открывалось без интернета. Данные офлайн
+        // обеспечивает сам Firestore (enablePersistence ниже).
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').catch(err => {
+              console.warn('Service worker не зарегистрирован:', err);
+            });
+          });
+        }
+    </script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
