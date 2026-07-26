@@ -851,6 +851,67 @@
             );
         }
 
+        /* ═══════════ инспектор прибора на плане ═══════════ */
+        function PlanInspector({ fixture, onChange, onCommit, onOpen }) {
+            if (!fixture) return null;
+            const prof = fixture.profile;
+            const isPx = !!prof.pixels;
+            const done = useRef(false);
+            const touch = () => { if (!done.current) { done.current = true; onCommit(); } };
+            useEffect(() => { done.current = false; }, [fixture.id]);
+            return (
+                <div className="shrink-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2.5">
+                    <div className="flex items-center gap-2 mb-2">
+                        <input className="glass-input rounded-lg px-2 py-1.5 text-xs flex-1 min-w-0" value={fixture.name}
+                               onChange={e => { touch(); onChange({ name: e.target.value }); }} />
+                        <span className="text-[10px] font-mono text-zinc-500 shrink-0">
+                            U{fixture.universe}·{String(fixture.addr).padStart(3, '0')}–{String(fixture.addr + footprint(prof) - 1).padStart(3, '0')}
+                            {isPx ? ' · ' + prof.pixels + ' пикс.' : ''}
+                        </span>
+                        <button onClick={onOpen} className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[10px] font-bold text-zinc-300 shrink-0">Адрес и тип</button>
+                    </div>
+                    <div className={"grid gap-1.5 " + (isPx ? 'grid-cols-2' : 'grid-cols-1')}>
+                        <HSlider label="Поворот" frac={((fixture.rot || 0) % 360) / 360} text={Math.round(fixture.rot || 0) + '°'}
+                                 onFrac={v => { touch(); onChange({ rot: v * 360 }); }}
+                                 gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                        {isPx && (
+                            <HSlider label="Длина" frac={clamp(fixture.len === undefined ? 0.14 : fixture.len, 0, 1)}
+                                     text={Math.round((fixture.len === undefined ? 0.14 : fixture.len) * 100) + '%'}
+                                     onFrac={v => { touch(); onChange({ len: v }); }}
+                                     gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        /* ═══════════ сворачивающийся раздел ═══════════ */
+        function Section({ title, note, storeKey, defOpen, children }) {
+            const [open, setOpen] = useState(() => {
+                try {
+                    const v = localStorage.getItem('cl_sec_' + storeKey);
+                    if (v !== null) return v === '1';
+                } catch (e) {}
+                return !!defOpen;
+            });
+            const toggle = () => {
+                setOpen(o => {
+                    try { localStorage.setItem('cl_sec_' + storeKey, o ? '0' : '1'); } catch (e) {}
+                    return !o;
+                });
+            };
+            return (
+                <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+                    <button onClick={toggle} className="w-full flex items-center gap-2 px-2.5 py-2 bg-[var(--panel-2)]">
+                        <span className={"text-zinc-500 text-[10px] transition-transform " + (open ? 'rotate-90' : '')}>▶</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex-1 text-left">{title}</span>
+                        {note && !open && <span className="text-[10px] font-mono text-zinc-500">{note}</span>}
+                    </button>
+                    {open && <div className="p-2.5 space-y-1.5">{children}</div>}
+                </div>
+            );
+        }
+
         /* ═══════════ ввод цвета цифрами ═══════════ */
         function NumField({ label, value, onCommit, step, hint }) {
             const [txt, setTxt] = useState(String(value));
@@ -1728,6 +1789,220 @@
                 : netStatus === 'on' ? 'ART-NET'
                 : netStatus === 'connecting' ? 'МОСТ…' : 'ДЕМО';
 
+            /* правая панель управления — одна и та же на «Пульте» и «Плане» */
+            const controlPanel = (
+                                <div className="lg:w-[400px] w-full h-[46%] lg:h-auto shrink-0 border-t lg:border-t-0 lg:border-l border-[var(--border)] bg-[var(--panel)] flex flex-col min-h-0">
+                                    <div className="shrink-0 flex p-2 gap-1">
+                                        {[['int', 'Яркость'], ['color', 'Цвет'], ['pos', 'Позиция'], ['fx', 'Эффекты']].map(([id, name]) => (
+                                            <button key={id} onClick={() => setTab(id)}
+                                                    className={"flex-1 py-2 rounded-lg text-[11px] font-bold " +
+                                                      (tab === id ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>
+                                                {name}{id === 'fx' && effects.filter(f => f.on).length > 0 ? ' ●' : ''}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2 space-y-3">
+                                        {noSel && <div className="text-[11px] text-zinc-500 px-1 pt-1">Выберите приборы слева, чтобы управлять ими.</div>}
+
+                                        {tab === 'int' && (
+                                            <React.Fragment>
+                                                <HSlider label="Диммер" frac={getVal('dim')} text={pct(getVal('dim'))} disabled={noSel}
+                                                         onFrac={v => applyToSelection({ dim: v })}
+                                                         gradient="linear-gradient(to right,#141312,#ffd9a0)" />
+                                                <div className="flex gap-1.5">
+                                                    {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                                                        <button key={v} disabled={noSel} onClick={() => applyToSelection({ dim: v })}
+                                                                className="flex-1 py-2.5 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-mono font-bold text-zinc-300 disabled:opacity-35">
+                                                            {Math.round(v * 100)}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <HSlider label="Строб" frac={getVal('strobe')} text={getVal('strobe') < 0.01 ? 'выкл' : pct(getVal('strobe'))} disabled={noSel}
+                                                         onFrac={v => applyToSelection({ strobe: v })}
+                                                         gradient="linear-gradient(to right,#141312,#e7e5e4)" />
+                                            </React.Fragment>
+                                        )}
+
+                                        {tab === 'color' && (
+                                            <React.Fragment>
+                                                <PaletteStrip kind="color" palettes={palettes} onApply={applyPalette}
+                                                              onSave={() => savePalette('color')}
+                                                              onHold={p => setModal({ type: 'palMenu', id: p.id })} />
+                                                <ColorWheel size={216} hs={hsRef.current} onPick={applyHS} disabled={noSel} />
+                                                <HSlider label="CCT" frac={(getVal('cct') - 2000) / 8000} text={Math.round(getVal('cct')) + 'K'} disabled={noSel}
+                                                         onFrac={v => applyCCT(2000 + v * 8000, getVal('gm'))} gradient={cctGrad} />
+                                                <HSlider label="Тон G/M"
+                                                         frac={(getVal('gm') + 1) / 2}
+                                                         text={Math.abs(getVal('gm')) < 0.005 ? '0' : (getVal('gm') > 0 ? 'G+' : 'M+') + Math.round(Math.abs(getVal('gm')) * 100)}
+                                                         disabled={noSel}
+                                                         onFrac={v => applyCCT(getVal('cct'), v * 2 - 1)}
+                                                         gradient="linear-gradient(to right,#e858c8,#242322,#3dbb52)" />
+                                                <Section title="Каналы прибора" storeKey="ch" defOpen={false}
+                                                         note={Math.round(getVal('r') * 255) + '/' + Math.round(getVal('g') * 255) + '/' + Math.round(getVal('b') * 255)}>
+                                                    <HSlider label="R" frac={getVal('r')} text={Math.round(getVal('r') * 255)} disabled={noSel}
+                                                             onFrac={v => applyRGBDirect({ r: v })} gradient="linear-gradient(to right,#141312,#f43f3f)" />
+                                                    <HSlider label="G" frac={getVal('g')} text={Math.round(getVal('g') * 255)} disabled={noSel}
+                                                             onFrac={v => applyRGBDirect({ g: v })} gradient="linear-gradient(to right,#141312,#3ddc55)" />
+                                                    <HSlider label="B" frac={getVal('b')} text={Math.round(getVal('b') * 255)} disabled={noSel}
+                                                             onFrac={v => applyRGBDirect({ b: v })} gradient="linear-gradient(to right,#141312,#3b6bff)" />
+                                                    <HSlider label="W" frac={getVal('w')} text={Math.round(getVal('w') * 255)} disabled={noSel}
+                                                             onFrac={v => applyRGBDirect({ w: v })} gradient="linear-gradient(to right,#141312,#ffffff)" />
+                                                    <HSlider label="A" frac={getVal('a')} text={Math.round(getVal('a') * 255)} disabled={noSel}
+                                                             onFrac={v => applyRGBDirect({ a: v })} gradient="linear-gradient(to right,#141312,#ffb400)" />
+                                                </Section>
+                                                <Section title="Цвет цифрами" storeKey="num" defOpen={false}
+                                                         note={'x' + (Math.round(curXY.x * 1000) / 1000) + ' y' + (Math.round(curXY.y * 1000) / 1000)}>
+                                                    <div className="flex gap-1.5 mb-2">
+                                                        <NumField label="CIE x" value={Math.round(curXY.x * 10000) / 10000} step="0.001"
+                                                                  onCommit={v => applyXY(clamp(v, 0, 0.8), curXY.y)} />
+                                                        <NumField label="CIE y" value={Math.round(curXY.y * 10000) / 10000} step="0.001"
+                                                                  onCommit={v => applyXY(curXY.x, clamp(v, 0.0001, 0.9))} />
+                                                        <NumField label="Кельвины" value={Math.round(getVal('cct'))} step="50"
+                                                                  onCommit={v => applyCCT(clamp(v, 1000, 20000), getVal('gm'))} />
+                                                    </div>
+                                                    <div className="flex gap-1.5 mb-2">
+                                                        <NumField label="R 0-255" value={Math.round(getVal('r') * 255)} step="1"
+                                                                  onCommit={v => applyRGBDirect({ r: clamp(v / 255, 0, 1) })} />
+                                                        <NumField label="G 0-255" value={Math.round(getVal('g') * 255)} step="1"
+                                                                  onCommit={v => applyRGBDirect({ g: clamp(v / 255, 0, 1) })} />
+                                                        <NumField label="B 0-255" value={Math.round(getVal('b') * 255)} step="1"
+                                                                  onCommit={v => applyRGBDirect({ b: clamp(v / 255, 0, 1) })} />
+                                                    </div>
+                                                    <div className="flex gap-1.5 items-end">
+                                                        <NumField label="Оттенок °" value={Math.round(hsRef.current.h)} step="1"
+                                                                  onCommit={v => applyHS(((v % 360) + 360) % 360, hsRef.current.s)} />
+                                                        <NumField label="Насыщ. %" value={Math.round(hsRef.current.s * 100)} step="1"
+                                                                  onCommit={v => applyHS(hsRef.current.h, clamp(v / 100, 0, 1))} />
+                                                        <NumField label="Тон G/M" value={Math.round(getVal('gm') * 100)} step="1"
+                                                                  onCommit={v => applyCCT(getVal('cct'), clamp(v / 100, -1, 1))} />
+                                                    </div>
+                                                    <div className="text-[9px] text-zinc-600 mt-1.5 leading-relaxed">
+                                                        x/y — координаты цвета по CIE 1931, как в паспортах приборов и на векторскопе.
+                                                        Плюс/минус по «Тон G/M»: плюс — в зелень, минус — в пурпур.
+                                                    </div>
+                                                </Section>
+                                                <Section title="Готовые цвета" storeKey="sw" defOpen={true}>
+                                                    <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Температура света</div>
+                                                    <div className="grid grid-cols-4 gap-1.5">
+                                                        {SWATCHES_K.map(sw => {
+                                                            const c = kelvin2rgb(sw.k).map(x => Math.round(x * 255));
+                                                            return (
+                                                                <button key={sw.n} disabled={noSel} onClick={() => applySwatch(sw)}
+                                                                        className="h-11 rounded-lg border border-black/40 text-[9px] font-bold text-black/70 disabled:opacity-35"
+                                                                        style={{ background: 'rgb(' + c.join(',') + ')' }}>
+                                                                    {sw.n}<br />{sw.k}K
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5 mt-2">Цвета</div>
+                                                    <div className="grid grid-cols-7 gap-1.5">
+                                                        {SWATCHES_C.map(sw => (
+                                                            <button key={sw.n} disabled={noSel} onClick={() => applySwatch(sw)} title={sw.n}
+                                                                    className="h-9 rounded-lg border border-black/40 disabled:opacity-35"
+                                                                    style={{ background: 'rgb(' + sw.rgb.map(x => Math.round(x * 255)).join(',') + ')' }}></button>
+                                                        ))}
+                                                    </div>
+                                                    <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5 mt-2">Мои цвета</div>
+                                                    <div className="grid grid-cols-7 gap-1.5">
+                                                        {customSwatches.map((sw, i) => (
+                                                            <button key={i} disabled={noSel} onClick={() => applySwatch(sw)}
+                                                                    onDoubleClick={() => { setCustomSwatches(list => list.filter((_, j) => j !== i)); toast('Свотч удалён'); }}
+                                                                    className="h-9 rounded-lg border border-black/40 disabled:opacity-35"
+                                                                    style={{ background: 'rgb(' + sw.rgb.map(x => Math.round(x * 255)).join(',') + ')' }}></button>
+                                                        ))}
+                                                        <button onClick={() => {
+                                                                    setCustomSwatches(list => [...list.slice(-13), { n: 'Мой', rgb: lastColorRef.current.rgb }]);
+                                                                    toast('Текущий цвет сохранён (двойной тап по свотчу — удалить)');
+                                                                }}
+                                                                className="h-9 rounded-lg border border-dashed border-[var(--border)] text-zinc-500 flex items-center justify-center">
+                                                            <Icons.Plus />
+                                                        </button>
+                                                    </div>
+                                                </Section>
+                                            </React.Fragment>
+                                        )}
+
+                                        {tab === 'fx' && (
+                                            <React.Fragment>
+                                                <div className="flex items-center gap-1.5">
+                                                    <button onClick={addEffect}
+                                                            className="flex-1 py-2.5 rounded-lg bg-[var(--accent)] text-white text-xs font-bold flex items-center justify-center gap-1.5">
+                                                        <Icons.Plus />Новый эффект
+                                                    </button>
+                                                    {effects.length > 0 && (
+                                                        <button onClick={() => { pushUndo('Удаление эффектов'); setEffects([]); toast('Эффекты удалены'); }}
+                                                                className="px-3 py-2.5 rounded-lg border border-red-900 text-red-400 text-xs font-bold">Убрать все</button>
+                                                    )}
+                                                </div>
+                                                {effects.length === 0 && (
+                                                    <div className="text-[11px] text-zinc-500 leading-relaxed">
+                                                        Эффект — это движение света: радуга, волна, бегущий огонёк, живое пламя.
+                                                        Он бежит по приборам так, как они расставлены на странице «План».
+                                                        У пиксельных трубок эффект идёт по каждому пикселю отдельно.
+                                                    </div>
+                                                )}
+                                                {effects.map((fx, i) => (
+                                                    <FxCard key={fx.id} fx={fx} selCount={selected.size}
+                                                            onChange={upd => setEffects(list => list.map((e, j) => j === i ? { ...e, ...upd } : e))}
+                                                            onTarget={() => {
+                                                                const ids = Array.from(selected);
+                                                                setEffects(list => list.map((e, j) => j === i ? { ...e, targets: ids } : e));
+                                                                toast(ids.length ? 'Эффект теперь только на выбранных приборах' : 'Эффект на всех приборах');
+                                                            }}
+                                                            onDelete={() => setEffects(list => list.filter((_, j) => j !== i))} />
+                                                ))}
+                                            </React.Fragment>
+                                        )}
+
+                                        {tab === 'pos' && (
+                                            <React.Fragment>
+                                                <PaletteStrip kind="pos" palettes={palettes} onApply={applyPalette}
+                                                              onSave={() => savePalette('pos')}
+                                                              onHold={p => setModal({ type: 'palMenu', id: p.id })} />
+                                                <XYPad x={getVal('pan')} y={getVal('tilt')} disabled={noSel}
+                                                       onXY={(x, y) => applyToSelection({ pan: x, tilt: y })} />
+                                                <div className="flex gap-1.5">
+                                                    <button disabled={noSel} onClick={() => applyToSelection({ pan: 0.5, tilt: 0.5 })}
+                                                            className="flex-1 py-2.5 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-bold text-zinc-300 disabled:opacity-35">
+                                                        В центр
+                                                    </button>
+                                                </div>
+                                                <HSlider label="Зум" frac={getVal('zoom')} text={pct(getVal('zoom'))} disabled={noSel}
+                                                         onFrac={v => applyToSelection({ zoom: v })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                                                <HSlider label="Фокус" frac={getVal('focus')} text={pct(getVal('focus'))} disabled={noSel}
+                                                         onFrac={v => applyToSelection({ focus: v })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
+                                            </React.Fragment>
+                                        )}
+                                    </div>
+
+                                    {/* энкодеры */}
+                                    <div className="shrink-0 border-t border-[var(--border)] px-3 pt-2 pb-3">
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                            <button onClick={locate} disabled={noSel}
+                                                    className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300 disabled:opacity-35">Locate</button>
+                                            <button onClick={() => setHighlight(h => !h)} disabled={noSel}
+                                                    title="Гасит всё кроме выбранных — чтобы найти прибор глазами"
+                                                    className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border disabled:opacity-35 " +
+                                                      (highlight ? 'bg-yellow-500 border-yellow-500 text-black' : 'bg-[var(--panel-2)] border-[var(--border)] text-zinc-300')}>Найти</button>
+                                            <button onClick={clearProg}
+                                                    className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
+                                                      (progDirty ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-zinc-500')}>Очистить</button>
+                                            <div className="flex-1"></div>
+                                            <button onClick={() => setFine(f => !f)}
+                                                    className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
+                                                      (fine ? 'bg-[var(--accent)] border-[var(--accent)] text-white' : 'border-[var(--border)] text-zinc-400')}>Точно</button>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            {encoders.map(enc => (
+                                                <Encoder key={tab + enc.label} label={enc.label} frac={enc.frac} text={enc.text}
+                                                         onTurn={enc.onTurn} disabled={noSel} />
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+            );
+
             /* ═══════════ вёрстка ═══════════ */
             return (
                 <div className="app-h w-screen flex flex-col overflow-hidden">
@@ -1774,32 +2049,52 @@
 
                     {view === 'plan' ? (
                         /* ═══ страница ПЛАН ═══ */
-                        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2">
-                            <div className="shrink-0 flex items-center gap-2 flex-wrap">
-                                <span className="text-[11px] text-zinc-400 font-semibold">План площадки · выбрано {selected.size}</span>
-                                <div className="flex-1"></div>
-                                <button onClick={() => setPlanEdit(p => !p)}
-                                        className={"px-2.5 py-1.5 rounded-lg text-[11px] font-bold border " +
-                                          (planEdit ? 'bg-[var(--accent)] border-[var(--accent)] text-white' : 'border-[var(--border)] text-zinc-400')}>
-                                    {planEdit ? 'Двигать: вкл' : 'Двигать: выкл'}
-                                </button>
-                                <button onClick={selNone} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Сброс</button>
-                                <button disabled={selected.size !== 1}
-                                        onClick={() => setModal({ type: 'editFixture', id: selected.values().next().value })}
-                                        className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300 disabled:opacity-35">
-                                    Настроить прибор
-                                </button>
-                                <button onClick={autoArrange} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Расставить рядами</button>
+                        <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+                            <div className="flex-1 min-h-0 min-w-0 flex flex-col p-3 gap-2">
+                                <div className="shrink-0 flex items-center gap-2 flex-wrap">
+                                    <span className="text-[11px] text-zinc-400 font-semibold">План площадки · выбрано {selected.size}</span>
+                                    <div className="flex-1"></div>
+                                    <button onClick={() => setPlanEdit(p => !p)}
+                                            className={"px-2.5 py-1.5 rounded-lg text-[11px] font-bold border " +
+                                              (planEdit ? 'bg-[var(--accent)] border-[var(--accent)] text-white' : 'border-[var(--border)] text-zinc-400')}>
+                                        {planEdit ? 'Двигать: вкл' : 'Двигать: выкл'}
+                                    </button>
+                                    <button onClick={selAll} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Все</button>
+                                    <button onClick={selNone} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Сброс</button>
+                                    <button onClick={autoArrange} className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--panel)] border border-[var(--border)] text-zinc-300">Расставить рядами</button>
+                                </div>
+                                {/* группы работают и здесь */}
+                                {groups.length > 0 && (
+                                    <div className="shrink-0 flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 shrink-0 pr-1">Группы</span>
+                                        {groups.map(g => (
+                                            <Chip key={g.id} label={g.name} sub={g.ids.length + ' приб.'}
+                                                  active={g.ids.length > 0 && g.ids.every(id => selected.has(id))}
+                                                  onTap={() => applyGroup(g, false)}
+                                                  onHold={() => setModal({ type: 'groupMenu', id: g.id })} />
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="flex-1 min-h-0">
+                                    <LayoutView fixtures={fixtures} outRef={outRef} selected={selected} mul={mul}
+                                                editing={planEdit} onTap={toggleSel}
+                                                onMove={(id, x, y) => setFixtures(fx => fx.map(f => f.id === id ? { ...f, x, y } : f))} />
+                                </div>
+                                {/* инспектор выбранного прибора */}
+                                {selected.size === 1 ? (
+                                    <PlanInspector fixture={fixtures.find(f => f.id === selected.values().next().value)}
+                                                   onChange={upd => setFixtures(fx => fx.map(f => f.id === selected.values().next().value ? { ...f, ...upd } : f))}
+                                                   onCommit={() => pushUndo('Настройка прибора')}
+                                                   onOpen={() => setModal({ type: 'editFixture', id: selected.values().next().value })} />
+                                ) : (
+                                    <div className="shrink-0 text-[11px] text-zinc-500">
+                                        {selected.size === 0
+                                            ? 'Тап по прибору выбирает его — снизу появятся настройки, справа управление светом. Перетаскивание пальцем задаёт место на площадке.'
+                                            : 'Выбрано приборов: ' + selected.size + '. Управление светом — справа. Настройки отдельного прибора появятся, если выбрать один.'}
+                                    </div>
+                                )}
                             </div>
-                            <div className="flex-1 min-h-0">
-                                <LayoutView fixtures={fixtures} outRef={outRef} selected={selected} mul={mul}
-                                            editing={planEdit} onTap={toggleSel}
-                                            onMove={(id, x, y) => setFixtures(fx => fx.map(f => f.id === id ? { ...f, x, y } : f))} />
-                            </div>
-                            <div className="shrink-0 text-[11px] text-zinc-500">
-                                Перетаскивайте приборы пальцем — расстановка задаёт, как по ним побегут эффекты.
-                                Тап без перетаскивания выбирает прибор. Длину и поворот пиксельных трубок задаёт кнопка «Настроить прибор».
-                            </div>
+                            {controlPanel}
                         </div>
                     ) : view === 'patch' ? (
                         /* ═══ страница ПАТЧ ═══ */
@@ -1944,220 +2239,7 @@
                                 </div>
                             </div>
 
-                            {/* правая панель: параметры + энкодеры */}
-                            <div className="lg:w-[400px] w-full h-[46%] lg:h-auto shrink-0 border-t lg:border-t-0 lg:border-l border-[var(--border)] bg-[var(--panel)] flex flex-col min-h-0">
-                                <div className="shrink-0 flex p-2 gap-1">
-                                    {[['int', 'Яркость'], ['color', 'Цвет'], ['pos', 'Позиция'], ['fx', 'Эффекты']].map(([id, name]) => (
-                                        <button key={id} onClick={() => setTab(id)}
-                                                className={"flex-1 py-2 rounded-lg text-[11px] font-bold " +
-                                                  (tab === id ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>
-                                            {name}{id === 'fx' && effects.filter(f => f.on).length > 0 ? ' ●' : ''}
-                                        </button>
-                                    ))}
-                                </div>
-                                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2 space-y-3">
-                                    {noSel && <div className="text-[11px] text-zinc-500 px-1 pt-1">Выберите приборы слева, чтобы управлять ими.</div>}
-
-                                    {tab === 'int' && (
-                                        <React.Fragment>
-                                            <HSlider label="Диммер" frac={getVal('dim')} text={pct(getVal('dim'))} disabled={noSel}
-                                                     onFrac={v => applyToSelection({ dim: v })}
-                                                     gradient="linear-gradient(to right,#141312,#ffd9a0)" />
-                                            <div className="flex gap-1.5">
-                                                {[0, 0.25, 0.5, 0.75, 1].map(v => (
-                                                    <button key={v} disabled={noSel} onClick={() => applyToSelection({ dim: v })}
-                                                            className="flex-1 py-2.5 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-mono font-bold text-zinc-300 disabled:opacity-35">
-                                                        {Math.round(v * 100)}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                            <HSlider label="Строб" frac={getVal('strobe')} text={getVal('strobe') < 0.01 ? 'выкл' : pct(getVal('strobe'))} disabled={noSel}
-                                                     onFrac={v => applyToSelection({ strobe: v })}
-                                                     gradient="linear-gradient(to right,#141312,#e7e5e4)" />
-                                        </React.Fragment>
-                                    )}
-
-                                    {tab === 'color' && (
-                                        <React.Fragment>
-                                            <PaletteStrip kind="color" palettes={palettes} onApply={applyPalette}
-                                                          onSave={() => savePalette('color')}
-                                                          onHold={p => setModal({ type: 'palMenu', id: p.id })} />
-                                            <ColorWheel size={216} hs={hsRef.current} onPick={applyHS} disabled={noSel} />
-                                            <HSlider label="CCT" frac={(getVal('cct') - 2000) / 8000} text={Math.round(getVal('cct')) + 'K'} disabled={noSel}
-                                                     onFrac={v => applyCCT(2000 + v * 8000, getVal('gm'))} gradient={cctGrad} />
-                                            <HSlider label="Тон G/M"
-                                                     frac={(getVal('gm') + 1) / 2}
-                                                     text={Math.abs(getVal('gm')) < 0.005 ? '0' : (getVal('gm') > 0 ? 'G+' : 'M+') + Math.round(Math.abs(getVal('gm')) * 100)}
-                                                     disabled={noSel}
-                                                     onFrac={v => applyCCT(getVal('cct'), v * 2 - 1)}
-                                                     gradient="linear-gradient(to right,#e858c8,#242322,#3dbb52)" />
-                                            <div className="grid grid-cols-1 gap-1.5">
-                                                <HSlider label="R" frac={getVal('r')} text={Math.round(getVal('r') * 255)} disabled={noSel}
-                                                         onFrac={v => applyRGBDirect({ r: v })} gradient="linear-gradient(to right,#141312,#f43f3f)" />
-                                                <HSlider label="G" frac={getVal('g')} text={Math.round(getVal('g') * 255)} disabled={noSel}
-                                                         onFrac={v => applyRGBDirect({ g: v })} gradient="linear-gradient(to right,#141312,#3ddc55)" />
-                                                <HSlider label="B" frac={getVal('b')} text={Math.round(getVal('b') * 255)} disabled={noSel}
-                                                         onFrac={v => applyRGBDirect({ b: v })} gradient="linear-gradient(to right,#141312,#3b6bff)" />
-                                                <HSlider label="W" frac={getVal('w')} text={Math.round(getVal('w') * 255)} disabled={noSel}
-                                                         onFrac={v => applyRGBDirect({ w: v })} gradient="linear-gradient(to right,#141312,#ffffff)" />
-                                                <HSlider label="A" frac={getVal('a')} text={Math.round(getVal('a') * 255)} disabled={noSel}
-                                                         onFrac={v => applyRGBDirect({ a: v })} gradient="linear-gradient(to right,#141312,#ffb400)" />
-                                            </div>
-                                            <div className="rounded-xl border border-[var(--border)] p-2.5">
-                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Цвет цифрами</div>
-                                                <div className="flex gap-1.5 mb-2">
-                                                    <NumField label="CIE x" value={Math.round(curXY.x * 10000) / 10000} step="0.001"
-                                                              onCommit={v => applyXY(clamp(v, 0, 0.8), curXY.y)} />
-                                                    <NumField label="CIE y" value={Math.round(curXY.y * 10000) / 10000} step="0.001"
-                                                              onCommit={v => applyXY(curXY.x, clamp(v, 0.0001, 0.9))} />
-                                                    <NumField label="Кельвины" value={Math.round(getVal('cct'))} step="50"
-                                                              onCommit={v => applyCCT(clamp(v, 1000, 20000), getVal('gm'))} />
-                                                </div>
-                                                <div className="flex gap-1.5 mb-2">
-                                                    <NumField label="R 0-255" value={Math.round(getVal('r') * 255)} step="1"
-                                                              onCommit={v => applyRGBDirect({ r: clamp(v / 255, 0, 1) })} />
-                                                    <NumField label="G 0-255" value={Math.round(getVal('g') * 255)} step="1"
-                                                              onCommit={v => applyRGBDirect({ g: clamp(v / 255, 0, 1) })} />
-                                                    <NumField label="B 0-255" value={Math.round(getVal('b') * 255)} step="1"
-                                                              onCommit={v => applyRGBDirect({ b: clamp(v / 255, 0, 1) })} />
-                                                </div>
-                                                <div className="flex gap-1.5 items-end">
-                                                    <NumField label="Оттенок °" value={Math.round(hsRef.current.h)} step="1"
-                                                              onCommit={v => applyHS(((v % 360) + 360) % 360, hsRef.current.s)} />
-                                                    <NumField label="Насыщ. %" value={Math.round(hsRef.current.s * 100)} step="1"
-                                                              onCommit={v => applyHS(hsRef.current.h, clamp(v / 100, 0, 1))} />
-                                                    <NumField label="Тон G/M" value={Math.round(getVal('gm') * 100)} step="1"
-                                                              onCommit={v => applyCCT(getVal('cct'), clamp(v / 100, -1, 1))} />
-                                                </div>
-                                                <div className="text-[9px] text-zinc-600 mt-1.5 leading-relaxed">
-                                                    x/y — координаты цвета по CIE 1931, как в паспортах приборов и на векторскопе.
-                                                    Плюс/минус по «Тон G/M»: плюс — в зелень, минус — в пурпур.
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Температура света</div>
-                                                <div className="grid grid-cols-4 gap-1.5">
-                                                    {SWATCHES_K.map(sw => {
-                                                        const c = kelvin2rgb(sw.k).map(x => Math.round(x * 255));
-                                                        return (
-                                                            <button key={sw.n} disabled={noSel} onClick={() => applySwatch(sw)}
-                                                                    className="h-11 rounded-lg border border-black/40 text-[9px] font-bold text-black/70 disabled:opacity-35"
-                                                                    style={{ background: 'rgb(' + c.join(',') + ')' }}>
-                                                                {sw.n}<br />{sw.k}K
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Цвета</div>
-                                                <div className="grid grid-cols-7 gap-1.5">
-                                                    {SWATCHES_C.map(sw => (
-                                                        <button key={sw.n} disabled={noSel} onClick={() => applySwatch(sw)} title={sw.n}
-                                                                className="h-9 rounded-lg border border-black/40 disabled:opacity-35"
-                                                                style={{ background: 'rgb(' + sw.rgb.map(x => Math.round(x * 255)).join(',') + ')' }}></button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">Мои цвета</div>
-                                                <div className="grid grid-cols-7 gap-1.5">
-                                                    {customSwatches.map((sw, i) => (
-                                                        <button key={i} disabled={noSel} onClick={() => applySwatch(sw)}
-                                                                onDoubleClick={() => { setCustomSwatches(list => list.filter((_, j) => j !== i)); toast('Свотч удалён'); }}
-                                                                className="h-9 rounded-lg border border-black/40 disabled:opacity-35"
-                                                                style={{ background: 'rgb(' + sw.rgb.map(x => Math.round(x * 255)).join(',') + ')' }}></button>
-                                                    ))}
-                                                    <button onClick={() => {
-                                                                setCustomSwatches(list => [...list.slice(-13), { n: 'Мой', rgb: lastColorRef.current.rgb }]);
-                                                                toast('Текущий цвет сохранён (двойной тап по свотчу — удалить)');
-                                                            }}
-                                                            className="h-9 rounded-lg border border-dashed border-[var(--border)] text-zinc-500 flex items-center justify-center">
-                                                        <Icons.Plus />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </React.Fragment>
-                                    )}
-
-                                    {tab === 'fx' && (
-                                        <React.Fragment>
-                                            <div className="flex items-center gap-1.5">
-                                                <button onClick={addEffect}
-                                                        className="flex-1 py-2.5 rounded-lg bg-[var(--accent)] text-white text-xs font-bold flex items-center justify-center gap-1.5">
-                                                    <Icons.Plus />Новый эффект
-                                                </button>
-                                                {effects.length > 0 && (
-                                                    <button onClick={() => { pushUndo('Удаление эффектов'); setEffects([]); toast('Эффекты удалены'); }}
-                                                            className="px-3 py-2.5 rounded-lg border border-red-900 text-red-400 text-xs font-bold">Убрать все</button>
-                                                )}
-                                            </div>
-                                            {effects.length === 0 && (
-                                                <div className="text-[11px] text-zinc-500 leading-relaxed">
-                                                    Эффект — это движение света: радуга, волна, бегущий огонёк, живое пламя.
-                                                    Он бежит по приборам так, как они расставлены на странице «План».
-                                                    У пиксельных трубок эффект идёт по каждому пикселю отдельно.
-                                                </div>
-                                            )}
-                                            {effects.map((fx, i) => (
-                                                <FxCard key={fx.id} fx={fx} selCount={selected.size}
-                                                        onChange={upd => setEffects(list => list.map((e, j) => j === i ? { ...e, ...upd } : e))}
-                                                        onTarget={() => {
-                                                            const ids = Array.from(selected);
-                                                            setEffects(list => list.map((e, j) => j === i ? { ...e, targets: ids } : e));
-                                                            toast(ids.length ? 'Эффект теперь только на выбранных приборах' : 'Эффект на всех приборах');
-                                                        }}
-                                                        onDelete={() => setEffects(list => list.filter((_, j) => j !== i))} />
-                                            ))}
-                                        </React.Fragment>
-                                    )}
-
-                                    {tab === 'pos' && (
-                                        <React.Fragment>
-                                            <PaletteStrip kind="pos" palettes={palettes} onApply={applyPalette}
-                                                          onSave={() => savePalette('pos')}
-                                                          onHold={p => setModal({ type: 'palMenu', id: p.id })} />
-                                            <XYPad x={getVal('pan')} y={getVal('tilt')} disabled={noSel}
-                                                   onXY={(x, y) => applyToSelection({ pan: x, tilt: y })} />
-                                            <div className="flex gap-1.5">
-                                                <button disabled={noSel} onClick={() => applyToSelection({ pan: 0.5, tilt: 0.5 })}
-                                                        className="flex-1 py-2.5 rounded-lg bg-[var(--panel-2)] border border-[var(--border)] text-xs font-bold text-zinc-300 disabled:opacity-35">
-                                                    В центр
-                                                </button>
-                                            </div>
-                                            <HSlider label="Зум" frac={getVal('zoom')} text={pct(getVal('zoom'))} disabled={noSel}
-                                                     onFrac={v => applyToSelection({ zoom: v })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
-                                            <HSlider label="Фокус" frac={getVal('focus')} text={pct(getVal('focus'))} disabled={noSel}
-                                                     onFrac={v => applyToSelection({ focus: v })} gradient="linear-gradient(to right,#1c1b1a,#78716c)" />
-                                        </React.Fragment>
-                                    )}
-                                </div>
-
-                                {/* энкодеры */}
-                                <div className="shrink-0 border-t border-[var(--border)] px-3 pt-2 pb-3">
-                                    <div className="flex items-center gap-2 mb-1.5">
-                                        <button onClick={locate} disabled={noSel}
-                                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300 disabled:opacity-35">Locate</button>
-                                        <button onClick={() => setHighlight(h => !h)} disabled={noSel}
-                                                title="Гасит всё кроме выбранных — чтобы найти прибор глазами"
-                                                className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border disabled:opacity-35 " +
-                                                  (highlight ? 'bg-yellow-500 border-yellow-500 text-black' : 'bg-[var(--panel-2)] border-[var(--border)] text-zinc-300')}>Найти</button>
-                                        <button onClick={clearProg}
-                                                className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
-                                                  (progDirty ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-zinc-500')}>Очистить</button>
-                                        <div className="flex-1"></div>
-                                        <button onClick={() => setFine(f => !f)}
-                                                className={"px-3 py-1.5 rounded-lg text-[11px] font-bold border " +
-                                                  (fine ? 'bg-[var(--accent)] border-[var(--accent)] text-white' : 'border-[var(--border)] text-zinc-400')}>Точно</button>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        {encoders.map(enc => (
-                                            <Encoder key={tab + enc.label} label={enc.label} frac={enc.frac} text={enc.text}
-                                                     onTurn={enc.onTurn} disabled={noSel} />
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
+                            {controlPanel}
                         </div>
                     )}
 
