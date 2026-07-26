@@ -729,6 +729,39 @@
           const [drawingSchemeId, setDrawingSchemeId] = useState(null);
           const [expandedLightSceneId, setExpandedLightSceneId] = useState(null);
 
+          // --- Экспорт в PDF: что именно печатаем ---
+          // 'full' — весь план, 'doc' — открытый гайд, 'scheme' — открытая
+          // схема света, 'gear' — сводный список техники.
+          const [printMode, setPrintMode] = useState('full');
+          const [printRequested, setPrintRequested] = useState(false);
+          // Печать запускаем только после того, как React перерисует
+          // #print-area под выбранный режим, иначе уйдёт старое содержимое.
+          useEffect(() => {
+            if (!printRequested) return;
+            const t = setTimeout(() => { window.print(); setPrintRequested(false); }, 120);
+            return () => clearTimeout(t);
+          }, [printRequested, printMode]);
+          const requestPrint = (mode) => { setPrintMode(mode); setPrintRequested(true); };
+
+          // Сводка техники по всему проекту. Считаем максимум за одну сцену:
+          // именно столько нужно взять в аренду (сумма по сценам завысила бы
+          // — один и тот же стедикам работает в разных сценах).
+          const gearSummary = useMemo(() => {
+            const build = (field, types) => {
+              const acc = {};
+              scenes.forEach(s => {
+                Object.entries(s[field] || {}).forEach(([k, v]) => {
+                  if (!v) return;
+                  if (!acc[k]) acc[k] = { label: ((types || {})[k] || { label: k }).label, peak: 0, scenes: [] };
+                  acc[k].peak = Math.max(acc[k].peak, v);
+                  acc[k].scenes.push(s.number);
+                });
+              });
+              return Object.values(acc).sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+            };
+            return { camera: build('gear', gearTypes), light: build('lightGear', lightGearTypes) };
+          }, [scenes, gearTypes, lightGearTypes]);
+
           const [lastReadChat, setLastReadChat] = useState(() => Number(localStorage.getItem('cf_last_read')) || Date.now());
           const [newGearName, setNewGearName] = useState('');
           const [newLightGearName, setNewLightGearName] = useState('');
@@ -1736,9 +1769,31 @@
                       <div className="w-full lg:w-80 glass-panel p-6 rounded-xl shrink-0 space-y-8 relative border-t border-white/10">
                         <div className="space-y-3">
                           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Экспорт / Печать</span>
-                          <button onClick={() => window.print()} className="w-full py-4 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-white text-sm font-bold tracking-wide transition-all flex items-center justify-center space-x-2 border border-white/10">
-                            <span><Icons.Print/></span><span>Сформировать PDF</span>
-                          </button>
+                          {(() => {
+                            const openDoc = docs.find(d => d.id === activeDocId);
+                            const openScheme = lightSchemes.find(s => s.id === activeSchemeId);
+                            const btn = "w-full py-3 rounded-xl text-sm font-bold tracking-wide transition-all flex items-center justify-center gap-2 border";
+                            return (
+                              <div className="space-y-2">
+                                <button onClick={() => requestPrint('full')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-white/10`}>
+                                  <Icons.Print/> <span>Весь план</span>
+                                </button>
+                                <button onClick={() => requestPrint('doc')} disabled={!openDoc || !!activeSchemeId}
+                                        title={openDoc && !activeSchemeId ? `Печать: ${openDoc.title}` : 'Сначала откройте гайд слева'}
+                                        className={`${btn} ${openDoc && !activeSchemeId ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-white/10' : 'bg-zinc-900/60 text-zinc-600 border-white/5 cursor-not-allowed'}`}>
+                                  <Icons.Docs/> <span className="truncate">Гайд{openDoc && !activeSchemeId ? `: ${openDoc.title}` : ''}</span>
+                                </button>
+                                <button onClick={() => requestPrint('scheme')} disabled={!openScheme}
+                                        title={openScheme ? `Печать: ${openScheme.title}` : 'Сначала откройте схему света слева'}
+                                        className={`${btn} ${openScheme ? 'bg-amber-900/40 hover:bg-amber-900/60 text-amber-100 border-amber-500/30' : 'bg-zinc-900/60 text-zinc-600 border-white/5 cursor-not-allowed'}`}>
+                                  <Icons.Lightbulb/> <span className="truncate">Схема света{openScheme ? `: ${openScheme.title}` : ''}</span>
+                                </button>
+                                <button onClick={() => requestPrint('gear')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-white/10`}>
+                                  <Icons.Video/> <span>Список техники</span>
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div className="space-y-4 pt-6 border-t border-white/10">
                           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Файлы и документы проекта</span>
@@ -1944,8 +1999,96 @@
                   <Lightbox refs={references.filter(r => lightboxData.sceneId ? r.sceneId === lightboxData.sceneId : true)} initialId={lightboxData.currentId} onClose={() => setLightboxData(null)} />
               )}
 
-              {/* Печатная версия (кнопка «Сформировать PDF») */}
+              {/* Печатная версия. Содержимое зависит от выбранной кнопки
+                  экспорта (printMode): весь план / гайд / схема / техника. */}
               <div id="print-area">
+                {printMode === 'doc' && (() => {
+                  const d = docs.find(x => x.id === activeDocId);
+                  if (!d) return null;
+                  return (
+                    <div>
+                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{d.title || 'Гайд'}</h1>
+                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>Операторский гайд · CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      <p style={{fontSize: '12pt', lineHeight: 1.55, whiteSpace: 'pre-wrap', margin: 0}}>{d.content || 'Документ пуст.'}</p>
+                    </div>
+                  );
+                })()}
+
+                {printMode === 'scheme' && (() => {
+                  const sch = lightSchemes.find(x => x.id === activeSchemeId);
+                  if (!sch) return null;
+                  const linked = scenes.filter(s => s.lightSchemeId === sch.id);
+                  return (
+                    <div>
+                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{sch.title || 'Схема света'}</h1>
+                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Схема света · CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      {sch.preview
+                        ? <img src={sch.preview} style={{width: '100%', border: '1px solid #ccc'}} />
+                        : <p style={{fontSize: '11pt', color: '#777'}}>Схема ещё не сохранена в редакторе — нечего печатать.</p>}
+                      {sch.elements && sch.elements.length > 0 && (
+                        <div style={{marginTop: '14pt'}}>
+                          <h2 style={{fontSize: '13pt', fontWeight: 800, margin: '0 0 6pt'}}>Приборы на схеме</h2>
+                          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '10pt'}}>
+                            <tbody>
+                              {sch.elements.filter(el => el.label || el.text).map((el, i) => (
+                                <tr key={el.id || i}>
+                                  <td style={{border: '1px solid #ccc', padding: '4pt', width: '28pt', textAlign: 'center'}}>{i + 1}</td>
+                                  <td style={{border: '1px solid #ccc', padding: '4pt'}}>{el.label || el.text}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {linked.length > 0 && (
+                        <p style={{fontSize: '10pt', marginTop: '12pt'}}>
+                          <b>Используется в сценах:</b> {linked.map(s => `#${s.number}`).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {printMode === 'gear' && (
+                  <div>
+                    <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>Список техники</h1>
+                    <p style={{fontSize: '10pt', color: '#555', margin: '0 0 6pt'}}>CineFlow · {new Date().toLocaleDateString('ru-RU')} · сцен в проекте: {scenes.length}</p>
+                    <p style={{fontSize: '9pt', color: '#777', margin: '0 0 16pt'}}>
+                      «Нужно» — максимум за одну сцену, то есть сколько единиц требуется одновременно.
+                    </p>
+                    {[{t: 'Камера и операторский грип', rows: gearSummary.camera}, {t: 'Осветительные приборы', rows: gearSummary.light}].map(block => (
+                      <div key={block.t} style={{marginBottom: '16pt'}}>
+                        <h2 style={{fontSize: '13pt', fontWeight: 800, margin: '0 0 6pt'}}>{block.t}</h2>
+                        {block.rows.length === 0
+                          ? <p style={{fontSize: '10pt', color: '#777', margin: 0}}>Ничего не отмечено.</p>
+                          : (
+                            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '10pt'}}>
+                              <thead>
+                                <tr>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt', textAlign: 'left'}}>Позиция</th>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt', width: '50pt', textAlign: 'center'}}>Нужно</th>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt', width: '60pt', textAlign: 'center'}}>Сцен</th>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt'}}>В каких сценах</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {block.rows.map(r => (
+                                  <tr key={r.label}>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt'}}>{r.label}</td>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt', textAlign: 'center', fontWeight: 700}}>{r.peak}</td>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt', textAlign: 'center'}}>{r.scenes.length}</td>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt'}}>{r.scenes.map(n => `#${n}`).join(', ')}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {printMode === 'full' && (<>
                 <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>CineFlow — План подготовки к съёмкам</h1>
                 <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Сформировано: {new Date().toLocaleDateString('ru-RU')} · Сцен: {scenes.length}</p>
                 {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
@@ -1980,6 +2123,7 @@
                     </table>
                   </div>
                 )}
+                </>)}
               </div>
 
             </div>
