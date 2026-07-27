@@ -802,15 +802,33 @@
           const [tagSearch, setTagSearch] = useState('');
           // Панель тегов в галерее: сворачивается в полоску 40px.
           const [galleryTagsOpen, setGalleryTagsOpen] = useState(true);
+          // Папки референсов. Папка — просто поле folder у референса,
+          // отдельной сущности нет: так ничего не рассинхронизируется,
+          // и папка исчезает сама, когда из неё убрали последний файл.
+          const [activeFolder, setActiveFolder] = useState('');
+          const folderCounts = useMemo(() => {
+            const m = {};
+            references.forEach(r => { const f = (r.folder || '').trim(); if (f) m[f] = (m[f] || 0) + 1; });
+            return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+          }, [references]);
+          const noFolderCount = useMemo(() => references.filter(r => !(r.folder || '').trim()).length, [references]);
+          const moveToFolder = (ref, folder) => {
+            const up = references.map(r => r.id === ref.id ? { ...r, folder } : r);
+            setReferences(up);
+            syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
           // Список тегов с количеством референсов у каждого.
           const tagCounts = useMemo(() => {
             const m = {};
             references.forEach(r => (r.tags || []).forEach(t => { m[t] = (m[t] || 0) + 1; }));
             return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
           }, [references]);
-          const visibleRefs = useMemo(() => references.filter(r =>
-            !tagSearch || (r.tags && r.tags.some(t => t.toLowerCase().includes(tagSearch.toLowerCase())))
-          ), [references, tagSearch]);
+          const visibleRefs = useMemo(() => references.filter(r => {
+            const byTag = !tagSearch || (r.tags && r.tags.some(t => t.toLowerCase().includes(tagSearch.toLowerCase())));
+            const f = (r.folder || '').trim();
+            const byFolder = activeFolder === '' ? true : (activeFolder === '__none__' ? !f : f === activeFolder);
+            return byTag && byFolder;
+          }), [references, tagSearch, activeFolder]);
           
           const [activeSchemeId, setActiveSchemeId] = useState(null);
           const [drawingSchemeId, setDrawingSchemeId] = useState(null);
@@ -1570,6 +1588,39 @@
                           </div>
                         </div>
                         <div className="flex-1 overflow-y-auto">
+                          {/* ПАПКИ */}
+                          <div style={{ borderBottom: '1px solid var(--border)' }}>
+                            <div className="flex items-center justify-between px-4 pt-3 pb-1">
+                              <span className="cf-eyebrow">Папки</span>
+                              <button onClick={() => {
+                                        const name = prompt('Название папки');
+                                        if (name && name.trim()) setActiveFolder(name.trim());
+                                      }}
+                                      title="Создать папку (появится, когда положите в неё референс)"
+                                      style={{ color: 'var(--muted-2)', fontSize: 14, lineHeight: 1 }}>+</button>
+                            </div>
+                            {[['', 'Все', references.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
+                              .map(([key, label, count]) => {
+                                const on = activeFolder === key;
+                                return (
+                                  <button key={key || 'all'} onClick={() => setActiveFolder(key)}
+                                          className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
+                                          style={{ minHeight: 38, background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                    <span className="truncate flex items-center gap-1.5" style={{ fontSize: 12.5 }}>
+                                      <Icons.Folder /> {label}
+                                    </span>
+                                    <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                                  </button>
+                                );
+                              })}
+                            {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && (
+                              <p className="px-4 pb-3" style={{ fontSize: 11.5, color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                                Папка «{activeFolder}» пока пустая. Перетащите сюда референсы или выберите папку на карточке.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="px-4 pt-3 pb-1"><span className="cf-eyebrow">Теги</span></div>
                           {tagCounts.map(([tag, count]) => {
                             const on = tagSearch.toLowerCase() === tag;
                             return (
@@ -1665,6 +1716,20 @@
                                     </div>
                                     <div className="p-3 space-y-2 bg-black/30">
                                         <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
+                                        <select value={(ref.folder || '')}
+                                                onChange={(e) => {
+                                                  if (e.target.value === '__new__') {
+                                                    const name = prompt('Новая папка');
+                                                    if (name && name.trim()) moveToFolder(ref, name.trim());
+                                                  } else moveToFolder(ref, e.target.value);
+                                                }}
+                                                className="w-full rounded-md px-2 py-1"
+                                                style={{ fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)', color: (ref.folder ? 'var(--text-2)' : 'var(--muted-2)') }}>
+                                          <option value="">Без папки</option>
+                                          {folderCounts.map(([f]) => <option key={f} value={f}>{f}</option>)}
+                                          {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && <option value={activeFolder}>{activeFolder}</option>}
+                                          <option value="__new__">+ новая папка…</option>
+                                        </select>
                                         <div className="flex flex-wrap gap-1">
                                             {(ref.tags || []).map((tag, idx) => (
                                                 <span key={idx} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1">
