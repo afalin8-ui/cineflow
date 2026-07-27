@@ -762,6 +762,21 @@
             return { camera: build('gear', gearTypes), light: build('lightGear', lightGearTypes) };
           }, [scenes, gearTypes, lightGearTypes]);
 
+          // Добавление тега к референсу. Раньше срабатывало только по Enter:
+          // напечатал тег, кликнул мимо — тег молча пропадал, и поэтому
+          // казалось, что «теги не сохраняются и поиск не работает».
+          // Теперь тег принимается и по Enter, и по запятой, и при уходе фокуса.
+          const commitTag = (ref, inputEl) => {
+            const raw = (inputEl.value || '').trim().toLowerCase().replace(/,+$/, '').trim();
+            inputEl.value = '';
+            if (!raw) return;
+            const current = ref.tags || [];
+            if (current.includes(raw)) return;
+            const up = references.map(r => r.id === ref.id ? { ...r, tags: [...current, raw] } : r);
+            setReferences(up);
+            syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
+
           const [lastReadChat, setLastReadChat] = useState(() => Number(localStorage.getItem('cf_last_read')) || Date.now());
           const [newGearName, setNewGearName] = useState('');
           const [newLightGearName, setNewLightGearName] = useState('');
@@ -1349,7 +1364,10 @@
                                                     {tag} <button onClick={() => { const up = references.map(r => r.id === ref.id ? {...r, tags: r.tags.filter((_, i) => i !== idx)} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="hover:text-white">✕</button>
                                                 </span>
                                             ))}
-                                            <input type="text" placeholder="+ тег" onKeyDown={e => { if(e.key === 'Enter' && e.target.value.trim()){ const nt = e.target.value.trim().toLowerCase(); const currentTags = ref.tags || []; if(!currentTags.includes(nt)){ const up = references.map(r => r.id === ref.id ? {...r, tags: [...currentTags, nt]} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); } e.target.value = ''; } }} className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-16" />
+                                            <input type="text" placeholder="+ тег, Enter"
+                                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitTag(ref, e.target); } }}
+                                                onBlur={e => commitTag(ref, e.target)}
+                                                className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-24 min-w-0" />
                                         </div>
                                     </div>
                                 </div>
