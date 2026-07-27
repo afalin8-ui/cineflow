@@ -757,6 +757,29 @@
           const [lightGearTypes, setLightGearTypes] = useState(() => safeLoad('cf_lightgeartypes', DEFAULT_LIGHT_GEAR, false));
           const [lightSchemes, setLightSchemes] = useState(() => safeLoad('cf_lightschemes', [], true));
 
+          // --- ДОСКИ ---
+          // Раньше доска была одна: все стикеры, референсы и один общий
+          // рисунок. Теперь досок несколько — у каждой свои стикеры,
+          // свои референсы и свой холст.
+          const DEFAULT_BOARD = { id: 'board-main', title: 'Основная', order: 0 };
+          const [boards, setBoards] = useState(() => safeLoad('cf_boards', [DEFAULT_BOARD], true));
+          const [activeBoardId, setActiveBoardId] = useState(() => localStorage.getItem('cf_active_board') || DEFAULT_BOARD.id);
+          const sortedBoards = useMemo(() => {
+            const list = (boards && boards.length) ? [...boards] : [DEFAULT_BOARD];
+            return list.sort((a, b) => (a.order || 0) - (b.order || 0));
+          }, [boards]);
+          // Если выбранной доски больше нет (удалили на другом устройстве) —
+          // возвращаемся на первую, иначе доска покажется пустой без причины.
+          useEffect(() => {
+            if (!sortedBoards.some(b => b.id === activeBoardId) && sortedBoards.length) {
+              setActiveBoardId(sortedBoards[0].id);
+            }
+          }, [sortedBoards, activeBoardId]);
+          useEffect(() => { localStorage.setItem('cf_active_board', activeBoardId); }, [activeBoardId]);
+          // Старые стикеры/референсы созданы без boardId — считаем их
+          // принадлежащими первой доске, чтобы ничего не пропало.
+          const belongsToBoard = (item, boardId) => (item.boardId || DEFAULT_BOARD.id) === boardId;
+
           const [messages, setMessages] = useState([]); 
 
           const [currentView, setCurrentView] = useState('notion'); 
@@ -1012,15 +1035,36 @@
               subList('lightSchemes', setLightSchemes, lightSchemes),
               subMap('gearTypes', setGearTypes, gearTypes),
               subMap('lightGearTypes', setLightGearTypes, lightGearTypes),
-              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err)),
-              baseRef.collection('canvas').doc('globalDraw').onSnapshot(doc => {
-                if (doc.exists && doc.data().lastDrawBy !== user.uid && paintCanvasRef.current) {
-                  const ctx = paintCanvasRef.current.getContext('2d'); const img = new Image();
-                  img.onload = () => { ctx.clearRect(0, 0, 4000, 4000); ctx.drawImage(img, 0, 0); }; img.src = doc.data().dataUrl;
-                }
-              })
+              subList('boards', setBoards, [DEFAULT_BOARD]),
+              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err))
             ]; return () => unsubs.forEach(u => u());
           }, [user]);
+
+          // Рисунок активной доски. Отдельная подписка: при переключении
+          // доски нужно отцепиться от старого документа и подцепиться к
+          // новому, иначе на новую доску прилетят чужие штрихи.
+          const canvasDocId = (boardId) => boardId === DEFAULT_BOARD.id ? 'globalDraw' : `draw-${boardId}`;
+          useEffect(() => {
+            const c = paintCanvasRef.current;
+            if (!c) return;
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            // сначала показываем локальную копию — она есть и без сети
+            const local = localStorage.getItem('cf_canvas_draw_' + activeBoardId);
+            if (local) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = local; }
+            if (!db || !user) return;
+            const unsub = db.collection('artifacts').doc(appId).collection('public').doc('data')
+              .collection('canvas').doc(canvasDocId(activeBoardId))
+              .onSnapshot(doc => {
+                if (!doc.exists || !paintCanvasRef.current) return;
+                if (doc.data().lastDrawBy === user.uid) return;
+                const cc = paintCanvasRef.current.getContext('2d');
+                const img = new Image();
+                img.onload = () => { cc.clearRect(0, 0, 4000, 4000); cc.drawImage(img, 0, 0); };
+                img.src = doc.data().dataUrl;
+              }, err => console.warn('sync canvas', err));
+            return () => unsub();
+          }, [user, activeBoardId]);
 
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака)
           useEffect(() => {
@@ -1030,7 +1074,8 @@
             save('cf_docs', docs); save('cf_crew', crew);
             save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
             save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
-          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes]);
+            save('cf_boards', boards);
+          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards]);
 
           const syncTimers = useRef({});
           const dataRef = () => db.collection('artifacts').doc(appId).collection('public').doc('data');
@@ -1507,6 +1552,29 @@
                                     <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => setLightboxData({ sceneId: null, currentId: ref.id })}>
                                         <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={{backgroundImage: `url(${ref.url})`}}></div>
                                         <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                        {(() => {
+                                          const onBoard = !!ref.boardId;
+                                          const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
+                                          return (
+                                            <button onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      const nextBoard = onBoard ? '' : activeBoardId;
+                                                      const placed = { ...ref, boardId: nextBoard,
+                                                        x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
+                                                        y: (240 - canvasOffset.y) / zoom + Math.random() * 60 };
+                                                      setReferences(references.map(r => r.id === ref.id ? placed : r));
+                                                      syncDoc('references', ref.id, placed);
+                                                      showToast(onBoard ? 'Убрано с доски · осталось в галерее' : 'Добавлено на доску');
+                                                    }}
+                                                    title={onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску'}
+                                                    className="absolute top-2 left-2 backdrop-blur w-7 h-7 rounded-lg transition-all text-xs z-20 flex items-center justify-center opacity-0 group-hover:opacity-100"
+                                                    style={onBoard
+                                                      ? { background: 'var(--accent)', color: 'var(--bg)', opacity: 1 }
+                                                      : { background: 'rgba(0,0,0,.8)', color: 'var(--muted)' }}>
+                                              <Icons.Board/>
+                                            </button>
+                                          );
+                                        })()}
                                         <img src={ref.url} className="w-full h-full object-contain relative z-10" draggable="false" />
                                     </div>
                                     <div className="p-3 space-y-2 bg-black/30">
@@ -1566,8 +1634,57 @@
                   </div>
 
                   {/* ИНТЕРАКТИВНАЯ ДОСКА (WHITEBOARD) */}
-                  <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'block' : 'hidden'}`}>
-                    <div id="whiteboard-canvas" className="w-full h-full bg-[radial-gradient(rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:24px_24px] relative overflow-hidden" 
+                  <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'flex flex-col' : 'hidden'}`}>
+
+                    {/* ВКЛАДКИ ДОСОК */}
+                    <div className="flex items-end gap-1 px-3 shrink-0 overflow-x-auto hide-scrollbar"
+                         style={{ background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
+                      {sortedBoards.map(b => {
+                        const on = b.id === activeBoardId;
+                        return (
+                          <button key={b.id} onClick={() => setActiveBoardId(b.id)}
+                                  onDoubleClick={() => {
+                                    const t = prompt('Название доски', b.title);
+                                    if (t && t.trim()) { const up = boards.map(x => x.id === b.id ? { ...x, title: t.trim() } : x); setBoards(up); syncDoc('boards', b.id, up.find(x => x.id === b.id)); }
+                                  }}
+                                  title={on ? 'Двойной клик — переименовать' : b.title}
+                                  className="shrink-0 flex items-center gap-2 transition-colors"
+                                  style={{ padding: '9px 15px', borderRadius: '8px 8px 0 0', minHeight: 40,
+                                           background: on ? 'var(--bg)' : 'transparent',
+                                           borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+                                           color: on ? 'var(--text)' : 'var(--muted-2)', fontSize: 12.5 }}>
+                            {b.title}
+                            {on && sortedBoards.length > 1 && (
+                              <span onClick={(e) => {
+                                      e.stopPropagation();
+                                      setConfirmAction({ title: 'Удалить доску?', message: `«${b.title}» и всё, что на ней нарисовано и разложено.`, onConfirm: () => {
+                                        const rest = boards.filter(x => x.id !== b.id);
+                                        setBoards(rest); deleteNetDoc('boards', b.id);
+                                        stickies.filter(st => belongsToBoard(st, b.id)).forEach(st => deleteNetDoc('stickies', st.id));
+                                        setStickies(stickies.filter(st => !belongsToBoard(st, b.id)));
+                                        setReferences(references.map(r => r.boardId === b.id ? { ...r, boardId: '' } : r));
+                                        references.filter(r => r.boardId === b.id).forEach(r => syncDoc('references', r.id, { ...r, boardId: '' }));
+                                        try { localStorage.removeItem('cf_canvas_draw_' + b.id); } catch (err) {}
+                                        setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
+                                        showToast('Доска удалена · референсы остались в галерее');
+                                      }});
+                                    }}
+                                    title="Удалить доску"
+                                    style={{ color: 'var(--muted-2)', fontSize: 13, lineHeight: 1 }}>✕</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      <button onClick={() => {
+                                const nb = { id: `board-${Date.now()}`, title: `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
+                                setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
+                              }}
+                              title="Новая доска"
+                              className="shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
+                              style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
+                    </div>
+
+                    <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
                     onWheel={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -1690,7 +1807,7 @@
                             e.target.releasePointerCapture(e.pointerId);
                           }
                           setIsPainting(false); setIsPanning(false); 
-                          if (paintCanvasRef.current) { const dU = paintCanvasRef.current.toDataURL(); localStorage.setItem('cf_canvas_draw', dU); if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc('globalDraw').set({ dataUrl: dU, lastDrawBy: user.uid }); } 
+                          if (paintCanvasRef.current) { const dU = paintCanvasRef.current.toDataURL(); try { localStorage.setItem('cf_canvas_draw_' + activeBoardId, dU); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: dU, lastDrawBy: user.uid }); }
                         }} onPointerCancel={() => { setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-10 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
@@ -1704,7 +1821,7 @@
                             </div>
                             ))}
 
-                            {references.map(ref => (
+                            {references.filter(r => r.boardId === activeBoardId).map(ref => (
                             <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, position: 'absolute' }} className={`w-48 glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 transition-all ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'}`}>
                                 <div className="relative aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/10">
                                 <button onClick={() => setConfirmAction({title:'Удалить референс?', message:'Убрать с доски?', onConfirm:()=> { setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
@@ -1720,7 +1837,7 @@
                             </div>
                             ))}
 
-                            {stickies.map(st => (
+                            {stickies.filter(st => belongsToBoard(st, activeBoardId)).map(st => (
                             <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')} style={{ left: `${st.x}px`, top: `${st.y}px`, position: 'absolute', backgroundColor: st.color }} className={`w-56 p-4 rounded-lg cursor-move pointer-events-auto z-20 text-zinc-900 transform rotate-1 hover:rotate-0 transition-all group ${selectedWbItems.includes(st.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : ' border border-white/20'}`}>
                                 <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors opacity-0 group-hover:opacity-100">✕</button>
                                 <textarea value={st.text} onChange={(e) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: e.target.value } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }} className="w-full bg-transparent border-none text-[13px] focus:outline-none h-20 resize-none font-bold text-zinc-900 leading-tight placeholder-black/50" placeholder="Текст заметки..." />
@@ -1735,9 +1852,9 @@
                         <button onClick={() => setWbMode('erase')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
                         <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1"></div>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на холсте будут стираться.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); localStorage.removeItem('cf_canvas_draw'); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
                       </div>
 
                       {wbMode === 'draw' && (
