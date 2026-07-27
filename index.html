@@ -34,7 +34,7 @@
                 zinc: { 50:'#fafaf9',100:'#f5f5f4',200:'#e7e5e4',300:'#d6d3d1',400:'#a8a29e',500:'#78716c',600:'#57534e',700:'#44403c',800:'#292524',900:'#1c1917',950:'#0c0a09' }
               },
               fontFamily: {
-                sans: ['Inter','-apple-system','BlinkMacSystemFont','Segoe UI','sans-serif'],
+                sans: ['Archivo','-apple-system','BlinkMacSystemFont','Segoe UI','sans-serif'],
                 serif: ['Lora','Georgia','serif'],
                 mono: ['JetBrains Mono','ui-monospace','SFMono-Regular','monospace']
               }
@@ -44,7 +44,7 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&family=Lora:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:wght@600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -56,13 +56,32 @@
 
     <style>
         :root {
-            --bg: #1a1918;
-            --panel: #242322;
-            --panel-2: #1e1d1c;
-            --border: #363430;
-            --text: #f0eee6;
-            --muted: #a6a39a;
-            --accent: #d97757;
+          /* поверхности: --canvas < --bg < --panel-3 < --panel-2 < --panel < изображения */
+          --bg: #1a1918;
+          --panel: #242322;       /* карточки, кнопки, выбранная строка, стикеры */
+          --panel-2: #1e1d1c;     /* рельс, шапка, правые панели, чат */
+          --panel-3: #1c1b1a;     /* боковые списки: сцены, теги, оглавление */
+          --canvas: #14130f;      /* холст доски и превью схем света */
+
+          --border: #363430;      /* границы панелей и кнопок */
+          --border-soft: #2c2b28; /* разделители строк в списках */
+
+          --text: #f0eee6;
+          --text-2: #c9c5bb;      /* абзацы, описания */
+          --muted: #a6a39a;       /* подписи, метки разделов */
+          --muted-2: #6f6b63;     /* служебное, моно-метки */
+
+          --accent: #d97757;
+          --accent-hover: #e28a63;
+          --accent-soft: rgba(217,119,87,.12);  /* фон своего сообщения в чате */
+          --accent-line: rgba(217,119,87,.45);  /* рамка активного тега */
+
+          --ink-yellow: #facc15;  /* приборы на схеме света, стикеры */
+          --ink-blue: #60a5fa;
+
+          --rail-w: 66px;
+          --header-h: 42px;
+          --panel-strip: 40px;
         }
         body {
             margin: 0;
@@ -70,15 +89,15 @@
             background: var(--bg);
             color: var(--text);
             touch-action: none;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-family: 'Archivo', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             -webkit-tap-highlight-color: transparent;
             -webkit-font-smoothing: antialiased;
         }
         ::selection { background: rgba(217,119,87,0.3); }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #2c353e; border-radius: 8px; }
-        ::-webkit-scrollbar-thumb:hover { background: #3d4954; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3d3a36; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .wb-color-well::-webkit-color-swatch-wrapper { padding: 0; }
@@ -92,19 +111,53 @@
         .glass-panel {
             background: var(--panel);
             border: 1px solid var(--border);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.25);
         }
         .glass-input {
             background: var(--panel-2);
             border: 1px solid var(--border);
             color: var(--text);
         }
-        .glass-input::placeholder { color: #5c6a75; }
+        .glass-input::placeholder { color: var(--muted-2); }
         .glass-input:focus, .glass-input:focus-within {
             border-color: var(--accent);
             outline: none;
         }
         .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(217,119,87,0.4); }
+
+        /* ---------- утилиты редизайна ---------- */
+        :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+        /* метка раздела над блоком */
+        .cf-eyebrow { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+
+        /* служебная моно-подпись: слаглайн, дата, счётчики */
+        .cf-meta { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .04em; color: var(--muted-2); }
+
+        /* чип параметра или тега */
+        .cf-chip { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .04em; color: var(--muted); background: var(--panel); border: 1px solid var(--border); padding: 4px 7px; border-radius: 5px; }
+        .cf-chip-accent { color: var(--accent); background: transparent; border-color: var(--accent-line); }
+
+        /* строка списка: граница есть всегда, меняется только цвет — текст не сдвигается при выборе */
+        .cf-row { border-left: 2px solid transparent; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+        .cf-row-on { background: var(--panel); border-left-color: var(--accent); }
+
+        /* свёрнутая боковая панель */
+        .cf-strip { width: var(--panel-strip); background: var(--panel-3); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; cursor: pointer; }
+        .cf-strip span { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted-2); writing-mode: vertical-rl; }
+
+        /* холст доски */
+        .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.13) 1.5px, transparent 1.5px); background-size: 26px 26px; }
+
+        /* метка поверх превью кадра */
+        .cf-overlay { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text); background: rgba(26,25,24,.72); padding: 3px 6px; border-radius: 3px; }
+
+        /* рельс навигации */
+        .cf-rail { width: var(--rail-w); background: var(--panel-2); border-right: 1px solid var(--border); padding: 10px 0; }
+        .cf-rail-item { width: 56px; padding: 8px 0 6px; gap: 5px; border-radius: 8px; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .cf-rail-item span { font-size: 9.5px; }
+        .cf-rail-item:hover { color: var(--text-2); }
+        .cf-rail-on { background: #2b2a28; color: var(--accent); }
+        .cf-rail-on:hover { color: var(--accent); }
         #print-area { display: none; }
         @media print {
             body { background: white !important; color: black !important; overflow: auto; touch-action: auto; }
@@ -227,11 +280,11 @@
             if (this.state.hasError) {
               return (
                 <div className="flex flex-col items-center justify-center h-screen bg-[#1a1918] text-zinc-200 p-6">
-                  <div className="glass-panel p-8 rounded-xl max-w-md text-center border-t border-red-500/30">
+                  <div className="glass-panel p-8 rounded-lg max-w-md text-center border-t border-red-500/30">
                     <h1 className="text-xl font-bold text-red-400 mb-4">Что-то пошло не так</h1>
                     <p className="text-sm text-zinc-400 mb-6">Произошла ошибка интерфейса. Перезагрузите приложение — ваши данные сохранены.</p>
-                    <button onClick={() => window.location.reload()} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl text-sm font-medium w-full transition-colors">Перезагрузить приложение</button>
-                    <button onClick={() => { if (confirm('Удалить ВСЕ локальные данные проекта? Это действие необратимо.')) { localStorage.clear(); window.location.reload(); } }} className="mt-3 bg-transparent border border-red-500/40 text-red-400 hover:bg-red-500/10 px-6 py-3 rounded-xl text-sm font-medium w-full transition-colors">Сбросить данные и перезагрузить</button>
+                    <button onClick={() => window.location.reload()} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] px-6 py-3 rounded-lg text-sm font-medium w-full transition-colors">Перезагрузить приложение</button>
+                    <button onClick={() => { if (confirm('Удалить ВСЕ локальные данные проекта? Это действие необратимо.')) { localStorage.clear(); window.location.reload(); } }} className="mt-3 bg-transparent border border-red-500/40 text-red-400 hover:bg-red-500/10 px-6 py-3 rounded-lg text-sm font-medium w-full transition-colors">Сбросить данные и перезагрузить</button>
                   </div>
                 </div>
               );
@@ -244,13 +297,13 @@
             if (!action) return null;
             return (
                 <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-                    <div className="glass-panel p-6 rounded-xl max-w-sm w-full text-center border-t border-red-500/50">
+                    <div className="glass-panel p-6 rounded-lg max-w-sm w-full text-center border-t border-red-500/50">
                         <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
                         <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
                         <p className="text-sm text-zinc-400 mb-6">{action.message}</p>
                         <div className="flex gap-3">
-                            <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-xl text-sm font-bold transition-colors">Отмена</button>
-                            <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl text-sm font-bold transition-colors">Подтвердить</button>
+                            <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors">Отмена</button>
+                            <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold transition-colors">Подтвердить</button>
                         </div>
                     </div>
                 </div>
@@ -324,7 +377,7 @@
 
             return (
                 <div className="fixed inset-0 bg-black/85 backdrop-blur-lg flex items-center justify-center z-[500] p-4">
-                    <div className="glass-panel p-8 rounded-xl w-full max-w-sm">
+                    <div className="glass-panel p-8 rounded-lg w-full max-w-sm">
                         <div className="flex justify-center mb-4 text-indigo-400"><Icons.User /></div>
                         <h2 className="text-2xl font-extrabold text-white mb-2 text-center">Профиль Оператора</h2>
                         {step === 'name' && (
@@ -333,11 +386,11 @@
                             <form onSubmit={handleNameSubmit} className="space-y-4">
                                 <div>
                                     <label className="text-xs text-zinc-400 mb-1 block ml-1">Имя и Фамилия</label>
-                                    <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Иван Иванов" className="w-full glass-input rounded-xl px-4 py-3 text-sm transition-colors" required />
+                                    <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Иван Иванов" className="w-full glass-input rounded-lg px-4 py-3 text-sm transition-colors" required />
                                 </div>
                                 <div>
                                     <label className="text-xs text-zinc-400 mb-1 block ml-1">Роль в съемочной группе</label>
-                                    <select value={role} onChange={e => setRole(e.target.value)} className="w-full glass-input rounded-xl px-4 py-3 text-sm transition-colors appearance-none bg-zinc-900">
+                                    <select value={role} onChange={e => setRole(e.target.value)} className="w-full glass-input rounded-lg px-4 py-3 text-sm transition-colors appearance-none bg-zinc-900">
                                         <option value="Оператор-постановщик">Оператор-постановщик (DoP)</option>
                                         <option value="Гаффер">Гаффер (Gaffer)</option>
                                         <option value="Режиссер">Режиссер-постановщик</option>
@@ -347,7 +400,7 @@
                                         <option value="Специалист">Механик / Стедикамист</option>
                                     </select>
                                 </div>
-                                <button type="submit" disabled={busy} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-semibold py-3 rounded-xl mt-4 transition-all">{busy ? 'Проверка…' : 'Продолжить'}</button>
+                                <button type="submit" disabled={busy} className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-[#1a1918] font-semibold py-3 rounded-lg mt-4 transition-all">{busy ? 'Проверка…' : 'Продолжить'}</button>
                             </form>
                           </>
                         )}
@@ -362,12 +415,12 @@
                                 <div>
                                     <label className="text-xs text-zinc-400 mb-1 block ml-1">PIN (мин. 4 символа)</label>
                                     <div className="relative">
-                                        <input autoFocus type={showPin ? "text" : "password"} value={pin} onChange={e => setPin(e.target.value)} autoComplete="off" data-lpignore="true" data-1p-ignore="true" name="cf-profile-pin" className="w-full glass-input rounded-xl px-4 py-3 pr-12 text-sm font-mono" required />
+                                        <input autoFocus type={showPin ? "text" : "password"} value={pin} onChange={e => setPin(e.target.value)} autoComplete="off" data-lpignore="true" data-1p-ignore="true" name="cf-profile-pin" className="w-full glass-input rounded-lg px-4 py-3 pr-12 text-sm font-mono" required />
                                         <button type="button" onClick={() => setShowPin(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-white/5 transition-colors">{showPin ? "Скрыть" : "Показать"}</button>
                                     </div>
                                 </div>
                                 {error && <p className="text-xs text-red-400">{error}</p>}
-                                <button type="submit" disabled={busy} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-all">{busy ? 'Проверка…' : (step === 'pin-new' ? 'Создать и продолжить' : 'Войти')}</button>
+                                <button type="submit" disabled={busy} className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-[#1a1918] font-semibold py-3 rounded-lg transition-all">{busy ? 'Проверка…' : (step === 'pin-new' ? 'Создать и продолжить' : 'Войти')}</button>
                                 <button type="button" onClick={backToName} className="w-full text-zinc-500 hover:text-zinc-300 text-xs font-semibold py-1 transition-colors">← Изменить имя</button>
                             </form>
                           </>
@@ -438,7 +491,7 @@
                         <div className="flex items-center gap-4">
                             <span className="text-white font-bold text-sm flex items-center gap-2"><Icons.Pen /> Модуль быстрого скетча</span>
                             <div className="flex gap-1 bg-black/50 p-1 rounded-lg">
-                                <button onClick={() => setTool('brush')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'brush' ? 'bg-indigo-600 text-white' : 'text-zinc-400'}`}><Icons.Pen /> Кисть</button>
+                                <button onClick={() => setTool('brush')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'brush' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400'}`}><Icons.Pen /> Кисть</button>
                                 <button onClick={() => setTool('eraser')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'eraser' ? 'bg-zinc-700 text-white' : 'text-zinc-400'}`}><Icons.Eraser /> Ластик</button>
                             </div>
                             <input type="range" min="1" max="20" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} className="w-24 accent-indigo-500" />
@@ -450,12 +503,12 @@
                         </div>
                         <div className="flex gap-2">
                             <button onClick={() => { const ctx = canvasRef.current.getContext('2d'); ctx.fillStyle = '#262624'; ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs rounded-lg hover:bg-zinc-700 flex items-center gap-1"><Icons.Trash /> Очистить</button>
-                            <button onClick={() => onSave(canvasRef.current.toDataURL('image/jpeg', 0.8))} className="px-4 py-2 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-500 font-bold">Сохранить</button>
+                            <button onClick={() => onSave(canvasRef.current.toDataURL('image/jpeg', 0.8))} className="px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить</button>
                             <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Отмена</button>
                         </div>
                     </div>
                     <div className="flex-1 p-4 md:p-12 flex justify-center items-center overflow-hidden">
-                        <div className="w-full max-w-5xl aspect-video relative rounded-xl overflow-hidden border border-zinc-800">
+                        <div className="w-full max-w-5xl aspect-video relative rounded-lg overflow-hidden border border-zinc-800">
                             <canvas ref={canvasRef} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={stopDrawing} onPointerCancel={stopDrawing} className="absolute inset-0 w-full h-full cursor-crosshair touch-none" />
                         </div>
                     </div>
@@ -563,17 +616,17 @@
                         <div className="flex flex-wrap items-center gap-y-2 gap-x-4">
                             <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Интерактивная Схема Света</span>
                             <div className="flex flex-wrap gap-1 bg-black/50 p-1 rounded-lg">
-                                <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Pointer/></button>
-                                <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Pen/></button>
+                                <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pointer/></button>
+                                <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pen/></button>
                                 <button onClick={() => setMode('erase')} className={`px-2 py-1 text-xs rounded ${mode==='erase'?'bg-zinc-700 text-white':'text-zinc-400'}`}><Icons.Eraser/></button>
                                 <div className="w-[1px] h-4 bg-white/20 my-auto mx-1"></div>
-                                <button onClick={() => setMode('rect')} title="Прямоугольник" className={`px-2 py-1 text-xs rounded ${mode==='rect'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Square/></button>
-                                <button onClick={() => setMode('circle')} title="Круг" className={`px-2 py-1 text-xs rounded ${mode==='circle'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Circle/></button>
-                                <button onClick={() => setMode('triangle')} title="Треугольник" className={`px-2 py-1 text-xs rounded ${mode==='triangle'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Triangle/></button>
-                                <button onClick={() => setMode('diamond')} title="Ромб" className={`px-2 py-1 text-xs rounded ${mode==='diamond'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Diamond/></button>
-                                <button onClick={() => setMode('star')} title="Звезда" className={`px-2 py-1 text-xs rounded ${mode==='star'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.Star/></button>
-                                <button onClick={() => setMode('arrow')} title="Стрелка (направление луча)" className={`px-2 py-1 text-xs rounded ${mode==='arrow'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.BeamArrow/></button>
-                                <button onClick={() => setMode('text')} title="Текст" className={`px-2 py-1 text-xs rounded ${mode==='text'?'bg-indigo-600 text-white':'text-zinc-400'}`}><Icons.TextIcon/></button>
+                                <button onClick={() => setMode('rect')} title="Прямоугольник" className={`px-2 py-1 text-xs rounded ${mode==='rect'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Square/></button>
+                                <button onClick={() => setMode('circle')} title="Круг" className={`px-2 py-1 text-xs rounded ${mode==='circle'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Circle/></button>
+                                <button onClick={() => setMode('triangle')} title="Треугольник" className={`px-2 py-1 text-xs rounded ${mode==='triangle'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Triangle/></button>
+                                <button onClick={() => setMode('diamond')} title="Ромб" className={`px-2 py-1 text-xs rounded ${mode==='diamond'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Diamond/></button>
+                                <button onClick={() => setMode('star')} title="Звезда" className={`px-2 py-1 text-xs rounded ${mode==='star'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Star/></button>
+                                <button onClick={() => setMode('arrow')} title="Стрелка (направление луча)" className={`px-2 py-1 text-xs rounded ${mode==='arrow'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.BeamArrow/></button>
+                                <button onClick={() => setMode('text')} title="Текст" className={`px-2 py-1 text-xs rounded ${mode==='text'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.TextIcon/></button>
                             </div>
                             <div className="flex gap-1">
                                 {['#facc15', '#60a5fa', '#f87171', '#34d399', '#ffffff'].map(c => (
@@ -609,18 +662,18 @@
                                         pctx.lineTo(x2 - headLen*Math.cos(ang + Math.PI/6), y2 - headLen*Math.sin(ang + Math.PI/6));
                                         pctx.closePath(); pctx.fill();
                                     }
-                                    else if (el.type === 'text') { pctx.font = 'bold 30px Inter, sans-serif'; pctx.fillText(el.text || '', el.x + 8, el.y + 36); }
-                                    if (el.label) { pctx.font = '22px Inter, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
+                                    else if (el.type === 'text') { pctx.font = 'bold 30px Archivo, sans-serif'; pctx.fillText(el.text || '', el.x + 8, el.y + 36); }
+                                    if (el.label) { pctx.font = '22px Archivo, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
                                 });
                                 onSave(scheme.id, elements, canvasRef.current.toDataURL('image/png'), pc.toDataURL('image/jpeg', 0.85));
-                            }} className="px-4 py-2 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-500 font-bold">Сохранить схему</button>
+                            }} className="px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить схему</button>
                             <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Закрыть</button>
                         </div>
                     </div>
 
                     <div className="flex-1 flex overflow-hidden">
                         <div className="flex-1 relative p-4 flex justify-center items-center" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
-                            <div ref={containerRef} onPointerDown={handlePointerDown} className="relative w-full max-w-5xl aspect-video bg-zinc-950 rounded-xl overflow-hidden border border-white/10 cursor-crosshair">
+                            <div ref={containerRef} onPointerDown={handlePointerDown} className="relative w-full max-w-5xl aspect-video bg-zinc-950 rounded-lg overflow-hidden border border-white/10 cursor-crosshair">
                                 <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
                                 {elements.map(el => (
                                     <div key={el.id} className={`scheme-el absolute pointer-events-auto ${selectedId === el.id ? 'ring-2 ring-indigo-400' : ''}`} 
@@ -657,7 +710,7 @@
                                     <label className="text-[11px] text-zinc-400">Высота</label>
                                     <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).h} onChange={e=>updateSelected({h: Number(e.target.value)})} className="w-full accent-indigo-500" />
                                 </div>
-                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-xl text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
+                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
                             </div>
                         )}
                     </div>
@@ -704,6 +757,29 @@
           const [lightGearTypes, setLightGearTypes] = useState(() => safeLoad('cf_lightgeartypes', DEFAULT_LIGHT_GEAR, false));
           const [lightSchemes, setLightSchemes] = useState(() => safeLoad('cf_lightschemes', [], true));
 
+          // --- ДОСКИ ---
+          // Раньше доска была одна: все стикеры, референсы и один общий
+          // рисунок. Теперь досок несколько — у каждой свои стикеры,
+          // свои референсы и свой холст.
+          const DEFAULT_BOARD = { id: 'board-main', title: 'Основная', order: 0 };
+          const [boards, setBoards] = useState(() => safeLoad('cf_boards', [DEFAULT_BOARD], true));
+          const [activeBoardId, setActiveBoardId] = useState(() => localStorage.getItem('cf_active_board') || DEFAULT_BOARD.id);
+          const sortedBoards = useMemo(() => {
+            const list = (boards && boards.length) ? [...boards] : [DEFAULT_BOARD];
+            return list.sort((a, b) => (a.order || 0) - (b.order || 0));
+          }, [boards]);
+          // Если выбранной доски больше нет (удалили на другом устройстве) —
+          // возвращаемся на первую, иначе доска покажется пустой без причины.
+          useEffect(() => {
+            if (!sortedBoards.some(b => b.id === activeBoardId) && sortedBoards.length) {
+              setActiveBoardId(sortedBoards[0].id);
+            }
+          }, [sortedBoards, activeBoardId]);
+          useEffect(() => { localStorage.setItem('cf_active_board', activeBoardId); }, [activeBoardId]);
+          // Старые стикеры/референсы созданы без boardId — считаем их
+          // принадлежащими первой доске, чтобы ничего не пропало.
+          const belongsToBoard = (item, boardId) => (item.boardId || DEFAULT_BOARD.id) === boardId;
+
           const [messages, setMessages] = useState([]); 
 
           const [currentView, setCurrentView] = useState('notion'); 
@@ -724,10 +800,87 @@
           const [showAgentModal, setShowAgentModal] = useState(false);
           const [manualJsonInput, setManualJsonInput] = useState('');
           const [tagSearch, setTagSearch] = useState('');
+          // Панель тегов в галерее: сворачивается в полоску 40px.
+          const [galleryTagsOpen, setGalleryTagsOpen] = useState(true);
+          // Папки референсов. Папка — просто поле folder у референса,
+          // отдельной сущности нет: так ничего не рассинхронизируется,
+          // и папка исчезает сама, когда из неё убрали последний файл.
+          const [activeFolder, setActiveFolder] = useState('');
+          const folderCounts = useMemo(() => {
+            const m = {};
+            references.forEach(r => { const f = (r.folder || '').trim(); if (f) m[f] = (m[f] || 0) + 1; });
+            return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+          }, [references]);
+          const noFolderCount = useMemo(() => references.filter(r => !(r.folder || '').trim()).length, [references]);
+          const moveToFolder = (ref, folder) => {
+            const up = references.map(r => r.id === ref.id ? { ...r, folder } : r);
+            setReferences(up);
+            syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
+          // Список тегов с количеством референсов у каждого.
+          const tagCounts = useMemo(() => {
+            const m = {};
+            references.forEach(r => (r.tags || []).forEach(t => { m[t] = (m[t] || 0) + 1; }));
+            return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+          }, [references]);
+          const visibleRefs = useMemo(() => references.filter(r => {
+            const byTag = !tagSearch || (r.tags && r.tags.some(t => t.toLowerCase().includes(tagSearch.toLowerCase())));
+            const f = (r.folder || '').trim();
+            const byFolder = activeFolder === '' ? true : (activeFolder === '__none__' ? !f : f === activeFolder);
+            return byTag && byFolder;
+          }), [references, tagSearch, activeFolder]);
           
           const [activeSchemeId, setActiveSchemeId] = useState(null);
           const [drawingSchemeId, setDrawingSchemeId] = useState(null);
           const [expandedLightSceneId, setExpandedLightSceneId] = useState(null);
+
+          // --- Экспорт в PDF: что именно печатаем ---
+          // 'full' — весь план, 'doc' — открытый гайд, 'scheme' — открытая
+          // схема света, 'gear' — сводный список техники.
+          const [printMode, setPrintMode] = useState('full');
+          const [printRequested, setPrintRequested] = useState(false);
+          // Печать запускаем только после того, как React перерисует
+          // #print-area под выбранный режим, иначе уйдёт старое содержимое.
+          useEffect(() => {
+            if (!printRequested) return;
+            const t = setTimeout(() => { window.print(); setPrintRequested(false); }, 120);
+            return () => clearTimeout(t);
+          }, [printRequested, printMode]);
+          const requestPrint = (mode) => { setPrintMode(mode); setPrintRequested(true); };
+
+          // Сводка техники по всему проекту. Считаем максимум за одну сцену:
+          // именно столько нужно взять в аренду (сумма по сценам завысила бы
+          // — один и тот же стедикам работает в разных сценах).
+          const gearSummary = useMemo(() => {
+            const build = (field, types) => {
+              const acc = {};
+              scenes.forEach(s => {
+                Object.entries(s[field] || {}).forEach(([k, v]) => {
+                  if (!v) return;
+                  if (!acc[k]) acc[k] = { label: ((types || {})[k] || { label: k }).label, peak: 0, scenes: [] };
+                  acc[k].peak = Math.max(acc[k].peak, v);
+                  acc[k].scenes.push(s.number);
+                });
+              });
+              return Object.values(acc).sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+            };
+            return { camera: build('gear', gearTypes), light: build('lightGear', lightGearTypes) };
+          }, [scenes, gearTypes, lightGearTypes]);
+
+          // Добавление тега к референсу. Раньше срабатывало только по Enter:
+          // напечатал тег, кликнул мимо — тег молча пропадал, и поэтому
+          // казалось, что «теги не сохраняются и поиск не работает».
+          // Теперь тег принимается и по Enter, и по запятой, и при уходе фокуса.
+          const commitTag = (ref, inputEl) => {
+            const raw = (inputEl.value || '').trim().toLowerCase().replace(/,+$/, '').trim();
+            inputEl.value = '';
+            if (!raw) return;
+            const current = ref.tags || [];
+            if (current.includes(raw)) return;
+            const up = references.map(r => r.id === ref.id ? { ...r, tags: [...current, raw] } : r);
+            setReferences(up);
+            syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
 
           const [lastReadChat, setLastReadChat] = useState(() => Number(localStorage.getItem('cf_last_read')) || Date.now());
           const [newGearName, setNewGearName] = useState('');
@@ -744,6 +897,86 @@
           const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
           const lastPoint = useRef({ x: 0, y: 0, pressure: 0.5, time: 0 });
+
+          // --- ДВИЖОК КИСТИ ---
+          // stroke хранит состояние текущего штриха: предыдущая точка,
+          // предыдущая середина отрезка и сглаженный нажим.
+          const stroke = useRef({ prev: null, prevMid: null, press: 0.5 });
+          // Последний сохранённый снимок холста. Он же — состояние «до»
+          // для отмены, поэтому отмена не требует лишней перекодировки.
+          const lastSaved = useRef(null);
+          const undoStack = useRef([]);
+          const [canUndo, setCanUndo] = useState(false);
+
+          const brushAlpha = (type) => type === 'marker' ? 0.3 : (type === 'soft' ? 0.45 : 1.0);
+          const brushWidthK = (type) => type === 'soft' ? 1.6 : 1;
+
+          const applyBrush = (ctx, mode, type, color, width) => {
+            if (mode === 'erase') {
+              ctx.globalCompositeOperation = 'destination-out';
+              ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.fillStyle = 'rgba(0,0,0,1)';
+              ctx.lineWidth = width * 2.5;
+            } else {
+              ctx.globalCompositeOperation = type === 'marker' ? 'screen' : 'source-over';
+              ctx.strokeStyle = color; ctx.fillStyle = color;
+              ctx.globalAlpha = brushAlpha(type);
+              ctx.lineWidth = width * brushWidthK(type);
+            }
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+          };
+
+          const pushUndo = () => {
+            if (!lastSaved.current) return;
+            undoStack.current.push(lastSaved.current);
+            if (undoStack.current.length > 12) undoStack.current.shift();
+            setCanUndo(true);
+          };
+
+          const restoreCanvas = (dataUrl) => {
+            const c = paintCanvasRef.current; if (!c) return;
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            if (!dataUrl) return;
+            const img = new Image();
+            img.onload = () => { ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0); };
+            img.src = dataUrl;
+          };
+
+          const persistCanvas = () => {
+            const c = paintCanvasRef.current; if (!c) return;
+            const dU = c.toDataURL();
+            lastSaved.current = dU;
+            try { localStorage.setItem('cf_canvas_draw_' + activeBoardId, dU); } catch (err) {}
+            if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data')
+              .collection('canvas').doc(canvasDocId(activeBoardId))
+              .set({ dataUrl: dU, lastDrawBy: user.uid });
+          };
+
+          const undoStroke = () => {
+            if (!undoStack.current.length) return;
+            const prev = undoStack.current.pop();
+            setCanUndo(undoStack.current.length > 0);
+            restoreCanvas(prev);
+            lastSaved.current = prev;
+            try { localStorage.setItem('cf_canvas_draw_' + activeBoardId, prev); } catch (err) {}
+            if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data')
+              .collection('canvas').doc(canvasDocId(activeBoardId))
+              .set({ dataUrl: prev, lastDrawBy: user.uid });
+          };
+
+          // Ctrl+Z / Cmd+Z для отмены штриха на доске
+          useEffect(() => {
+            const onKey = (e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && currentView === 'whiteboard') {
+                const t = e.target.tagName;
+                if (t === 'INPUT' || t === 'TEXTAREA') return;
+                e.preventDefault(); undoStroke();
+              }
+            };
+            window.addEventListener('keydown', onKey);
+            return () => window.removeEventListener('keydown', onKey);
+          }, [currentView, activeBoardId, user]);
+
           const [linkingFromRefId, setLinkingFromRefId] = useState(null);
           const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
           const [hoveredSceneId, setHoveredSceneId] = useState(null);
@@ -900,15 +1133,42 @@
               subList('lightSchemes', setLightSchemes, lightSchemes),
               subMap('gearTypes', setGearTypes, gearTypes),
               subMap('lightGearTypes', setLightGearTypes, lightGearTypes),
-              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err)),
-              baseRef.collection('canvas').doc('globalDraw').onSnapshot(doc => {
-                if (doc.exists && doc.data().lastDrawBy !== user.uid && paintCanvasRef.current) {
-                  const ctx = paintCanvasRef.current.getContext('2d'); const img = new Image();
-                  img.onload = () => { ctx.clearRect(0, 0, 4000, 4000); ctx.drawImage(img, 0, 0); }; img.src = doc.data().dataUrl;
-                }
-              })
+              subList('boards', setBoards, [DEFAULT_BOARD]),
+              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err))
             ]; return () => unsubs.forEach(u => u());
           }, [user]);
+
+          // Рисунок активной доски. Отдельная подписка: при переключении
+          // доски нужно отцепиться от старого документа и подцепиться к
+          // новому, иначе на новую доску прилетят чужие штрихи.
+          const canvasDocId = (boardId) => boardId === DEFAULT_BOARD.id ? 'globalDraw' : `draw-${boardId}`;
+          useEffect(() => {
+            const c = paintCanvasRef.current;
+            if (!c) return;
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            // История отмены своя у каждой доски — иначе Ctrl+Z вернул бы
+            // на эту доску рисунок с соседней.
+            undoStack.current = []; setCanUndo(false);
+            // сначала показываем локальную копию — она есть и без сети
+            const local = localStorage.getItem('cf_canvas_draw_' + activeBoardId);
+            lastSaved.current = local || null;
+            if (local) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = local; }
+            if (!db || !user) return;
+            const unsub = db.collection('artifacts').doc(appId).collection('public').doc('data')
+              .collection('canvas').doc(canvasDocId(activeBoardId))
+              .onSnapshot(doc => {
+                if (!doc.exists || !paintCanvasRef.current) return;
+                if (doc.data().lastDrawBy === user.uid) return;
+                const cc = paintCanvasRef.current.getContext('2d');
+                lastSaved.current = doc.data().dataUrl || null;
+                if (!doc.data().dataUrl) { cc.clearRect(0, 0, 4000, 4000); return; }
+                const img = new Image();
+                img.onload = () => { cc.clearRect(0, 0, 4000, 4000); cc.drawImage(img, 0, 0); };
+                img.src = doc.data().dataUrl;
+              }, err => console.warn('sync canvas', err));
+            return () => unsub();
+          }, [user, activeBoardId]);
 
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака)
           useEffect(() => {
@@ -918,7 +1178,8 @@
             save('cf_docs', docs); save('cf_crew', crew);
             save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
             save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
-          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes]);
+            save('cf_boards', boards);
+          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards]);
 
           const syncTimers = useRef({});
           const dataRef = () => db.collection('artifacts').doc(appId).collection('public').doc('data');
@@ -1044,55 +1305,82 @@
           
           if (showWelcome) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
+          // Пункты навигации — общий список для рельса и мобильной ленты.
+          const navItems = [
+            { id: 'notion',     label: 'Сцены',        icon: <Icons.Scene /> },
+            { id: 'whiteboard', label: 'Доска',        icon: <Icons.Board /> },
+            { id: 'gallery',    label: 'Галерея',      icon: <Icons.Gallery /> },
+            { id: 'master',     label: 'Документ',     icon: <Icons.Master /> },
+            { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
+            { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
+          ];
+          const syncing = pendingWrites > 0;
+          const syncTitle = !isOnline
+            ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
+            : (syncing ? `Отправка в облако · ${pendingWrites}` : 'Всё сохранено в облаке');
+          const syncDot = !isOnline ? '#f59e0b' : (syncing ? '#fbbf24' : '#10b981');
+          const ghostBtn = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors";
+          const ghostStyle = { fontSize: '11.5px', color: 'var(--muted)', border: '1px solid var(--border)', minHeight: '28px' };
+
           return (
-            <div className="flex flex-col h-screen w-screen relative overflow-hidden bg-transparent">
+            <div className="flex h-screen w-screen relative overflow-hidden bg-transparent">
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
               {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
 
-              {/* ХЕДЕР ПРИЛОЖЕНИЯ */}
-              <header className="flex flex-col md:flex-row items-center justify-between px-4 md:px-6 py-2.5 glass-panel border-b border-white/10 z-40 shrink-0 gap-3 md:gap-0">
-                <div className="flex items-center justify-between w-full md:w-auto">
-                  <div className="flex items-center space-x-3">
-                    <span className="font-serif text-base font-bold tracking-[0.2em] text-white uppercase">CineFlow <span className="text-indigo-400 font-mono text-xs font-normal">PREP</span></span>
-                    <div className="flex gap-2 items-center">
-                      {(() => {
-                        const syncing = pendingWrites > 0;
-                        const dot = !isOnline ? 'bg-amber-500' : (syncing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500');
-                        const label = !isOnline
-                          ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
-                          : (syncing ? `Отправка в облако · ${pendingWrites}` : 'Всё сохранено в облаке');
-                        const short = !isOnline ? 'Офлайн' : (syncing ? 'Отправка…' : 'Синхронизировано');
-                        return (
-                          <div className="flex items-center gap-1.5" title={label}>
-                            <div className={`w-2 h-2 rounded-full ${dot}`}></div>
-                            <span className="hidden lg:inline text-[10px] text-zinc-400 font-semibold">{short}</span>
-                          </div>
-                        );
-                      })()}
-                      <button onClick={() => setShowProjectModal(true)} className="bg-black/40 hover:bg-black/60 border border-white/10 text-[11px] px-3 py-1.5 rounded-lg text-zinc-300 transition-colors flex items-center gap-1.5"><Icons.Folder /> Проект</button>
-                    </div>
-                  </div>
-                  <button onClick={() => setShowShareModal(true)} className="md:hidden bg-indigo-600/30 text-[11px] px-3 py-1.5 rounded-lg text-indigo-200 font-semibold flex items-center gap-1"><Icons.Link /> Доступ</button>
+              {/* РЕЛЬС НАВИГАЦИИ (десктоп) */}
+              <nav className="cf-rail hidden md:flex flex-col items-center shrink-0 z-40">
+                <div className="flex items-center justify-center shrink-0"
+                     style={{ width: 26, height: 26, background: 'var(--accent)', color: 'var(--bg)', borderRadius: 6, fontFamily: "'Lora', Georgia, serif", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>C</div>
+                {navItems.map(t => (
+                  <button key={t.id} onClick={() => setCurrentView(t.id)} title={t.label}
+                          className={`cf-rail-item transition-colors ${currentView === t.id ? 'cf-rail-on' : ''}`}>
+                    {t.icon}<span>{t.label}</span>
+                  </button>
+                ))}
+                <div className="mt-auto flex flex-col items-center gap-1.5">
+                  <button onClick={() => { setShowChat(!showChat); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }}
+                          title="Чат группы"
+                          className={`cf-rail-item relative transition-colors ${showChat ? 'cf-rail-on' : ''}`}>
+                    <Icons.Chat /><span>Чат</span>
+                    {unreadCount > 0 && (
+                      <span className="absolute flex items-center justify-center font-bold rounded-full"
+                            style={{ top: 2, right: 8, minWidth: 15, height: 15, padding: '0 4px', fontSize: 9.5, background: 'var(--accent)', color: 'var(--bg)' }}>{unreadCount}</span>
+                    )}
+                  </button>
+                  <button onClick={() => setShowAgentModal(true)} title="Агент КПП"
+                          className="flex items-center justify-center rounded-lg transition-colors hover:bg-white/5"
+                          style={{ width: 36, height: 36, color: 'var(--muted)' }}>
+                    <Icons.Bot />
+                  </button>
                 </div>
-                
-                <div className="flex bg-black/50 p-1 rounded-xl border border-white/10 w-full md:w-auto overflow-x-auto hide-scrollbar snap-x nav-scroll-hint">
-                  {[{id: 'notion', label: 'Сцены', icon: <Icons.Scene />}, {id: 'gallery', label: 'Галерея', icon: <Icons.Gallery />}, {id: 'master', label: 'Мастер-док', icon: <Icons.Master />}, {id: 'whiteboard', label: 'Доска', icon: <Icons.Board />}, {id: 'table', label: 'КПП / Смены', icon: <Icons.Table />}, {id: 'docs', label: 'Экспликации', icon: <Icons.Docs />}]
-                    .map(tab => (
-                    <button key={tab.id} onClick={() => setCurrentView(tab.id)} className={`snap-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 min-h-[34px] ${currentView === tab.id ? 'bg-indigo-600/80 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}>
-                      {tab.icon} {tab.label}
+              </nav>
+
+              <div className="flex flex-col flex-1 min-w-0">
+                {/* ШАПКА — только то, что не навигация */}
+                <header className="flex items-center justify-between shrink-0 z-40 gap-3"
+                        style={{ minHeight: 'var(--header-h)', padding: '0 16px', background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span style={{ fontFamily: "'Lora', Georgia, serif", fontSize: 16, fontWeight: 600, color: 'var(--text)' }}>CineFlow</span>
+                    <span title={syncTitle} className="rounded-full shrink-0" style={{ width: 6, height: 6, background: syncDot, display: 'inline-block' }}></span>
+                    <span className="cf-meta hidden lg:inline truncate">{scenes.length} сцен · {storyboard.length} кадров</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => setShowProjectModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Folder /> Проект</button>
+                    <button onClick={() => setShowShareModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Link /> Доступ</button>
+                  </div>
+                </header>
+
+                {/* ЛЕНТА ТАБОВ (телефон) */}
+                <div className="md:hidden flex overflow-x-auto hide-scrollbar snap-x nav-scroll-hint shrink-0"
+                     style={{ background: 'var(--panel-3)', borderBottom: '1px solid var(--border)' }}>
+                  {navItems.map(t => (
+                    <button key={t.id} onClick={() => setCurrentView(t.id)}
+                            className="snap-center shrink-0 flex items-center gap-1.5 px-4 min-h-[44px] text-xs font-semibold transition-colors"
+                            style={currentView === t.id ? { background: 'var(--accent)', color: 'var(--bg)' } : { color: 'var(--muted)' }}>
+                      {t.icon}{t.label}
                     </button>
                   ))}
                 </div>
-
-                <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-end overflow-x-auto hide-scrollbar">
-                  <button onClick={() => setShowAgentModal(true)} className="bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"><Icons.Bot /> Агент КПП</button>
-                  <button onClick={() => { setShowChat(!showChat); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }} className={`relative px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all shrink-0 flex items-center gap-1.5 ${showChat ? 'bg-indigo-600 border-indigo-500 text-white' : 'glass-panel text-zinc-300 hover:bg-white/5'}`}>
-                    <Icons.Chat /> Чат
-                    {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full font-bold">{unreadCount}</span>}
-                  </button>
-                  <button onClick={() => setShowShareModal(true)} className="hidden md:flex bg-indigo-600/30 hover:bg-indigo-600/50 text-[11px] px-3.5 py-1.5 rounded-xl text-indigo-200 font-semibold transition-colors items-center gap-1.5"><Icons.Link /> Поделиться</button>
-                </div>
-              </header>
 
               <div className="flex flex-1 overflow-hidden relative z-10">
                 <div className="flex-1 overflow-hidden relative">
@@ -1100,13 +1388,13 @@
                   {/* СЦЕНЫ И РАСКАДРОВКА */}
                   <div className={`h-full w-full ${currentView === 'notion' ? 'block' : 'hidden'}`}>
                     <div className="flex flex-col md:flex-row h-full max-w-7xl mx-auto p-2 md:p-6 gap-3 md:gap-6 overflow-hidden">
-                      <div className="w-full md:w-64 glass-panel p-2 md:p-4 rounded-xl flex flex-row md:flex-col space-x-2 md:space-x-0 md:space-y-1.5 overflow-x-auto md:overflow-y-auto shrink-0 hide-scrollbar snap-x">
+                      <div className="w-full md:w-64 glass-panel p-2 md:p-4 rounded-lg flex flex-row md:flex-col space-x-2 md:space-x-0 md:space-y-1.5 overflow-x-auto md:overflow-y-auto shrink-0 hide-scrollbar snap-x">
                         {sortedScenes.map(s => (
-                          <button key={s.id} onClick={() => setActiveSceneId(s.id)} className={`snap-center whitespace-nowrap md:whitespace-normal shrink-0 md:w-full text-left px-3.5 py-2.5 rounded-xl text-sm transition-all border ${activeSceneId === s.id ? 'bg-indigo-600/30 text-white border-indigo-500/40 font-bold' : 'bg-transparent text-zinc-400 border-transparent hover:bg-white/5'}`}>
+                          <button key={s.id} onClick={() => setActiveSceneId(s.id)} className={`snap-center whitespace-nowrap md:whitespace-normal shrink-0 md:w-full text-left px-3.5 py-2.5 rounded-lg text-sm transition-all border ${activeSceneId === s.id ? 'bg-indigo-600/30 text-white border-indigo-500/40 font-bold' : 'bg-transparent text-zinc-400 border-transparent hover:bg-white/5'}`}>
                             <span className="font-mono text-indigo-400 mr-2 text-xs">#{s.number}</span> {s.title || 'Без названия'}
                           </button>
                         ))}
-                        <button onClick={() => { const num = scenes.length + 1; const newS = { id: `sc-${Date.now()}`, number: String(num), title: `СЦЕНА ${num}. НОВАЯ`, content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-xl text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
+                        <button onClick={() => { const num = scenes.length + 1; const newS = { id: `sc-${Date.now()}`, number: String(num), title: `СЦЕНА ${num}. НОВАЯ`, content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
                       </div>
 
                       {activeSceneId && scenes.find(s => s.id === activeSceneId) && (() => {
@@ -1114,7 +1402,7 @@
                         const frames = storyboard.filter(f => f.sceneId === s.id);
                         const sceneRefs = references.filter(r => r.sceneId === s.id);
                         return (
-                          <div className="flex-1 glass-panel p-5 md:p-8 rounded-xl overflow-y-auto space-y-6 border-t border-white/10">
+                          <div className="flex-1 glass-panel p-5 md:p-8 rounded-lg overflow-y-auto space-y-6 border-t border-white/10">
                             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-white/10 pb-4 gap-3">
                               <div className="flex items-center gap-3">
                                   <span className="text-xs font-mono font-bold text-indigo-300 bg-indigo-950/60 px-3 py-1.5 rounded-lg">СЦЕНА #{s.number}</span>
@@ -1129,29 +1417,29 @@
                                 <span className="text-xs text-zinc-400 uppercase tracking-widest font-bold ml-1">Операторская и режиссерская экспликация</span>
                                 <button onClick={() => enhanceSceneWithAI(s.id, s.content, s.title)} disabled={isAILoading} className="text-xs text-indigo-200 bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1"><Icons.Bot /> Расширить с ИИ</button>
                               </div>
-                              <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} className="w-full h-32 glass-input rounded-xl p-4 text-sm resize-none leading-relaxed" placeholder="Опишите характер движения камеры, тональность света, атмосферику..." />
+                              <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} className="w-full h-32 glass-input rounded-lg p-4 text-sm resize-none leading-relaxed" placeholder="Опишите характер движения камеры, тональность света, атмосферику..." />
                             </div>
 
                             {/* Световая схема и сетап */}
-                            <div className="bg-black/30 p-5 rounded-xl border border-white/10 space-y-4">
+                            <div className="bg-black/30 p-5 rounded-lg border border-white/10 space-y-4">
                               <button onClick={() => setExpandedLightSceneId(expandedLightSceneId === s.id ? null : s.id)} className="w-full flex justify-between items-center text-xs font-bold text-amber-300 uppercase tracking-widest hover:text-amber-200 transition-colors">
                                 <span className="flex items-center gap-2"><Icons.Lightbulb/> Световой сетап и приборы {expandedLightSceneId === s.id ? '▲' : '▼'}</span>
                               </button>
                               {expandedLightSceneId === s.id && (
                                 <div className="space-y-5 pt-3 border-t border-white/10">
                                   <div className="flex items-center gap-3">
-                                      <select value={s.lightSchemeId || ''} onChange={e => updateScene(s.id, 'lightSchemeId', e.target.value)} className="glass-input rounded-xl px-3 py-2 text-sm flex-1 bg-zinc-900">
+                                      <select value={s.lightSchemeId || ''} onChange={e => updateScene(s.id, 'lightSchemeId', e.target.value)} className="glass-input rounded-lg px-3 py-2 text-sm flex-1 bg-zinc-900">
                                           <option value="">-- Интерактивная схема света --</option>
                                           {lightSchemes.map(sch => (<option key={sch.id} value={sch.id}>{sch.title}</option>))}
                                       </select>
-                                      {s.lightSchemeId && <button onClick={() => { setActiveSchemeId(s.lightSchemeId); setActiveDocId(null); setCurrentView('docs'); }} className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 px-4 py-2 rounded-xl text-xs font-bold transition-colors">Открыть схему</button>}
+                                      {s.lightSchemeId && <button onClick={() => { setActiveSchemeId(s.lightSchemeId); setActiveDocId(null); setCurrentView('docs'); }} className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 px-4 py-2 rounded-lg text-xs font-bold transition-colors">Открыть схему</button>}
                                   </div>
                                   <div>
                                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
                                         {Object.entries(lightGearTypes || DEFAULT_LIGHT_GEAR).map(([key, item]) => {
                                         const count = (s.lightGear && s.lightGear[key]) || 0;
                                         return (
-                                            <div key={key} className="glass-panel p-3 rounded-xl flex flex-col items-center space-y-3 relative group hover:bg-white/5 transition-all">
+                                            <div key={key} className="glass-panel p-3 rounded-lg flex flex-col items-center space-y-3 relative group hover:bg-white/5 transition-all">
                                             <button onClick={() => setConfirmAction({title:'Удалить прибор?', message:'Удалить позицию из каталога света?', onConfirm:()=> { const up={...lightGearTypes}; delete up[key]; setLightGearTypes(up); deleteNetDoc('lightGearTypes', key); }})} className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-all text-[11px] rounded-md w-6 h-6 flex items-center justify-center bg-black/60">✕</button>
                                             <span className="text-[11px] md:text-xs font-medium truncate max-w-full text-center px-1 text-zinc-300">
                                                 <span className="inline-block align-middle mr-1 w-3.5 h-3.5 text-amber-400"><Icons.Lightbulb/></span>
@@ -1167,8 +1455,8 @@
                                         })}
                                     </div>
                                     <div className="mt-3 flex gap-2">
-                                        <input type="text" placeholder="Новый прибор в каталог..." value={newLightGearName} onChange={e => setNewLightGearName(e.target.value)} className="glass-input px-3 py-2 rounded-xl text-xs flex-1" />
-                                        <button onClick={() => addCustomGear(true)} className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-xs px-3 py-2 rounded-xl font-semibold transition-colors">+ В каталог света</button>
+                                        <input type="text" placeholder="Новый прибор в каталог..." value={newLightGearName} onChange={e => setNewLightGearName(e.target.value)} className="glass-input px-3 py-2 rounded-lg text-xs flex-1" />
+                                        <button onClick={() => addCustomGear(true)} className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-xs px-3 py-2 rounded-lg font-semibold transition-colors">+ В каталог света</button>
                                     </div>
                                   </div>
                                 </div>
@@ -1176,13 +1464,13 @@
                             </div>
 
                             {/* Камерная техника */}
-                            <div className="bg-black/30 p-5 rounded-xl border border-white/10 space-y-4">
+                            <div className="bg-black/30 p-5 rounded-lg border border-white/10 space-y-4">
                               <label className="text-xs font-bold text-indigo-300 uppercase tracking-widest block ml-1">Съемочная техника и операторский грип</label>
                               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
                                 {Object.entries(gearTypes || DEFAULT_GEAR).map(([key, item]) => {
                                   const count = (s.gear && s.gear[key]) || 0;
                                   return (
-                                    <div key={key} className="glass-panel p-3 rounded-xl flex flex-col items-center space-y-3 relative group hover:bg-white/5 transition-all">
+                                    <div key={key} className="glass-panel p-3 rounded-lg flex flex-col items-center space-y-3 relative group hover:bg-white/5 transition-all">
                                       <button onClick={() => setConfirmAction({title:'Удалить технику?', message:'Удалить позицию из каталога техники?', onConfirm:()=> { const up={...gearTypes}; delete up[key]; setGearTypes(up); deleteNetDoc('gearTypes', key); }})} className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-all text-[11px] rounded-md w-6 h-6 flex items-center justify-center bg-black/60">✕</button>
                                       <span className="text-[11px] md:text-xs font-medium truncate max-w-full text-center px-1 text-zinc-300">
                                           <span className="inline-block align-middle mr-1 w-3.5 h-3.5 text-indigo-400"><Icons.Video/></span>
@@ -1200,8 +1488,8 @@
                               <div className="mt-2 pt-4 border-t border-white/5 flex flex-col sm:flex-row gap-3 sm:items-center">
                                 <span className="text-xs text-zinc-400 font-semibold sm:mr-2 ml-1">Добавить позицию:</span>
                                 <div className="flex gap-2 w-full sm:w-auto">
-                                  <input type="text" placeholder="Напр: Легкий кран..." value={newGearName} onChange={e => setNewGearName(e.target.value)} className="glass-input px-3 py-2 rounded-xl text-sm flex-1 min-w-[140px]" />
-                                  <button onClick={() => addCustomGear(false)} className="bg-indigo-600/40 hover:bg-indigo-600/60 text-white text-xs px-4 py-2 rounded-xl font-semibold transition-colors shrink-0">+ В каталог</button>
+                                  <input type="text" placeholder="Напр: Легкий кран..." value={newGearName} onChange={e => setNewGearName(e.target.value)} className="glass-input px-3 py-2 rounded-lg text-sm flex-1 min-w-[140px]" />
+                                  <button onClick={() => addCustomGear(false)} className="bg-indigo-600/40 hover:bg-indigo-600/60 text-white text-xs px-4 py-2 rounded-lg font-semibold transition-colors shrink-0">+ В каталог</button>
                                 </div>
                               </div>
                             </div>
@@ -1222,9 +1510,9 @@
                               {showImages ? (
                                 <div className="flex space-x-4 overflow-x-auto pb-4 hide-scrollbar snap-x">
                                   {frames.map(frame => (
-                                    <div key={frame.id} className="snap-center w-52 bg-black/40 rounded-xl border border-white/10 p-3 shrink-0 space-y-2.5 relative group hover:border-indigo-500/40 transition-colors">
+                                    <div key={frame.id} className="snap-center w-52 bg-black/40 rounded-lg border border-white/10 p-3 shrink-0 space-y-2.5 relative group hover:border-indigo-500/40 transition-colors">
                                       <button onClick={() => setConfirmAction({title:'Удалить кадр?', message:'Отменить действие невозможно.', onConfirm:()=>{ setStoryboard(storyboard.filter(f => f.id !== frame.id)); deleteNetDoc('storyboard', frame.id); }})} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg text-xs z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"><Icons.Trash/></button>
-                                      <div className="aspect-video bg-black/70 rounded-xl flex items-center justify-center overflow-hidden relative border border-white/10">
+                                      <div className="aspect-video bg-black/70 rounded-lg flex items-center justify-center overflow-hidden relative border border-white/10">
                                         {frame.image ? <img src={frame.image} className="w-full h-full object-cover pointer-events-none" /> : (
                                           <div className="flex w-full h-full">
                                             <label className="flex-1 border-r border-white/10 hover:bg-white/5 cursor-pointer flex flex-col items-center justify-center transition-colors">
@@ -1244,9 +1532,9 @@
                                   ))}
                                 </div>
                               ) : (
-                                <div className="flex flex-col space-y-2 bg-black/30 p-2 rounded-xl border border-white/10">
+                                <div className="flex flex-col space-y-2 bg-black/30 p-2 rounded-lg border border-white/10">
                                   {frames.map(frame => (
-                                    <div key={frame.id} className="w-full glass-panel rounded-xl border-white/5 px-4 py-3 flex items-center space-x-3 text-sm">
+                                    <div key={frame.id} className="w-full glass-panel rounded-lg border-white/5 px-4 py-3 flex items-center space-x-3 text-sm">
                                       <span className="font-mono text-indigo-400 font-bold w-12 shrink-0 bg-black/50 px-2 py-1 rounded-lg text-center border border-white/10">{frame.frameNum}</span>
                                       <input type="text" value={frame.description} onChange={(e) => { const up=storyboard.map(x=>x.id===frame.id?{...x,description:e.target.value}:x); setStoryboard(up); syncDoc('storyboard',frame.id,up.find(x=>x.id===frame.id)); }} className="bg-transparent text-zinc-200 font-medium focus:outline-none flex-1 border-b border-transparent focus:border-indigo-400 transition-colors py-1" placeholder="Детальное описание кадра..." />
                                       <button onClick={() => setConfirmAction({title:'Удалить кадр?', message:'Отменить действие невозможно.', onConfirm:()=>{ setStoryboard(storyboard.filter(f => f.id !== frame.id)); deleteNetDoc('storyboard', frame.id); }})} className="text-zinc-500 hover:text-red-400 w-8 h-8 rounded-lg bg-black/50 flex items-center justify-center transition-colors"><Icons.Trash/></button>
@@ -1267,7 +1555,7 @@
                               </div>
                               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                 {sceneRefs.map(ref => (
-                                  <div key={ref.id} className="glass-panel rounded-xl overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, currentId: ref.id })}>
+                                  <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, currentId: ref.id })}>
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={{backgroundImage: `url(${ref.url})`}}></div>
                                     <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
                                     <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-10" draggable="false" />
@@ -1285,43 +1573,179 @@
                   </div>
 
                   {/* ГАЛЕРЕЯ РЕФЕРЕНСОВ */}
-                  <div className={`h-full w-full overflow-y-auto ${currentView === 'gallery' ? 'block' : 'hidden'}`}>
-                    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6 pb-24">
-                        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-white/10 pb-5 gap-4">
-                            <h2 className="text-xl font-extrabold text-white flex items-center gap-2"><Icons.Gallery /> Общая Галерея Референсов</h2>
-                            <div className="flex gap-3 w-full sm:w-auto">
-                                <div className="glass-input rounded-xl px-4 py-2 flex items-center gap-2 w-full sm:w-64">
-                                    <span className="text-zinc-400"><Icons.Tag /></span>
-                                    <input type="text" placeholder="Поиск по тегам..." value={tagSearch} onChange={e => setTagSearch(e.target.value)} className="bg-transparent border-none text-sm text-white focus:outline-none w-full" />
-                                </div>
-                                <label className="text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-xl transition-colors flex items-center justify-center shrink-0">
-                                    + Загрузить
-                                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
-                                </label>
-                            </div>
+                  <div className={`h-full w-full ${currentView === 'gallery' ? 'flex' : 'hidden'}`}>
+
+                    {/* КОЛОНКА ТЕГОВ */}
+                    {galleryTagsOpen ? (
+                      <div className="hidden md:flex flex-col shrink-0" style={{ width: 212, background: 'var(--panel-3)', borderRight: '1px solid var(--border)' }}>
+                        <div className="flex items-center justify-between px-4 shrink-0" style={{ minHeight: 44, borderBottom: '1px solid var(--border)' }}>
+                          <span className="cf-eyebrow">Теги</span>
+                          <div className="flex items-center gap-2">
+                            {tagSearch && <button onClick={() => setTagSearch('')} style={{ color: 'var(--accent)', fontSize: 11.5 }}>Сбросить</button>}
+                            <button onClick={() => setGalleryTagsOpen(false)} title="Свернуть"
+                                    className="flex items-center justify-center rounded shrink-0"
+                                    style={{ width: 22, height: 22, border: '1px solid var(--border)', color: 'var(--muted-2)', fontSize: 12 }}>‹</button>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                            {references.filter(r => !tagSearch || (r.tags && r.tags.some(t => t.toLowerCase().includes(tagSearch.toLowerCase())))).map(ref => (
-                                <div key={ref.id} className="glass-panel rounded-xl overflow-hidden flex flex-col group border-t border-white/10">
+                        <div className="flex-1 overflow-y-auto">
+                          {/* ПАПКИ */}
+                          <div style={{ borderBottom: '1px solid var(--border)' }}>
+                            <div className="flex items-center justify-between px-4 pt-3 pb-1">
+                              <span className="cf-eyebrow">Папки</span>
+                              <button onClick={() => {
+                                        const name = prompt('Название папки');
+                                        if (name && name.trim()) setActiveFolder(name.trim());
+                                      }}
+                                      title="Создать папку (появится, когда положите в неё референс)"
+                                      style={{ color: 'var(--muted-2)', fontSize: 14, lineHeight: 1 }}>+</button>
+                            </div>
+                            {[['', 'Все', references.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
+                              .map(([key, label, count]) => {
+                                const on = activeFolder === key;
+                                return (
+                                  <button key={key || 'all'} onClick={() => setActiveFolder(key)}
+                                          className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
+                                          style={{ minHeight: 38, background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                    <span className="truncate flex items-center gap-1.5" style={{ fontSize: 12.5 }}>
+                                      <Icons.Folder /> {label}
+                                    </span>
+                                    <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                                  </button>
+                                );
+                              })}
+                            {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && (
+                              <p className="px-4 pb-3" style={{ fontSize: 11.5, color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                                Папка «{activeFolder}» пока пустая. Перетащите сюда референсы или выберите папку на карточке.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="px-4 pt-3 pb-1"><span className="cf-eyebrow">Теги</span></div>
+                          {tagCounts.map(([tag, count]) => {
+                            const on = tagSearch.toLowerCase() === tag;
+                            return (
+                              <button key={tag} onClick={() => setTagSearch(on ? '' : tag)}
+                                      className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
+                                      style={{ minHeight: 44, borderBottom: '1px solid var(--border-soft)', background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                <span className="truncate" style={{ fontSize: 13 }}>{tag}</span>
+                                <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                              </button>
+                            );
+                          })}
+                          {tagCounts.length === 0 && (
+                            <p className="px-4 py-4" style={{ fontSize: 12, color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                              Тегов пока нет. Добавьте их на карточке референса — поле «+ тег».
+                            </p>
+                          )}
+                        </div>
+                        <div className="p-3 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+                          <label className="w-full flex items-center justify-center gap-2 cursor-pointer rounded-lg transition-colors hover:bg-white/5"
+                                 style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
+                            <Icons.Gallery /> Загрузить референсы
+                            <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="hidden md:flex cf-strip shrink-0" onClick={() => setGalleryTagsOpen(true)} title="Развернуть теги">
+                        <span style={{ writingMode: 'horizontal-tb', color: 'var(--muted-2)', fontSize: 12 }}>›</span>
+                        <span>Теги</span>
+                      </div>
+                    )}
+
+                    {/* СЕТКА РЕФЕРЕНСОВ */}
+                    <div className="flex-1 min-w-0 overflow-y-auto">
+                     <div className="p-4 md:p-6 pb-24 space-y-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-baseline gap-3 min-w-0">
+                              <span className="cf-eyebrow truncate">{tagSearch ? `Тег: ${tagSearch}` : 'Все референсы'}</span>
+                              <span className="cf-meta shrink-0">{visibleRefs.length} из {references.length}</span>
+                            </div>
+                            <label className="md:hidden flex items-center gap-2 cursor-pointer rounded-lg px-4 shrink-0"
+                                   style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
+                                + Загрузить
+                                <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                            </label>
+                        </div>
+
+                        {/* теги на телефоне — горизонтальной лентой */}
+                        {tagCounts.length > 0 && (
+                          <div className="md:hidden flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+                            {tagSearch && <button onClick={() => setTagSearch('')} className="cf-chip shrink-0" style={{ color: 'var(--accent)', borderColor: 'var(--accent-line)' }}>Сбросить</button>}
+                            {tagCounts.map(([tag, count]) => {
+                              const on = tagSearch.toLowerCase() === tag;
+                              return (
+                                <button key={tag} onClick={() => setTagSearch(on ? '' : tag)} className={`cf-chip shrink-0 ${on ? 'cf-chip-accent' : ''}`}>
+                                  {tag} · {count}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(212px, 1fr))' }}>
+                            {visibleRefs.map(ref => (
+                                <div key={ref.id} className="glass-panel rounded-lg overflow-hidden flex flex-col group border-t border-white/10">
                                     <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => setLightboxData({ sceneId: null, currentId: ref.id })}>
                                         <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={{backgroundImage: `url(${ref.url})`}}></div>
                                         <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                        {(() => {
+                                          const onBoard = !!ref.boardId;
+                                          const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
+                                          return (
+                                            <button onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      const nextBoard = onBoard ? '' : activeBoardId;
+                                                      const placed = { ...ref, boardId: nextBoard,
+                                                        x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
+                                                        y: (240 - canvasOffset.y) / zoom + Math.random() * 60 };
+                                                      setReferences(references.map(r => r.id === ref.id ? placed : r));
+                                                      syncDoc('references', ref.id, placed);
+                                                      showToast(onBoard ? 'Убрано с доски · осталось в галерее' : 'Добавлено на доску');
+                                                    }}
+                                                    title={onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску'}
+                                                    className="absolute top-2 left-2 backdrop-blur w-7 h-7 rounded-lg transition-all text-xs z-20 flex items-center justify-center opacity-0 group-hover:opacity-100"
+                                                    style={onBoard
+                                                      ? { background: 'var(--accent)', color: 'var(--bg)', opacity: 1 }
+                                                      : { background: 'rgba(0,0,0,.8)', color: 'var(--muted)' }}>
+                                              <Icons.Board/>
+                                            </button>
+                                          );
+                                        })()}
                                         <img src={ref.url} className="w-full h-full object-contain relative z-10" draggable="false" />
                                     </div>
                                     <div className="p-3 space-y-2 bg-black/30">
                                         <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
+                                        <select value={(ref.folder || '')}
+                                                onChange={(e) => {
+                                                  if (e.target.value === '__new__') {
+                                                    const name = prompt('Новая папка');
+                                                    if (name && name.trim()) moveToFolder(ref, name.trim());
+                                                  } else moveToFolder(ref, e.target.value);
+                                                }}
+                                                className="w-full rounded-md px-2 py-1"
+                                                style={{ fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)', color: (ref.folder ? 'var(--text-2)' : 'var(--muted-2)') }}>
+                                          <option value="">Без папки</option>
+                                          {folderCounts.map(([f]) => <option key={f} value={f}>{f}</option>)}
+                                          {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && <option value={activeFolder}>{activeFolder}</option>}
+                                          <option value="__new__">+ новая папка…</option>
+                                        </select>
                                         <div className="flex flex-wrap gap-1">
                                             {(ref.tags || []).map((tag, idx) => (
                                                 <span key={idx} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1">
                                                     {tag} <button onClick={() => { const up = references.map(r => r.id === ref.id ? {...r, tags: r.tags.filter((_, i) => i !== idx)} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="hover:text-white">✕</button>
                                                 </span>
                                             ))}
-                                            <input type="text" placeholder="+ тег" onKeyDown={e => { if(e.key === 'Enter' && e.target.value.trim()){ const nt = e.target.value.trim().toLowerCase(); const currentTags = ref.tags || []; if(!currentTags.includes(nt)){ const up = references.map(r => r.id === ref.id ? {...r, tags: [...currentTags, nt]} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); } e.target.value = ''; } }} className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-16" />
+                                            <input type="text" placeholder="+ тег, Enter"
+                                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitTag(ref, e.target); } }}
+                                                onBlur={e => commitTag(ref, e.target)}
+                                                className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-24 min-w-0" />
                                         </div>
                                     </div>
                                 </div>
                             ))}
                         </div>
+                     </div>
                     </div>
                   </div>
 
@@ -1331,20 +1755,20 @@
                       {sortedScenes.map(s => {
                         const sceneFrames = storyboard.filter(f => f.sceneId === s.id);
                         return (
-                          <div key={s.id} className="glass-panel p-6 md:p-8 rounded-xl space-y-5">
+                          <div key={s.id} className="glass-panel p-6 md:p-8 rounded-lg space-y-5">
                             <div className="flex justify-between items-center border-b border-white/10 pb-4 relative z-10">
                               <span className="font-mono text-white font-extrabold text-sm md:text-lg">СЦЕНА #{s.number} | {s.title}</span>
                               <span className="text-[11px] md:text-xs text-zinc-400 font-mono bg-black/50 px-3 py-1 rounded-lg border border-white/10 font-semibold">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
                             </div>
-                            <p className="text-sm text-zinc-300 bg-black/30 p-4 rounded-xl border border-white/5 leading-relaxed relative z-10 font-medium">{s.content || 'Описание отсутствует'}</p>
+                            <p className="text-sm text-zinc-300 bg-black/30 p-4 rounded-lg border border-white/5 leading-relaxed relative z-10 font-medium">{s.content || 'Описание отсутствует'}</p>
                             
                             {sceneFrames.length > 0 && (
                               <div className="space-y-3 pt-3 relative z-10">
                                 <span className="text-[11px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest block ml-1">Раскадровка / План смены:</span>
                                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                                   {sceneFrames.map(frame => (
-                                    <div key={frame.id} className="bg-black/40 rounded-xl border border-white/10 p-2.5 flex flex-col space-y-2">
-                                      {frame.image && (<div className="aspect-video bg-black/60 rounded-xl overflow-hidden border border-white/5"><img src={frame.image} className="w-full h-full object-cover pointer-events-none" draggable="false" /></div>)}
+                                    <div key={frame.id} className="bg-black/40 rounded-lg border border-white/10 p-2.5 flex flex-col space-y-2">
+                                      {frame.image && (<div className="aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/5"><img src={frame.image} className="w-full h-full object-cover pointer-events-none" draggable="false" /></div>)}
                                       <div className="text-[11px] md:text-xs leading-tight flex flex-col space-y-1.5 p-1">
                                         <span className="font-mono text-indigo-400 font-bold bg-indigo-500/10 self-start px-2 py-0.5 rounded-md">{frame.frameNum}</span>
                                         <span className="text-zinc-400 font-medium line-clamp-4">{frame.description || '...'}</span>
@@ -1361,8 +1785,57 @@
                   </div>
 
                   {/* ИНТЕРАКТИВНАЯ ДОСКА (WHITEBOARD) */}
-                  <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'block' : 'hidden'}`}>
-                    <div id="whiteboard-canvas" className="w-full h-full bg-[radial-gradient(rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:24px_24px] relative overflow-hidden" 
+                  <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'flex flex-col' : 'hidden'}`}>
+
+                    {/* ВКЛАДКИ ДОСОК */}
+                    <div className="flex items-end gap-1 px-3 shrink-0 overflow-x-auto hide-scrollbar"
+                         style={{ background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
+                      {sortedBoards.map(b => {
+                        const on = b.id === activeBoardId;
+                        return (
+                          <button key={b.id} onClick={() => setActiveBoardId(b.id)}
+                                  onDoubleClick={() => {
+                                    const t = prompt('Название доски', b.title);
+                                    if (t && t.trim()) { const up = boards.map(x => x.id === b.id ? { ...x, title: t.trim() } : x); setBoards(up); syncDoc('boards', b.id, up.find(x => x.id === b.id)); }
+                                  }}
+                                  title={on ? 'Двойной клик — переименовать' : b.title}
+                                  className="shrink-0 flex items-center gap-2 transition-colors"
+                                  style={{ padding: '9px 15px', borderRadius: '8px 8px 0 0', minHeight: 40,
+                                           background: on ? 'var(--bg)' : 'transparent',
+                                           borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+                                           color: on ? 'var(--text)' : 'var(--muted-2)', fontSize: 12.5 }}>
+                            {b.title}
+                            {on && sortedBoards.length > 1 && (
+                              <span onClick={(e) => {
+                                      e.stopPropagation();
+                                      setConfirmAction({ title: 'Удалить доску?', message: `«${b.title}» и всё, что на ней нарисовано и разложено.`, onConfirm: () => {
+                                        const rest = boards.filter(x => x.id !== b.id);
+                                        setBoards(rest); deleteNetDoc('boards', b.id);
+                                        stickies.filter(st => belongsToBoard(st, b.id)).forEach(st => deleteNetDoc('stickies', st.id));
+                                        setStickies(stickies.filter(st => !belongsToBoard(st, b.id)));
+                                        setReferences(references.map(r => r.boardId === b.id ? { ...r, boardId: '' } : r));
+                                        references.filter(r => r.boardId === b.id).forEach(r => syncDoc('references', r.id, { ...r, boardId: '' }));
+                                        try { localStorage.removeItem('cf_canvas_draw_' + b.id); } catch (err) {}
+                                        setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
+                                        showToast('Доска удалена · референсы остались в галерее');
+                                      }});
+                                    }}
+                                    title="Удалить доску"
+                                    style={{ color: 'var(--muted-2)', fontSize: 13, lineHeight: 1 }}>✕</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      <button onClick={() => {
+                                const nb = { id: `board-${Date.now()}`, title: `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
+                                setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
+                              }}
+                              title="Новая доска"
+                              className="shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
+                              style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
+                    </div>
+
+                    <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
                     onWheel={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -1454,54 +1927,88 @@
                               return; 
                           }
                           e.currentTarget.setPointerCapture(e.pointerId);
-                          const rect = paintCanvasRef.current.getBoundingClientRect(); const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
-                          const press = e.pressure !== undefined && e.pressure > 0 ? e.pressure : 0.5;
-                          setIsPainting(true); lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
+                          const rect = paintCanvasRef.current.getBoundingClientRect();
+                          const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
+                          const press = (e.pressure !== undefined && e.pressure > 0 && e.pointerType === 'pen') ? e.pressure : 0.5;
+                          pushUndo();
+                          setIsPainting(true);
+                          stroke.current = { prev: coords, prevMid: coords, press };
+                          lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
                           const ctx = paintCanvasRef.current.getContext('2d');
                           ctx.save();
-                          if (wbMode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; }
-                          else {
-                              ctx.fillStyle = brushColor; ctx.globalAlpha = brushType === 'marker' ? 0.3 : (brushType === 'soft' ? 0.45 : 1.0);
-                          }
-                          const dotSize = wbMode === 'erase' ? brushSize * 2.5 : (brushType === 'soft' ? brushSize * 1.6 : brushSize);
-                          ctx.beginPath(); ctx.arc(coords.x, coords.y, (dotSize * (0.4 + press * 1.2)) / 2, 0, Math.PI * 2); ctx.fill();
+                          applyBrush(ctx, wbMode, brushType, brushColor, brushSize * (0.35 + press * 1.3));
+                          ctx.beginPath(); ctx.arc(coords.x, coords.y, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill();
                           ctx.restore();
                         }} onPointerMove={(e) => {
                           if (isPanning && wbMode === 'pan') { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
                           if (!isPainting || wbMode === 'select') return;
-                          const ctx = paintCanvasRef.current.getContext('2d'); const rect = paintCanvasRef.current.getBoundingClientRect(); const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
-                          const cT = Date.now(); const dist = Math.hypot(coords.x - lastPoint.current.x, coords.y - lastPoint.current.y);
-                          let press = e.pressure !== undefined && e.pressure > 0 ? e.pressure : 0.5; if (e.pointerType === 'touch' || e.pointerType === 'mouse') press = Math.max(0.1, 1 - (dist / (cT - lastPoint.current.time || 1)) * 0.15);
+                          const c = paintCanvasRef.current; if (!c) return;
+                          const ctx = c.getContext('2d');
+                          const rect = c.getBoundingClientRect();
+                          const ne = e.nativeEvent;
+                          // Браузер копит промежуточные точки между кадрами. Без
+                          // getCoalescedEvents они теряются, и быстрый штрих
+                          // выходит углами — это и была главная причина «плохой» кисти.
+                          const pts = (ne.getCoalescedEvents && ne.getCoalescedEvents().length) ? ne.getCoalescedEvents() : [ne];
                           ctx.save();
-                          if (wbMode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = brushSize * (0.3 + press * 1.4) * 2.5; ctx.strokeStyle = 'rgba(0,0,0,1)'; } else {
-                              ctx.strokeStyle = brushColor; ctx.lineWidth = brushSize * (0.3 + press * 1.4) * (brushType === 'soft' ? 1.6 : 1);
-                              ctx.globalAlpha = brushType === 'marker' ? 0.3 : (brushType === 'soft' ? 0.45 : 1.0);
-                              ctx.globalCompositeOperation = brushType === 'marker' ? 'screen' : 'source-over';
+                          for (const p of pts) {
+                            const cur = { x: (p.clientX - rect.left) / zoom, y: (p.clientY - rect.top) / zoom };
+                            const st = stroke.current;
+                            if (!st.prev) { st.prev = cur; st.prevMid = cur; continue; }
+                            const dist = Math.hypot(cur.x - st.prev.x, cur.y - st.prev.y);
+                            if (dist < 0.6) continue; // отбрасываем дрожание
+                            // Нажим: у пера — настоящий, у мыши/пальца считаем по
+                            // скорости. Сглаживаем, иначе толщина скачет.
+                            const raw = (p.pressure !== undefined && p.pressure > 0 && e.pointerType === 'pen')
+                              ? p.pressure
+                              : Math.max(0.15, Math.min(1, 1 - dist / 45));
+                            st.press = st.press * 0.7 + raw * 0.3;
+                            const mid = { x: (st.prev.x + cur.x) / 2, y: (st.prev.y + cur.y) / 2 };
+                            applyBrush(ctx, wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
+                            // Квадратичная кривая через середины отрезков — даёт
+                            // непрерывный гладкий путь вместо ломаной.
+                            ctx.beginPath();
+                            ctx.moveTo(st.prevMid.x, st.prevMid.y);
+                            ctx.quadraticCurveTo(st.prev.x, st.prev.y, mid.x, mid.y);
+                            ctx.stroke();
+                            st.prev = cur; st.prevMid = mid;
                           }
-                          ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(lastPoint.current.x, lastPoint.current.y); ctx.quadraticCurveTo(lastPoint.current.x, lastPoint.current.y, (lastPoint.current.x + coords.x) / 2, (lastPoint.current.y + coords.y) / 2); ctx.lineTo(coords.x, coords.y); ctx.stroke(); ctx.restore();
-                          lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: cT };
-                        }} onPointerUp={(e) => { 
+                          ctx.restore();
+                          lastPoint.current = { x: stroke.current.prev.x, y: stroke.current.prev.y, pressure: stroke.current.press, time: Date.now() };
+                        }} onPointerUp={(e) => {
                           if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
                             e.target.releasePointerCapture(e.pointerId);
                           }
-                          setIsPainting(false); setIsPanning(false); 
-                          if (paintCanvasRef.current) { const dU = paintCanvasRef.current.toDataURL(); localStorage.setItem('cf_canvas_draw', dU); if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc('globalDraw').set({ dataUrl: dU, lastDrawBy: user.uid }); } 
-                        }} onPointerCancel={() => { setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-10 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
+                          // Дотягиваем хвост от последней середины до последней точки,
+                          // иначе кончик штриха обрезается.
+                          const st = stroke.current;
+                          if (isPainting && st.prev && st.prevMid && paintCanvasRef.current) {
+                            const ctx = paintCanvasRef.current.getContext('2d');
+                            ctx.save();
+                            applyBrush(ctx, wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
+                            ctx.beginPath(); ctx.moveTo(st.prevMid.x, st.prevMid.y); ctx.lineTo(st.prev.x, st.prev.y); ctx.stroke();
+                            ctx.restore();
+                          }
+                          stroke.current = { prev: null, prevMid: null, press: 0.5 };
+                          const wasPainting = isPainting;
+                          setIsPainting(false); setIsPanning(false);
+                          if (wasPainting) persistCanvas();
+                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {sortedScenes.map(s => (
-                            <div key={s.id} data-scene-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-xl cursor-move overflow-hidden pointer-events-auto hover:border-indigo-500/50 transition-all group ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
+                            <div key={s.id} data-scene-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-lg cursor-move overflow-hidden pointer-events-auto hover:border-indigo-500/50 transition-all group ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
                                 <div className="bg-white/5 px-4 py-2.5 border-b border-white/10 flex justify-between items-center"><span className="text-[11px] font-mono text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1"><Icons.Scene/> Сцена #{s.number}</span></div>
                                 <div className="p-4 space-y-2">
                                 <input type="text" value={s.title} onChange={(e) => updateScene(s.id, 'title', e.target.value)} className="w-full bg-transparent text-sm font-black text-white focus:outline-none" />
-                                <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} rows="2" className="w-full bg-black/50 border border-white/10 rounded-xl p-2.5 text-[11px] text-zinc-300 resize-none focus:outline-none focus:border-indigo-500/50 transition-colors font-medium" />
+                                <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} rows="2" className="w-full bg-black/50 border border-white/10 rounded-lg p-2.5 text-[11px] text-zinc-300 resize-none focus:outline-none focus:border-indigo-500/50 transition-colors font-medium" />
                                 </div>
                             </div>
                             ))}
 
-                            {references.map(ref => (
-                            <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, position: 'absolute' }} className={`w-48 glass-panel p-2.5 rounded-xl cursor-move pointer-events-auto group hover:border-indigo-500/50 transition-all ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'}`}>
-                                <div className="relative aspect-video bg-black/60 rounded-xl overflow-hidden border border-white/10">
+                            {references.filter(r => r.boardId === activeBoardId).map(ref => (
+                            <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, position: 'absolute' }} className={`w-48 glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 transition-all ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'}`}>
+                                <div className="relative aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/10">
                                 <button onClick={() => setConfirmAction({title:'Удалить референс?', message:'Убрать с доски?', onConfirm:()=> { setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
                                 {ref.url ? <img src={ref.url} className="w-full h-full object-cover pointer-events-none" draggable="false" /> : (
                                     <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
@@ -1515,8 +2022,8 @@
                             </div>
                             ))}
 
-                            {stickies.map(st => (
-                            <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')} style={{ left: `${st.x}px`, top: `${st.y}px`, position: 'absolute', backgroundColor: st.color }} className={`w-56 p-4 rounded-xl cursor-move pointer-events-auto z-20 text-zinc-900 transform rotate-1 hover:rotate-0 transition-all group ${selectedWbItems.includes(st.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : ' border border-white/20'}`}>
+                            {stickies.filter(st => belongsToBoard(st, activeBoardId)).map(st => (
+                            <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')} style={{ left: `${st.x}px`, top: `${st.y}px`, position: 'absolute', backgroundColor: st.color }} className={`w-56 p-4 rounded-lg cursor-move pointer-events-auto z-20 text-zinc-900 transform rotate-1 hover:rotate-0 transition-all group ${selectedWbItems.includes(st.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : ' border border-white/20'}`}>
                                 <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors opacity-0 group-hover:opacity-100">✕</button>
                                 <textarea value={st.text} onChange={(e) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: e.target.value } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }} className="w-full bg-transparent border-none text-[13px] focus:outline-none h-20 resize-none font-bold text-zinc-900 leading-tight placeholder-black/50" placeholder="Текст заметки..." />
                             </div>
@@ -1524,23 +2031,27 @@
                         </div>
                       </div>
 
-                      <div className="absolute top-2 md:top-6 left-2 md:left-6 glass-panel p-2 rounded-xl flex flex-row md:flex-col gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar">
-                        <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
-                        <button onClick={() => setWbMode('draw')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
-                        <button onClick={() => setWbMode('erase')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
-                        <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-xl text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
+                      <div className="absolute top-2 md:top-6 left-2 md:left-6 glass-panel p-2 rounded-lg flex flex-row md:flex-col gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar">
+                        <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
+                        <button onClick={() => setWbMode('draw')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
+                        <button onClick={() => setWbMode('erase')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
+                        <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
+                        <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
+                                className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+                        </button>
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1"></div>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-xl shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-xl shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на холсте будут стираться.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); localStorage.removeItem('cf_canvas_draw'); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-xl shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
                       </div>
 
                       {wbMode === 'draw' && (
-                        <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-xl flex flex-col space-y-4 z-30 w-52 border-t border-white/10">
-                          <div className="flex bg-black/50 p-1.5 rounded-xl border border-white/5">
-                              <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
-                              <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
-                              <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
+                        <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-4 z-30 w-52 border-t border-white/10">
+                          <div className="flex bg-black/50 p-1.5 rounded-lg border border-white/5">
+                              <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
+                              <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
+                              <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
                           </div>
                           <div className="space-y-2">
                             <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Размер</span><span>{brushSize}px</span></div>
@@ -1556,10 +2067,10 @@
                         </div>
                       )}
 
-                      <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-xl flex items-center space-x-3 z-30 border-t border-white/10">
-                        <button onClick={() => setZoom(prev => Math.max(0.3, prev - 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-xl text-lg font-bold transition-colors">-</button>
+                      <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-lg flex items-center space-x-3 z-30 border-t border-white/10">
+                        <button onClick={() => setZoom(prev => Math.max(0.3, prev - 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">-</button>
                         <span className="text-xs font-bold font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
-                        <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-xl text-lg font-bold transition-colors">+</button>
+                        <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">+</button>
                       </div>
                     </div>
                   </div>
@@ -1569,14 +2080,14 @@
                     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 pb-24">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-white/10 pb-5 gap-4">
                         <h2 className="text-xl font-bold text-white flex items-center gap-2"><Icons.Table/> Таблица Планирования и Смен</h2>
-                        <div className="flex glass-panel p-1.5 rounded-xl border border-white/5">
-                          <button onClick={() => setTableSubView('list')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${tableSubView === 'list' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Общий список</button>
-                          <button onClick={() => setTableSubView('grouped')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Группировка по сменам</button>
+                        <div className="flex glass-panel p-1.5 rounded-lg border border-white/5">
+                          <button onClick={() => setTableSubView('list')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'list' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Общий список</button>
+                          <button onClick={() => setTableSubView('grouped')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Группировка по сменам</button>
                         </div>
                       </div>
 
                       {tableSubView === 'list' ? (
-                        <div className="glass-panel rounded-xl overflow-x-auto border border-white/10">
+                        <div className="glass-panel rounded-lg overflow-x-auto border border-white/10">
                           <table className="w-full min-w-[700px] text-left border-collapse text-sm">
                             <thead><tr className="bg-white/5 border-b border-white/10 text-zinc-400 uppercase tracking-widest text-[11px] font-bold"><th className="p-5 w-20 text-center">Сцена</th><th className="p-5 w-44">Дата съемки</th><th className="p-5 w-1/3">Объект / Заголовок</th><th className="p-5">Камерный сетап</th></tr></thead>
                             <tbody className="divide-y divide-white/5 text-zinc-200">
@@ -1615,14 +2126,14 @@
                               dayScenes.forEach(s => { const gear = s.gear || {}; Object.keys(gear).forEach(k => { if (summary[k] !== undefined) summary[k] += (gear[k] || 0); else summary[k] = (gear[k] || 0); }); });
                               const hasSummary = Object.values(summary).some(v => v > 0);
                               return (
-                                <div key={dateKey || 'unassigned'} className="glass-panel rounded-xl overflow-hidden border-t border-white/10">
+                                <div key={dateKey || 'unassigned'} className="glass-panel rounded-lg overflow-hidden border-t border-white/10">
                                   <div className="bg-white/5 px-6 py-4 border-b border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
                                     <div className="flex items-center space-x-4">
                                       <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `СМЕНА: ${formatDateDisplay(dateKey)}` : 'СЦЕНЫ ВНЕ СМЕН'}</span>
                                       <span className="text-zinc-600">|</span>
                                       <span className="text-xs font-bold text-zinc-300 bg-black/50 px-3 py-1 rounded-full border border-white/10">{dayScenes.length} сцен</span>
                                     </div>
-                                    {hasSummary && (<div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-2">Итого техника:</span>{Object.entries(summary).map(([key, totalQty]) => { if (totalQty === 0) return null; const item = (gearTypes || DEFAULT_GEAR)[key] || { label: key }; return (<span key={key} className="bg-indigo-950/60 text-indigo-200 text-xs px-3 py-1 rounded-xl font-mono font-semibold flex items-center space-x-2"><span className="text-indigo-400"><Icons.Video/></span><span>{item.label}</span><span className="font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md">{totalQty}</span></span>); })}</div>)}
+                                    {hasSummary && (<div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-2">Итого техника:</span>{Object.entries(summary).map(([key, totalQty]) => { if (totalQty === 0) return null; const item = (gearTypes || DEFAULT_GEAR)[key] || { label: key }; return (<span key={key} className="bg-indigo-950/60 text-indigo-200 text-xs px-3 py-1 rounded-lg font-mono font-semibold flex items-center space-x-2"><span className="text-indigo-400"><Icons.Video/></span><span>{item.label}</span><span className="font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md">{totalQty}</span></span>); })}</div>)}
                                   </div>
                                   <div className="divide-y divide-white/5">
                                     {dayScenes.map(s => (
@@ -1649,27 +2160,27 @@
                   {/* ЭКСПЛИКАЦИИ И ДОКУМЕНТЫ */}
                   <div className={`h-full w-full ${currentView === 'docs' ? 'block' : 'hidden'}`}>
                     <div className="flex flex-col lg:flex-row h-full max-w-7xl mx-auto p-4 md:p-6 gap-6 overflow-y-auto lg:overflow-hidden">
-                      <div className="w-full lg:w-72 glass-panel p-5 rounded-xl flex flex-col shrink-0 relative border-t border-white/10 overflow-hidden">
+                      <div className="w-full lg:w-72 glass-panel p-5 rounded-lg flex flex-col shrink-0 relative border-t border-white/10 overflow-hidden">
                         <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
                           <div>
                               <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Операторские Гайды</span>
                               {docs.map(doc => (
                                 <div key={doc.id} className="group relative mb-2">
-                                  <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null);}} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}>{doc.title}</button>
+                                  <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}>{doc.title}</button>
                                   {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>)}
                                 </div>
                               ))}
-                              <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
+                              <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
                           </div>
                           <div className="pt-4 border-t border-white/10">
                               <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Схемы Света</span>
                               {lightSchemes.map(sch => (
                                 <div key={sch.id} className="group relative mb-2">
-                                  <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
+                                  <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
                                   <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
                                 </div>
                               ))}
-                              <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                              <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
                           </div>
                         </div>
                       </div>
@@ -1678,16 +2189,16 @@
                       {activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
                         const activeDoc = docs.find(d => d.id === activeDocId);
                         return (
-                          <div className="flex-1 glass-panel p-6 md:p-8 rounded-xl flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-white/10">
+                          <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-white/10">
                             <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
-                            <textarea value={activeDoc.content} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="w-full flex-1 glass-input rounded-xl p-6 text-sm md:text-base min-h-[300px] lg:min-h-0 transition-shadow leading-relaxed resize-none font-medium border border-white/10" placeholder="Содержание документа..." />
+                            <textarea value={activeDoc.content} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="w-full flex-1 glass-input rounded-lg p-6 text-sm md:text-base min-h-[300px] lg:min-h-0 transition-shadow leading-relaxed resize-none font-medium border border-white/10" placeholder="Содержание документа..." />
                             
                             <div className="space-y-4 border-t border-white/10 pt-6">
                               <div className="flex justify-between items-center px-1">
                                 <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
                                 <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
                               </div>
-                              <div className="glass-panel rounded-xl overflow-x-auto border border-white/5">
+                              <div className="glass-panel rounded-lg overflow-x-auto border border-white/5">
                                 <table className="w-full min-w-[500px] text-left text-sm border-collapse">
                                   <thead><tr className="bg-white/5 text-zinc-400 text-[11px] uppercase tracking-widest font-bold border-b border-white/10"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
                                   <tbody className="divide-y divide-white/5 text-zinc-200">
@@ -1711,12 +2222,12 @@
                       {activeSchemeId && lightSchemes.find(s=>s.id === activeSchemeId) && (() => {
                           const sch = lightSchemes.find(s=>s.id === activeSchemeId);
                           return (
-                            <div className="flex-1 glass-panel p-6 md:p-8 rounded-xl flex flex-col space-y-6 lg:overflow-y-auto relative">
+                            <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative">
                                 <div className="flex justify-between items-center gap-4">
                                     <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
-                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-xl font-bold transition-colors shrink-0">Открыть графический редактор</button>
+                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
                                 </div>
-                                <div className="w-full aspect-video bg-black/70 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden">
+                                <div className="w-full aspect-video bg-black/70 rounded-lg border border-white/10 flex items-center justify-center overflow-hidden">
                                     {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
                                 </div>
                                 <div className="pt-4 border-t border-white/10">
@@ -1733,16 +2244,38 @@
                       })()}
 
                       {/* Правая колонка: Файлы */}
-                      <div className="w-full lg:w-80 glass-panel p-6 rounded-xl shrink-0 space-y-8 relative border-t border-white/10">
+                      <div className="w-full lg:w-80 glass-panel p-6 rounded-lg shrink-0 space-y-8 relative border-t border-white/10">
                         <div className="space-y-3">
                           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Экспорт / Печать</span>
-                          <button onClick={() => window.print()} className="w-full py-4 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-white text-sm font-bold tracking-wide transition-all flex items-center justify-center space-x-2 border border-white/10">
-                            <span><Icons.Print/></span><span>Сформировать PDF</span>
-                          </button>
+                          {(() => {
+                            const openDoc = docs.find(d => d.id === activeDocId);
+                            const openScheme = lightSchemes.find(s => s.id === activeSchemeId);
+                            const btn = "w-full py-3 rounded-lg text-sm font-bold tracking-wide transition-all flex items-center justify-center gap-2 border";
+                            return (
+                              <div className="space-y-2">
+                                <button onClick={() => requestPrint('full')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-white/10`}>
+                                  <Icons.Print/> <span>Весь план</span>
+                                </button>
+                                <button onClick={() => requestPrint('doc')} disabled={!openDoc || !!activeSchemeId}
+                                        title={openDoc && !activeSchemeId ? `Печать: ${openDoc.title}` : 'Сначала откройте гайд слева'}
+                                        className={`${btn} ${openDoc && !activeSchemeId ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-white/10' : 'bg-zinc-900/60 text-zinc-600 border-white/5 cursor-not-allowed'}`}>
+                                  <Icons.Docs/> <span className="truncate">Гайд{openDoc && !activeSchemeId ? `: ${openDoc.title}` : ''}</span>
+                                </button>
+                                <button onClick={() => requestPrint('scheme')} disabled={!openScheme}
+                                        title={openScheme ? `Печать: ${openScheme.title}` : 'Сначала откройте схему света слева'}
+                                        className={`${btn} ${openScheme ? 'bg-amber-900/40 hover:bg-amber-900/60 text-amber-100 border-amber-500/30' : 'bg-zinc-900/60 text-zinc-600 border-white/5 cursor-not-allowed'}`}>
+                                  <Icons.Lightbulb/> <span className="truncate">Схема света{openScheme ? `: ${openScheme.title}` : ''}</span>
+                                </button>
+                                <button onClick={() => requestPrint('gear')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-white/10`}>
+                                  <Icons.Video/> <span>Список техники</span>
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div className="space-y-4 pt-6 border-t border-white/10">
                           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Файлы и документы проекта</span>
-                          <div className="border border-dashed border-white/20 hover:border-indigo-500/50 rounded-xl p-6 text-center bg-black/30 hover:bg-indigo-500/10 transition-all group">
+                          <div className="border border-dashed border-white/20 hover:border-indigo-500/50 rounded-lg p-6 text-center bg-black/30 hover:bg-indigo-500/10 transition-all group">
                             <label className="text-xs font-bold text-zinc-400 group-hover:text-indigo-300 cursor-pointer block w-full h-full flex flex-col items-center gap-2">
                               <span className="opacity-60 group-hover:opacity-100 transition-opacity"><Icons.Folder/></span>
                               <span>Загрузить КПП или доки</span>
@@ -1751,7 +2284,7 @@
                           </div>
                           <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 hide-scrollbar">
                             {projectFiles.map(file => (
-                              <div key={file.id} className="glass-panel p-4 rounded-xl flex flex-col space-y-3 group hover:border-indigo-500/30 transition-colors border border-white/5">
+                              <div key={file.id} className="glass-panel p-4 rounded-lg flex flex-col space-y-3 group hover:border-indigo-500/30 transition-colors border border-white/5">
                                 <div className="truncate flex flex-col">
                                   <span className="text-sm text-zinc-200 truncate font-bold tracking-wide" title={file.name}>{file.name}</span>
                                   <span className="text-[11px] font-mono text-zinc-500 mt-0.5">{file.size}</span>
@@ -1778,7 +2311,7 @@
                     <button onClick={() => setShowChat(false)} className="md:hidden absolute top-4 right-4 w-8 h-8 flex items-center justify-center glass-panel rounded-full text-zinc-400 font-bold">✕</button>
                     <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block">Профиль участника</span>
                     <div className="flex flex-col gap-3">
-                      <div className="glass-panel rounded-xl px-4 py-3 flex items-center border border-white/10">
+                      <div className="glass-panel rounded-lg px-4 py-3 flex items-center border border-white/10">
                         <span className="text-zinc-300 mr-3"><Icons.User/></span>
                         <div className="flex flex-col">
                             <span className="text-sm font-extrabold text-white">{userName}</span>
@@ -1798,7 +2331,7 @@
                               <span className="text-[11px] font-extrabold text-zinc-400">{msg.senderName}</span>
                               <span className="text-[10px] text-zinc-500 font-mono font-semibold">{msg.senderRole}</span>
                             </div>
-                            <div className={`px-4 py-2.5 rounded-xl text-[13px] font-medium leading-relaxed border ${isMe ? 'bg-indigo-600 text-white border-indigo-500/50 rounded-tr-sm' : 'glass-panel text-zinc-200 rounded-tl-sm border-white/10'}`}>
+                            <div className={`px-4 py-2.5 rounded-lg text-[13px] font-medium leading-relaxed border ${isMe ? 'bg-indigo-500 text-[#1a1918] border-indigo-500/50 rounded-tr-sm' : 'glass-panel text-zinc-200 rounded-tl-sm border-white/10'}`}>
                               {msg.text}
                             </div>
                           </div>
@@ -1813,18 +2346,19 @@
                   </div>
 
                   <div className="p-4 border-t border-white/10 bg-black/50">
-                    <div className="flex glass-input rounded-xl p-1.5 transition-all">
+                    <div className="flex glass-input rounded-lg p-1.5 transition-all">
                         <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && chatInput.trim()){ const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); } }} className="flex-1 bg-transparent px-3 text-sm font-medium text-white focus:outline-none placeholder-zinc-500" placeholder="Сообщение..." />
-                        <button onClick={() => { if(!chatInput.trim()) return; const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); }} className="bg-indigo-600 hover:bg-indigo-500 text-white w-10 h-10 rounded-xl flex items-center justify-center transition-colors font-bold">↑</button>
+                        <button onClick={() => { if(!chatInput.trim()) return; const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] w-10 h-10 rounded-lg flex items-center justify-center transition-colors font-bold">↑</button>
                     </div>
                   </div>
                 </div>
+              </div>
               </div>
 
               {/* МОДАЛЬНЫЕ ОКНА */}
               {showShareModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-xl p-8 max-w-md w-full relative">
+                  <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
                     <button onClick={() => setShowShareModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
                     <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-4 mb-6">
@@ -1833,14 +2367,14 @@
                     <div className="mb-4">
                       <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Код комнаты проекта</label>
                       <div className="flex gap-2">
-                        <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-xl px-4 py-2.5 text-sm font-mono" />
-                        <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 rounded-xl transition-colors">Войти</button>
+                        <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
+                        <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 rounded-lg transition-colors">Войти</button>
                       </div>
                       <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">У всех участников проекта должен быть одинаковый код комнаты.</p>
                     </div>
-                    <div className="bg-black/50 p-2 pl-4 rounded-xl border border-white/10 flex items-center justify-between gap-3">
+                    <div className="bg-black/50 p-2 pl-4 rounded-lg border border-white/10 flex items-center justify-between gap-3">
                       <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{window.location.href}</span>
-                      <button onClick={() => { navigator.clipboard.writeText(window.location.href).then(() => showToast('Ссылка скопирована!')).catch(() => { const t = document.createElement('input'); t.value = window.location.href; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка скопирована!'); }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                      <button onClick={() => { navigator.clipboard.writeText(window.location.href).then(() => showToast('Ссылка скопирована!')).catch(() => { const t = document.createElement('input'); t.value = window.location.href; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка скопирована!'); }); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
                     </div>
                   </div>
                 </div>
@@ -1848,14 +2382,14 @@
 
               {showProjectModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-xl p-8 max-w-md w-full relative">
+                  <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
                     <button onClick={() => setShowProjectModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-6 flex items-center gap-2"><Icons.Folder/> Управление проектом</h3>
                     <div className="space-y-3">
                       <div className="mb-2">
                         <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Ключ Gemini API (для ИИ-функций)</label>
                         <div className="relative">
-                          <input type={showGeminiKey ? "text" : "password"} value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" data-lpignore="true" data-1p-ignore="true" name="cf-gemini-api-key" className="w-full glass-input rounded-xl px-4 py-3 pr-12 text-sm font-mono" />
+                          <input type={showGeminiKey ? "text" : "password"} value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" data-lpignore="true" data-1p-ignore="true" name="cf-gemini-api-key" className="w-full glass-input rounded-lg px-4 py-3 pr-12 text-sm font-mono" />
                           <button type="button" onClick={() => setShowGeminiKey(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-white/5 transition-colors">{showGeminiKey ? "Скрыть" : "Показать"}</button>
                         </div>
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
@@ -1864,9 +2398,9 @@
                         const d = { scenes, storyboard, references, stickies, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvasData: localStorage.getItem('cf_canvas_draw') || '' };
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                         showToast("Резервная копия проекта сохранена!");
-                      }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-xl text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
+                      }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
                       
-                      <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-xl text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
+                      <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
                         <span>📂 Импортировать из JSON</span>
                         <input type="file" accept=".json" onChange={(e) => {
                           const f = e.target.files[0]; if (!f) return; const r = new FileReader();
@@ -1878,7 +2412,7 @@
                       
                       <button onClick={() => setConfirmAction({title:'Сбросить все данные?', message:'Создать абсолютно новый чистый проект?', onConfirm:()=>{
                         setScenes(initialScenes); setStoryboard([]); setReferences([]); setStickies([]); setDocs(initialDocs); setCrew([]); setGearTypes({ steadicam: { label: 'Стедикам' }, crane: { label: 'Кран' }, drone: { label: 'Коптер' } }); setLightGearTypes({ arri600: { label: 'ARRI Skypanel 600' }, astera: { label: 'Astera Titan Tube' }, aputure: { label: 'Aputure 300d' } }); setLightSchemes([]); setProjectFiles([]); const c = paintCanvasRef.current; if (c) { c.getContext('2d').clearRect(0, 0, c.width, c.height); localStorage.removeItem('cf_canvas_draw'); } setShowProjectModal(false); showToast("Создан чистый проект");
-                      }})} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-xl text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
+                      }})} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-lg text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
                     </div>
                   </div>
                 </div>
@@ -1886,24 +2420,24 @@
 
               {showAgentModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-xl p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
+                  <div className="glass-panel rounded-lg p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
                     <button onClick={() => setShowAgentModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> ИИ-Агент импорта КПП</h3>
                     
                     <div className="space-y-6">
-                      <div className="bg-black/40 p-4 rounded-xl border border-white/10">
+                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
                         <h4 className="text-sm font-bold text-indigo-300 mb-2">Загрузка файла таблицы (.xlsx / .csv)</h4>
                         <p className="text-xs text-zinc-400 mb-3">Загрузите файл КПП от Второго Режиссера, и ИИ распарсит матрицу смен и сцен.</p>
-                        <label className="w-full bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 px-4 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
+                        <label className="w-full bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
                           {isAILoading ? '⏳ Обработка нейросетью...' : '📁 Выбрать КПП (.xlsx / .csv)'}
                           <input type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => { handleAIAgentFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
                         </label>
                       </div>
 
-                      <div className="bg-black/40 p-4 rounded-xl border border-white/10">
+                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
                         <h4 className="text-sm font-bold text-emerald-400 mb-2">Ручной импорт JSON</h4>
                         <p className="text-xs text-zinc-400 mb-3">Скопируйте массив сцен и вставьте в поле ниже:</p>
-                        <textarea value={manualJsonInput} onChange={(e) => setManualJsonInput(e.target.value)} placeholder='[{"number":"1","title":"ИНТ. ОФИС - ДЕНЬ","date":"2026-06-29","content":"Описание..."}]' className="w-full h-24 glass-input rounded-xl p-3 text-xs resize-none mb-3 font-mono text-zinc-300" />
+                        <textarea value={manualJsonInput} onChange={(e) => setManualJsonInput(e.target.value)} placeholder='[{"number":"1","title":"ИНТ. ОФИС - ДЕНЬ","date":"2026-06-29","content":"Описание..."}]' className="w-full h-24 glass-input rounded-lg p-3 text-xs resize-none mb-3 font-mono text-zinc-300" />
                         <button 
                           onClick={() => {
                             try {
@@ -1916,7 +2450,7 @@
                               } else { showToast("❌ Массив сцен пуст."); }
                             } catch (e) { showToast("❌ Ошибка формата JSON."); }
                           }}
-                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
                         >Импортировать сцены</button>
                       </div>
                     </div>
@@ -1944,8 +2478,96 @@
                   <Lightbox refs={references.filter(r => lightboxData.sceneId ? r.sceneId === lightboxData.sceneId : true)} initialId={lightboxData.currentId} onClose={() => setLightboxData(null)} />
               )}
 
-              {/* Печатная версия (кнопка «Сформировать PDF») */}
+              {/* Печатная версия. Содержимое зависит от выбранной кнопки
+                  экспорта (printMode): весь план / гайд / схема / техника. */}
               <div id="print-area">
+                {printMode === 'doc' && (() => {
+                  const d = docs.find(x => x.id === activeDocId);
+                  if (!d) return null;
+                  return (
+                    <div>
+                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{d.title || 'Гайд'}</h1>
+                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>Операторский гайд · CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      <p style={{fontSize: '12pt', lineHeight: 1.55, whiteSpace: 'pre-wrap', margin: 0}}>{d.content || 'Документ пуст.'}</p>
+                    </div>
+                  );
+                })()}
+
+                {printMode === 'scheme' && (() => {
+                  const sch = lightSchemes.find(x => x.id === activeSchemeId);
+                  if (!sch) return null;
+                  const linked = scenes.filter(s => s.lightSchemeId === sch.id);
+                  return (
+                    <div>
+                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{sch.title || 'Схема света'}</h1>
+                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Схема света · CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      {sch.preview
+                        ? <img src={sch.preview} style={{width: '100%', border: '1px solid #ccc'}} />
+                        : <p style={{fontSize: '11pt', color: '#777'}}>Схема ещё не сохранена в редакторе — нечего печатать.</p>}
+                      {sch.elements && sch.elements.length > 0 && (
+                        <div style={{marginTop: '14pt'}}>
+                          <h2 style={{fontSize: '13pt', fontWeight: 800, margin: '0 0 6pt'}}>Приборы на схеме</h2>
+                          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '10pt'}}>
+                            <tbody>
+                              {sch.elements.filter(el => el.label || el.text).map((el, i) => (
+                                <tr key={el.id || i}>
+                                  <td style={{border: '1px solid #ccc', padding: '4pt', width: '28pt', textAlign: 'center'}}>{i + 1}</td>
+                                  <td style={{border: '1px solid #ccc', padding: '4pt'}}>{el.label || el.text}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {linked.length > 0 && (
+                        <p style={{fontSize: '10pt', marginTop: '12pt'}}>
+                          <b>Используется в сценах:</b> {linked.map(s => `#${s.number}`).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {printMode === 'gear' && (
+                  <div>
+                    <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>Список техники</h1>
+                    <p style={{fontSize: '10pt', color: '#555', margin: '0 0 6pt'}}>CineFlow · {new Date().toLocaleDateString('ru-RU')} · сцен в проекте: {scenes.length}</p>
+                    <p style={{fontSize: '9pt', color: '#777', margin: '0 0 16pt'}}>
+                      «Нужно» — максимум за одну сцену, то есть сколько единиц требуется одновременно.
+                    </p>
+                    {[{t: 'Камера и операторский грип', rows: gearSummary.camera}, {t: 'Осветительные приборы', rows: gearSummary.light}].map(block => (
+                      <div key={block.t} style={{marginBottom: '16pt'}}>
+                        <h2 style={{fontSize: '13pt', fontWeight: 800, margin: '0 0 6pt'}}>{block.t}</h2>
+                        {block.rows.length === 0
+                          ? <p style={{fontSize: '10pt', color: '#777', margin: 0}}>Ничего не отмечено.</p>
+                          : (
+                            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '10pt'}}>
+                              <thead>
+                                <tr>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt', textAlign: 'left'}}>Позиция</th>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt', width: '50pt', textAlign: 'center'}}>Нужно</th>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt', width: '60pt', textAlign: 'center'}}>Сцен</th>
+                                  <th style={{border: '1px solid #ccc', padding: '4pt'}}>В каких сценах</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {block.rows.map(r => (
+                                  <tr key={r.label}>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt'}}>{r.label}</td>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt', textAlign: 'center', fontWeight: 700}}>{r.peak}</td>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt', textAlign: 'center'}}>{r.scenes.length}</td>
+                                    <td style={{border: '1px solid #ccc', padding: '4pt'}}>{r.scenes.map(n => `#${n}`).join(', ')}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {printMode === 'full' && (<>
                 <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>CineFlow — План подготовки к съёмкам</h1>
                 <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Сформировано: {new Date().toLocaleDateString('ru-RU')} · Сцен: {scenes.length}</p>
                 {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
@@ -1980,6 +2602,7 @@
                     </table>
                   </div>
                 )}
+                </>)}
               </div>
 
             </div>

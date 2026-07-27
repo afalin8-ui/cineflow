@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v1';
+const VERSION = 'cineflow-v2';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -89,16 +89,34 @@ self.addEventListener('fetch', event => {
 
   // Сама страница: сначала сеть (чтобы приезжали обновления),
   // при отсутствии связи — версия из кэша.
+  // cache:'reload' обязателен: иначе ответ может прийти из HTTP-кэша
+  // браузера, и пользователь после обновления увидит старое приложение.
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        const fresh = await fetch(req);
+        const fresh = await fetch(req.url, { cache: 'reload' });
         const cache = await caches.open(APP_CACHE);
         cache.put('./index.html', fresh.clone());
         return fresh;
       } catch (e) {
         const cache = await caches.open(APP_CACHE);
         return (await cache.match('./index.html')) || (await cache.match('./')) || Response.error();
+      }
+    })());
+    return;
+  }
+
+  // index.html, запрошенный не как навигация (например проверка обновления):
+  // тоже сначала сеть, иначе отдадим устаревшую копию.
+  if (url.origin === self.location.origin && /\/index\.html$/.test(url.pathname)) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req.url, { cache: 'reload' });
+        const cache = await caches.open(APP_CACHE);
+        cache.put('./index.html', fresh.clone());
+        return fresh;
+      } catch (e) {
+        return (await caches.match('./index.html')) || Response.error();
       }
     })());
     return;
