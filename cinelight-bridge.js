@@ -49,6 +49,33 @@ function routePacket(buf) {
 
 function log(msg) { console.log(new Date().toLocaleTimeString() + '  ' + msg); }
 
+/* Все подключённые пульты. Текстовые сообщения (не DMX) мост пересылает
+   остальным — так оператор и пультовик видят одну и ту же картину. */
+const peers = new Set();
+
+function frameText(str) {
+    const body = Buffer.from(str, 'utf8');
+    let head;
+    if (body.length < 126) {
+        head = Buffer.from([0x81, body.length]);
+    } else if (body.length < 65536) {
+        head = Buffer.alloc(4);
+        head[0] = 0x81; head[1] = 126; head.writeUInt16BE(body.length, 2);
+    } else {
+        head = Buffer.alloc(10);
+        head[0] = 0x81; head[1] = 127; head.writeBigUInt64BE(BigInt(body.length), 2);
+    }
+    return Buffer.concat([head, body]);
+}
+
+function relay(str, from) {
+    const packet = frameText(str);
+    peers.forEach(s => {
+        if (s === from || s.destroyed) return;
+        try { s.write(packet); } catch (e) {}
+    });
+}
+
 const server = http.createServer((req, res) => {
     if (req.url === '/' || req.url === '/index.html' || req.url === '/cinelight.html') {
         fs.readFile(path.join(__dirname, 'cinelight.html'), (err, data) => {
@@ -74,7 +101,10 @@ server.on('upgrade', (req, socket) => {
                  'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
                  'Sec-WebSocket-Accept: ' + accept + '\r\n\r\n');
     socket.setNoDelay(true);
-    log('Пульт подключился (' + (req.socket.remoteAddress || '?') + ')');
+    peers.add(socket);
+    log('Пульт подключился (' + (req.socket.remoteAddress || '?') + '), всего пультов: ' + peers.size);
+    // новичку сообщаем, что он не один — он попросит проект у напарника
+    if (peers.size > 1) relay(JSON.stringify({ t: 'peers', n: peers.size }));
 
     let buf = Buffer.alloc(0);
     let gotFirst = null;
@@ -96,10 +126,14 @@ server.on('upgrade', (req, socket) => {
                 for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
             }
             buf = buf.slice(dataOff + len);
-            if (op === 8) { try { socket.end(); } catch (e) {} return; }
+            if (op === 8) { peers.delete(socket); try { socket.end(); } catch (e) {} return; }
             if (op === 9) { // ping → pong
                 const p = payload.slice(0, 125);
                 try { socket.write(Buffer.concat([Buffer.from([0x8a, p.length]), p])); } catch (e) {}
+                continue;
+            }
+            if (op === 1) { // текст — это синхронизация пультов, не DMX
+                relay(payload.toString('utf8'), socket);
                 continue;
             }
             if (op === 2 && payload.length > 0) {
@@ -114,7 +148,11 @@ server.on('upgrade', (req, socket) => {
         }
     });
     socket.on('error', () => {});
-    socket.on('close', () => log('Пульт отключился'));
+    socket.on('close', () => {
+        peers.delete(socket);
+        log('Пульт отключился, осталось: ' + peers.size);
+        relay(JSON.stringify({ t: 'peers', n: peers.size }));
+    });
 });
 
 server.on('error', err => {

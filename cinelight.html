@@ -658,6 +658,16 @@
             for (let i = 0; i < 16; i++) b[i] = parseInt(s.substr(i * 2, 2), 16);
             return b;
         })();
+        /* Постоянный код этого устройства — нужен, чтобы два пульта договорились,
+           кто из них отдаёт свет в кабель. */
+        const CLIENT_ID = (() => {
+            try {
+                let v = localStorage.getItem('cl_client');
+                if (!v) { v = Math.random().toString(36).slice(2, 10); localStorage.setItem('cl_client', v); }
+                return v;
+            } catch (e) { return Math.random().toString(36).slice(2, 10); }
+        })();
+
         const SACN_SEQ = {};
         function sacnPacket(universe, data, priority) {
             const p = new Uint8Array(638);
@@ -1320,7 +1330,7 @@
             const [groups, setGroups] = useState(init.groups || []);
             const [cuelists, setCuelists] = useState(init.cuelists || []);
             const [palettes, setPalettes] = useState(init.palettes || []);
-            const [settings, setSettings] = useState({ serialUniverse: 1, artnetBase: 0, bridgeAddr: '', ...(init.settings || {}) });
+            const [settings, setSettings] = useState({ serialUniverse: 1, artnetBase: 0, bridgeAddr: '', dmxOut: true, ...(init.settings || {}) });
 
             const [view, setView] = useState('board');           // board | plan | patch
             const [tab, setTab] = useState('color');             // int | color | pos | fx
@@ -1369,6 +1379,16 @@
             const wsRef = useRef(null);
             const wsWantRef = useRef(null);
             const wsTimerRef = useRef(null);
+            /* ── совместная работа: оператор и пультовик видят одно и то же ──
+               Правило простое: кто последним что-то трогал, тот и задаёт картину.
+               Пока вы крутите — ваши значения главные; отпустили на пару секунд —
+               принимаете то, что делает напарник. Так не нужен «главный» пульт. */
+            const touchRef = useRef(0);            // когда последний раз трогали этот пульт
+            const syncSendRef = useRef(0);         // когда последний раз отправляли состояние
+            const syncDirtyRef = useRef(false);
+            const applyingRef = useRef(false);     // применяем чужое — не считать это «трогали»
+            const [peers, setPeers] = useState(0);
+            const HOLD_MS = 1800;                  // столько держим приоритет после своего касания
 
             playbacks.forEach(pb => { if (pb && !pbRunRef.current[pb.id]) pbRunRef.current[pb.id] = { level: 0, lvI: 0, lvC: 0, lvP: 0, target: 0, lastOn: 0 }; });
 
@@ -1389,6 +1409,7 @@
                 prog: Array.from(progRef.current.entries()).map(([k, v]) => [k, { ...v }])
             });
             const pushUndo = label => {
+                mark();
                 undoStackRef.current.push({ label, state: snapshot() });
                 if (undoStackRef.current.length > 40) undoStackRef.current.shift();
                 setUndoLabel(label);
@@ -1430,6 +1451,7 @@
             };
             const goCuelist = (cl, dir) => {
                 if (!cl.steps || cl.steps.length === 0) { toast('В списке пока нет шагов'); return; }
+                mark();
                 const r = clRun(cl.id);
                 const prev = r.step;
                 const next = (!r.on || prev < 0)
@@ -1441,6 +1463,7 @@
                 setUiTick(t => t + 1);
             };
             const stopCuelist = cl => {
+                mark();
                 const r = clRun(cl.id);
                 (cl.steps || []).forEach(st => setPbTarget(st.slot, 0));
                 r.on = false; r.step = -1; r.t = 0;
@@ -1458,6 +1481,106 @@
                 });
             };
             const stepCuelistsRef = useRef(stepCuelists); stepCuelistsRef.current = stepCuelists;
+
+            /* ── обмен состоянием с напарником ── */
+            const mark = () => { if (!applyingRef.current) { touchRef.current = Date.now(); syncDirtyRef.current = true; } };
+            const iOwn = () => Date.now() - touchRef.current < HOLD_MS;
+            const wsSend = obj => {
+                const ws = wsRef.current;
+                if (!ws || ws.readyState !== 1) return;
+                try { ws.send(JSON.stringify(obj)); } catch (e) {}
+            };
+            const liveState = () => ({
+                t: 'live', at: touchRef.current, cid: CLIENT_ID,
+                out: settingsRef.current.dmxOut !== false,
+                master: masterRef.current, blackout: blackoutRef.current,
+                pb: playbacksRef.current.reduce((acc, p) => {
+                    if (p && pbRunRef.current[p.id]) acc[p.id] = pbRunRef.current[p.id].target;
+                    return acc;
+                }, {}),
+                prog: Array.from(progRef.current.entries()),
+                fx: effectsRef.current
+            });
+            const projectState = () => ({
+                t: 'project', at: Date.now(),
+                data: {
+                    fixtures: fixturesRef.current, playbacks: playbacksRef.current,
+                    groups: groupsRef.current, palettes: palettesRef.current,
+                    cuelists: cuelistsRef.current, effects: effectsRef.current
+                }
+            });
+            const applyLive = m => {
+                applyingRef.current = true;
+                try {
+                    if (typeof m.master === 'number') setMaster(m.master);
+                    if (typeof m.blackout === 'boolean') setBlackout(m.blackout);
+                    if (m.pb) Object.entries(m.pb).forEach(([id, target]) => {
+                        const r = pbRunRef.current[id];
+                        if (!r) return;
+                        if (target > 0 && r.target <= 0) r.lastOn = Date.now();
+                        r.target = target;
+                    });
+                    if (Array.isArray(m.prog)) {
+                        progRef.current = new Map(m.prog);
+                        setProgDirty(m.prog.length > 0);
+                    }
+                    if (Array.isArray(m.fx)) setEffects(m.fx);
+                    setUiTick(t => t + 1);
+                } finally { applyingRef.current = false; }
+            };
+            const applyProject = d => {
+                applyingRef.current = true;
+                try {
+                    if (Array.isArray(d.fixtures)) setFixtures(d.fixtures);
+                    if (Array.isArray(d.playbacks) && d.playbacks.length === 10) setPlaybacks(d.playbacks);
+                    if (Array.isArray(d.groups)) setGroups(d.groups);
+                    if (Array.isArray(d.palettes)) setPalettes(d.palettes);
+                    if (Array.isArray(d.cuelists)) setCuelists(d.cuelists);
+                    if (Array.isArray(d.effects)) setEffects(d.effects);
+                } finally { applyingRef.current = false; }
+            };
+            const onPeerMessage = raw => {
+                let m; try { m = JSON.parse(raw); } catch (e) { return; }
+                if (!m || !m.t) return;
+                if (m.t === 'peers') { setPeers(Math.max(0, (m.n || 1) - 1)); return; }
+                if (m.t === 'need') { wsSend(projectState()); wsSend(liveState()); return; }
+                if (m.t === 'live') {
+                    // оба пульта не должны слать свет в один кабель — уступает тот, у кого код больше
+                    if (m.out && settingsRef.current.dmxOut !== false && m.cid && m.cid < CLIENT_ID) {
+                        setSettings(s => ({ ...s, dmxOut: false }));
+                        toast('Свет уже отдаёт напарник — этот пульт перешёл в режим наблюдения');
+                    }
+                    if (!iOwn()) applyLive(m);
+                    return;
+                }
+                if (m.t === 'project') { if (!iOwn()) applyProject(m.data || {}); return; }
+            };
+
+            /* Своё состояние отдаём сразу после правки (каждые 100 мс),
+               а раз в секунду — в любом случае: так напарник всегда знает,
+               что мы здесь, и пульты успевают договориться, кто даёт свет. */
+            useEffect(() => {
+                const id = setInterval(() => {
+                    const now = Date.now();
+                    const beat = now - syncSendRef.current > 1000;
+                    if (!syncDirtyRef.current && !beat) return;
+                    if (syncDirtyRef.current && now - syncSendRef.current < 100) return;
+                    syncDirtyRef.current = false; syncSendRef.current = now;
+                    wsSend(liveState());
+                }, 100);
+                return () => clearInterval(id);
+            }, []);
+
+            /* проект меняется редко — шлём с задержкой, чтобы не спамить */
+            const projTimerRef = useRef(null);
+            useEffect(() => {
+                if (applyingRef.current) return;
+                clearTimeout(projTimerRef.current);
+                projTimerRef.current = setTimeout(() => {
+                    if (wsRef.current && wsRef.current.readyState === 1) wsSend(projectState());
+                }, 800);
+                return () => clearTimeout(projTimerRef.current);
+            }, [fixtures, playbacks, groups, palettes, cuelists]);
 
             /* ── не давать экрану гаснуть, пока пульт открыт ── */
             const wakeRef = useRef(null);
@@ -1578,8 +1701,9 @@
                 dmxRef.current = dmx;
 
                 const ws = wsRef.current;
-                const wantSerial = !!writerRef.current;
-                const wantNet = !!(ws && ws.readyState === 1);
+                const outOn = settingsRef.current.dmxOut !== false;
+                const wantSerial = outOn && !!writerRef.current;
+                const wantNet = outOn && !!(ws && ws.readyState === 1);
                 if (wantSerial || wantNet) {
                     const mul = blackoutRef.current ? 0 : masterRef.current;
                     const unis = {};
@@ -1651,7 +1775,13 @@
                 let ws;
                 try { ws = new WebSocket('ws://' + addr); } catch (e) { setNetStatus('off'); wsWantRef.current = null; toast('Не получилось подключиться к мосту'); return; }
                 ws.binaryType = 'arraybuffer';
-                ws.onopen = () => { setNetStatus('on'); toast('Мост подключён — Art-Net уходит в сеть'); };
+                ws.onmessage = ev => { if (typeof ev.data === 'string') onPeerMessage(ev.data); };
+                ws.onopen = () => {
+                    setNetStatus('on');
+                    toast('Мост подключён');
+                    // спрашиваем напарника, что сейчас происходит
+                    setTimeout(() => wsSend({ t: 'need' }), 300);
+                };
                 ws.onclose = () => {
                     if (wsRef.current === ws) wsRef.current = null;
                     if (wsWantRef.current) {
@@ -1704,6 +1834,7 @@
             const applyToSelection = (partial, palId) => {
                 const sel = selectedRef.current;
                 if (sel.size === 0) return;
+                mark();
                 sel.forEach(fid => {
                     const cur = progRef.current.get(fid) || {};
                     const merged = { ...cur, ...partial };
@@ -1724,7 +1855,7 @@
                 setProgDirty(true);
                 setUiTick(t => t + 1);
             };
-            const clearProg = () => { if (progRef.current.size) pushUndo('Очистка правок'); progRef.current.clear(); setProgDirty(false); setUiTick(t => t + 1); };
+            const clearProg = () => { mark(); if (progRef.current.size) pushUndo('Очистка правок'); progRef.current.clear(); setProgDirty(false); setUiTick(t => t + 1); };
             const locate = () => applyToSelection({ dim: 1, r: 1, g: 1, b: 1, w: 0, a: 0, cct: 5600, gm: 0, pan: 0.5, tilt: 0.5, zoom: 0.5, focus: 0.5, strobe: 0 });
 
             const applyHS = (h, s) => {
@@ -1878,12 +2009,14 @@
             /* ── плейбеки ── */
             const togglePb = pb => {
                 const r = pbRunRef.current[pb.id]; if (!r) return;
+                mark();
                 r.target = r.target > 0 ? 0 : 1;
                 if (r.target > 0) r.lastOn = Date.now();
                 setUiTick(t => t + 1);
             };
             const setPbLevel = (pb, v) => {
                 const r = pbRunRef.current[pb.id]; if (!r) return;
+                mark();
                 if (r.level <= 0.001 && v > 0) r.lastOn = Date.now();
                 r.level = v; r.lvI = v; r.lvC = v; r.lvP = v; r.target = v;
                 setUiTick(t => t + 1);
@@ -2123,7 +2256,7 @@
                                                 )}
                                                 {effects.map((fx, i) => (
                                                     <FxCard key={fx.id} fx={fx} selCount={selected.size}
-                                                            onChange={upd => setEffects(list => list.map((e, j) => j === i ? { ...e, ...upd } : e))}
+                                                            onChange={upd => { mark(); setEffects(list => list.map((e, j) => j === i ? { ...e, ...upd } : e)); }}
                                                             onTarget={() => {
                                                                 const ids = Array.from(selected);
                                                                 setEffects(list => list.map((e, j) => j === i ? { ...e, targets: ids } : e));
@@ -2196,6 +2329,13 @@
                             ))}
                         </div>
                         <div className="flex-1"></div>
+                        {peers > 0 && (
+                            <span title={settings.dmxOut === false ? 'Свет отдаёт напарник' : 'Этот пульт отдаёт свет'}
+                                  className={"px-2.5 py-1.5 rounded-lg text-[10px] font-bold border whitespace-nowrap " +
+                                    (settings.dmxOut === false ? 'border-sky-700 text-sky-400' : 'border-green-700 text-green-400')}>
+                                {settings.dmxOut === false ? 'НАБЛЮДЕНИЕ' : 'ВЕДУЩИЙ'} · напарник{peers > 1 ? 'ов ' + peers : ''}
+                            </span>
+                        )}
                         <button onClick={undo} disabled={!undoLabel}
                                 title={undoLabel ? 'Отменить: ' + undoLabel : 'Отменять нечего'}
                                 className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--border)] text-zinc-300 disabled:opacity-30">
@@ -2215,10 +2355,10 @@
                         <div className="hidden md:flex items-center gap-2 px-2">
                             <span className="text-[10px] font-bold text-zinc-400">МАСТЕР</span>
                             <input type="range" min="0" max="100" value={Math.round(master * 100)}
-                                   onChange={e => setMaster(e.target.value / 100)} className="w-32" />
+                                   onChange={e => { mark(); setMaster(e.target.value / 100); }} className="w-32" />
                             <span className="text-[10px] font-mono w-8 text-zinc-300">{pct(master)}</span>
                         </div>
-                        <button onClick={() => setBlackout(b => !b)}
+                        <button onClick={() => { mark(); setBlackout(b => !b); }}
                                 className={"px-3 py-2 rounded-lg text-xs font-extrabold tracking-wide " +
                                   (blackout ? 'bg-red-600 text-white animate-pulse' : 'bg-[var(--panel-2)] border border-[var(--border)] text-zinc-300')}>
                             BLACKOUT
@@ -2647,6 +2787,24 @@
                                 встречается чаще у радиопередатчиков (CRMX и похожие), sACN — современный
                                 стандарт, его просят новые ноды и медиасерверы. Мост сам разбирается, что
                                 куда слать, и передаёт все юниверсы, где есть приборы.
+                            </p>
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Работа вдвоём</div>
+                            <button onClick={() => setSettings(s => ({ ...s, dmxOut: s.dmxOut === false }))}
+                                    className={"w-full py-2.5 rounded-lg text-xs font-bold border mb-2 " +
+                                      (settings.dmxOut === false
+                                        ? 'border-sky-700 text-sky-400'
+                                        : 'border-green-700 text-green-400')}>
+                                {settings.dmxOut === false ? 'Наблюдение — свет отдаёт напарник' : 'Этот пульт отдаёт свет в приборы'}
+                            </button>
+                            <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                Откройте пульт с адреса моста на обоих устройствах — у оператора и у пультовика.
+                                Оба видят одну картину: сцены, правки, эффекты и сам проект передаются через мост,
+                                интернет не нужен. Кто последним что-то тронул, тот и главный: пока вы крутите — ваши
+                                значения, отпустили на пару секунд — снова видите напарника. Выбор приборов у каждого
+                                свой, чтобы не мешать друг другу. Свет в кабель отдаёт только один пульт — второй
+                                переключается на наблюдение сам, но переключить можно и вручную кнопкой выше.
                             </p>
                         </div>
                         <div>
