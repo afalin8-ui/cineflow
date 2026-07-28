@@ -52,11 +52,12 @@ export function createSpaceBattle(ctx, config) {
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
   });
 
-  scene.add(new THREE.AmbientLight(0x5a6a86, 0.75));
+  // Заливки мало нарочно: иначе теневая сторона планеты светится
+  scene.add(new THREE.AmbientLight(0x4a5a76, 0.35));
   const key = new THREE.DirectionalLight(0xffe8cf, 2.9);
   key.position.set(-500, 400, -300);
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0x4d7bb8, 1.0);
+  const fill = new THREE.DirectionalLight(0x3d5f92, 0.55);
   fill.position.set(400, -250, 500);
   scene.add(fill);
   // Свет «со стороны зрителя»: без него корпуса на теневой стороне
@@ -73,6 +74,8 @@ export function createSpaceBattle(ctx, config) {
   // Планета под ногами — бой идёт на её орбите
   const planet = buildPlanet(config.biome || 'rock', 1150, config.planetSeed || 1);
   planet.position.set(340, -1560, -420);
+  // Направление на звезду: от него зависит терминатор и венец атмосферы
+  planet.userData.setSun(key.position.clone().normalize());
   scene.add(planet);
 
   viewport.setBloom({ strength: 0.72, radius: 0.55, threshold: 0.85, exposure: 0.92 });

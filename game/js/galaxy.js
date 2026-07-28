@@ -148,6 +148,8 @@ export function createGalaxy(ctx, camp) {
     const radius = 3.0 + def.slots * 0.45;
     const g = buildPlanet(def.biome, radius, 1);
     g.position.set(def.pos[0] * SCALE * 0.55, def.pos[1] * SCALE * 0.42, def.pos[2] * SCALE * 0.55);
+    // солнце считаем уже от итоговой позиции мира, иначе венец смотрит не туда
+    g.userData.setSun(star.position.clone().sub(g.position).normalize());
     scene.add(g);
 
     // кольцо принадлежности

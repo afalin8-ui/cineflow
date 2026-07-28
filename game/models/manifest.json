@@ -1,8 +1,8 @@
 {
   "_комментарий": "Положи .glb рядом и добавь строку. Разворот и масштаб подбираются в игре: главное меню → Ангар.",
   "models": {
-    "ship:troyden:capital": {
-      "file": "troyden_capital.glb",
+    "ship:troyden:cruiser": {
+      "file": "troyden_cruiser.glb",
       "rotate": [0, 90, 0]
     }
   }

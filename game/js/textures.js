@@ -102,9 +102,9 @@ export function planetTextures(biome, seed = 1) {
   if (cache.has(key)) return cache.get(key);
 
   const P = PALETTES[biome] || PALETTES.rock;
-  const W = IS_TOUCH ? 640 : 1024;
+  const W = IS_TOUCH ? 1024 : 2048;
   const H = W / 2;
-  const oct = IS_TOUCH ? 5 : 6;
+  const oct = IS_TOUCH ? 6 : 7;
 
   const land = new Noise(seed);
   const detail = new Noise(seed + 7717);
@@ -170,6 +170,30 @@ export function planetTextures(biome, seed = 1) {
   }
   sctx.putImageData(simg, 0, 0);
 
+  /* ── карта шероховатости.
+     Вода гладкая, суша матовая. Именно из-за этого на океане
+     появляется солнечный блик — то, без чего планета выглядит
+     нарисованной на бумаге. */
+  const rough = document.createElement('canvas');
+  rough.width = W; rough.height = H;
+  const rctx = rough.getContext('2d');
+  const rimg = rctx.createImageData(W, H);
+  const rd = rimg.data;
+  for (let i = 0; i < W * H; i++) {
+    const h = heights[i];
+    let v;
+    if (P.sea > 0 && h < P.sea) {
+      // вода: у берега чуть шероховатее, на глубине — зеркало
+      v = 0.10 + Math.max(0, (h - (P.sea - 0.12))) * 1.6;
+    } else {
+      v = 0.86 + (h - (P.sea > 0 ? P.sea : 0)) * 0.2;
+    }
+    const c = Math.max(0, Math.min(255, v * 255));
+    const o = i * 4;
+    rd[o] = rd[o + 1] = rd[o + 2] = c; rd[o + 3] = 255;
+  }
+  rctx.putImageData(rimg, 0, 0);
+
   // ── карта нормалей из поля высот
   const norm = document.createElement('canvas');
   norm.width = W; norm.height = H;
@@ -183,7 +207,9 @@ export function planetTextures(biome, seed = 1) {
       const im = (i - 1 + W) % W, ip = (i + 1) % W;
       const hl = heights[j * W + im], hr = heights[j * W + ip];
       const hu = heights[jm * W + i], hd = heights[jp * W + i];
-      let nx = (hl - hr) * strength, ny = (hu - hd) * strength, nz = 1;
+      const water = P.sea > 0 && heights[j * W + i] < P.sea;
+      const k = water ? 0.15 : 1;
+      let nx = (hl - hr) * strength * k, ny = (hu - hd) * strength * k, nz = 1;
       const len = Math.hypot(nx, ny, nz) || 1;
       const o = (j * W + i) * 4;
       ndata[o] = (nx / len * 0.5 + 0.5) * 255;
@@ -220,6 +246,7 @@ export function planetTextures(biome, seed = 1) {
 
   const out = {
     map: canvasTexture(surf),
+    roughnessMap: canvasTexture(rough, false),
     normalMap: canvasTexture(norm, false),
     cloudMap: canvasTexture(cl),
     emissiveMap: nightOn ? canvasTexture(nimg && (() => {

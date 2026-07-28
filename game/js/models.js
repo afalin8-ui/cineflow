@@ -730,77 +730,6 @@ export function buildSupplyField() {
 // (textures.js), считаются один раз на биом и кладутся в кэш.
 // ─────────────────────────────────────────────────────────────
 
-const ATMO_VERT = `
-varying vec3 vN; varying vec3 vP;
-void main() {
-  vN = normalize(normalMatrix * normal);
-  vP = (modelViewMatrix * vec4(position, 1.0)).xyz;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}`;
-
-const ATMO_FRAG = `
-uniform vec3 uColor; uniform float uPower;
-varying vec3 vN; varying vec3 vP;
-void main() {
-  // Чем острее угол взгляда к поверхности, тем ярче ободок —
-  // так атмосфера светится по краю диска, как на снимках.
-  float f = 1.0 - abs(dot(normalize(vN), normalize(-vP)));
-  f = pow(clamp(f, 0.0, 1.0), 3.2);
-  gl_FragColor = vec4(uColor, f * uPower);
-}`;
-
-function sphereGeo(segments) {
-  const g = new THREE.SphereGeometry(1, segments, Math.round(segments / 2));
-  g.userData.shared = true;
-  return g;
-}
-const GEO_HI = sphereGeo(64);
-const GEO_MID = sphereGeo(40);
-const GEO_LO = sphereGeo(24);
-
-export function buildPlanet(biome, radius, seed) {
-  const tex = planetTextures(biome, seed === undefined ? 1 : seed);
-  const g = new THREE.Group();
-  const geo = radius > 400 ? GEO_HI : radius > 40 ? GEO_MID : GEO_LO;
-
-  const surface = new THREE.MeshStandardMaterial({
-    map: tex.map,
-    normalMap: tex.normalMap,
-    normalScale: new THREE.Vector2(0.9, 0.9),
-    emissiveMap: tex.emissiveMap || null,
-    emissive: tex.emissiveMap ? 0xffffff : 0x000000,
-    emissiveIntensity: tex.emissiveMap ? 1.1 : 0,
-    roughness: 0.92, metalness: 0.02,
-  });
-  const sphere = new THREE.Mesh(geo, surface);
-  sphere.scale.setScalar(radius);
-  g.add(sphere);
-
-  // Облака отдельной оболочкой — они и вращаются отдельно
-  const clouds = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    map: tex.cloudMap, transparent: true, opacity: 0.85,
-    roughness: 1, metalness: 0, depthWrite: false,
-  }));
-  clouds.scale.setScalar(radius * 1.013);
-  g.add(clouds);
-
-  const atmo = new THREE.Mesh(geo, new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color(tex.atmo) },
-      uPower: { value: tex.atmoPower * 6.5 },
-    },
-    vertexShader: ATMO_VERT, fragmentShader: ATMO_FRAG,
-    side: THREE.BackSide, transparent: true, depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  }));
-  atmo.scale.setScalar(radius * 1.09);
-  g.add(atmo);
-
-  g.userData.sphere = sphere;
-  g.userData.clouds = clouds;
-  return g;
-}
-
 /* КУПОЛ РЭБ.
    Сфера помех: сетка меридианов, бегущая рябь и подсветка по краю.
    Режим глушения — цвет клана, защитный — холодный белый. */
@@ -985,6 +914,92 @@ export function buildHyperVortex(radius) {
     core.scale.setScalar(radius * (0.6 + open * 1.2));
     core.material.opacity = open;
   };
+  return g;
+}
+
+/* Атмосфера. Ободок по касательной, но яркость зависит от того,
+   с какой стороны звезда: на освещённом крае — плотный голубой венец,
+   на теневом — почти ничего. Это и даёт узнаваемый вид планеты
+   из космоса, а не «шарик с каёмкой». */
+
+const ATMO_VERT = `
+varying vec3 vN; varying vec3 vP; varying vec3 vWN;
+void main() {
+  vN = normalize(normalMatrix * normal);
+  vWN = normalize(mat3(modelMatrix) * normal);
+  vP = (modelViewMatrix * vec4(position, 1.0)).xyz;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const ATMO_FRAG = `
+uniform vec3 uColor; uniform float uPower; uniform vec3 uSun;
+varying vec3 vN; varying vec3 vP; varying vec3 vWN;
+void main() {
+  float rim = pow(1.0 - abs(dot(normalize(vN), normalize(-vP))), 3.0);
+  float sun = max(0.0, dot(normalize(vWN), normalize(uSun)));
+  // рассеяние вперёд: у терминатора венец горячее
+  float glow = rim * (0.12 + pow(sun, 0.7) * 1.9);
+  vec3 tint = mix(uColor * 0.7, uColor + vec3(0.25, 0.18, 0.10), pow(sun, 2.0));
+  gl_FragColor = vec4(tint, clamp(glow * uPower, 0.0, 1.0));
+}`;
+
+function sphereGeo(segments) {
+  const g = new THREE.SphereGeometry(1, segments, Math.round(segments / 2));
+  g.userData.shared = true;
+  return g;
+}
+const GEO_HI = sphereGeo(96);
+const GEO_MID = sphereGeo(48);
+const GEO_LO = sphereGeo(24);
+
+export function buildPlanet(biome, radius, seed) {
+  const tex = planetTextures(biome, seed === undefined ? 1 : seed);
+  const g = new THREE.Group();
+  const geo = radius > 400 ? GEO_HI : radius > 40 ? GEO_MID : GEO_LO;
+
+  const surface = new THREE.MeshStandardMaterial({
+    map: tex.map,
+    normalMap: tex.normalMap,
+    normalScale: new THREE.Vector2(1.1, 1.1),
+    roughnessMap: tex.roughnessMap,
+    roughness: 1, metalness: 0.05,
+    // Освещённая сторона иначе выбивается в белое: чуть притемняем
+    color: 0xc8c4bc,
+    emissiveMap: tex.emissiveMap || null,
+    emissive: tex.emissiveMap ? 0xffffff : 0x000000,
+    emissiveIntensity: tex.emissiveMap ? 1.4 : 0,
+    envMapIntensity: 0.35,
+  });
+  const sphere = new THREE.Mesh(geo, surface);
+  sphere.scale.setScalar(radius);
+  g.add(sphere);
+
+  // Облака отдельной оболочкой — вращаются сами и ловят свет у терминатора
+  const clouds = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: tex.cloudMap, transparent: true, opacity: 0.9,
+    roughness: 0.95, metalness: 0, depthWrite: false, envMapIntensity: 0.2,
+  }));
+  clouds.scale.setScalar(radius * 1.012);
+  g.add(clouds);
+
+  const atmoMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(tex.atmo) },
+      uPower: { value: tex.atmoPower * 7.5 },
+      uSun: { value: new THREE.Vector3(-1, 0.5, -0.4).normalize() },
+    },
+    vertexShader: ATMO_VERT, fragmentShader: ATMO_FRAG,
+    side: THREE.BackSide, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const atmo = new THREE.Mesh(geo, atmoMat);
+  atmo.scale.setScalar(radius * 1.055);
+  g.add(atmo);
+
+  g.userData.sphere = sphere;
+  g.userData.clouds = clouds;
+  // Сцена сообщает планете, где звезда — от этого зависит венец
+  g.userData.setSun = v => atmoMat.uniforms.uSun.value.copy(v).normalize();
   return g;
 }
 

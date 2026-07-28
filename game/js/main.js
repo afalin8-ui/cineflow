@@ -275,7 +275,7 @@ function showSkirmish() {
     setMode(() => createSpaceBattle(ctx, {
       attacker: { faction: mine, ships: scaleFor(mine, fleetOf(size)), reserve: scaleFor(mine, fleetOf('small')) },
       defender: { faction: foe, ships: scaleFor(foe, fleetOf(size)), station: size === 'big' },
-      playerSide: 'attacker', biome: 'rock', title: 'Быстрый бой · орбита',
+      playerSide: 'attacker', biome: 'klotho', title: 'Быстрый бой · орбита',
       onEnd: () => showMenu(),
     }));
   };
