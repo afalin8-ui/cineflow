@@ -4,6 +4,9 @@
     "ship:troyden:cruiser": {
       "file": "troyden_cruiser.glb",
       "rotate": [0, 90, 0]
+    },
+    "ship:troyden:corvette": {
+      "file": "troyden_corvette.glb"
     }
   }
 }
