@@ -288,6 +288,43 @@ export function nebulaTexture(seed = 11) {
   return t;
 }
 
+/* Мелкая деталь грунта. Тайлится по ландшафту с большим повтором:
+   даёт крупицы, трещины и пятна вблизи, не добавляя ни одного полигона. */
+export function groundTexture(biome, seed = 5) {
+  const key = 'ground|' + biome + '|' + seed;
+  if (cache.has(key)) return cache.get(key);
+  const S = IS_TOUCH ? 256 : 512;
+  const n = new Noise(seed);
+  const fine = new Noise(seed + 3);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const d = img.data;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      // бесшовно: щупаем шум на торе, поэтому края сходятся
+      const a = (x / S) * Math.PI * 2, b = (y / S) * Math.PI * 2;
+      const px = Math.cos(a) * 2, py = Math.sin(a) * 2;
+      const qy = Math.sin(b) * 2, qx = Math.cos(b) * 2;
+      const big = n.fbm3(px + qx * 0.3, py, qy, 4) * 0.5 + 0.5;
+      const gr = fine.fbm3(px * 6, py * 6, qy * 6, 3) * 0.5 + 0.5;
+      let v = 0.78 + big * 0.30 + (gr - 0.5) * 0.26;
+      if (gr > 0.78) v *= 0.72;      // крапины: камешки и трещины
+      const o = (y * S + x) * 4;
+      const c = Math.max(0, Math.min(255, v * 255));
+      d[o] = c; d[o + 1] = c; d[o + 2] = c; d[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  cache.set(key, t);
+  return t;
+}
+
 export function clearTextureCache() {
   for (const v of cache.values()) {
     if (v && v.dispose) v.dispose();

@@ -135,15 +135,20 @@ export function buildShip(def, faction) {
 
   const g = new THREE.Group();
   const style = faction.style;
-  const hullColor = style === 'heavy' ? 0x6b625a : style === 'scrap' ? 0x6a6358 : 0x8d94a0;
-  const darkColor = style === 'heavy' ? 0x3b342f : style === 'scrap' ? 0x39342d : 0x454b55;
-  const hull = mat(hullColor, { rough: 0.75, metal: 0.4 });
+  // Корпус светлее фона, клановая полоса светится — иначе после
+  // тональной компрессии корабли сливаются с космосом в тёмное пятно.
+  const hullColor = style === 'stealth' ? 0x6a6a80 : style === 'scrap' ? 0x8a8272 : 0xa8b2c0;
+  const darkColor = style === 'stealth' ? 0x24242f : style === 'scrap' ? 0x4a463c : 0x555c68;
+  const hull = mat(hullColor, { rough: 0.62, metal: 0.45 });
   const dark = mat(darkColor, { rough: 0.85, metal: 0.3 });
-  const trim = mat(faction.color, { rough: 0.5, metal: 0.5, emissive: faction.color, ei: 0.25 });
+  const trim = mat(faction.color, { rough: 0.35, metal: 0.4, emissive: faction.color, ei: 1.1 });
 
   const R = def.radius;
   const L = R * (def.cls === 'escort' ? 3.4 : def.cls === 'carrier' ? 3.0 : 3.6);
   const muzzles = [], pdPoints = [], engines = [];
+
+  // Общая клановая полоса вдоль борта: главный опознавательный признак
+  const stripe = (w, h, d, x, y, z) => g.add(box(w, h, d, trim, x, y, z));
 
   const addEngine = (x, y, z, size) => {
     const s = glowSprite(size, 0x7fd4ff);
@@ -193,6 +198,32 @@ export function buildShip(def, faction) {
       new THREE.Vector3(-W * 0.5, R * 0.4, L * 0.25), new THREE.Vector3(W * 0.5, R * 0.4, L * 0.25),
     );
     g.userData.bay = new THREE.Vector3(0, R * 0.1, -L * 0.55);
+  } else if (def.ecm) {
+    // Корабль РЭБ: две большие тарелки и решётчатая мачта
+    g.add(box(R * 0.8, R * 0.6, L * 0.8, hull));
+    g.add(cone(R * 0.42, R * 1.2, hull, 0, 0, -L * 0.4 - R * 0.4).rotateX(-Math.PI / 2));
+    for (const side of [-1, 1]) {
+      const dish = new THREE.Group();
+      const d1 = cyl(R * 0.95, R * 0.16, trim, 0, 0, 0);
+      d1.rotation.z = Math.PI / 2;
+      dish.add(d1);
+      dish.add(cyl(R * 0.12, R * 0.7, dark, 0, 0, 0).rotateZ(Math.PI / 2));
+      dish.add(sph(R * 0.18, trim, side * R * 0.4, 0, 0));
+      dish.position.set(side * R * 1.15, R * 0.15, -L * 0.05);
+      dish.rotation.y = side * 0.35;
+      g.add(dish);
+    }
+    // мачта с излучателями
+    g.add(cyl(R * 0.09, R * 2.2, dark, 0, R * 1.3, L * 0.1));
+    for (let i = 0; i < 3; i++) {
+      g.add(box(R * 0.5, R * 0.07, R * 0.07, trim, 0, R * (0.8 + i * 0.5), L * 0.1));
+    }
+    stripe(R * 0.86, R * 0.12, L * 0.7, 0, R * 0.28, 0);
+    addEngine(-R * 0.3, 0, L * 0.42, R * 1.0);
+    addEngine(R * 0.3, 0, L * 0.42, R * 1.0);
+    pdPoints.push(new THREE.Vector3(-R * 0.6, R * 0.2, L * 0.2),
+                  new THREE.Vector3(R * 0.6, R * 0.2, L * 0.2));
+    g.userData.dish = true;
   } else if (def.station) {
     // Орбитальная крепость: кольцо + ядро
     const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 1.2, R * 0.22, 8, 20), hull);
@@ -221,6 +252,15 @@ export function buildShip(def, faction) {
     } else if (style === 'sleek') {
       g.add(box(W * 1.7, R * 0.14, L * 0.42, hull, 0, 0, L * 0.08)); // крылья-радиаторы
       g.add(box(W * 1.75, R * 0.08, R * 0.3, trim, 0, R * 0.02, L * 0.08));
+    } else if (style === 'stealth') {
+      // Гранёные скосы, как у самолётов-невидимок: рассеивают луч
+      for (const side of [-1, 1]) {
+        const fin = box(W * 0.5, R * 0.12, L * 0.5, hull, side * W * 0.62, R * 0.1, L * 0.05);
+        fin.rotation.z = side * 0.5;
+        g.add(fin);
+      }
+      g.add(box(W * 0.5, R * 0.5, L * 0.3, dark, 0, R * 0.55, -L * 0.15));
+      g.add(box(W * 0.2, R * 0.1, L * 0.75, trim, 0, R * 0.42, 0));
     } else {
       g.add(cyl(R * 0.3, L * 0.7, dark, W * 0.6, R * 0.1, L * 0.05));
       g.add(box(W * 0.6, R * 0.5, R * 1.4, dark, -W * 0.55, R * 0.3, -L * 0.1));
@@ -258,6 +298,16 @@ export function buildShip(def, faction) {
   g.userData.pdPoints = pdPoints.length ? pdPoints : [new THREE.Vector3(0, 0, 0)];
   g.userData.engines = engines;
   if (!g.userData.bay) g.userData.bay = new THREE.Vector3(0, -R * 0.4, 0);
+
+  // Крупнее на четверть: с тактической камеры силуэт должен читаться,
+  // а не превращаться в точку. Точки оружия масштабируем следом,
+  // иначе выстрелы полетят мимо корпуса.
+  const K = 1.25;
+  g.scale.multiplyScalar(K);
+  for (const list of [g.userData.muzzles, g.userData.pdPoints]) {
+    for (const v of list) v.multiplyScalar(K);
+  }
+  g.userData.bay.multiplyScalar(K);
   return g;
 }
 
@@ -543,6 +593,76 @@ export function buildStructure(def, faction) {
   return g;
 }
 
+/* ДЕКОР ЛАНДШАФТА.
+   Немного растительности и обломков по биому: без них карта читается
+   как пустая заливка, сколько полигонов в ней ни держи. */
+
+const CONE_S = new THREE.ConeGeometry(1, 1, 7);
+const ICO = new THREE.IcosahedronGeometry(1, 0);
+const DODEC = new THREE.DodecahedronGeometry(1, 0);
+for (const g of [CONE_S, ICO, DODEC]) g.userData.shared = true;
+
+export function buildProp(biome, rng) {
+  const g = new THREE.Group();
+  const r = rng || Math.random;
+  if (biome === 'green') {
+    const trunk = mat(0x4a3a28, { rough: 1, metal: 0 });
+    const leaf = mat(r() < 0.5 ? 0x35592f : 0x2c4a2a, { rough: 1, metal: 0 });
+    const h = 3 + r() * 3;
+    g.add(cyl(0.35, h, trunk, 0, h / 2, 0));
+    for (let i = 0; i < 3; i++) {
+      const c = new THREE.Mesh(CONE_S, leaf);
+      const sz = 2.6 - i * 0.55;
+      c.scale.set(sz, sz * 1.5, sz);
+      c.position.y = h * 0.75 + i * 1.5;
+      c.rotation.y = r() * 3;
+      g.add(c);
+    }
+  } else if (biome === 'ice') {
+    const ice = mat(0xa8cade, { rough: 0.35, metal: 0.1 });
+    for (let i = 0; i < 3; i++) {
+      const c = new THREE.Mesh(CONE_S, ice);
+      const sz = 1 + r() * 2;
+      c.scale.set(sz * 0.6, sz * 3.2, sz * 0.6);
+      c.position.set(r() * 3 - 1.5, sz * 1.5, r() * 3 - 1.5);
+      c.rotation.z = (r() - 0.5) * 0.5;
+      g.add(c);
+    }
+  } else if (biome === 'desert') {
+    const dry = mat(0x8a6f45, { rough: 1, metal: 0 });
+    const n = 2 + (r() * 3 | 0);
+    for (let i = 0; i < n; i++) {
+      const b = new THREE.Mesh(DODEC, dry);
+      const sz = 0.8 + r() * 1.8;
+      b.scale.set(sz * 1.6, sz * 0.5, sz * 1.4);
+      b.position.set(r() * 6 - 3, sz * 0.25, r() * 6 - 3);
+      b.rotation.y = r() * 3;
+      g.add(b);
+    }
+  } else if (biome === 'city') {
+    const wall = mat(0x6a675f, { rough: 1, metal: 0.05 });
+    const n = 2 + (r() * 3 | 0);
+    for (let i = 0; i < n; i++) {
+      const h = 1.5 + r() * 5;
+      const b = box(1 + r() * 3, h, 0.8 + r() * 1.2, wall,
+                    r() * 8 - 4, h / 2, r() * 8 - 4);
+      b.rotation.y = r() * 3;
+      g.add(b);
+    }
+  } else {
+    const st = mat(0x7a6a58, { rough: 1, metal: 0 });
+    for (let i = 0; i < 3; i++) {
+      const b = new THREE.Mesh(ICO, st);
+      const sz = 1.2 + r() * 3;
+      b.scale.set(sz, sz * (0.6 + r() * 0.7), sz);
+      b.position.set(r() * 5 - 2.5, sz * 0.4, r() * 5 - 2.5);
+      b.rotation.set(r() * 3, r() * 3, r() * 3);
+      g.add(b);
+    }
+  }
+  return g;
+}
+
 // Поле снабжения на наземной карте
 export function buildSupplyField() {
   const g = new THREE.Group();
@@ -633,6 +753,137 @@ export function buildPlanet(biome, radius, seed) {
 
   g.userData.sphere = sphere;
   g.userData.clouds = clouds;
+  return g;
+}
+
+/* КУПОЛ РЭБ.
+   Сфера помех: сетка меридианов, бегущая рябь и подсветка по краю.
+   Режим глушения — цвет клана, защитный — холодный белый. */
+
+const DOME_VERT = `
+varying vec3 vN; varying vec3 vP; varying vec2 vUv;
+void main() {
+  vN = normalize(normalMatrix * normal);
+  vP = (modelViewMatrix * vec4(position, 1.0)).xyz;
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const DOME_FRAG = `
+uniform vec3 uColor; uniform float uTime; uniform float uPower;
+varying vec3 vN; varying vec3 vP; varying vec2 vUv;
+void main() {
+  // ободок по касательной — купол читается как оболочка, а не как шар
+  // Купол должен читаться как граница, а не как молочная стена:
+  // почти вся яркость уходит в тонкий ободок по касательной.
+  float rim = pow(1.0 - abs(dot(normalize(vN), normalize(-vP))), 4.0);
+  float grid = max(
+    smoothstep(0.985, 1.0, abs(sin(vUv.x * 62.831))),
+    smoothstep(0.990, 1.0, abs(sin(vUv.y * 37.699))));
+  float wave = smoothstep(0.14, 0.0, abs(fract(vUv.y * 2.0 - uTime * 0.35) - 0.5));
+  float a = (rim * 0.30 + grid * 0.10 + wave * 0.05) * uPower;
+  gl_FragColor = vec4(uColor * (0.8 + wave * 0.6), a);
+}`;
+
+export function buildEcmDome(radius, color) {
+  const geo = new THREE.SphereGeometry(1, 40, 26);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uTime: { value: 0 }, uPower: { value: 0 },
+    },
+    vertexShader: DOME_VERT, fragmentShader: DOME_FRAG,
+    // Только задняя грань: с двусторонней оболочкой аддитивное смешивание
+    // складывается само с собой и купол превращается в белый шар.
+    transparent: true, depthWrite: false, side: THREE.BackSide,
+    blending: THREE.AdditiveBlending, toneMapped: true,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.scale.setScalar(radius);
+  m.renderOrder = 3;
+  m.userData.set = (t, power, col) => {
+    mat.uniforms.uTime.value = t;
+    mat.uniforms.uPower.value = power;
+    if (col !== undefined) mat.uniforms.uColor.value.set(col);
+  };
+  return m;
+}
+
+/* ГИПЕРВОРОНКА.
+   Вращающийся раструб с бегущими внутрь кольцами и переливами от
+   синего к фиолетовому. Открывается перед кораблём, который уходит,
+   и перед тем, который выходит из гипера. */
+
+const VORTEX_VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const VORTEX_FRAG = `
+uniform float uTime;
+uniform float uOpen;
+varying vec2 vUv;
+
+void main() {
+  // Кольца бегут вглубь воронки
+  float rings = fract(vUv.y * 4.0 - uTime * 1.6);
+  float band = smoothstep(0.0, 0.35, rings) * smoothstep(1.0, 0.62, rings);
+
+  // Переливы: оттенок гуляет по окружности и во времени
+  float hue = vUv.x * 3.0 + uTime * 0.7 + vUv.y * 1.4;
+  vec3 cold = vec3(0.24, 0.55, 1.00);
+  vec3 warm = vec3(0.62, 0.42, 1.00);
+  vec3 tint = mix(cold, warm, 0.5 + 0.5 * sin(hue * 3.14159));
+  tint = mix(tint, vec3(0.80, 0.95, 1.0), pow(vUv.y, 3.0));
+
+  // Горловина ярче устья, края растворяются
+  float depth = pow(vUv.y, 1.6);
+  float a = (0.20 + band * 0.85) * depth * uOpen;
+  a *= smoothstep(0.0, 0.12, vUv.y);
+
+  gl_FragColor = vec4(tint * (1.2 + band * 1.6), a);
+}`;
+
+export function buildHyperVortex(radius) {
+  const g = new THREE.Group();
+  // раструб: широкое устье у корабля, узкая горловина вдали
+  const geo = new THREE.CylinderGeometry(radius * 0.18, radius, radius * 3.4, 40, 10, true);
+  geo.rotateX(-Math.PI / 2);       // ось вдоль −Z, горловина в −Z
+  geo.translate(0, 0, -radius * 1.7);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpen: { value: 0 } },
+    vertexShader: VORTEX_VERT, fragmentShader: VORTEX_FRAG,
+    transparent: true, depthWrite: false, side: THREE.BackSide,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const tube = new THREE.Mesh(geo, mat);
+  g.add(tube);
+
+  // светящееся ядро в горловине
+  const core = glowSprite(radius * 1.4, 0x9fd8ff);
+  core.position.z = -radius * 3.2;
+  g.add(core);
+
+  // кольцо на устье
+  const ringGeo = new THREE.RingGeometry(radius * 0.92, radius * 1.12, 48);
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+    color: 0xaee0ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+  }));
+  g.add(ring);
+
+  g.userData.update = (t, open) => {
+    mat.uniforms.uTime.value = t;
+    mat.uniforms.uOpen.value = open;
+    tube.rotation.z = t * 1.1;
+    ring.rotation.z = -t * 0.8;
+    ring.material.opacity = open * 0.9;
+    ring.scale.setScalar(0.6 + open * 0.4);
+    core.scale.setScalar(radius * (0.6 + open * 1.2));
+    core.material.opacity = open;
+  };
   return g;
 }
 

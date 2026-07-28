@@ -16,9 +16,11 @@ import {
   THREE, TacticalCamera, Controls, Fx, starfield, screenOf, ringMesh,
   clamp, lerp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
-import { buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula } from './models.js';
 import {
-  FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE, STATION, STEALTH, HYPER,
+  buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula, buildHyperVortex, buildEcmDome,
+} from './models.js';
+import {
+  FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE, STATION, STEALTH, HYPER, ECM,
   dmgMult, shipDef,
 } from './data.js';
 
@@ -50,12 +52,16 @@ export function createSpaceBattle(ctx, config) {
   });
 
   scene.add(new THREE.AmbientLight(0x5a6a86, 1.05));
-  const key = new THREE.DirectionalLight(0xffe8cf, 2.3);
+  const key = new THREE.DirectionalLight(0xffe8cf, 1.85);
   key.position.set(-500, 400, -300);
   scene.add(key);
   const fill = new THREE.DirectionalLight(0x4d7bb8, 1.0);
   fill.position.set(400, -250, 500);
   scene.add(fill);
+  // Свет «со стороны зрителя»: без него корпуса на теневой стороне
+  // превращаются в чёрные силуэты и корабль перестаёт читаться.
+  const headlight = new THREE.DirectionalLight(0xdfe8ff, 0.85);
+  scene.add(headlight);
 
   scene.add(buildNebula(5200, config.nebulaSeed || 11));
   scene.add(starfield(3200, 4600));
@@ -65,9 +71,41 @@ export function createSpaceBattle(ctx, config) {
   planet.position.set(340, -1560, -420);
   scene.add(planet);
 
-  viewport.setBloom({ strength: 0.7, radius: 0.55, threshold: 0.8, exposure: 1.0 });
+  viewport.setBloom({ strength: 0.72, radius: 0.55, threshold: 0.85, exposure: 0.92 });
   const fx = new Fx(scene);
   fx.setCamera(tcam.cam);
+
+  const vortexes = [];   // {obj, ship, mode, t, life, radius}
+
+  function openVortex(pos, dir, radius, mode) {
+    const obj = buildHyperVortex(radius);
+    obj.position.copy(pos);
+    obj.quaternion.copy(quatFromDir(dir));
+    scene.add(obj);
+    const v = { obj, mode, t: 0, life: mode === 'out' ? 2.6 : 3.2, radius };
+    vortexes.push(v);
+    return v;
+  }
+
+  function updateVortexes(dt, rawT) {
+    for (let i = vortexes.length - 1; i >= 0; i--) {
+      const v = vortexes[i];
+      v.t += dt;
+      const k = v.t / v.life;
+      // раскрылась — подержалась — схлопнулась
+      const open = k < 0.25 ? k / 0.25 : k > 0.75 ? Math.max(0, (1 - k) / 0.25) : 1;
+      v.obj.userData.update(rawT, open);
+      if (v.follow && !v.follow.dead) {
+        v.obj.position.copy(v.follow.pos).addScaledVector(v.follow.dir, v.radius * 1.6);
+        v.obj.quaternion.copy(v.follow.obj.quaternion);
+      }
+      if (k >= 1) {
+        scene.remove(v.obj);
+        v.obj.traverse(o => { if (o.material && o.material.dispose) o.material.dispose(); });
+        vortexes.splice(i, 1);
+      }
+    }
+  }
 
   const state = {
     ships: [], craft: [], proj: [], squads: [],
@@ -112,7 +150,14 @@ export function createSpaceBattle(ctx, config) {
       stealth: !!def.stealth, revealUntil: 0, exposed: false,
       hyper: null,          // {left, total} пока копится переход
       fled: false,
+      ecm: def.ecm ? { mode: 'jam', power: 0 } : null,
     };
+    if (e.ecm) {
+      const dome = buildEcmDome(ECM.radius, side.faction.color);
+      dome.visible = false;
+      scene.add(dome);
+      e.dome = dome;
+    }
     obj.userData.entity = e;
     obj.quaternion.copy(quatFromDir(dir));
     if (def.hangar) e.hangar = { bays: def.hangar, free: def.hangar, rebuild: [], launched: [] };
@@ -211,8 +256,46 @@ export function createSpaceBattle(ctx, config) {
     return p;
   }
 
+  // ── РАДИОЭЛЕКТРОННАЯ БОРЬБА ──────────────────────────────
+  // Купол глушения ломает противнику наведение внутри своего радиуса.
+  // Свой защитный купол это глушение отменяет — отсюда и дуэль РЭБ.
+
+  const _fields = [];
+  function updateEcm(dt) {
+    _fields.length = 0;
+    for (const e of state.ships) {
+      if (!e.ecm || e.dead) continue;
+      const want = (e.ecm.mode === 'off' || e.hyper) ? 0 : 1;
+      e.ecm.power += (want - e.ecm.power) * Math.min(1, dt / ECM.spinUp * 2.5);
+      if (e.ecm.power > 0.05) {
+        _fields.push({ pos: e.pos, side: e.side, mode: e.ecm.mode });
+      }
+      if (e.dome) {
+        e.dome.visible = e.ecm.power > 0.02;
+        e.dome.position.copy(e.pos);
+        e.dome.userData.set(state.time, e.ecm.power * 0.5,
+          e.ecm.mode === 'shield' ? 0xcfe8ff : e.faction.color);
+      }
+    }
+  }
+
+  const R2 = ECM.radius * ECM.radius;
+  function jammed(pos, side) {
+    let hit = false;
+    for (const f of _fields) {
+      if (f.mode !== 'jam' || f.side === side) continue;
+      if (f.pos.distanceToSquared(pos) < R2) { hit = true; break; }
+    }
+    if (!hit) return false;
+    for (const f of _fields) {
+      if (f.mode !== 'shield' || f.side !== side) continue;
+      if (f.pos.distanceToSquared(pos) < R2) return false;
+    }
+    return true;
+  }
+
   // ── СКРЫТНОСТЬ ───────────────────────────────────────────
-  // Юнит Девиана невидим, пока молчит. Выстрелил — виден пять секунд.
+  // Юнит Рииза невидим, пока молчит. Выстрелил — виден пять секунд.
   // Подошёл вплотную чужой корвет — виден, даже если молчит.
 
   function reveal(e) {
@@ -231,6 +314,7 @@ export function createSpaceBattle(ctx, config) {
       for (const s of state.ships) {
         if (s.dead || s.side !== foe) continue;
         // корвет — разведчик, видит скрытых почти вдвое дальше
+        if (jammed(s.pos, s.side)) continue;   // ослеплённый помехами не обнаружит
         const r = s.def.id === 'corvette' ? STEALTH.detectRange * 1.9 : STEALTH.detectRange;
         if (s.pos.distanceToSquared(e.pos) < r * r) { e.exposed = true; break; }
       }
@@ -256,7 +340,7 @@ export function createSpaceBattle(ctx, config) {
   function beginJump(e) {
     if (e.dead || e.hyper || e.station) return false;
     const total = (e.def.hyperCharge || 8) * HYPER.jumpCharge;
-    e.hyper = { left: total, total };
+    e.hyper = { left: total, total, vortex: null };
     e.moveTo = null;
     e.forced = null;
     return true;
@@ -265,6 +349,7 @@ export function createSpaceBattle(ctx, config) {
   function completeJump(e) {
     e.fled = true;
     e.dead = true;
+    if (e.hyper && e.hyper.vortex) e.hyper.vortex.follow = null;
     fx.ring(e.pos, e.radius * 2, e.radius * 22, 0x9fd0ff, 0.7);
     fx.flash(e.pos, e.radius * 4, 0xdfefff, 0.5);
     scene.remove(e.obj);
@@ -279,10 +364,27 @@ export function createSpaceBattle(ctx, config) {
   function updateHyper(e, dt) {
     e.hyper.left -= dt;
     const k = 1 - e.hyper.left / e.hyper.total;
-    // видимая накачка перехода: кольцо затягивается вокруг корпуса
-    if (!e.hyperFx || state.time - e.hyperFx > 0.22) {
+
+    // Накачка: кольца затягиваются к корпусу
+    if (!e.hyperFx || state.time - e.hyperFx > 0.3) {
       e.hyperFx = state.time;
       fx.ring(e.pos, e.radius * (4 - k * 2.6), e.radius * 1.6, 0x9fd0ff, 0.5);
+    }
+    // За пару секунд до перехода перед носом раскрывается воронка
+    if (!e.hyper.vortex && e.hyper.left < 2.4) {
+      const v = openVortex(
+        _v.copy(e.pos).addScaledVector(e.dir, e.radius * 1.6),
+        e.dir.clone(), e.radius * 2.2, 'out');
+      v.follow = e;
+      e.hyper.vortex = v;
+    }
+    // Корабль втягивается в воронку: разгон по курсу
+    if (e.hyper.left < 2.0) {
+      e.vel.addScaledVector(e.dir, e.def.thrust * 2.2 * dt);
+      e.pos.addScaledVector(e.vel, dt);
+      for (const en of e.obj.userData.engines || []) {
+        en.scale.setScalar(e.def.radius * (1.4 + (2.0 - e.hyper.left) * 0.9));
+      }
     }
     if (e.hyper.left <= 0) completeJump(e);
   }
@@ -308,8 +410,13 @@ export function createSpaceBattle(ctx, config) {
         const pos = new THREE.Vector3((i % 5 - 2) * 90 + rnd(-15, 15), rnd(-40, 40),
                                       baseZ + sign * Math.floor(i / 5) * 80);
         const sh = spawnShip(side, def, pos);
+        // Воронка раскрывается позади корабля — он из неё вылетает
+        const back = new THREE.Vector3(0, 0, sign > 0 ? 1 : -1);
+        openVortex(pos.clone().addScaledVector(back, def.radius * 2.2),
+                   back.clone().negate(), def.radius * 2.4, 'in');
+        // Выходит на большой скорости и гасит её маршевыми — видно по соплам
+        sh.vel.set(0, 0, -sign * def.maxSpeed * 2.6);
         sh.moveTo = new THREE.Vector3(pos.x * 0.4, 0, sign * 120);
-        fx.ring(pos, def.radius * 20, def.radius * 2, 0x9fd0ff, 0.8);
         fx.flash(pos, def.radius * 5, 0xdfefff, 0.6);
       }
     }
@@ -524,6 +631,8 @@ export function createSpaceBattle(ctx, config) {
       if (dmgMult(SPACE_DMG, g.def.type, t.cls) <= 0) continue;
       _v.subVectors(t.pos, e.pos).divideScalar(d || 1);
       if (e.dir.dot(_v) < (e.station ? -0.3 : 0.25)) continue;   // башня не довернулась
+      // Помехи: под чужим куполом наведение работает только вблизи
+      if (d > ECM.lockRange && jammed(e.pos, e.side)) continue;
 
       if (g.def.charge && g.cd <= g.def.charge && g.cd > 0) {
         if (state.time - g.chargeFx > 0.09) {
@@ -548,9 +657,10 @@ export function createSpaceBattle(ctx, config) {
                || nearest(e.pos, state.craft, pd.range, x => x.side === foe);
         if (!t) { e.pdCd[i] = 0.2; continue; }
         e.pdCd[i] = pd.cd * rnd(0.85, 1.2);
+        const pdMult = jammed(e.pos, e.side) ? ECM.pdPenalty : 1;
         reveal(e);
         fx.tracer(pdWorld(e, i), t.pos, e.side === state.playerSide ? 0x9fe8ff : 0xffc07a, 0.1, 0.24);
-        damage(t, pd.dmg, 'pd');
+        damage(t, pd.dmg * pdMult, 'pd');
       }
     }
   }
@@ -689,7 +799,9 @@ export function createSpaceBattle(ctx, config) {
     p.life -= dt;
     if (p.life <= 0) { destroy(p); return; }
     if (p.target && p.target.dead) p.target = null;
-    if (p.target) {
+    // Под куполом помех головка самонаведения слепнет — снаряд идёт прямо
+    if (p.target && ECM.missileBlind && jammed(p.pos, p.side)) p.blind = true;
+    if (p.target && !p.blind) {
       _v.subVectors(p.target.pos, p.pos).normalize();
       p.dir.lerp(_v, clamp((p.weapon === 'torp' ? 1.1 : 1.8) * dt, 0, 1)).normalize();
     }
@@ -715,6 +827,13 @@ export function createSpaceBattle(ctx, config) {
     const mine = state.ships.filter(s => !s.dead && s.side === ai.side);
     const foes = state.ships.filter(s => !s.dead && s.side !== ai.side);
     if (!foes.length || !mine.length) return;
+
+    // РЭБ: если нас глушат — переключаем свои корабли на прикрытие
+    const myEcm = mine.filter(s => s.ecm);
+    if (myEcm.length) {
+      const underJam = mine.some(s => jammed(s.pos, s.side));
+      for (const s of myEcm) s.ecm.mode = underJam ? 'shield' : 'jam';
+    }
 
     const enemyCraft = state.craft.filter(c => c.side !== ai.side).length;
     const myCraft = state.craft.filter(c => c.side === ai.side).length;
@@ -1104,6 +1223,25 @@ export function createSpaceBattle(ctx, config) {
     const squads = list.filter(e => e.kind === 'squad' && e.side === state.playerSide);
     if (squads.length) addBtn('На посадку', 'Вернуть звено, освободить ангар', () => { for (const s of squads) s.recall = true; });
 
+    const ecms = list.filter(e => e.ecm && e.side === state.playerSide);
+    if (ecms.length) {
+      const cur = ecms[0].ecm.mode;
+      addBtn((cur === 'jam' ? '⦿ ' : '') + 'Глушение',
+        'Ломает чужое наведение в куполе', () => {
+          for (const e of ecms) e.ecm.mode = 'jam';
+          toast('Купол помех развёрнут');
+          refreshSel();
+        });
+      addBtn((cur === 'shield' ? '⦿ ' : '') + 'Прикрытие',
+        'Снимает чужие помехи со своих', () => {
+          for (const e of ecms) e.ecm.mode = 'shield';
+          toast('Купол переключён на защиту');
+          refreshSel();
+        });
+      addBtn((cur === 'off' ? '⦿ ' : '') + 'Молчать',
+        'Выключить излучение', () => { for (const e of ecms) e.ecm.mode = 'off'; refreshSel(); });
+    }
+
     const ships = list.filter(e => e.kind === 'ship' && e.side === state.playerSide && !e.station);
     if (ships.length) {
       const jumping = ships.filter(s => s.hyper);
@@ -1188,6 +1326,7 @@ export function createSpaceBattle(ctx, config) {
     const dt = state.paused ? 0 : Math.min(rawDt, 0.05) * state.speed;
     if (dt > 0) {
       state.time += dt;
+      updateEcm(dt);
       updateExposure();
       for (const sd of ['attacker', 'defender']) {
         const at = state.reinforceAt[sd];
@@ -1237,6 +1376,8 @@ export function createSpaceBattle(ctx, config) {
       tcam.cam.position.y += rnd(-s, s);
     }
 
+    updateVortexes(dt || rawDt * 0.001, state.time);
+    headlight.position.copy(tcam.cam.position);
     updateMarkers();
     updateSelVisuals();
 
@@ -1261,6 +1402,8 @@ export function createSpaceBattle(ctx, config) {
   }
 
   function dispose() {
+    for (const e of state.ships) if (e.dome) scene.remove(e.dome);
+    for (const v of vortexes) scene.remove(v.obj);
     removeEventListener('keydown', onKey);
     tcam.dispose();
     controls.dispose();

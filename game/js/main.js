@@ -249,13 +249,13 @@ function showSkirmish() {
     </div>`;
   hudRoot.appendChild(el);
   const sel = k => el.querySelector(`[data-f="${k}"]`).value;
-  el.querySelector('[data-f="foe"]').value = 'devian';
+  el.querySelector('[data-f="foe"]').value = 'plektor';
   el.querySelector('[data-a="back"]').onclick = () => el.remove();
 
   const sizes = {
-    small: { corvette: 2, frigate: 2, destroyer: 1, cruiser: 1, carrier: 1, capital: 0, regiments: 2 },
-    mid:   { corvette: 3, frigate: 3, destroyer: 2, cruiser: 2, carrier: 1, capital: 1, regiments: 4 },
-    big:   { corvette: 4, frigate: 4, destroyer: 3, cruiser: 3, carrier: 2, capital: 2, regiments: 6 },
+    small: { corvette: 2, frigate: 2, ecm: 1, cruiser: 1, carrier: 1, capital: 0, regiments: 2 },
+    mid:   { corvette: 3, frigate: 3, ecm: 1, cruiser: 2, carrier: 1, capital: 1, regiments: 4 },
+    big:   { corvette: 4, frigate: 4, ecm: 2, cruiser: 3, carrier: 2, capital: 2, regiments: 6 },
   };
   const fleetOf = s => Object.entries(sizes[s])
     .filter(([k, v]) => k !== 'regiments' && v > 0)

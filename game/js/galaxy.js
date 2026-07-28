@@ -36,12 +36,12 @@ export function newCampaign(playerFaction) {
     st.regiments = 4;
     st.fleet = [
       { id: 'corvette', count: 2 }, { id: 'frigate', count: 2 },
-      { id: 'destroyer', count: 1 }, { id: 'cruiser', count: 1 }, { id: 'carrier', count: 1 },
+      { id: 'ecm', count: 1 }, { id: 'cruiser', count: 1 }, { id: 'carrier', count: 1 },
     ];
     if (s.station) st.buildings.push('station');
   }
-  // Клото — родина Тройден, но её держит Девиан: с неё и начинается война
-  systems.klotho.owner = 'devian';
+  // Клото — родина Тройден, но её держит Рииз: с неё и начинается война
+  systems.klotho.owner = 'reez';
   systems.klotho.buildings = ['garrison', 'mine'];
   systems.klotho.regiments = 5;
   systems.klotho.fleet = [

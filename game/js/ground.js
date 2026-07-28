@@ -13,7 +13,8 @@ import {
   THREE, TacticalCamera, Controls, Fx, screenOf, ringMesh,
   clamp, lerp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
-import { buildGroundUnit, buildStructure, buildSupplyField, mat } from './models.js';
+import { buildGroundUnit, buildStructure, buildSupplyField, buildProp, mat } from './models.js';
+import { groundTexture } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
@@ -130,16 +131,23 @@ export function createGroundBattle(ctx, config) {
   }
   tGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   tGeo.computeVertexNormals();
+  // Гладкое затенение плюс тайловая деталь: фасетки уходят, а вблизи
+  // видно крупицы и трещины — полигонов при этом не прибавилось.
+  const detail = groundTexture(config.biome || 'rock');
+  detail.repeat.set(48, 48);
   const terrain = new THREE.Mesh(tGeo, new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 1, metalness: 0, flatShading: true,
+    vertexColors: true, map: detail, roughness: 0.98, metalness: 0,
+    flatShading: false,
   }));
   scene.add(terrain);
   viewport.setBloom({ strength: 0.34, radius: 0.5, threshold: 0.84, exposure: 1.18 });
 
-  // камни для масштаба
-  const rockMat = mat(biome.accent, { rough: 1, metal: 0 });
+  // камни и растительность: масштаб и ощущение живой поверхности
+  const rockMat = mat(biome.rock || biome.accent, { rough: 1, metal: 0 });
   const rockGeo = new THREE.DodecahedronGeometry(1, 0);
   rockGeo.userData.shared = true;
+  const busy = [[-BX0, BX0, 90], [BX0, -BX0, 90]];   // рядом с базами не сорим
+  const freeSpot = (x, z) => !busy.some(([bx, bz, r]) => Math.hypot(x - bx, z - bz) < r);
   for (let i = 0; i < (IS_TOUCH ? 70 : 120); i++) {
     const near = i % 2 === 0;
     const lim = near ? MAP * 0.95 : TERRAIN * 0.8;
@@ -150,6 +158,16 @@ export function createGroundBattle(ctx, config) {
     r.position.set(x, terrainH(x, z) + s * 0.3, z);
     r.rotation.set(rnd(0, 3), rnd(0, 3), rnd(0, 3));
     scene.add(r);
+  }
+  for (let i = 0; i < (IS_TOUCH ? 40 : 75); i++) {
+    const x = rnd(-MAP * 0.98, MAP * 0.98), z = rnd(-MAP * 0.98, MAP * 0.98);
+    if (!freeSpot(x, z)) continue;
+    const p = buildProp(config.biome || 'rock');
+    p.position.set(x, terrainH(x, z), z);
+    p.rotation.y = rnd(0, 6.28);
+    const k = rnd(0.8, 1.5);
+    p.scale.setScalar(k);
+    scene.add(p);
   }
 
   const fx = new Fx(scene);
@@ -283,7 +301,7 @@ export function createGroundBattle(ctx, config) {
   }
 
   // ── СКРЫТНОСТЬ ───────────────────────────────────────────
-  // Техника Девиана не видна, пока не откроет огонь; вплотную её
+  // Техника Рииза не видна, пока не откроет огонь; вплотную её
   // вскрывают любые войска, а дальше всех видят ЗСУ и зенитки.
 
   function hiddenU(u) {
@@ -1124,7 +1142,7 @@ export function createGroundBattle(ctx, config) {
 
 // Быстрый расчёт наземного боя
 export function autoResolveGround(attacker, defender) {
-  const p = s => (s.regiments || 0) * (s.faction === 'devian' ? 1.15 : s.faction === 'troyden' ? 1.1 : 0.95)
+  const p = s => (s.regiments || 0) * (s.faction === 'reez' ? 1.15 : s.faction === 'troyden' ? 1.1 : 0.95)
     + (s.turrets ? 1.5 : 0);
   const a = p(attacker) * rnd(0.85, 1.2);
   const d = (p(defender) + 1) * rnd(0.85, 1.2);
