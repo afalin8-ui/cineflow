@@ -57,190 +57,189 @@ export function dmgMult(table, weapon, targetClass) {
 // ─────────────────────────────────────────────────────────────
 
 const TROYDEN = {
-  id: 'troyden',
-  name: 'Клан Тройден',
-  short: 'Тройден',
-  tag: 'ТРД',
-  color: 0x5ac8e0,
-  colorCss: '#5ac8e0',
-  style: 'sleek',
-  doctrine: 'tech',
+  id: 'troyden', name: 'Клан Тройден', short: 'Тройден', tag: 'ТРД',
+  color: 0x5ac8e0, colorCss: '#5ac8e0', style: 'sleek', doctrine: 'tech',
   motto: 'Нас мало. Значит, каждый должен стоить десятерых',
   desc: 'Самый малочисленный из двадцати семи кланов Капеллы и признанный ' +
         'лидер в высоких технологиях. Корабли строит подземный комплекс ' +
         'LT-Farm, основанный Лансом Тройденом. Техника дороже чужой вдвое ' +
-        'и стоит этих денег: броня, наведение, ПВО и авиакрылья лучшие ' +
-        'в системе. Но потери восполнять нечем.',
+        'и стоит этих денег: броня, наведение и ПВО лучшие в системе. ' +
+        'Но потери восполнять нечем.',
   perks: [
-    'Каждый юнит крепче и точнее чужого того же класса',
-    'ПВО и авиакрылья — лучшие в системе',
+    'Каждый корабль крепче и точнее чужого того же класса',
+    'Лучшее в системе ПВО',
     'Главный калибр стреляет чаще: лучше охлаждение',
   ],
-  weakness: 'Всё дороже на треть и строится дольше. Размен не в нашу пользу',
+  weakness: 'Всё дороже на треть и строится дольше',
 };
 
 const PLEKTOR = {
-  id: 'plektor',
-  name: 'Клан Плэктор',
-  short: 'Плэктор',
-  tag: 'ПЛК',
-  color: 0xe0b34e,
-  colorCss: '#e0b34e',
-  style: 'scrap',
-  doctrine: 'swarm',
+  id: 'plektor', name: 'Клан Плэктор', short: 'Плэктор', tag: 'ПЛК',
+  color: 0xe0b34e, colorCss: '#e0b34e', style: 'scrap', doctrine: 'swarm',
   motto: 'Числом, а не числами',
   desc: 'Тот самый клан, что сжёг LT-Farm и вместе с Риизом выдавил ' +
-        'Тройден с Клото. Корабли неказистые: истребитель «Бронко» ' +
-        'летает отвратительно, зато хорошо защищён, а бомбардировщики ' +
-        '«Шерман» возят мало бомб — поэтому летают звеньями вдвое ' +
-        'больше обычных. Плэктор воюет не качеством, а количеством.',
+        'Тройден с Клото. Истребитель «Бронко» летает отвратительно, ' +
+        'зато хорошо защищён, а бомбардировщики «Шерман» возят мало ' +
+        'ракет — поэтому летают звеньями вдвое больше обычных. ' +
+        'Плэктор воюет не качеством, а количеством.',
   perks: [
     'Всё вдвое дешевле и строится вдвое быстрее',
-    'Носители несут на два звена больше',
-    'Кораблей и полков за те же деньги выходит втрое больше',
+    'Кораблей за те же деньги выходит втрое больше',
+    'Звенья бомбардировщиков крупнее',
   ],
   weakness: 'Поодиночке беспомощны: тонкая броня, слабые орудия',
 };
 
 const REEZ = {
-  id: 'reez',
-  name: 'Клан Рииз',
-  short: 'Рииз',
-  tag: 'РИЗ',
-  color: 0xb07ae0,
-  colorCss: '#b07ae0',
-  style: 'stealth',
-  doctrine: 'stealth',
+  id: 'reez', name: 'Клан Рииз', short: 'Рииз', tag: 'РИЗ',
+  color: 0x6ee0b0, colorCss: '#6ee0b0', style: 'wedge', doctrine: 'carrier',
+  motto: 'Верфей нет — есть ангары',
+  desc: 'У клана нет производственных мощностей для больших кораблей: ' +
+        '«Касатка» построена на заказ и осталась единственным линейным ' +
+        'кораблём, причём она же служит носителем. Отсюда доктрина — ' +
+        'воевать авиацией. Ангары просторнее чужих, звенья крупнее и ' +
+        'живучее, а вот линия у Рииза слабая.',
+  perks: [
+    'Носители несут на два звена больше',
+    'Авиакрылья живучее и точнее на четверть',
+    'Звено — семь машин вместо пяти',
+  ],
+  weakness: 'Слабая линия: крейсеры и флагман хуже чужих',
+};
+
+const DEVIAN = {
+  id: 'devian', name: 'Клан Девиан', short: 'Девиан', tag: 'ДВН',
+  color: 0xb07ae0, colorCss: '#b07ae0', style: 'stealth', doctrine: 'stealth',
   motto: 'Тебя убьёт то, чего ты не видел',
-  desc: 'Клан без собственных верфей для больших кораблей: единственный ' +
-        'линейный корабль «Касатка» построен на заказ и несёт всю ударную ' +
-        'мощь клана. Отсюда доктрина — скрытность вместо брони. Вся ' +
-        'техника Рииза несёт маскировочное поле и не видна, пока не ' +
-        'откроет огонь; орудия при этом бьют больнее чужих.',
+  desc: 'Клан тайных операций. Вся техника Девиана несёт маскировочное ' +
+        'поле: корабли не видно, пока они не откроют огонь. Вся экономия ' +
+        'веса ушла из брони в орудия — бьют они больнее всех в системе, ' +
+        'но раскрытый девианец живёт недолго.',
   perks: [
     'Скрытность у всех юнитов: невидимы, пока не выстрелят',
     'Орудия бьют на четверть сильнее',
     'Раскрытые снова исчезают через несколько секунд',
   ],
-  weakness: 'Броня вдвое тоньше. Раскрытый риизец живёт недолго',
+  weakness: 'Броня вдвое тоньше. Под главным калибром рассыпаются',
 };
 
-export const FACTIONS = { troyden: TROYDEN, reez: REEZ, plektor: PLEKTOR };
-export const FACTION_IDS = ['troyden', 'reez', 'plektor'];
+export const FACTIONS = { troyden: TROYDEN, reez: REEZ, plektor: PLEKTOR, devian: DEVIAN };
+export const FACTION_IDS = ['troyden', 'reez', 'plektor', 'devian'];
 
-// Скрытность: сколько секунд юнит виден после выстрела и с какого
-// расстояния его вскрывает противник, даже пока он молчит.
 export const STEALTH = { revealFor: 5.0, detectRange: 130, groundDetect: 55 };
 
 // Радиоэлектронная борьба. «Сайленсер» — канонический корабль РЭБ
-// клана Тройден; здесь это отдельный класс у всех трёх кланов.
+// клана Тройден. Поле помех — плоский блин в плоскости боя,
+// а не шар: так видно, кто под ним, а кто уже вышел.
 export const ECM = {
-  radius: 380,          // радиус купола
-  lockRange: 170,       // ближе этого расстояния наведение всё же работает
-  missileBlind: true,   // ракеты и торпеды теряют наведение внутри купола
-  pdPenalty: 0.55,      // чужое ПВО внутри купола бьёт вполсилы
-  spinUp: 2.5,          // секунд на разворачивание купола
+  radius: 420,          // радиус блина
+  height: 90,           // его толщина по вертикали
+  lockRange: 170,       // ближе этого наведение всё же работает
+  missileBlind: true,
+  pdPenalty: 0.55,
+  spinUp: 2.5,
 };
 
 // ─────────────────────────────────────────────────────────────
 // КОСМИЧЕСКИЕ КОРАБЛИ
-//
-// Названия — из канона Homeplanet (elite-games.ru, раздел «Корабли»).
-// Что канон, а что достроено мной, помечено полем canon.
-//
-// Полёт ньютоновский: thrust даёт ускорение, а не скорость;
-// разворот корпуса от вектора не зависит.
-// Гипер: hyperCharge — секунды накачки перехода, всё это время
-// корабль беззащитен. flee — порог, ниже которого уходит сам.
+// Названия — из канона Homeplanet (elite-games.ru, раздел «Корабли»);
+// поле canon помечает, что из игры, а что достроено.
 // ─────────────────────────────────────────────────────────────
 
 const SQUAD_SIZE = 5;
 
 export const STRIKE_ROLES = {
-  interceptor: { label: 'Перехватчик', short: 'ПХВ', hint: 'Бьёт вражескую авиацию и сбивает торпеды' },
-  fighter:     { label: 'Истребитель', short: 'ИСТ', hint: 'Универсал: по всему средне' },
-  bomber:      { label: 'Бомбардировщик', short: 'БМБ', hint: 'Торпеды по крупным кораблям, в бою беспомощен' },
+  interceptor: { label: 'Перехватчик', short: 'ПХВ', hint: 'Пушки. Бьёт авиацию и сбивает ракеты' },
+  fighter:     { label: 'Истребитель', short: 'ИСТ', hint: '8 ракет, промах 25%. Универсал' },
+  bomber:      { label: 'Бомбардировщик', short: 'БМБ', hint: '6 тяжёлых ракет, промах 10%. По крупным целям' },
 };
 
-// canon: true — название и роль взяты из игры; false — достроено
 const STRIKE_NAMES = {
-  troyden: {
-    interceptor: { name: '«Зонг»', canon: true },
-    fighter:     { name: '«Рекс»', canon: true },
-    bomber:      { name: '«Паларм»', canon: true },
-  },
-  reez: {
-    interceptor: { name: '«Акула»', canon: true },
-    fighter:     { name: '«Пиранья»', canon: true },
-    bomber:      { name: '«Нарвал»', canon: false },
-  },
-  plektor: {
-    interceptor: { name: '«Драккар»', canon: true },
-    fighter:     { name: '«Бронко»', canon: true },
-    bomber:      { name: '«Шерман»', canon: true },
-  },
+  troyden: { interceptor: ['«Зонг»', true], fighter: ['«Рекс»', true], bomber: ['«Паларм»', true] },
+  reez:    { interceptor: ['«Акула»', true], fighter: ['«Пиранья»', true], bomber: ['«Нарвал»', false] },
+  plektor: { interceptor: ['«Драккар»', true], fighter: ['«Бронко»', true], bomber: ['«Шерман»', true] },
+  devian:  { interceptor: ['«Игла»', false], fighter: ['«Морок»', false], bomber: ['«Саван»', false] },
 };
 
+/* Вооружение авиации.
+   Перехватчик — пушки: по ракете не набьёшь скорострельности,
+   а его работа — рвать чужие звенья очередями.
+   Истребитель и бомбардировщик — ракеты с боезапасом: восемь и шесть.
+   Кончились — можно перезарядиться прямо в космосе, но ограниченное
+   число раз; дальше только на носитель. Ракеты промахиваются:
+   у истребителя каждая четвёртая, у бомбардировщика каждая десятая. */
 function strikeCraft(faction) {
-  const trd = faction === 'troyden', plk = faction === 'plektor', rez = faction === 'reez';
-  const tough = trd ? 1.3 : rez ? 0.75 : 0.95;   // «Бронко» неповоротлив, но живуч
-  const gun = trd ? 1.15 : rez ? 1.25 : 0.85;
+  const trd = faction === 'troyden', plk = faction === 'plektor';
+  const rez = faction === 'reez', dvn = faction === 'devian';
+  const tough = trd ? 1.3 : rez ? 1.25 : dvn ? 0.8 : 1.0;
+  const gun = trd ? 1.15 : rez ? 1.2 : dvn ? 1.25 : 0.85;
   const N = STRIKE_NAMES[faction];
-  const mk = (id, role, hp, speed, thrust, turn, weapon, dmg, cd, range, extra) => ({
-    id, role, name: N[role].name, canon: N[role].canon, cls: 'strike',
-    hp: Math.round(hp * tough), armor: role === 'bomber' ? 0.1 : role === 'fighter' ? 0.05 : 0,
-    maxSpeed: speed, thrust, turn,
-    weapon, dmg: dmg * gun, cd, range, stealth: rez, ...(extra || {}),
-  });
-  // Плэкторовский «Драккар»: огромная скорость, низкая манёвренность
-  const turnMod = plk ? 0.75 : 1;
+  const turnMod = plk ? 0.75 : 1;      // «Драккар» неповоротлив
+  const nm = k => ({ name: N[k][0], canon: N[k][1] });
+
   return {
-    interceptor: mk('interceptor', 'interceptor', 70, plk ? 175 : 155, 105, 2.7 * turnMod, 'gunInt', 14, 0.5, 60),
-    fighter:     mk('fighter', 'fighter', 95, 128, 82, 2.1 * turnMod, 'gunFig', 17, 0.62, 66),
-    bomber:      mk('bomber', 'bomber', 150, 84, 44, 1.15, 'torp', 140, 6.5, 95, { torpedo: true }),
+    interceptor: {
+      id: 'interceptor', role: 'interceptor', ...nm('interceptor'), cls: 'strike',
+      hp: Math.round(70 * tough), armor: 0,
+      maxSpeed: plk ? 175 : 155, thrust: 105, turn: 2.7 * turnMod,
+      weaponKind: 'gun', weapon: 'gunInt',
+      dmg: 14 * gun, cd: 0.5, range: 60, stealth: dvn,
+    },
+    fighter: {
+      id: 'fighter', role: 'fighter', ...nm('fighter'), cls: 'strike',
+      hp: Math.round(95 * tough), armor: 0.05,
+      maxSpeed: 128, thrust: 82, turn: 2.1 * turnMod,
+      weaponKind: 'missile', weapon: 'gunFig',
+      dmg: 95 * gun, cd: 1.7, range: 95, stealth: dvn,
+      ammo: 8, reloads: 4, reloadTime: 7, missChance: 0.25,
+      missileSpeed: 150, missileHp: 20,
+    },
+    bomber: {
+      id: 'bomber', role: 'bomber', ...nm('bomber'), cls: 'strike',
+      hp: Math.round(160 * tough), armor: 0.1,
+      maxSpeed: 72, thrust: 38, turn: 1.05,
+      weaponKind: 'missile', weapon: 'torp',
+      dmg: 260 * (dvn ? 1.25 : 1), cd: 3.4, range: 120, stealth: dvn,
+      ammo: 6, reloads: 2, reloadTime: 11, missChance: 0.10,
+      missileSpeed: 88, missileHp: 34, torpedo: true,
+    },
   };
 }
 
-/* Шесть классов на клан.
-   Тройден и Плэктор названы строго по канону; у Рииза канон даёт
-   только «Касатку», поэтому остальные достроены в его же манере —
-   морские хищники. */
 const SHIP_NAMES = {
   troyden: {
-    corvette: { name: 'Корвет «Гроссер»', canon: true },
-    frigate:  { name: 'Фрегат «Диксон»', canon: true },
-    ecm:      { name: 'Корабль РЭБ «Сайленсер»', canon: true },
-    cruiser:  { name: 'Линейный крейсер «Ховард»', canon: true },
-    carrier:  { name: 'Носитель «Хантер»', canon: true },
-    capital:  { name: 'Флагман «Ланселот»', canon: true },
+    corvette: ['Корвет «Гроссер»', true], frigate: ['Фрегат «Диксон»', true],
+    ecm: ['Корабль РЭБ «Сайленсер»', true], cruiser: ['Линейный крейсер «Ховард»', true],
+    carrier: ['Носитель «Хантер»', true], capital: ['Флагман «Ланселот»', true],
   },
   reez: {
-    corvette: { name: 'Корвет «Барракуда»', canon: false },
-    frigate:  { name: 'Фрегат «Мурена»', canon: false },
-    ecm:      { name: 'Корабль РЭБ «Скат»', canon: false },
-    cruiser:  { name: 'Крейсер «Марлин»', canon: false },
-    carrier:  { name: 'Носитель «Касатка»', canon: true },
-    capital:  { name: 'Линкор «Кашалот»', canon: false },
+    corvette: ['Корвет «Барракуда»', false], frigate: ['Фрегат «Мурена»', false],
+    ecm: ['Корабль РЭБ «Скат»', false], cruiser: ['Крейсер «Марлин»', false],
+    carrier: ['Носитель «Касатка»', true], capital: ['Линкор «Кашалот»', false],
   },
   plektor: {
-    corvette: { name: 'Корвет «Исса»', canon: true },
-    frigate:  { name: 'Фрегат «Севен Клоз»', canon: true },
-    ecm:      { name: 'Корабль РЭБ «Уайт Шарк»', canon: true },
-    cruiser:  { name: 'Крейсер «Рэш»', canon: true },
-    carrier:  { name: 'Носитель «Норман»', canon: true },
-    capital:  { name: 'Флагман «Орк»', canon: true },
+    sinho: ['Крейсер «Синхо»', true],
+    corvette: ['Корвет «Исса»', true], frigate: ['Фрегат «Севен Клоз»', true],
+    ecm: ['Корабль РЭБ «Уайт Шарк»', true], cruiser: ['Крейсер «Рэш»', true],
+    carrier: ['Носитель «Норман»', true], capital: ['Флагман «Орк»', true],
+  },
+  devian: {
+    corvette: ['Корвет «Тень»', false], frigate: ['Фрегат «Морок»', false],
+    ecm: ['Корабль РЭБ «Полог»', false], cruiser: ['Крейсер «Затмение»', false],
+    carrier: ['Носитель «Призрак»', false], capital: ['Линкор «Немезида»', false],
   },
 };
 
 function shipsFor(faction) {
-  const trd = faction === 'troyden', plk = faction === 'plektor', rez = faction === 'reez';
-  const hpMod    = trd ? 1.30 : plk ? 0.68 : 0.82;
-  const armorMod = trd ? 1.25 : plk ? 0.75 : 0.55;
-  const gunMod   = trd ? 1.10 : plk ? 0.78 : 1.25;
-  const costMod  = trd ? 1.35 : plk ? 0.50 : 0.95;
+  const trd = faction === 'troyden', plk = faction === 'plektor';
+  const rez = faction === 'reez', dvn = faction === 'devian';
+  const hpMod    = trd ? 1.30 : plk ? 0.68 : rez ? 0.95 : 0.82;
+  const armorMod = trd ? 1.25 : plk ? 0.75 : rez ? 0.95 : 0.55;
+  const gunMod   = trd ? 1.10 : plk ? 0.78 : rez ? 0.82 : 1.25;
+  const costMod  = trd ? 1.35 : plk ? 0.50 : rez ? 1.00 : 0.95;
   const buildMod = trd ? 1.30 : plk ? 0.50 : 1.0;
-  const pdRange  = trd ? 1.35 : rez ? 0.85 : 1.0;
-  const pdDmg    = trd ? 1.30 : rez ? 0.85 : 0.9;
+  const pdRange  = trd ? 1.35 : dvn ? 0.85 : 1.0;
+  const pdDmg    = trd ? 1.30 : dvn ? 0.85 : 0.9;
   const cdMod    = trd ? 0.9 : 1.0;
 
   const N = SHIP_NAMES[faction];
@@ -257,8 +256,7 @@ function shipsFor(faction) {
       guns: [{ type: 'light', dmg: 40, cd: 2.2, range: 220 }],
       pd: { count: 2, dmg: 15, cd: 0.26, range: 120 },
       desc: 'Самый дешёвый корабль и самый быстрый. Видит дальше всех — ' +
-            'именно корветы вскрывают маскировку Рииза. В линейном бою ' +
-            'живёт полминуты.',
+            'именно корветы вскрывают маскировку Девиана.',
     },
     {
       id: 'frigate', cls: 'escort', tier: 1, role: 'Фрегат · зонт ПВО',
@@ -266,20 +264,20 @@ function shipsFor(faction) {
       cost: 380, build: 1, hyperCharge: 6,
       guns: [{ type: 'light', dmg: 66, cd: 2.6, range: 270 }],
       pd: { count: 4, dmg: 17, cd: 0.26, range: 130 },
-      desc: 'Рабочая лошадь охранения. Главное — зенитки: без фрегатов ' +
-            'звено бомбардировщиков разберёт линкор на болты.',
+      desc: 'Рабочая лошадь охранения. Главное — зенитки: они сбивают ' +
+            'ракеты. Без фрегатов звено бомбардировщиков разберёт линкор.',
     },
     {
-      id: 'ecm', cls: 'escort', tier: 2, role: 'РЭБ · глушение',
+      id: 'ecm', cls: 'escort', tier: 2, role: 'РЭБ · поле помех',
       hp: 1400, armor: 0.20, maxSpeed: 30, thrust: 9, turn: 0.5, radius: 8,
       cost: 720, build: 2, hyperCharge: 8, ecm: true,
       guns: [],
       pd: { count: 2, dmg: 14, cd: 0.3, range: 120 },
-      desc: 'Разворачивает купол помех. Внутри купола чужой главный ' +
-            'калибр не может взять цель на дальней дистанции, ракеты ' +
-            'теряют наведение, ПВО бьёт вполсилы, а маскировку никто ' +
-            'не вскрывает. Можно переключить на защитный режим — тогда ' +
-            'купол наоборот прикрывает своих от чужих помех.',
+      desc: 'Разворачивает плоское поле помех вокруг себя. Внутри чужой ' +
+            'главный калибр не берёт цель на дальней дистанции, ракеты ' +
+            'теряют наведение, ПВО бьёт вполсилы, маскировку никто ' +
+            'не вскрывает. Переключается в защитный режим — тогда поле ' +
+            'наоборот снимает чужие помехи со своих.',
     },
     {
       id: 'cruiser', cls: 'capital', tier: 2, role: 'Крейсер · тяжёлый лазер',
@@ -298,9 +296,9 @@ function shipsFor(faction) {
       guns: [],
       pd: { count: 5, dmg: 15, cd: 0.3, range: 135 },
       hangar: 3,
-      desc: 'Своего оружия нет — только ПВО. Вся сила в ангаре. Уход ' +
-            'носителя в гипер означает, что бой проигран: без него ' +
-            'флот остаётся без авиации и без ремонта.',
+      desc: 'Своего оружия нет — только ПВО. Вся сила в ангаре, и он же ' +
+            'единственное место, где авиация пополняет ракеты. Уход ' +
+            'носителя в гипер означает, что бой проигран.',
     },
     {
       id: 'capital', cls: 'capital', tier: 3, role: 'Флагман · главный калибр',
@@ -317,25 +315,35 @@ function shipsFor(faction) {
     },
   ];
 
+  // «Синхо» — тот самый большой корабль противника со вступительного
+  // ролика. Класса в открытых источниках нет, поэтому пока это
+  // тяжёлый крейсер Плэктора: медленный, много брони, залповый огонь.
+  if (plk) base.push({
+    id: 'sinho', cls: 'capital', tier: 3, role: 'Тяжёлый крейсер · залп',
+    hp: 4200, armor: 0.34, maxSpeed: 14, thrust: 2.2, turn: 0.15, radius: 18,
+    cost: 1700, build: 3, hyperCharge: 13, flee: 0.15,
+    guns: [
+      { type: 'heavy', dmg: 560, cd: 11, range: 840, charge: 1.6 },
+      { type: 'missile', dmg: 210, cd: 5, range: 640, salvo: 3, spread: 0.06 },
+    ],
+    pd: { count: 5, dmg: 16, cd: 0.28, range: 130 },
+    desc: 'Тот самый корабль, что идёт первым во вступительном ролике. ' +
+          'Тяжёлый, медленный, с лазером и ракетными пакетами разом. ' +
+          'Класс в открытых источниках не описан — если помнишь точнее, ' +
+          'поправим.',
+  });
+
   return base.map(d => {
-    const bays = d.hangar ? d.hangar + (plk ? 2 : trd ? 0 : -1) : null;
+    const bays = d.hangar ? d.hangar + (plk ? 1 : rez ? 2 : trd ? 0 : -1) : null;
     return {
       ...d,
-      name: N[d.id].name,
-      canon: N[d.id].canon,
+      name: N[d.id][0], canon: N[d.id][1],
       role: d.hangar ? `Носитель · ${bays} звена` : d.role,
-      hp: H(d.hp),
-      armor: A(d.armor),
-      cost: C(d.cost),
+      hp: H(d.hp), armor: A(d.armor), cost: C(d.cost),
       build: Math.max(1, Math.round(d.build * buildMod)),
-      stealth: rez,
-      hangar: bays,
+      stealth: dvn, hangar: bays,
       guns: (d.guns || []).map(g => ({ ...g, dmg: G(g.dmg), cd: +(g.cd * cdMod).toFixed(2) })),
-      pd: d.pd ? {
-        ...d.pd,
-        dmg: +(d.pd.dmg * pdDmg).toFixed(1),
-        range: Math.round(d.pd.range * pdRange),
-      } : null,
+      pd: d.pd ? { ...d.pd, dmg: +(d.pd.dmg * pdDmg).toFixed(1), range: Math.round(d.pd.range * pdRange) } : null,
     };
   });
 }
@@ -346,6 +354,8 @@ for (const f of FACTION_IDS) {
   SHIPS[f] = shipsFor(f);
   STRIKE[f] = strikeCraft(f);
 }
+// Рииз держит в звене семь машин вместо пяти
+export const SQUAD_SIZE_OF = f => (f === 'reez' ? 7 : f === 'plektor' ? 6 : 5);
 export { SQUAD_SIZE };
 
 export function shipDef(faction, id) {
@@ -508,7 +518,7 @@ export function unitDef(faction, id) {
 export const GALAXY_MAP = {
   systems: [
     { id: 'prometheus', name: 'Прометей',     pos: [-4, 6, -70],  income: 240, slots: 5, biome: 'ice',    start: 'troyden', station: true },
-    { id: 'klotho',     name: 'Клото',        pos: [30, -4, -46], income: 280, slots: 5, biome: 'green',  homeOf: 'troyden' },
+    { id: 'klotho',     name: 'Клото',        pos: [30, -4, -46], income: 280, slots: 5, biome: 'klotho', homeOf: 'troyden' },
     { id: 'lachesis',   name: 'Лахесис',      pos: [-42, 10, -44],income: 180, slots: 4, biome: 'rock' },
     { id: 'atropos',    name: 'Атропос',      pos: [2, 14, -24],  income: 160, slots: 3, biome: 'ice' },
     { id: 'vespa',      name: 'Рудники Веспы',pos: [-58, -6, -6], income: 210, slots: 4, biome: 'rock' },
@@ -520,7 +530,7 @@ export const GALAXY_MAP = {
     { id: 'tartarus',   name: 'Тартар',       pos: [48, -10, 38], income: 290, slots: 5, biome: 'city',   start: 'reez' },
     { id: 'wolfdelta',  name: 'Дельта Волка', pos: [14, 16, 52],  income: 145, slots: 3, biome: 'rock' },
     { id: 'morbelt',    name: 'Пояс Мора',    pos: [-60, -14, 58],income: 250, slots: 4, biome: 'rock',   start: 'plektor' },
-    { id: 'ferrum',     name: 'Феррум',       pos: [-28, 12, 66], income: 190, slots: 3, biome: 'desert' },
+    { id: 'ferrum',     name: 'Феррум',       pos: [-28, 12, 66], income: 250, slots: 4, biome: 'desert', start: 'devian' },
   ],
   links: [
     ['prometheus', 'lachesis'], ['prometheus', 'klotho'], ['prometheus', 'atropos'],
@@ -549,6 +559,7 @@ export const PLANET_BUILDINGS = {
 export const REGIMENT_COST = 350;
 
 export const BIOME_COLORS = {
+  klotho: { ground: 0x8a7550, accent: 0xb09a6c, rock: 0x6a5a3e, sky: 0x2e2a1e },
   city:   { ground: 0x4a4640, accent: 0x746a5e, rock: 0x5a534b, sky: 0x2a2a33 },
   green:  { ground: 0x46603a, accent: 0x6d8450, rock: 0x6a5c48, sky: 0x2c3428 },
   rock:   { ground: 0x554a42, accent: 0x7a6a58, rock: 0x8a7a66, sky: 0x33291f },

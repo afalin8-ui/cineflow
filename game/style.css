@@ -454,3 +454,44 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 .marker.cloak .mk-bar { border-color: rgba(176,122,224,.7); opacity: .75; }
 .marker.jump .mk-bar { border-color: #9fd0ff; box-shadow: 0 0 8px rgba(159,208,255,.7); }
 .marker.jump .mk-name::after { content: ' ⇢ гипер'; color: #9fd0ff; }
+
+/* ─────────── ангар: просмотр моделей ─────────── */
+
+.hangar-left {
+  position: absolute; left: calc(12px + var(--safe-l)); top: calc(70px + var(--safe-t));
+  width: 300px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--panel); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 14px;
+}
+.hangar-right {
+  position: absolute; right: calc(12px + var(--safe-r)); top: calc(70px + var(--safe-t));
+  bottom: calc(40px + var(--safe-b)); width: 330px;
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--panel); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 14px;
+}
+.hangar-left, .hangar-right { pointer-events: auto; }
+.hangar-block h4 {
+  margin: 0 0 6px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--muted); font-weight: 600;
+}
+.hangar-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.hangar-btns button { flex: 1 1 auto; min-width: 68px; padding: 9px 8px; font-size: 13px; }
+.hangar-status { font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
+.hangar-status .ok { color: var(--good); }
+.hangar-status .warn { color: var(--accent); }
+.hangar-status code {
+  font-family: var(--mono); font-size: 11.5px; color: var(--accent-2);
+}
+.hangar-code {
+  font-family: var(--mono); font-size: 11.5px; color: var(--accent-2);
+  background: #0a1018; border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 10px; margin: 0 0 8px; white-space: pre-wrap; word-break: break-all;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .hangar-left { width: 220px; }
+  .hangar-right { width: 250px; }
+}

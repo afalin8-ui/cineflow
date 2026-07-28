@@ -10,6 +10,7 @@ import {
   clamp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
 import { buildPlanet, buildNebula } from './models.js';
+import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
@@ -131,6 +132,9 @@ export function createGalaxy(ctx, camp) {
   star.position.set(0, 40, -20);
   scene.add(star);
   scene.add(buildNebula(2600, 7));
+  // Отражения: металл должен что-то отражать, иначе он чёрный
+  scene.environment = viewport.environmentFrom(nebulaTexture(7));
+  scene.environmentIntensity = 0.7;
   scene.add(starfield(2600, 1500));
 
   viewport.setBloom({ strength: 0.7, radius: 0.6, threshold: 0.7, exposure: 1.0 });

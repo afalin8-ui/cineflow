@@ -9,6 +9,7 @@ import { createSpaceBattle, autoResolveSpace } from './space.js';
 import { createGroundBattle, autoResolveGround } from './ground.js';
 import { buildPlanet, buildNebula } from './models.js';
 import { loadModelLibrary, modelCount } from './assets.js';
+import { createHangar } from './hangar.js';
 import {
   FACTIONS, FACTION_IDS, NEURO_BRIEF, SHIPS, STRIKE, STRIKE_ROLES,
   GROUND_UNITS, GROUND_BUILDINGS, GALAXY_MAP,
@@ -159,6 +160,7 @@ function showMenu() {
           ${has ? '<button class="btn primary big" data-a="continue">Продолжить кампанию</button>' : ''}
           <button class="btn ${has ? '' : 'primary '}big" data-a="new">Новая кампания</button>
           <button class="btn big" data-a="skirmish">Быстрый бой</button>
+          <button class="btn big" data-a="hangar">Ангар · модели</button>
           <button class="btn ghost big" data-a="neuro">Нейроинтерфейс</button>
         </div>
         ${has ? `<div class="menu-note">Сохранение: ход ${has.turn}, клан
@@ -170,6 +172,7 @@ function showMenu() {
     el.querySelector('[data-a="new"]').onclick = () => showFactionPick();
     el.querySelector('[data-a="skirmish"]').onclick = () => showSkirmish();
     el.querySelector('[data-a="neuro"]').onclick = () => showNeuro();
+    el.querySelector('[data-a="hangar"]').onclick = () => setMode(() => createHangar(ctx));
     const cont = el.querySelector('[data-a="continue"]');
     if (cont) cont.onclick = () => { campaign = loadSave(); backToGalaxy(); };
 

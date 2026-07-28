@@ -19,8 +19,9 @@ import {
 import {
   buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula, buildHyperVortex, buildEcmDome,
 } from './models.js';
+import { nebulaTexture } from './textures.js';
 import {
-  FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE, STATION, STEALTH, HYPER, ECM,
+  FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE_OF, STATION, STEALTH, HYPER, ECM,
   dmgMult, shipDef,
 } from './data.js';
 
@@ -51,8 +52,8 @@ export function createSpaceBattle(ctx, config) {
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
   });
 
-  scene.add(new THREE.AmbientLight(0x5a6a86, 1.05));
-  const key = new THREE.DirectionalLight(0xffe8cf, 1.85);
+  scene.add(new THREE.AmbientLight(0x5a6a86, 0.75));
+  const key = new THREE.DirectionalLight(0xffe8cf, 2.9);
   key.position.set(-500, 400, -300);
   scene.add(key);
   const fill = new THREE.DirectionalLight(0x4d7bb8, 1.0);
@@ -64,6 +65,9 @@ export function createSpaceBattle(ctx, config) {
   scene.add(headlight);
 
   scene.add(buildNebula(5200, config.nebulaSeed || 11));
+  // Отражения: металл должен что-то отражать, иначе он чёрный
+  scene.environment = viewport.environmentFrom(nebulaTexture(config.nebulaSeed || 11));
+  scene.environmentIntensity = 1.6;
   scene.add(starfield(3200, 4600));
 
   // Планета под ногами — бой идёт на её орбите
@@ -153,7 +157,7 @@ export function createSpaceBattle(ctx, config) {
       ecm: def.ecm ? { mode: 'jam', power: 0 } : null,
     };
     if (e.ecm) {
-      const dome = buildEcmDome(ECM.radius, side.faction.color);
+      const dome = buildEcmDome(ECM.radius, side.faction.color, ECM.height);
       dome.visible = false;
       scene.add(dome);
       e.dome = dome;
@@ -209,7 +213,9 @@ export function createSpaceBattle(ctx, config) {
     };
     const bay = carrier.obj.userData.bay || ZERO;
     const origin = bay.clone().applyQuaternion(carrier.obj.quaternion).add(carrier.pos);
-    for (let i = 0; i < SQUAD_SIZE; i++) {
+    const size = SQUAD_SIZE_OF(carrier.faction.id);
+    squad.size = size;
+    for (let i = 0; i < size; i++) {
       const obj = buildStrike(role, carrier.faction);
       obj.position.copy(origin).add(new THREE.Vector3(rnd(-9, 9), rnd(-6, 6), rnd(-9, 9)));
       scene.add(obj);
@@ -220,6 +226,8 @@ export function createSpaceBattle(ctx, config) {
         hp: def.hp, maxHp: def.hp, armor: def.armor,
         dead: false, cd: rnd(0, def.cd), target: null, phase: 'out',
         breakUntil: 0, radius: 2.6, slot: i,
+        ammo: def.ammo || 0, reloads: def.reloads || 0, reloading: 0,
+        revealUntil: 0, exposed: false,
       };
       obj.userData.entity = c;
       obj.quaternion.copy(carrier.obj.quaternion);
@@ -238,6 +246,25 @@ export function createSpaceBattle(ctx, config) {
     const carrier = squad.home;
     if (carrier && !carrier.dead && carrier.hangar) carrier.hangar.rebuild.push(state.time + 26);
     state.selection = state.selection.filter(s => s !== squad);
+  }
+
+  /* Пуск ракеты авиацией. Ракета летит физически: её можно сбить
+     зенитками, а с заданной вероятностью она уходит мимо — тогда
+     наведение просто отключается и снаряд проходит стороной. */
+  function fireMissile(c, t) {
+    const def = c.def;
+    const miss = Math.random() < (def.missChance || 0);
+    const p = spawnProjectile(c, t, def.dmg, def.weapon,
+                              def.missileSpeed || 120, def.missileHp || 24);
+    if (miss) {
+      p.target = null;      // головка не захватила — уйдёт мимо
+      p.dir.add(_v.set(rnd(-1, 1), rnd(-0.5, 0.5), rnd(-1, 1)).multiplyScalar(0.28)).normalize();
+      p.life = 3.5;
+    }
+    fx.flash(_v.copy(c.pos).addScaledVector(c.dir, 3), 2.6, 0xffd0a0, 0.16);
+    c.ammo--;
+    c.revealUntil = state.time + STEALTH.revealFor;
+    return p;
   }
 
   function spawnProjectile(owner, target, dmg, weapon, speed, hp) {
@@ -268,28 +295,43 @@ export function createSpaceBattle(ctx, config) {
       const want = (e.ecm.mode === 'off' || e.hyper) ? 0 : 1;
       e.ecm.power += (want - e.ecm.power) * Math.min(1, dt / ECM.spinUp * 2.5);
       if (e.ecm.power > 0.05) {
-        _fields.push({ pos: e.pos, side: e.side, mode: e.ecm.mode });
+        const emit = e.obj.userData.emitter;
+        const ey = emit ? emit.y * 1.25 : -e.radius;
+        _fields.push({
+          pos: new THREE.Vector3(e.pos.x, e.pos.y + ey, e.pos.z),
+          side: e.side, mode: e.ecm.mode,
+        });
       }
       if (e.dome) {
         e.dome.visible = e.ecm.power > 0.02;
-        e.dome.position.copy(e.pos);
-        e.dome.userData.set(state.time, e.ecm.power * 0.5,
-          e.ecm.mode === 'shield' ? 0xcfe8ff : e.faction.color);
+        // Блин лежит в плоскости боя, а не крутится вместе с корпусом
+        const emit = e.obj.userData.emitter;
+        const ey = emit ? emit.y * 1.25 : -e.radius;
+        e.dome.position.set(e.pos.x, e.pos.y + ey, e.pos.z);
+        e.dome.userData.set(state.time, e.ecm.power * 0.55,
+          e.ecm.mode === 'shield' ? 0xcfe8ff : e.faction.color, -ey);
       }
     }
   }
 
   const R2 = ECM.radius * ECM.radius;
+  // Поле — блин: по горизонтали круг, по вертикали тонкий слой.
+  // Поднявшись над ним или нырнув под него, из помех можно выйти.
+  function inField(f, pos) {
+    if (Math.abs(pos.y - f.pos.y) > ECM.height * 1.6) return false;
+    const dx = pos.x - f.pos.x, dz = pos.z - f.pos.z;
+    return dx * dx + dz * dz < R2;
+  }
   function jammed(pos, side) {
     let hit = false;
     for (const f of _fields) {
       if (f.mode !== 'jam' || f.side === side) continue;
-      if (f.pos.distanceToSquared(pos) < R2) { hit = true; break; }
+      if (inField(f, pos)) { hit = true; break; }
     }
     if (!hit) return false;
     for (const f of _fields) {
       if (f.mode !== 'shield' || f.side !== side) continue;
-      if (f.pos.distanceToSquared(pos) < R2) return false;
+      if (inField(f, pos)) return false;
     }
     return true;
   }
@@ -710,6 +752,38 @@ export function createSpaceBattle(ctx, config) {
     const squad = c.squad;
     if (c.target && c.target.dead) c.target = null;
 
+    // ── боезапас: пусто → перезарядка прямо в космосе, пока есть запас
+    if (c.def.weaponKind === 'missile') {
+      if (c.reloading > 0) {
+        c.reloading -= dt;
+        if (c.reloading <= 0) {
+          c.ammo = c.def.ammo;
+          fx.flash(c.pos, 4, 0x9fe8ff, 0.3);
+        } else {
+          // на перезарядке машина выходит из боя и держится в стороне
+          const away = (squad && squad.home && !squad.home.dead) ? squad.home.pos : ZERO;
+          flyToward(c, away, dt, 0.8);
+          return;
+        }
+      } else if (c.ammo <= 0) {
+        if (c.reloads > 0) {
+          c.reloads--;
+          c.reloading = c.def.reloadTime;
+          if (c.slot === 0 && squad && squad.side === state.playerSide) {
+            toast(`${c.def.name}: перезарядка, осталось ${c.reloads} комплектов`);
+          }
+          return;
+        }
+        // запас кончился — только на носитель
+        if (squad && !squad.recall) {
+          squad.recall = true;
+          if (squad.side === state.playerSide) {
+            toast(`${c.def.name}: ракеты кончились, звено уходит на носитель`);
+          }
+        }
+      }
+    }
+
     if (squad && squad.recall) {
       const home = squad.home;
       if (home && !home.dead) {
@@ -720,6 +794,7 @@ export function createSpaceBattle(ctx, config) {
           if (!squad.craft.length) {
             home.hangar.free = Math.min(home.hangar.bays, home.hangar.free + 1);
             killSquad(squad);
+            if (squad.side === state.playerSide) toast('Звено село, ангар свободен');
           }
           return;
         }
@@ -757,12 +832,11 @@ export function createSpaceBattle(ctx, config) {
       }
       flyToward(c, t.pos, dt, 1);
       c.cd -= dt;
-      if (d < wr && c.cd <= 0) {
+      if (d < wr && c.cd <= 0 && c.ammo > 0) {
         c.cd = c.def.cd;
-        spawnProjectile(c, t, c.def.dmg, 'torp', 78, 34);
-        fx.flash(c.pos, 3, 0xffd0a0, 0.18);
+        fireMissile(c, t);
         c.phase = 'break';
-        c.breakUntil = state.time + rnd(3.4, 4.6);
+        c.breakUntil = state.time + rnd(3.0, 4.2);
       }
       if (d < (t.radius || 10) + 30) { c.phase = 'break'; c.breakUntil = state.time + 3; }
       return;
@@ -786,11 +860,16 @@ export function createSpaceBattle(ctx, config) {
       _v2.subVectors(t.pos, c.pos).divideScalar(d || 1);
       if (c.dir.dot(_v2) > 0.7) {
         c.cd = c.def.cd;
-        c.revealUntil = state.time + STEALTH.revealFor;
-        fx.tracer(_v.copy(c.pos).addScaledVector(c.dir, 4), t.pos,
-          c.side === state.playerSide ? 0x9fe0ff : 0xffb070, 0.09, 0.2);
-        damage(t, c.def.dmg, c.def.weapon);
-        if (t.dead) fx.explosion(t.pos, t.kind === 'craft' ? 4 : 6, 0xffc070);
+        if (c.def.weaponKind === 'missile') {
+          if (c.ammo > 0) fireMissile(c, t);
+        } else {
+          // перехватчик — пушки: очередями, без боезапаса
+          c.revealUntil = state.time + STEALTH.revealFor;
+          fx.tracer(_v.copy(c.pos).addScaledVector(c.dir, 4), t.pos,
+            c.side === state.playerSide ? 0x9fe0ff : 0xffb070, 0.09, 0.2);
+          damage(t, c.def.dmg, c.def.weapon);
+          if (t.dead) fx.explosion(t.pos, t.kind === 'craft' ? 4 : 6, 0xffc070);
+        }
       }
     }
   }
@@ -1173,8 +1252,13 @@ export function createSpaceBattle(ctx, config) {
       const e = list[0];
       if (e.kind === 'squad') {
         const role = STRIKE_ROLES[e.role];
+        const size = e.size || e.craft.length;
+        const ammo = e.craft.reduce((a, c) => a + (c.ammo || 0), 0);
+        const rl = e.craft.reduce((a, c) => a + (c.reloads || 0), 0);
+        const ammoTxt = e.def.weaponKind === 'missile'
+          ? ` · ракет ${ammo} · запасных комплектов ${rl}` : ' · пушки';
         sel.innerHTML = `<div class="sel-title">${e.def.name}</div>
-          <div class="sel-sub">${role.label} · ${e.craft.length}/${SQUAD_SIZE} машин</div>
+          <div class="sel-sub">${role.label} · ${e.craft.length}/${size} машин${ammoTxt}</div>
           <div class="sel-desc">${role.hint}</div>`;
       } else {
         const spd = Math.round(e.vel.length());
@@ -1418,6 +1502,7 @@ export function createSpaceBattle(ctx, config) {
   tcam.focus(new THREE.Vector3(0, 0, state.playerSide === 'attacker' ? 110 : -110), 980);
   tcam.apply(1, true);
 
+  if (typeof window !== 'undefined') window.__sp = state;   // ВРЕМЕННО: отладка
   return { scene, camera: tcam.cam, update, dispose, state };
 }
 

@@ -94,6 +94,17 @@ export class Viewport {
     cam.updateProjectionMatrix();
   }
 
+  /* Карта окружения. Без неё физически корректные материалы
+     (а именно такие приезжают из Prism, Meshy и Blender) выглядят
+     почти чёрными: металлу нечего отражать. Собираем её один раз
+     из той же туманности, что служит фоном. */
+  environmentFrom(equirect) {
+    if (!this._pmrem) this._pmrem = new THREE.PMREMGenerator(this.renderer);
+    if (this._env) this._env.dispose();
+    this._env = this._pmrem.fromEquirectangular(equirect).texture;
+    return this._env;
+  }
+
   render(scene, camera) {
     if (this.camera !== camera) this.syncCamera(camera);
     const r = this.canvas.getBoundingClientRect();
