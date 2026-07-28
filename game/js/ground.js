@@ -1,0 +1,1042 @@
+/* НАЗЕМНЫЙ БОЙ — классическая RTS в духе Command & Conquer: Generals.
+
+   База, снабжение, три ветки производства и связка «пехота — техника —
+   артиллерия — авиация». Ключевые правила:
+     · сборщики возят снабжение с полей на штаб, без них кончаются деньги;
+     · пехота косит пехоту, ракетчики вскрывают технику и достают авиацию;
+     · артиллерия бьёт дальше всех, но слепая и беззащитна вблизи;
+     · штурмовик отрабатывает по цели и обязан вернуться на аэродром
+       за боезапасом — пока летит домой, он мишень;
+     · ЗСУ и зенитные башни — единственная защита от авиации. */
+
+import {
+  THREE, TacticalCamera, Controls, Fx, screenOf, ringMesh,
+  clamp, lerp, rnd, disposeScene, IS_TOUCH,
+} from './engine.js';
+import { buildGroundUnit, buildStructure, buildSupplyField, mat } from './models.js';
+import {
+  FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, dmgMult, unitDef,
+} from './data.js';
+
+const MAP = 270;              // половина стороны карты (игровая зона)
+const TERRAIN = MAP * 2.4;    // сам ландшафт шире, чтобы не было видно края
+const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const UPV = new THREE.Vector3(0, 1, 0);
+
+export function terrainH(x, z) {
+  return Math.sin(x * 0.021) * Math.cos(z * 0.019) * 9
+       + Math.sin((x + z) * 0.013) * 6
+       + Math.cos(x * 0.043) * Math.sin(z * 0.037) * 3
+       + Math.sin(x * 0.008) * Math.sin(z * 0.009) * 5;
+}
+
+export function createGroundBattle(ctx, config) {
+  const { viewport, hudRoot } = ctx;
+  const biome = BIOME_COLORS[config.biome] || BIOME_COLORS.rock;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(biome.sky);
+  scene.fog = new THREE.Fog(biome.sky, 420, 900);
+
+  const tcam = new TacticalCamera({
+    dist: 150, minDist: 40, maxDist: 380, pitch: 0.8, yaw: 0.4,
+    bounds: { x: MAP - 20, z: MAP - 20 }, far: 2600,
+  });
+
+  scene.add(new THREE.AmbientLight(0x8a94a8, 0.95));
+  const sun = new THREE.DirectionalLight(0xfff0d8, 3.1);
+  sun.position.set(180, 210, 120);
+  scene.add(sun);
+  const bounce = new THREE.DirectionalLight(0x6a7a90, 0.6);
+  bounce.position.set(-160, 80, -140);
+  scene.add(bounce);
+
+  // ── ЛАНДШАФТ ─────────────────────────────────────────────
+  const segs = IS_TOUCH ? 64 : 96;
+  const tGeo = new THREE.PlaneGeometry(TERRAIN * 2, TERRAIN * 2, segs, segs);
+  tGeo.rotateX(-Math.PI / 2);
+  const posAttr = tGeo.attributes.position;
+  const colors = new Float32Array(posAttr.count * 3);
+  const cA = new THREE.Color(biome.ground), cB = new THREE.Color(biome.accent);
+  const tmpC = new THREE.Color();
+  for (let i = 0; i < posAttr.count; i++) {
+    const x = posAttr.getX(i), z = posAttr.getZ(i);
+    const h = terrainH(x, z);
+    posAttr.setY(i, h);
+    tmpC.copy(cA).lerp(cB, clamp((h + 14) / 28, 0, 1) * 0.85 + Math.random() * 0.15);
+    colors[i * 3] = tmpC.r; colors[i * 3 + 1] = tmpC.g; colors[i * 3 + 2] = tmpC.b;
+  }
+  tGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  tGeo.computeVertexNormals();
+  const terrain = new THREE.Mesh(tGeo, new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 1, metalness: 0, flatShading: true,
+  }));
+  scene.add(terrain);
+
+  // камни для масштаба
+  const rockMat = mat(biome.accent, { rough: 1, metal: 0 });
+  const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+  rockGeo.userData.shared = true;
+  for (let i = 0; i < (IS_TOUCH ? 70 : 120); i++) {
+    const near = i % 2 === 0;
+    const lim = near ? MAP * 0.95 : TERRAIN * 0.8;
+    const x = rnd(-lim, lim), z = rnd(-lim, lim);
+    const r = new THREE.Mesh(rockGeo, rockMat);
+    const s = near ? rnd(2, 6) : rnd(4, 12);
+    r.scale.set(s, s * rnd(0.5, 1), s);
+    r.position.set(x, terrainH(x, z) + s * 0.3, z);
+    r.rotation.set(rnd(0, 3), rnd(0, 3), rnd(0, 3));
+    scene.add(r);
+  }
+
+  const fx = new Fx(scene);
+
+  // ── СОСТОЯНИЕ ────────────────────────────────────────────
+  const state = {
+    units: [], buildings: [], proj: [], fields: [],
+    time: 0, speed: 1, paused: false,
+    selection: [], placing: null, rallyMode: false,
+    playerSide: 'me',
+  };
+  const sides = {
+    me: { faction: FACTIONS[config.player.faction], credits: config.player.credits ?? 3000, id: 'me' },
+    foe: { faction: FACTIONS[config.enemy.faction], credits: config.enemy.credits ?? 3000, id: 'foe' },
+  };
+  const other = s => (s === 'me' ? 'foe' : 'me');
+  let uid = 1;
+
+  // ── ПОЛЯ СНАБЖЕНИЯ ───────────────────────────────────────
+  const fieldSpots = [
+    [-0.66, 0.48], [-0.40, 0.79], [0.66, -0.48], [0.40, -0.79],
+    [-0.17, -0.25], [0.17, 0.25], [-0.79, -0.32], [0.79, 0.32],
+  ].map(([fx, fz]) => [fx * MAP, fz * MAP]);
+  for (const [x, z] of fieldSpots) {
+    const obj = buildSupplyField();
+    obj.position.set(x, terrainH(x, z), z);
+    scene.add(obj);
+    state.fields.push({ kind: 'field', pos: obj.position, obj, left: 5000, uid: uid++ });
+  }
+
+  // ── СОЗДАНИЕ ─────────────────────────────────────────────
+  function makeBuilding(sideId, defId, x, z, instant) {
+    const def = GROUND_BUILDINGS[defId];
+    const side = sides[sideId];
+    const obj = buildStructure(def, side.faction);
+    const y = terrainH(x, z);
+    obj.position.set(x, y, z);
+    scene.add(obj);
+    const b = {
+      uid: uid++, kind: 'building', side: sideId, faction: side.faction, def,
+      obj, pos: obj.position, cls: 'structure',
+      hp: instant ? def.hp : def.hp * 0.15, maxHp: def.hp, armor: def.armor,
+      dead: false, radius: def.size * 0.75,
+      building: !instant, buildLeft: instant ? 0 : def.build,
+      queue: [], produceLeft: 0,
+      rally: new THREE.Vector3(x + rnd(-1, 1) * 18, y, z + 26),
+      cd: 0, target: null,
+    };
+    obj.userData.entity = b;
+    if (!instant) obj.scale.y = 0.25;
+    state.buildings.push(b);
+    return b;
+  }
+
+  function makeUnit(sideId, defId, x, z) {
+    const side = sides[sideId];
+    const def = unitDef(side.faction.id, defId);
+    const obj = buildGroundUnit(def, side.faction);
+    const y = def.air ? 45 : terrainH(x, z);
+    obj.position.set(x, y, z);
+    scene.add(obj);
+    const u = {
+      uid: uid++, kind: 'unit', side: sideId, faction: side.faction, def,
+      obj, pos: obj.position, cls: def.cls, air: !!def.air,
+      hp: def.hp, maxHp: def.hp, armor: def.armor, dead: false,
+      radius: def.cls === 'infantry' ? 3.2 : 5,
+      moveTo: null, target: null, forced: null, cd: rnd(0, 1), retarget: rnd(0, 1),
+      heading: rnd(0, 6.28), turretAngle: 0,
+      ammo: def.ammo || 0, rearm: 0, phase: 'idle',
+      carry: 0, field: null, homeBase: null,
+    };
+    obj.userData.entity = u;
+    obj.rotation.y = u.heading;
+    state.units.push(u);
+    return u;
+  }
+
+  // ── БАЗЫ ─────────────────────────────────────────────────
+  function setupBase(sideId, bx, bz, garrison) {
+    const hq = makeBuilding(sideId, 'hq', bx, bz, true);
+    const away = bx > 0 ? -1 : 1;      // достройки — в сторону противника
+    makeBuilding(sideId, 'barracks', bx + away * 40, bz + 8, true);
+    makeBuilding(sideId, 'factory', bx - 8, bz - away * 42, true);
+    for (let i = 0; i < 3; i++) {
+      const u = makeUnit(sideId, 'worker', bx + rnd(-28, 28), bz + rnd(-28, 28));
+      u.homeBase = hq;
+    }
+    // полки, привезённые с орбиты
+    const roster = ['rifle', 'rifle', 'rocket', 'tank'];
+    for (let i = 0; i < garrison; i++) {
+      const id = roster[i % roster.length];
+      const a = (i / Math.max(1, garrison)) * Math.PI * 2;
+      makeUnit(sideId, id, bx + Math.cos(a) * rnd(40, 60), bz + Math.sin(a) * rnd(40, 60));
+    }
+    return hq;
+  }
+  const BX = MAP * 0.62;
+  const myHQ = setupBase('me', -BX, BX, config.player.regiments ?? 3);
+  const foeHQ = setupBase('foe', BX, -BX, config.enemy.regiments ?? 3);
+  if (config.enemy.turrets) {
+    makeBuilding('foe', 'turret', BX - 52, -BX + 24, true);
+    makeBuilding('foe', 'sam', BX + 24, -BX - 46, true);
+  }
+
+  // ── УРОН ─────────────────────────────────────────────────
+  function damage(target, amount, weapon) {
+    if (!target || target.dead) return;
+    const mult = dmgMult(GROUND_DMG, weapon, target.cls);
+    if (mult <= 0) return;
+    target.hp -= amount * mult * (1 - (target.armor || 0));
+    if (target.hp <= 0) destroy(target);
+  }
+
+  function splash(pos, radius, amount, weapon, side) {
+    for (const list of [state.units, state.buildings]) {
+      for (const e of list) {
+        if (e.dead || e.side === side || e.air) continue;
+        const d = e.pos.distanceTo(pos);
+        if (d > radius) continue;
+        damage(e, amount * (1 - d / radius * 0.6), weapon);
+      }
+    }
+  }
+
+  function destroy(e) {
+    if (e.dead) return;
+    e.dead = true;
+    const size = e.kind === 'building' ? e.def.size * 1.5 : e.cls === 'infantry' ? 3 : 6;
+    fx.explosion(e.pos, size, 0xffa050);
+    if (e.kind === 'building') fx.shake = Math.min(1, fx.shake + 0.4);
+    scene.remove(e.obj);
+    state.selection = state.selection.filter(s => s !== e);
+  }
+
+  // ── ПОИСК ────────────────────────────────────────────────
+  function nearestEnemy(e, range, needAir) {
+    const foe = other(e.side);
+    let best = null, bd = range * range;
+    for (const list of [state.units, state.buildings]) {
+      for (const t of list) {
+        if (t.dead || t.side !== foe) continue;
+        if (t.air && !needAir) continue;
+        if (dmgMult(GROUND_DMG, e.def.weapon.type, t.cls) <= 0) continue;
+        const d = t.pos.distanceToSquared(e.pos);
+        if (d < bd) { bd = d; best = t; }
+      }
+    }
+    return best;
+  }
+
+  // ── ДВИЖЕНИЕ ─────────────────────────────────────────────
+  function moveGround(u, dest, dt, speedMul = 1) {
+    _v.subVectors(dest, u.pos);
+    _v.y = 0;
+    const d = _v.length();
+    if (d < 2.5) return true;
+    _v.divideScalar(d);
+    // расталкивание
+    for (const o of state.units) {
+      if (o === u || o.dead || o.air !== u.air) continue;
+      const dd = o.pos.distanceTo(u.pos);
+      const min = (o.radius + u.radius) * 1.15;
+      if (dd < min && dd > 0.01) {
+        _v2.subVectors(u.pos, o.pos).setY(0).divideScalar(dd).multiplyScalar((min - dd) / min * 1.4);
+        _v.add(_v2);
+      }
+    }
+    // обход зданий
+    for (const b of state.buildings) {
+      if (b.dead) continue;
+      const dd = b.pos.distanceTo(u.pos);
+      const min = b.radius + u.radius + 1;
+      if (dd < min && dd > 0.01) {
+        _v2.subVectors(u.pos, b.pos).setY(0).divideScalar(dd).multiplyScalar((min - dd) / min * 2.2);
+        _v.add(_v2);
+      }
+    }
+    _v.normalize();
+    const step = u.def.speed * speedMul * dt;
+    u.pos.x = clamp(u.pos.x + _v.x * step, -MAP + 8, MAP - 8);
+    u.pos.z = clamp(u.pos.z + _v.z * step, -MAP + 8, MAP - 8);
+    u.pos.y = terrainH(u.pos.x, u.pos.z);
+    const want = Math.atan2(-_v.x, -_v.z);
+    let diff = ((want - u.heading + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    u.heading += clamp(diff, -4 * dt, 4 * dt);
+    u.obj.rotation.y = u.heading;
+    return false;
+  }
+
+  function moveAir(u, dest, dt) {
+    _v.subVectors(dest, u.pos);
+    const d = _v.length();
+    if (d < 4) return true;
+    _v.divideScalar(d);
+    const step = u.def.speed * dt;
+    u.pos.addScaledVector(_v, step);
+    u.pos.x = clamp(u.pos.x, -MAP, MAP);
+    u.pos.z = clamp(u.pos.z, -MAP, MAP);
+    const want = Math.atan2(-_v.x, -_v.z);
+    let diff = ((want - u.heading + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    u.heading += clamp(diff, -2.2 * dt, 2.2 * dt);
+    u.obj.rotation.y = u.heading;
+    u.obj.rotation.z = clamp(-diff * 0.9, -0.7, 0.7);
+    return false;
+  }
+
+  // ── СТРЕЛЬБА ─────────────────────────────────────────────
+  function muzzleOf(e) {
+    const list = e.obj.userData.muzzles || [new THREE.Vector3(0, 2, 0)];
+    return list[0].clone().applyQuaternion(e.obj.quaternion).add(e.pos);
+  }
+
+  function aimTurret(e, target, dt) {
+    const tur = e.obj.userData.turret;
+    if (!tur || !target) return;
+    const want = Math.atan2(target.pos.x - e.pos.x, target.pos.z - e.pos.z) - e.obj.rotation.y + Math.PI;
+    let diff = ((want - tur.rotation.y + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    tur.rotation.y += clamp(diff, -3 * dt, 3 * dt);
+  }
+
+  function tryFire(e, target, dt) {
+    const w = e.def.weapon;
+    if (!w || !target || target.dead) return;
+    const d = e.pos.distanceTo(target.pos);
+    if (d > w.range) return;
+    if (w.minRange && d < w.minRange) return;
+    if (target.air && !w.air && w.type !== 'aa') return;
+    e.cd -= dt;
+    if (e.cd > 0) return;
+    e.cd = w.cd;
+    const from = muzzleOf(e);
+    const mine = e.side === state.playerSide;
+
+    if (w.arc) {
+      for (let i = 0; i < (w.salvo || 1); i++) {
+        spawnShell(e, target.pos.clone().add(_v.set(rnd(-6, 6), 0, rnd(-6, 6))), w, i * 0.18);
+      }
+      fx.flash(from, 4, 0xffd0a0, 0.2);
+      fx.shake = Math.min(1, fx.shake + 0.1);
+      return;
+    }
+    const color = mine ? 0x9fe8ff : 0xffb070;
+    fx.tracer(from, target.pos, color, 0.1, w.type === 'cannon' ? 0.35 : 0.2);
+    fx.flash(from, w.type === 'cannon' ? 2.6 : 1.4, 0xffe0b0, 0.14);
+    if (w.splash) {
+      fx.explosion(target.pos, w.splash * 0.7, 0xffa050);
+      splash(target.pos, w.splash, w.dmg, w.type, e.side);
+    } else {
+      damage(target, w.dmg, w.type);
+    }
+  }
+
+  function spawnShell(owner, dest, w, delay) {
+    const from = muzzleOf(owner);
+    state.proj.push({
+      kind: 'shell', side: owner.side, from: from.clone(), to: dest.clone(),
+      t: -delay, dur: Math.max(0.9, from.distanceTo(dest) / 130), w, dead: false,
+    });
+  }
+
+  function updateShell(p, dt) {
+    p.t += dt;
+    if (p.t < 0) return;
+    const k = p.t / p.dur;
+    if (k >= 1) {
+      p.dead = true;
+      dest_impact(p);
+      return;
+    }
+    _v.lerpVectors(p.from, p.to, k);
+    _v.y += Math.sin(k * Math.PI) * 45;
+    fx.flash(_v, 1.3, 0xffe0a0, 0.09);
+  }
+  function dest_impact(p) {
+    fx.explosion(p.to, p.w.splash || 8, 0xffa050);
+    fx.shake = Math.min(1, fx.shake + 0.14);
+    splash(p.to, p.w.splash || 8, p.w.dmg, p.w.type, p.side);
+  }
+
+  // ── ЮНИТЫ ────────────────────────────────────────────────
+  function updateUnit(u, dt) {
+    const def = u.def;
+    if (u.target && u.target.dead) u.target = null;
+    if (u.forced && u.forced.dead) u.forced = null;
+
+    // ── сборщик
+    if (def.id === 'worker') {
+      const hq = (u.homeBase && !u.homeBase.dead) ? u.homeBase
+        : state.buildings.find(b => !b.dead && b.side === u.side && b.def.id === 'hq');
+      u.homeBase = hq || null;
+      if (u.moveTo) { if (moveGround(u, u.moveTo, dt)) u.moveTo = null; return; }
+      if (!hq) return;
+      if (u.carry >= def.cargo) {
+        if (u.pos.distanceTo(hq.pos) < hq.radius + 9) {
+          sides[u.side].credits += u.carry;
+          u.carry = 0;
+          fx.flash(hq.pos.clone().setY(hq.pos.y + 10), 6, 0xffd76a, 0.45);
+        } else moveGround(u, hq.pos, dt);
+        return;
+      }
+      if (!u.field || u.field.left <= 0) {
+        let best = null, bd = Infinity;
+        for (const f of state.fields) {
+          if (f.left <= 0) continue;
+          const d = f.pos.distanceToSquared(u.pos);
+          if (d < bd) { bd = d; best = f; }
+        }
+        u.field = best;
+      }
+      if (!u.field) return;
+      if (u.pos.distanceTo(u.field.pos) < 12) {
+        const take = Math.min(def.cargo * 0.6 * dt, u.field.left, def.cargo - u.carry);
+        u.carry += take;
+        u.field.left -= take;
+        if (u.field.left <= 0) u.field.obj.visible = false;
+      } else moveGround(u, u.field.pos, dt);
+      return;
+    }
+
+    // ── авиация: заход, боезапас, возврат
+    if (u.air) {
+      const field = state.buildings.find(b => !b.dead && b.side === u.side && b.def.id === 'airfield');
+      if (u.phase === 'rearm') {
+        u.rearm -= dt;
+        u.obj.visible = false;
+        if (u.rearm <= 0) {
+          u.ammo = def.ammo;
+          u.phase = 'idle';
+          u.obj.visible = true;
+          if (field) u.pos.set(field.pos.x, 45, field.pos.z);
+        }
+        return;
+      }
+      if (u.ammo <= 0) {
+        if (!field) { u.phase = 'idle'; u.ammo = 1; }
+        else {
+          u.phase = 'home';
+          if (moveAir(u, _v2.set(field.pos.x, 45, field.pos.z), dt)) {
+            u.phase = 'rearm';
+            u.rearm = def.rearm;
+          }
+          return;
+        }
+      }
+      const t = u.forced || u.target || nearestEnemy(u, def.vision * 2.2, false);
+      u.target = t;
+      if (!t) {
+        const anchor = field ? field.pos : (u.moveTo || u.pos);
+        _v2.set(anchor.x + Math.sin(state.time * 0.5 + u.uid) * 60, 45,
+                anchor.z + Math.cos(state.time * 0.5 + u.uid) * 60);
+        moveAir(u, _v2, dt);
+        return;
+      }
+      _v2.set(t.pos.x, 45, t.pos.z);
+      moveAir(u, _v2, dt);
+      const d = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z);
+      u.cd -= dt;
+      if (d < def.weapon.range && u.cd <= 0) {
+        u.cd = def.weapon.cd;
+        u.ammo--;
+        const hit = t.pos.clone();
+        fx.explosion(hit, def.weapon.splash, 0xffb060);
+        fx.shake = Math.min(1, fx.shake + 0.12);
+        splash(hit, def.weapon.splash, def.weapon.dmg, def.weapon.type, u.side);
+      }
+      return;
+    }
+
+    // ── наземные боевые
+    u.retarget -= dt;
+    if (!u.target || u.retarget <= 0) {
+      u.target = u.forced || nearestEnemy(u, def.vision + (def.weapon ? def.weapon.range : 0),
+        !!(def.weapon && def.weapon.air));
+      u.retarget = rnd(0.5, 1.1);
+    }
+
+    if (u.moveTo) {
+      if (moveGround(u, u.moveTo, dt)) u.moveTo = null;
+      // на ходу стреляют все, кроме артиллерии
+      if (u.target && def.weapon && !def.weapon.arc) { aimTurret(u, u.target, dt); tryFire(u, u.target, dt); }
+      return;
+    }
+
+    if (u.target && def.weapon) {
+      const d = u.pos.distanceTo(u.target.pos);
+      const w = def.weapon;
+      if (d > w.range) {
+        if (u.forced) moveGround(u, u.target.pos, dt);      // приказ — идём добивать
+        else if (d < def.vision * 1.6) moveGround(u, u.target.pos, dt);
+      } else if (w.minRange && d < w.minRange) {
+        _v2.subVectors(u.pos, u.target.pos).setY(0).setLength(w.minRange + 12).add(u.target.pos);
+        moveGround(u, _v2, dt);
+      }
+      aimTurret(u, u.target, dt);
+      tryFire(u, u.target, dt);
+    }
+  }
+
+  // ── ЗДАНИЯ ───────────────────────────────────────────────
+  function updateBuilding(b, dt) {
+    if (b.building) {
+      b.buildLeft -= dt;
+      const k = clamp(1 - b.buildLeft / Math.max(0.1, b.def.build), 0, 1);
+      b.obj.scale.y = 0.25 + k * 0.75;
+      b.hp = b.maxHp * (0.15 + k * 0.85);
+      if (b.buildLeft <= 0) {
+        b.building = false;
+        b.obj.scale.y = 1;
+        b.hp = b.maxHp;
+        fx.flash(b.pos.clone().setY(b.pos.y + 6), b.def.size, 0xffd76a, 0.5);
+      }
+      return;
+    }
+    // производство
+    if (b.queue.length) {
+      b.produceLeft -= dt;
+      if (b.produceLeft <= 0) {
+        const id = b.queue.shift();
+        const a = rnd(0, Math.PI * 2);
+        const u = makeUnit(b.side, id, b.pos.x + Math.cos(a) * (b.def.size + 6), b.pos.z + Math.sin(a) * (b.def.size + 6));
+        if (id === 'worker') u.homeBase = b;
+        else u.moveTo = b.rally.clone();
+        if (b.queue.length) b.produceLeft = unitDef(b.faction.id, b.queue[0]).build;
+      }
+    }
+    // оборонительные башни
+    if (b.def.weapon) {
+      if (!b.target || b.target.dead) {
+        b.target = nearestEnemy(b, b.def.weapon.range, !!b.def.weapon.air);
+      }
+      if (b.target) {
+        if (b.target.air && !b.def.weapon.air) b.target = null;
+        else { aimTurret(b, b.target, dt); tryFire(b, b.target, dt); }
+      }
+    }
+  }
+
+  function enqueue(b, unitId) {
+    const def = unitDef(b.faction.id, unitId);
+    const side = sides[b.side];
+    if (side.credits < def.cost) return false;
+    if (b.queue.length >= 6) return false;
+    side.credits -= def.cost;
+    b.queue.push(unitId);
+    if (b.queue.length === 1) b.produceLeft = def.build;
+    return true;
+  }
+
+  function canPlace(sideId, defId, x, z) {
+    const def = GROUND_BUILDINGS[defId];
+    if (Math.abs(x) > MAP - 20 || Math.abs(z) > MAP - 20) return false;
+    let nearOwn = false;
+    for (const b of state.buildings) {
+      if (b.dead) continue;
+      const d = Math.hypot(b.pos.x - x, b.pos.z - z);
+      if (d < (b.def.size + def.size) * 0.75) return false;
+      if (b.side === sideId && d < 130) nearOwn = true;
+    }
+    for (const f of state.fields) if (f.left > 0 && f.pos.distanceTo(_v.set(x, f.pos.y, z)) < 22) return false;
+    return nearOwn;
+  }
+
+  // ── ИИ ───────────────────────────────────────────────────
+  const ai = { next: 4, wave: 0, attacking: false };
+  function updateAI(dt) {
+    ai.next -= dt;
+    if (ai.next > 0) return;
+    ai.next = 3.5;
+    const side = sides.foe;
+    const mine = state.units.filter(u => !u.dead && u.side === 'foe');
+    const myB = state.buildings.filter(b => !b.dead && b.side === 'foe');
+    const has = id => myB.some(b => b.def.id === id && !b.building);
+    const workers = mine.filter(u => u.def.id === 'worker').length;
+    const army = mine.filter(u => u.def.id !== 'worker');
+
+    const hq = myB.find(b => b.def.id === 'hq');
+    if (!hq) return;
+
+    // достройка базы
+    const wish = [];
+    if (!has('barracks') && !myB.some(b => b.def.id === 'barracks')) wish.push('barracks');
+    if (!has('factory') && !myB.some(b => b.def.id === 'factory')) wish.push('factory');
+    if (army.length > 4 && !myB.some(b => b.def.id === 'airfield')) wish.push('airfield');
+    if (army.length > 6 && myB.filter(b => b.def.id === 'turret').length < 2) wish.push('turret');
+    if (army.length > 8 && myB.filter(b => b.def.id === 'sam').length < 1) wish.push('sam');
+    for (const w of wish) {
+      const def = GROUND_BUILDINGS[w];
+      if (side.credits < def.cost) break;
+      for (let tries = 0; tries < 14; tries++) {
+        const a = rnd(0, Math.PI * 2), r = rnd(35, 95);
+        const x = hq.pos.x + Math.cos(a) * r, z = hq.pos.z + Math.sin(a) * r;
+        if (canPlace('foe', w, x, z)) { side.credits -= def.cost; makeBuilding('foe', w, x, z, false); break; }
+      }
+      break;
+    }
+
+    // производство
+    if (workers < 5) { const h = myB.find(b => b.def.id === 'hq'); if (h && !h.queue.length) enqueue(h, 'worker'); }
+    const bar = myB.find(b => b.def.id === 'barracks' && !b.building);
+    if (bar && bar.queue.length < 2) enqueue(bar, Math.random() < 0.55 ? 'rifle' : 'rocket');
+    const fac = myB.find(b => b.def.id === 'factory' && !b.building);
+    if (fac && fac.queue.length < 2) {
+      const roll = Math.random();
+      enqueue(fac, roll < 0.55 ? 'tank' : roll < 0.8 ? 'aa' : 'arty');
+    }
+    const air = myB.find(b => b.def.id === 'airfield' && !b.building);
+    if (air && air.queue.length < 1 && mine.filter(u => u.air).length < 3) enqueue(air, 'jet');
+
+    // волна
+    if (!ai.attacking && army.length >= 6 + ai.wave) {
+      ai.attacking = true;
+      ai.wave = Math.min(6, ai.wave + 1);
+      const targets = state.buildings.filter(b => !b.dead && b.side === 'me');
+      const t = targets.find(b => b.def.id === 'hq') || targets[0];
+      if (t) for (const u of army) { u.forced = t; u.moveTo = null; }
+    } else if (ai.attacking && army.length < 3) {
+      ai.attacking = false;
+      for (const u of army) { u.forced = null; u.moveTo = hq.pos.clone(); }
+    }
+  }
+
+  // ── HUD ──────────────────────────────────────────────────
+  const hud = document.createElement('div');
+  hud.className = 'hud hud-ground';
+  hud.innerHTML = `
+    <div class="topbar">
+      <div class="res"><span class="credits" data-role="credits">0</span><small>кредитов</small></div>
+      <div class="title" data-role="banner"></div>
+      <div class="speedctl">
+        <button data-speed="0" aria-label="Пауза">❚❚</button>
+        <button data-speed="1" class="on">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="4">4×</button>
+        <button data-role="retreat" class="danger">Сдаться</button>
+      </div>
+    </div>
+    <div class="markers" data-role="markers"></div>
+    <div class="sidebar">
+      <button data-q="army">Все<br>войска</button>
+      <button data-q="tank">Техника</button>
+      <button data-q="infantry">Пехота</button>
+      <button data-q="worker">Сбор-<br>щики</button>
+      <button data-role="buildmenu">Строить</button>
+      <button data-role="boxmode">Рамка</button>
+    </div>
+    <div class="buildbar" data-role="buildbar" style="display:none"></div>
+    <div class="botpanel">
+      <div class="sel-info" data-role="sel"></div>
+      <div class="sel-actions" data-role="acts"></div>
+    </div>
+    <div class="hint" data-role="hint"></div>
+    <div class="endcard" data-role="end" style="display:none"></div>
+  `;
+  hudRoot.appendChild(hud);
+  const $ = r => hud.querySelector(`[data-role="${r}"]`);
+  $('banner').textContent = config.title || 'Наземная операция';
+  $('hint').innerHTML = IS_TOUCH
+    ? 'Касание по своему — выбрать · по врагу — атаковать · по земле — идти · тянуть — карта · щипок — приближение · долгое нажатие — рамка'
+    : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · WASD — карта';
+
+  hud.querySelectorAll('[data-speed]').forEach(b => {
+    b.onclick = () => {
+      const v = +b.dataset.speed;
+      state.paused = v === 0;
+      if (v) state.speed = v;
+      hud.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', +x.dataset.speed === v));
+    };
+  });
+  $('retreat').onclick = () => finish('defeat');
+
+  hud.querySelectorAll('[data-q]').forEach(b => {
+    b.onclick = () => {
+      const q = b.dataset.q;
+      state.selection = state.units.filter(u => !u.dead && u.side === 'me' && (
+        q === 'army' ? u.def.id !== 'worker'
+          : q === 'worker' ? u.def.id === 'worker'
+          : q === 'infantry' ? u.cls === 'infantry'
+          : u.cls === 'vehicle' && u.def.id !== 'worker' || u.air));
+      if (state.selection.length) {
+        const c = new THREE.Vector3();
+        for (const e of state.selection) c.add(e.pos);
+        tcam.focus(c.divideScalar(state.selection.length));
+      }
+      refreshSel();
+    };
+  });
+
+  const boxBtn = $('boxmode');
+  boxBtn.onclick = () => controls.setBoxMode(!controls.boxMode);
+
+  const buildbar = $('buildbar');
+  $('buildmenu').onclick = () => {
+    const open = buildbar.style.display === 'none';
+    buildbar.style.display = open ? 'flex' : 'none';
+    $('buildmenu').classList.toggle('on', open);
+    if (open) renderBuildBar();
+    else { state.placing = null; ghost.visible = false; }
+  };
+
+  function renderBuildBar() {
+    buildbar.innerHTML = '';
+    for (const id of ['barracks', 'factory', 'airfield', 'turret', 'sam']) {
+      const def = GROUND_BUILDINGS[id];
+      const b = document.createElement('button');
+      b.className = 'build-btn';
+      b.innerHTML = `<b>${def.name}</b><span class="cost">${def.cost}</span><small>${def.desc}</small>`;
+      b.disabled = sides.me.credits < def.cost;
+      b.onclick = () => {
+        state.placing = id;
+        buildbar.querySelectorAll('.build-btn').forEach(x => x.classList.remove('on'));
+        b.classList.add('on');
+      };
+      buildbar.appendChild(b);
+    }
+  }
+
+  // призрак постройки
+  const ghost = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0x8fffc8, transparent: true, opacity: 0.35, depthWrite: false }),
+  );
+  ghost.visible = false;
+  scene.add(ghost);
+
+  // ── маркеры ──────────────────────────────────────────────
+  const markers = $('markers');
+  const markerPool = [];
+  function updateMarkers() {
+    const w = viewport.w, h = viewport.h;
+    let i = 0;
+    const all = [...state.buildings, ...state.units];
+    for (const s of all) {
+      if (s.dead) continue;
+      if (s.kind === 'unit' && s.side === 'me' && s.hp >= s.maxHp && !state.selection.includes(s)) continue;
+      let d = markerPool[i];
+      if (!d) {
+        d = document.createElement('div');
+        d.className = 'marker small';
+        d.innerHTML = '<span class="mk-bar"><i></i></span>';
+        markers.appendChild(d);
+        markerPool[i] = d;
+      }
+      i++;
+      const p = screenOf(_v.copy(s.pos).setY(s.pos.y + (s.kind === 'building' ? s.def.size * 0.9 : 6)), tcam.cam, w, h);
+      if (p.z > 1 || p.x < -40 || p.x > w + 40 || p.y < -20 || p.y > h + 20) { d.style.display = 'none'; continue; }
+      d.style.display = 'block';
+      d.style.transform = `translate(${(p.x - 22) | 0}px,${(p.y - 8) | 0}px)`;
+      const hp = clamp(s.hp / s.maxHp, 0, 1);
+      const bar = d.firstChild.firstChild;
+      bar.style.width = (hp * 100) + '%';
+      bar.style.background = s.side === 'me' ? (hp > 0.4 ? '#7fd8a0' : '#e0a94e') : '#e05555';
+      d.classList.toggle('sel', state.selection.includes(s));
+    }
+    for (; i < markerPool.length; i++) markerPool[i].style.display = 'none';
+  }
+
+  const selRings = [];
+  function updateRings() {
+    let i = 0;
+    for (const e of state.selection) {
+      if (e.dead) continue;
+      if (!selRings[i]) {
+        const r = ringMesh(1, 0x8fffc8, 0.9, 0.12);
+        r.renderOrder = 4;
+        scene.add(r);
+        selRings[i] = r;
+      }
+      const r = selRings[i++];
+      r.visible = true;
+      r.position.copy(e.pos).setY(e.pos.y + (e.air ? -40 : 0.6));
+      r.scale.setScalar(e.kind === 'building' ? e.def.size * 0.9 : e.radius * 2.2);
+    }
+    for (; i < selRings.length; i++) selRings[i].visible = false;
+  }
+
+  // ── управление ───────────────────────────────────────────
+  function pickMeshes() {
+    const m = [];
+    for (const b of state.buildings) if (!b.dead) m.push(b.obj);
+    for (const u of state.units) if (!u.dead) m.push(u.obj);
+    return m;
+  }
+  function entityAt(x, y) {
+    let ent = controls.pick(x, y);
+    if (!ent) {
+      const cands = [...state.units.filter(u => !u.dead), ...state.buildings.filter(b => !b.dead)];
+      ent = controls.pickNear(x, y, cands, tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 40 : 20);
+    }
+    return ent;
+  }
+
+  function selectEntity(ent, additive) {
+    if (!ent) { if (!additive) state.selection = []; refreshSel(); return; }
+    if (ent.side !== 'me') { state.selection = [ent]; refreshSel(); return; }
+    if (additive) {
+      state.selection = state.selection.includes(ent)
+        ? state.selection.filter(x => x !== ent)
+        : [...state.selection, ent];
+    } else state.selection = [ent];
+    refreshSel();
+  }
+
+  function issueOrder(ent, world) {
+    const mine = state.selection.filter(s => s.side === 'me' && !s.dead);
+    if (!mine.length) return false;
+    // здание выделено — назначаем точку сбора
+    const bld = mine.filter(s => s.kind === 'building');
+    if (bld.length && world) {
+      for (const b of bld) b.rally.copy(world);
+      fx.flash(world, 6, 0x8fffc8, 0.5);
+    }
+    const units = mine.filter(s => s.kind === 'unit');
+    if (!units.length) return bld.length > 0;
+
+    if (ent && ent.side !== 'me') {
+      for (const u of units) { u.forced = ent; u.target = ent; u.moveTo = null; }
+      fx.flash(ent.pos, 6, 0xff6b5a, 0.5);
+      return true;
+    }
+    if (!world) return false;
+    const n = units.length, cols = Math.ceil(Math.sqrt(n));
+    units.forEach((u, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      const d = world.clone().add(_v.set((col - (cols - 1) / 2) * 9, 0, (row - (cols - 1) / 2) * 9));
+      d.y = terrainH(d.x, d.z);
+      u.moveTo = d;
+      u.forced = null;
+      u.target = null;
+      if (u.def.id === 'worker') u.field = null;
+    });
+    fx.flash(world, 7, 0x8fffc8, 0.5);
+    return true;
+  }
+
+  function tryPlace(world) {
+    if (!state.placing || !world) return false;
+    const def = GROUND_BUILDINGS[state.placing];
+    if (sides.me.credits < def.cost) return false;
+    if (!canPlace('me', state.placing, world.x, world.z)) {
+      fx.flash(world, 8, 0xff5555, 0.4);
+      return true;
+    }
+    sides.me.credits -= def.cost;
+    makeBuilding('me', state.placing, world.x, world.z, false);
+    state.placing = null;
+    ghost.visible = false;
+    buildbar.querySelectorAll('.build-btn').forEach(x => x.classList.remove('on'));
+    renderBuildBar();
+    return true;
+  }
+
+  const controls = new Controls(viewport.canvas, tcam, {
+    pickMeshes,
+    planeY: () => 0,
+    onBoxModeChange: on => boxBtn.classList.toggle('on', on),
+    onTap({ x, y, shift, touch }) {
+      const world = controls.worldAt(x, y);
+      if (state.placing) { if (tryPlace(world)) return; }
+      const ent = entityAt(x, y);
+      if (!touch) { selectEntity(ent, shift); return; }
+      if (ent && ent.side === 'me') { selectEntity(ent, shift); return; }
+      if (state.selection.some(s => s.side === 'me' && !s.dead)) {
+        if (issueOrder(ent, world)) return;
+      }
+      selectEntity(ent, shift);
+    },
+    onOrder({ x, y }) {
+      const world = controls.worldAt(x, y);
+      if (state.placing) { state.placing = null; ghost.visible = false; return; }
+      issueOrder(entityAt(x, y), world);
+    },
+    onBox(rect, additive) {
+      const w = viewport.w, h = viewport.h;
+      const found = [];
+      for (const u of state.units) {
+        if (u.dead || u.side !== 'me') continue;
+        const p = screenOf(u.pos, tcam.cam, w, h);
+        if (p.z < 1 && p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1) found.push(u);
+      }
+      state.selection = additive ? [...new Set([...state.selection, ...found])] : found;
+      refreshSel();
+    },
+  });
+
+  // ── панель выделения ─────────────────────────────────────
+  function refreshSel() {
+    const sel = $('sel'), acts = $('acts');
+    const list = state.selection.filter(s => !s.dead);
+    acts.innerHTML = '';
+    if (!list.length) {
+      sel.innerHTML = '<div class="sel-empty">Ничего не выбрано</div>';
+      return;
+    }
+    if (list.length === 1) {
+      const e = list[0];
+      const foreign = e.side !== 'me' ? '<span class="tag foe">противник</span>' : '';
+      let sub = e.kind === 'building'
+        ? (e.building ? `Строится · ${Math.ceil(e.buildLeft)} с` : e.def.name)
+        : `${e.def.cls === 'infantry' ? 'Пехота' : e.air ? 'Авиация' : 'Техника'}`;
+      if (e.def.id === 'worker') sub += ` · груз ${Math.round(e.carry)}/${e.def.cargo}`;
+      if (e.air) sub += ` · боезапас ${e.ammo}/${e.def.ammo}`;
+      sel.innerHTML = `<div class="sel-title">${e.def.name} ${foreign}</div>
+        <div class="sel-sub">${sub} · ${Math.max(0, Math.round(e.hp))}/${e.maxHp}</div>
+        <div class="sel-hpbar"><i style="width:${clamp(e.hp / e.maxHp, 0, 1) * 100}%"></i></div>
+        <div class="sel-desc">${e.def.desc || ''}</div>`;
+    } else {
+      const by = {};
+      for (const e of list) by[e.def.name] = (by[e.def.name] || 0) + 1;
+      sel.innerHTML = `<div class="sel-title">Выделено: ${list.length}</div>
+        <div class="sel-sub">${Object.entries(by).map(([n, c]) => `${n} ×${c}`).join(' · ')}</div>`;
+    }
+
+    // производство
+    const prod = list.filter(e => e.kind === 'building' && e.side === 'me' && !e.building && e.def.produces);
+    if (prod.length) {
+      const b = prod[0];
+      for (const id of b.def.produces) {
+        const def = unitDef(b.faction.id, id);
+        const btn = document.createElement('button');
+        btn.className = 'act';
+        btn.innerHTML = `<b>${def.name}</b><small>${def.cost} кр · ${def.build} с</small>`;
+        btn.disabled = sides.me.credits < def.cost;
+        btn.onclick = () => { if (enqueue(b, id)) refreshSel(); };
+        acts.appendChild(btn);
+      }
+      if (b.queue.length) {
+        const q = document.createElement('div');
+        q.className = 'act-note';
+        q.textContent = `В очереди: ${b.queue.length} · готов через ${Math.ceil(b.produceLeft)} с`;
+        acts.appendChild(q);
+      }
+    }
+    const units = list.filter(e => e.kind === 'unit' && e.side === 'me');
+    if (units.length) {
+      const stop = document.createElement('button');
+      stop.className = 'act';
+      stop.innerHTML = '<b>Стоп</b><small>Отменить приказ</small>';
+      stop.onclick = () => { for (const u of units) { u.moveTo = null; u.forced = null; } };
+      acts.appendChild(stop);
+    }
+  }
+  refreshSel();
+
+  function onKey(e) {
+    if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+    if (e.code === 'Space') { e.preventDefault(); hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); }
+    if (e.code === 'Escape') { state.selection = []; state.placing = null; ghost.visible = false; refreshSel(); }
+  }
+  addEventListener('keydown', onKey);
+
+  // ── завершение ───────────────────────────────────────────
+  let ended = false;
+  function finish(result) {
+    if (ended) return;
+    ended = true;
+    state.paused = true;
+    const win = result === 'victory';
+    const card = $('end');
+    card.style.display = 'flex';
+    card.innerHTML = `<div class="end-inner">
+      <h2>${win ? 'Планета взята' : 'Плацдарм потерян'}</h2>
+      <p>${win ? 'Наземные силы противника уничтожены. Система переходит под наш контроль.'
+                : 'Десант разбит. Планета остаётся за противником.'}</p>
+      <button class="btn primary" data-role="cont">Продолжить</button></div>`;
+    card.querySelector('[data-role="cont"]').onclick = () => {
+      const left = state.units.filter(u => !u.dead && u.side === 'me' && u.def.id !== 'worker').length;
+      config.onEnd && config.onEnd({ result, regiments: Math.max(0, Math.round(left / 2)) });
+    };
+  }
+
+  function checkEnd() {
+    if (ended) return;
+    const foeAlive = state.buildings.some(b => !b.dead && b.side === 'foe')
+                  || state.units.some(u => !u.dead && u.side === 'foe' && u.def.id !== 'worker');
+    const meAlive = state.buildings.some(b => !b.dead && b.side === 'me')
+                 || state.units.some(u => !u.dead && u.side === 'me');
+    if (!foeAlive) finish('victory');
+    else if (!meAlive) finish('defeat');
+  }
+
+  // ── цикл ─────────────────────────────────────────────────
+  function update(rawDt) {
+    tcam.update(rawDt);
+    const dt = state.paused ? 0 : Math.min(rawDt, 0.05) * state.speed;
+    if (dt > 0) {
+      state.time += dt;
+      updateAI(dt);
+      for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
+      for (const u of state.units) if (!u.dead) updateUnit(u, dt);
+      for (const p of state.proj) if (!p.dead) updateShell(p, dt);
+      state.proj = state.proj.filter(p => !p.dead);
+      if (state.units.length > 260) state.units = state.units.filter(u => !u.dead);
+      checkEnd();
+    }
+
+    fx.update(rawDt);
+    if (fx.shake > 0.001) {
+      const s = fx.shake * 1.6;
+      tcam.cam.position.x += rnd(-s, s);
+      tcam.cam.position.y += rnd(-s, s);
+    }
+
+    // призрак постройки под курсором/пальцем
+    if (state.placing) {
+      const def = GROUND_BUILDINGS[state.placing];
+      const p = controls.worldAt(
+        viewport.canvas.getBoundingClientRect().left + viewport.w / 2,
+        viewport.canvas.getBoundingClientRect().top + viewport.h / 2);
+      if (p) {
+        ghost.visible = true;
+        ghost.scale.set(def.size * 1.3, 6, def.size * 1.3);
+        ghost.position.set(p.x, terrainH(p.x, p.z) + 3, p.z);
+        ghost.material.color.set(canPlace('me', state.placing, p.x, p.z) ? 0x8fffc8 : 0xff6b5a);
+      }
+    } else ghost.visible = false;
+
+    updateMarkers();
+    updateRings();
+    $('credits').textContent = Math.floor(sides.me.credits);
+
+    if (state.selection.some(s => s.dead)) {
+      state.selection = state.selection.filter(s => !s.dead);
+      refreshSel();
+    }
+  }
+
+  function dispose() {
+    removeEventListener('keydown', onKey);
+    tcam.dispose();
+    controls.dispose();
+    hud.remove();
+    disposeScene(scene);
+  }
+
+  tcam.focus(myHQ.pos.clone());
+  tcam.apply(1, true);
+
+  return { scene, camera: tcam.cam, update, dispose, state };
+}
+
+// Быстрый расчёт наземного боя
+export function autoResolveGround(attacker, defender) {
+  const p = s => (s.regiments || 0) * (s.faction === 'devian' ? 1.15 : s.faction === 'troyden' ? 1.1 : 0.95)
+    + (s.turrets ? 1.5 : 0);
+  const a = p(attacker) * rnd(0.85, 1.2);
+  const d = (p(defender) + 1) * rnd(0.85, 1.2);
+  const win = a > d;
+  return {
+    result: win ? 'attacker' : 'defender',
+    regiments: Math.max(0, Math.round((win ? attacker.regiments - d * 0.6 : defender.regiments - a * 0.6))),
+  };
+}

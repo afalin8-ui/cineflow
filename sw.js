@@ -87,6 +87,11 @@ self.addEventListener('fetch', event => {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   if (BYPASS_HOSTS.some(h => url.hostname.endsWith(h))) return;
 
+  // Папка /game/ — отдельное приложение («Капелла») со своим service
+  // worker'ом. Не трогаем её вовсе: иначе навигация на игру подменит
+  // в кэше './index.html' CineFlow на страницу игры.
+  if (url.origin === self.location.origin && url.pathname.includes('/game/')) return;
+
   // Сама страница: сначала сеть (чтобы приезжали обновления),
   // при отсутствии связи — версия из кэша.
   // cache:'reload' обязателен: иначе ответ может прийти из HTTP-кэша

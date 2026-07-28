@@ -1,0 +1,15 @@
+{
+  "name": "Капелла: Галактический фронт",
+  "short_name": "Капелла",
+  "description": "3D-стратегия: карта системы Капелла, бой на орбите с настоящей инерцией и наземная операция с базой и снабжением.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#05070d",
+  "theme_color": "#05070d",
+  "lang": "ru",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

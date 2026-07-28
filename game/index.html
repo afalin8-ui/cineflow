@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Капелла">
+<meta name="theme-color" content="#05070d">
+<meta name="description" content="Капелла: Галактический фронт — 3D-стратегия по мотивам Homeplanet и Empire at War: карта системы, бой на орбите с настоящей инерцией, наземная операция.">
+<title>Капелла: Галактический фронт</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="./icon.svg">
+<link rel="apple-touch-icon" href="./icon.svg">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud"></div>
+  </div>
+
+  <noscript>
+    <div class="noscript">Для игры нужен включённый JavaScript.</div>
+  </noscript>
+
+  <script>
+    // Свой service worker с областью /game/: держит игру офлайн и не
+    // мешает service worker'у CineFlow, который живёт в корне.
+    if ('serviceWorker' in navigator) {
+      addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js', { scope: './' })
+          .catch(err => console.warn('SW игры не зарегистрирован:', err));
+      });
+    }
+  </script>
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
