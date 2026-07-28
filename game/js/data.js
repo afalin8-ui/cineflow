@@ -36,6 +36,11 @@ export const GROUND_DMG = {
   arty:    { infantry: 1.25, vehicle: 0.80, structure: 1.40, air: 0.00 },
   aa:      { infantry: 0.15, vehicle: 0.10, structure: 0.00, air: 1.60 },
   bomb:    { infantry: 0.90, vehicle: 1.15, structure: 1.30, air: 0.00 },
+  // Автопушка БМП: косит пехоту, дырявит лёгкую технику, слегка достаёт
+  // низколетящие вертолёты. Против брони и стен — почти бесполезна.
+  auto:    { infantry: 0.95, vehicle: 0.45, structure: 0.30, air: 0.35 },
+  // Снайпер: строго по живой силе, зато с огромной дистанции
+  sniper:  { infantry: 1.80, vehicle: 0.00, structure: 0.00, air: 0.00 },
 };
 
 export function dmgMult(table, weapon, targetClass) {
@@ -393,17 +398,17 @@ export const GROUND_BUILDINGS = {
   },
   barracks: {
     id: 'barracks', name: 'Казарма', cls: 'structure', hp: 1600, armor: 0.2,
-    cost: 400, build: 8, size: 9, vision: 40, produces: ['rifle', 'rocket'],
-    desc: 'Пехота: стрелки и ракетчики.',
+    cost: 400, build: 8, size: 9, vision: 40, produces: ['rifle', 'rocket', 'eng', 'sniper'],
+    desc: 'Пехота: стрелки, ракетчики, ремонтники и снайперы.',
   },
   factory: {
     id: 'factory', name: 'Завод', cls: 'structure', hp: 2200, armor: 0.28,
-    cost: 700, build: 12, size: 11, vision: 40, produces: ['tank', 'aa', 'arty'],
-    desc: 'Тяжёлая техника: танки, ЗСУ, артиллерия.',
+    cost: 700, build: 12, size: 11, vision: 40, produces: ['scout', 'tank', 'ifv', 'aa', 'arty', 'mlrs'],
+    desc: 'Техника: разведка, танки, БМП, ЗСУ и артиллерия.',
   },
   airfield: {
     id: 'airfield', name: 'Аэродром', cls: 'structure', hp: 1800, armor: 0.22,
-    cost: 900, build: 14, size: 14, vision: 55, produces: ['jet'],
+    cost: 900, build: 14, size: 14, vision: 55, produces: ['jet', 'heli'],
     desc: 'Штурмовики. После захода самолёт обязан вернуться на полосу ' +
           'за боезапасом — как в старых RTS.',
   },
@@ -442,6 +447,12 @@ function groundUnits(faction) {
     tank:   trd ? 'ОБТ «Паладин»' : rez ? 'Танк «Морок»' : 'Багги «Гвоздь»',
     arty:   trd ? 'САУ «Клинок»' : rez ? 'САУ «Затмение»' : 'Миномёт на грузовике',
     jet:    trd ? 'Штурмовик «Ястреб»' : rez ? 'Штурмовик «Саван»' : 'Ударный дрон',
+    scout:  trd ? 'Разведмашина «Дозор»' : rez ? 'Глайдер «Шёпот»' : 'Мотоцикл-разведчик',
+    ifv:    trd ? 'БМП «Копейщик»' : rez ? 'БМП «Наваждение»' : 'Пикап с автопушкой',
+    eng:    trd ? 'Ремонтная группа' : rez ? 'Техники-невидимки' : 'Механики',
+    mlrs:   trd ? 'РСЗО «Гроза»' : rez ? 'РСЗО «Морок»' : 'Связка труб на шасси',
+    heli:   trd ? 'Вертолёт «Секира»' : rez ? 'Вертолёт «Тень»' : 'Винтокрыл-стервятник',
+    sniper: trd ? 'Снайперская пара' : rez ? 'Ликвидатор' : 'Охотник с длинным стволом',
   };
 
   const mk = (o) => ({ ...o, hp: H(o.hp), armor: A(o.armor), cost: C(o.cost),
@@ -449,40 +460,40 @@ function groundUnits(faction) {
 
   return {
     worker: mk({
-      id: 'worker', name: 'Сборщик', cls: 'vehicle', from: 'hq',
+      id: 'worker', name: 'Сборщик', cls: 'vehicle', from: 'hq', tier: 1,
       hp: 260, armor: 0.1, speed: 13, cost: 180, build: 5,
       cargo: 90, vision: 35, weapon: null,
       desc: 'Возит снабжение с полей на штаб. Безоружен. Без сборщиков ' +
             'быстро кончатся деньги.',
     }),
     rifle: mk({
-      id: 'rifle', name: nm.rifle, cls: 'infantry', from: 'barracks',
+      id: 'rifle', name: nm.rifle, cls: 'infantry', from: 'barracks', tier: 1,
       hp: 170, armor: 0.05, speed: 8.5, cost: 120, build: 4,
       vision: 45, weapon: { type: 'rifle', dmg: 22, cd: 0.75, range: 34 },
       desc: 'Дёшево и сердито. Косит чужую пехоту, по технике почти бесполезна.',
     }),
     rocket: mk({
-      id: 'rocket', name: nm.rocket, cls: 'infantry', from: 'barracks',
+      id: 'rocket', name: nm.rocket, cls: 'infantry', from: 'barracks', tier: 1,
       hp: 150, armor: 0.05, speed: 7.5, cost: 200, build: 5,
       vision: 50, weapon: { type: 'at', dmg: 90, cd: 2.4, range: 48, air: true },
       desc: 'Вскрывает танки и достаёт самолёты. Против пехоты — плохо.',
     }),
     tank: mk({
-      id: 'tank', name: nm.tank, cls: 'vehicle', from: 'factory',
+      id: 'tank', name: nm.tank, cls: 'vehicle', from: 'factory', tier: 1,
       hp: 950, armor: 0.3, speed: plk ? 15 : 11.5, cost: 600, build: 8,
       vision: 50, weapon: { type: 'cannon', dmg: 130, cd: 2.1, range: 55 },
       desc: 'Основа наземной армии. Давит пехоту, ломает здания, ' +
             'боится ракетчиков и артиллерии.',
     }),
     aa: mk({
-      id: 'aa', name: 'ЗСУ', cls: 'vehicle', from: 'factory',
+      id: 'aa', name: 'ЗСУ', cls: 'vehicle', from: 'factory', tier: 1,
       hp: 520, armor: 0.2, speed: 13, cost: 420, build: 6,
       vision: 70, weapon: { type: 'aa', dmg: 80, cd: 0.85, range: 95, air: true },
       desc: 'Зенитная самоходка. Ставь под колонну, иначе штурмовики ' +
             'выбьют технику за один заход.',
     }),
     arty: mk({
-      id: 'arty', name: nm.arty, cls: 'vehicle', from: 'factory',
+      id: 'arty', name: nm.arty, cls: 'vehicle', from: 'factory', tier: 2,
       hp: 420, armor: 0.12, speed: 7, cost: 760, build: 11,
       vision: 40, weapon: {
         type: 'arty', dmg: 200, cd: 6, range: 175, minRange: 45,
@@ -492,12 +503,66 @@ function groundUnits(faction) {
             'в пустоту. Вблизи беззащитна, по воздуху не стреляет.',
     }),
     jet: mk({
-      id: 'jet', name: nm.jet, cls: 'air', from: 'airfield',
+      id: 'jet', name: nm.jet, cls: 'air', from: 'airfield', tier: 2,
       hp: 420, armor: 0.15, speed: 46, cost: 800, build: 10,
       vision: 80, air: true, ammo: trd ? 5 : 4, rearm: trd ? 6 : 9,
       weapon: { type: 'bomb', dmg: 240, cd: 0.9, range: 42, splash: 9 },
       desc: 'Заходит на цель, вываливает боезапас и возвращается на аэродром ' +
             'перезаряжаться. Пока летит домой — беззащитен.',
+    }),
+
+    // ── Открываются с ростом технологий ──────────────────────
+    scout: mk({
+      id: 'scout', name: nm.scout, cls: 'vehicle', from: 'factory', tier: 1,
+      hp: 300, armor: 0.08, speed: 22, cost: 220, build: 4,
+      vision: 130, weapon: { type: 'rifle', dmg: 26, cd: 0.7, range: 40 },
+      desc: 'Глаза армии. Видит вдвое дальше всех и бегает быстрее всех, ' +
+            'но в драке бесполезен. Без него артиллерия бьёт в пустоту, ' +
+            'а маскировку Рииза никто не вскроет.',
+    }),
+    ifv: mk({
+      id: 'ifv', name: nm.ifv, cls: 'vehicle', from: 'factory', tier: 2,
+      hp: 620, armor: 0.22, speed: 15, cost: 460, build: 7,
+      vision: 60, weapon: { type: 'auto', dmg: 62, cd: 0.55, range: 62, air: true },
+      desc: 'Автопушка. Выкашивает пехоту быстрее танка и цепляет ' +
+            'вертолёты, но лобовую броню не пробьёт — от танков держись ' +
+            'подальше.',
+    }),
+    eng: mk({
+      id: 'eng', name: nm.eng, cls: 'infantry', from: 'barracks', tier: 2,
+      hp: 190, armor: 0.05, speed: 8, cost: 260, build: 6,
+      vision: 40, weapon: null, repair: 55, repairRange: 26,
+      desc: 'Чинит соседнюю технику и здания прямо в поле. Сам безоружен. ' +
+            'Пара ремонтников за танковой колонной удваивает её живучесть.',
+    }),
+    mlrs: mk({
+      id: 'mlrs', name: nm.mlrs, cls: 'vehicle', from: 'factory', tier: 3,
+      hp: 400, armor: 0.10, speed: 9, cost: 900, build: 12,
+      vision: 40, weapon: {
+        type: 'arty', dmg: 130, cd: 8, range: 130, minRange: 35,
+        splash: 26, arc: true, salvo: plk ? 6 : 4,
+      },
+      desc: 'Бьёт ближе ствольной артиллерии, зато накрывает залпом целую ' +
+            'площадь. Идеально по скоплению пехоты и по стройке. ' +
+            'Перезаряжается долго.',
+    }),
+    heli: mk({
+      id: 'heli', name: nm.heli, cls: 'air', from: 'airfield', tier: 3,
+      hp: 560, armor: 0.18, speed: 26, cost: 950, build: 12,
+      vision: 85, air: true, ammo: 14, rearm: 5,
+      weapon: { type: 'at', dmg: 115, cd: 1.6, range: 70, air: true },
+      desc: 'В отличие от штурмовика не проносится мимо, а висит над полем ' +
+            'и долбит по технике. Боезапаса вчетверо больше, зато тихоходен ' +
+            'и от зениток не убежит.',
+    }),
+    sniper: mk({
+      id: 'sniper', name: nm.sniper, cls: 'infantry', from: 'barracks', tier: 3,
+      hp: 140, armor: 0.03, speed: 7, cost: 420, build: 8,
+      vision: 95, stealthAlways: true,
+      weapon: { type: 'sniper', dmg: 150, cd: 3.2, range: 88 },
+      desc: 'Снимает пехоту с дистанции, на которой её нечем достать. ' +
+            'По технике не стреляет вовсе. Не двигаясь — не виден, ' +
+            'но один залп артиллерии его стирает.',
     }),
   };
 }
@@ -551,12 +616,63 @@ export const GALAXY_MAP = {
 
 export const PLANET_BUILDINGS = {
   mine:     { id: 'mine',     name: 'Рудник',              cost: 400,  desc: '+120 кредитов за ход' },
+  lab:      { id: 'lab',      name: 'Научный центр',       cost: 900,  desc: '+45 очков науки за ход' },
   shipyard: { id: 'shipyard', name: 'Верфь',               cost: 800,  desc: 'Позволяет строить корабли' },
   garrison: { id: 'garrison', name: 'Гарнизон',            cost: 600,  desc: 'Позволяет набирать полки' },
   station:  { id: 'station',  name: 'Орбитальная станция', cost: 1400, desc: 'Крепость в бою на орбите' },
 };
 
 export const REGIMENT_COST = 350;
+
+/* ─────────────────────────────────────────────────────────────
+   РАЗВИТИЕ.
+
+   Ресурс один — кредиты. Их дают сами планеты (поле income) и
+   рудники на них. Наука — вторая, непокупаемая валюта: её дают
+   только научные центры, и потратить её можно лишь на следующий
+   уровень технологий.
+
+   Уровень технологий у клана один на всю кампанию и открывает
+   технику разом и в космосе, и на земле: у кораблей это поле
+   `tier`, у наземных юнитов — `tier`. Поэтому вкладываться в науку
+   выгоднее, чем в очередной рудник, но наука не кормит флот.
+   ───────────────────────────────────────────────────────────── */
+
+export const RESEARCH_PER_LAB = 45;
+export const RESEARCH_BASE = 10;      // столько капает даже без центров
+
+export const TECH_LEVELS = [
+  {
+    level: 1, cost: 0, name: 'Мобилизация',
+    unlocks: 'Корветы и фрегаты · пехота, танки, ЗСУ, разведчики',
+  },
+  {
+    level: 2, cost: 900, name: 'Тяжёлые платформы',
+    unlocks: 'Корабли РЭБ, крейсеры, носители · артиллерия, БМП, ' +
+             'штурмовики, ремонтники',
+  },
+  {
+    level: 3, cost: 2400, name: 'Главный калибр',
+    unlocks: 'Флагманы · РСЗО, ударные вертолёты, снайперы',
+  },
+  {
+    level: 4, cost: 5000, name: 'Боевые протоколы',
+    unlocks: 'Новой техники нет: вся уже построенная получает ' +
+             '+15% прочности и +10% урона',
+  },
+];
+
+export const MAX_TECH = TECH_LEVELS.length;
+
+// Бонус последнего уровня — единственное, что меняет числа задним числом
+export function techBonus(level) {
+  return level >= 4 ? { hp: 1.15, dmg: 1.10 } : { hp: 1, dmg: 1 };
+}
+
+export function techCost(level) {
+  const t = TECH_LEVELS[level];      // level — текущий, индекс даёт следующий
+  return t ? t.cost : null;
+}
 
 export const BIOME_COLORS = {
   klotho: { ground: 0x8a7550, accent: 0xb09a6c, rock: 0x6a5a3e, sky: 0x2e2a1e },

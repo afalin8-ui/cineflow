@@ -36,7 +36,19 @@ function loadSave() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const c = JSON.parse(raw);
-    return (c && c.systems && c.playerFaction) ? c : null;
+    if (!c || !c.systems || !c.playerFaction) return null;
+    // Сохранения до появления науки: дописываем поля, чтобы старая
+    // кампания открылась, а не упала на первом же обращении к tech
+    if (!c.research || !c.tech) {
+      c.research = c.research || {};
+      c.tech = c.tech || {};
+      for (const f of FACTION_IDS) {
+        if (c.research[f] === undefined) c.research[f] = 0;
+        if (c.tech[f] === undefined) c.tech[f] = 1;
+      }
+      c.version = 2;
+    }
+    return c;
   } catch (e) { return null; }
 }
 function dropSave() {

@@ -75,6 +75,21 @@ export class Noise {
     return this.fbm3(x, y, 0.5, octaves, lacunarity, gain);
   }
 
+  /* Хребтовый шум на сфере. Нужен отдельно от ridged2: на планете
+     координата трёхмерная, и плоский вариант дал бы шов по долготе
+     и кашу на полюсах. */
+  ridged3(x, y, z, octaves = 4, lacunarity = 2.0, gain = 0.5) {
+    let sum = 0, amp = 1, norm = 0, f = 1;
+    for (let i = 0; i < octaves; i++) {
+      const n = 1 - Math.abs(this.noise3(x * f, y * f, z * f));
+      sum += n * n * amp;
+      norm += amp;
+      amp *= gain;
+      f *= lacunarity;
+    }
+    return sum / norm;
+  }
+
   // Хребтовый шум — даёт горные гряды, а не мягкие холмы
   ridged2(x, y, octaves = 4, lacunarity = 2.0, gain = 0.5) {
     let sum = 0, amp = 1, norm = 0, f = 1;

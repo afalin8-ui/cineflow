@@ -20,7 +20,7 @@ import { groundTexture } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
-  dmgMult, unitDef,
+  dmgMult, unitDef, MAX_TECH,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -280,9 +280,18 @@ export function createGroundBattle(ctx, config) {
     selection: [], placing: null, rallyMode: false,
     playerSide: 'me',
   };
+  /* Уровень технологий приезжает с галактической карты и решает,
+     какая техника вообще есть в меню. В быстром бою его не передают —
+     тогда открыто всё, иначе половина ростера была бы недоступна. */
   const sides = {
-    me: { faction: FACTIONS[config.player.faction], credits: config.player.credits ?? 3000, id: 'me' },
-    foe: { faction: FACTIONS[config.enemy.faction], credits: config.enemy.credits ?? 3000, id: 'foe' },
+    me: {
+      faction: FACTIONS[config.player.faction], credits: config.player.credits ?? 3000,
+      tech: config.player.tech ?? MAX_TECH, id: 'me',
+    },
+    foe: {
+      faction: FACTIONS[config.enemy.faction], credits: config.enemy.credits ?? 3000,
+      tech: config.enemy.tech ?? MAX_TECH, id: 'foe',
+    },
   };
   const other = s => (s === 'me' ? 'foe' : 'me');
   let uid = 1;
@@ -520,6 +529,13 @@ export function createGroundBattle(ctx, config) {
     return list[0].clone().applyQuaternion(e.obj.quaternion).add(e.pos);
   }
 
+  // Винт крутится всегда, пока машина жива: неподвижный вертолёт
+  // читается как макет, а не как техника в воздухе
+  function spinRotor(e, dt) {
+    const r = e.obj.userData.rotor;
+    if (r) r.rotation.y += dt * 26;
+  }
+
   function aimTurret(e, target, dt) {
     const tur = e.obj.userData.turret;
     if (!tur || !target) return;
@@ -589,10 +605,55 @@ export function createGroundBattle(ctx, config) {
   }
 
   // ── ЮНИТЫ ────────────────────────────────────────────────
+  /* РЕМОНТНИК.
+     Ищет самого побитого своего в радиусе и подливает ему прочность.
+     Сам безоружен, поэтому в бою держится за спинами: без приказа
+     подходит к раненому, с приказом — идёт куда сказали. */
+  function updateEngineer(u, dt) {
+    const def = u.def;
+    if (u.moveTo && moveGround(u, u.moveTo, dt)) u.moveTo = null;
+
+    u.retarget -= dt;
+    if (!u.patient || u.patient.dead || u.patient.hp >= u.patient.maxHp || u.retarget <= 0) {
+      u.patient = null;
+      let worst = 1;
+      for (const list of [state.units, state.buildings]) {
+        for (const e of list) {
+          if (e.dead || e.side !== u.side || e === u || e.building) continue;
+          const frac = e.hp / e.maxHp;
+          if (frac >= 1) continue;
+          if (e.pos.distanceTo(u.pos) > def.repairRange * 3) continue;
+          if (frac < worst) { worst = frac; u.patient = e; }
+        }
+      }
+      u.retarget = rnd(0.6, 1.2);
+    }
+    if (!u.patient) return;
+
+    const d = u.pos.distanceTo(u.patient.pos);
+    if (d > def.repairRange) {
+      if (!u.moveTo) moveGround(u, u.patient.pos, dt);
+      return;
+    }
+    u.patient.hp = Math.min(u.patient.maxHp, u.patient.hp + def.repair * dt);
+    u.repairBlink = (u.repairBlink || 0) - dt;
+    if (u.repairBlink <= 0) {
+      u.repairBlink = 0.55;
+      fx.ring(u.patient.pos, 2.5, 7, 0x8fffc8, 0.35);
+    }
+  }
+
   function updateUnit(u, dt) {
     const def = u.def;
+    spinRotor(u, dt);
     if (u.target && u.target.dead) u.target = null;
     if (u.forced && u.forced.dead) u.forced = null;
+
+    // ── ремонтник: чинит соседнюю технику и постройки, сам не стреляет
+    if (def.repair) {
+      updateEngineer(u, dt);
+      return;
+    }
 
     // ── сборщик
     if (def.id === 'worker') {
@@ -1134,11 +1195,15 @@ export function createGroundBattle(ctx, config) {
       const b = prod[0];
       for (const id of b.def.produces) {
         const def = unitDef(b.faction.id, id);
+        // Закрытую технику показываем серой: видно, ради чего копить науку
+        const locked = (def.tier || 1) > sides.me.tech;
         const btn = document.createElement('button');
-        btn.className = 'act';
-        btn.innerHTML = `<b>${def.name}</b><small>${def.cost} кр · ${def.build} с</small>`;
-        btn.disabled = sides.me.credits < def.cost;
-        btn.onclick = () => { if (enqueue(b, id)) refreshSel(); };
+        btn.className = 'act' + (locked ? ' locked' : '');
+        btn.innerHTML = `<b>${def.name}</b><small>${locked
+          ? `нужен ${def.tier}-й уровень технологий`
+          : `${def.cost} кр · ${def.build} с`}</small>`;
+        btn.disabled = locked || sides.me.credits < def.cost;
+        btn.onclick = () => { if (!locked && enqueue(b, id)) refreshSel(); };
         acts.appendChild(btn);
       }
       if (b.queue.length) {
@@ -1255,6 +1320,15 @@ export function createGroundBattle(ctx, config) {
   tcam.focus(myHQ.pos.clone());
   tcam.apply(1, true);
 
+  // Состояние наружу — по нему автотесты проверяют юнитов и ремонт.
+  // На игру не влияет, читать можно из консоли.
+  if (typeof window !== 'undefined') {
+    window.__gr = state;
+    state.spawnTest = (id, x, z, side = 'me') => makeUnit(
+      side, id,
+      x === undefined ? rnd(-60, 60) : x,
+      z === undefined ? rnd(-60, 60) : z);
+  }
   return { scene, camera: tcam.cam, update, dispose, state };
 }
 

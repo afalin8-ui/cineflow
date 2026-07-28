@@ -14,6 +14,7 @@ import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
+  TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -50,13 +51,17 @@ export function newCampaign(playerFaction) {
   ];
 
   const credits = {};
-  for (const f of FACTION_IDS) credits[f] = 2200;
+  const research = {};
+  const tech = {};
+  for (const f of FACTION_IDS) { credits[f] = 2200; research[f] = 0; tech[f] = 1; }
 
   return {
-    version: 1,
+    version: 2,
     playerFaction,
     turn: 1,
     credits,
+    research,          // накопленные очки науки, тратятся на уровень
+    tech,              // уровень технологий клана, 1..MAX_TECH
     systems,
     log: [{ turn: 1, text: 'Флот клана Тройден уходит с Клото. Приказ — закрепиться и вернуть родной мир.' }],
   };
@@ -99,6 +104,34 @@ export function incomeOf(camp, faction) {
     if (st.buildings.includes('mine')) sum += 120;
   }
   return sum;
+}
+
+/* Наука. В отличие от кредитов её дают только научные центры —
+   планета сама по себе почти ничего не приносит. Поэтому расширение
+   кормит флот, а вкладываться в технологии приходится отдельно. */
+export function researchOf(camp, faction) {
+  let labs = 0;
+  for (const def of GALAXY_MAP.systems) {
+    const st = camp.systems[def.id];
+    if (st.owner === faction && st.buildings.includes('lab')) labs++;
+  }
+  return labs ? labs * RESEARCH_PER_LAB + RESEARCH_BASE : RESEARCH_BASE;
+}
+
+export function techOf(camp, faction) {
+  return (camp.tech && camp.tech[faction]) || 1;
+}
+
+// Сколько науки до следующего уровня. null — дальше некуда
+export function nextTechCost(camp, faction) {
+  const lvl = techOf(camp, faction);
+  return lvl >= MAX_TECH ? null : TECH_LEVELS[lvl].cost;
+}
+
+/* Доступна ли техника уровня tier. Старые сохранения без поля tech
+   считаем первым уровнем, а технику без поля tier — доступной всегда. */
+export function techAllows(camp, faction, tier) {
+  return !tier || tier <= techOf(camp, faction);
 }
 
 export function ownedCount(camp, faction) {
@@ -196,6 +229,9 @@ export function createGalaxy(ctx, camp) {
       <div class="res">
         <span class="credits" data-role="credits">0</span><small data-role="income"></small>
       </div>
+      <div class="res science">
+        <span class="sci" data-role="science">0</span><small data-role="sciflow"></small>
+      </div>
       <div class="title">Система Капелла · ход <span data-role="turn">1</span></div>
       <div class="speedctl">
         <button data-role="neuro">Нейроинтерфейс</button>
@@ -265,6 +301,60 @@ export function createGalaxy(ctx, camp) {
     }
   }
 
+  /* ── ТЕХНОЛОГИИ.
+     Живут не на планете, а у клана целиком, поэтому блок показываем,
+     когда ни один мир не выбран: это «общий экран развития». */
+  function techBlock() {
+    const my = camp.playerFaction;
+    const lvl = techOf(camp, my);
+    const box = document.createElement('div');
+    box.className = 'gp-block tech-block';
+
+    const cost = nextTechCost(camp, my);
+    const have = Math.floor(camp.research[my] || 0);
+    const cur = TECH_LEVELS[lvl - 1];
+
+    let html = `<h4>Технологии · уровень ${lvl} из ${MAX_TECH}</h4>`;
+    html += `<div class="tech-now"><b>${cur.name}</b><br><small>${cur.unlocks}</small></div>`;
+    html += `<div class="gp-line">Наука: ${have}${cost !== null ? ` из ${cost}` : ''} ·
+             +${researchOf(camp, my)} за ход</div>`;
+
+    if (cost !== null) {
+      const next = TECH_LEVELS[lvl];
+      const pct = Math.min(100, Math.round(have / cost * 100));
+      html += `<div class="tech-bar"><i style="width:${pct}%"></i></div>`;
+      html += `<div class="tech-next"><b>Дальше: ${next.name}</b><br>
+               <small>${next.unlocks}</small></div>`;
+    } else {
+      html += '<div class="tech-next"><b>Всё изучено</b></div>';
+    }
+    box.innerHTML = html;
+
+    if (cost !== null) {
+      const b = document.createElement('button');
+      b.className = 'act';
+      const enough = have >= cost;
+      b.innerHTML = `<b>Изучить: ${TECH_LEVELS[lvl].name}</b><small>${
+        enough ? `${cost} очков науки` : `не хватает ${cost - have} очков`}</small>`;
+      b.disabled = !enough;
+      b.onclick = () => {
+        if (camp.research[my] < cost) return;
+        camp.research[my] -= cost;
+        camp.tech[my] = lvl + 1;
+        logLine(`Изучен ${lvl + 1}-й уровень технологий: ${TECH_LEVELS[lvl].name}.`);
+        refreshAll();
+      };
+      box.appendChild(b);
+    }
+
+    const hint = document.createElement('div');
+    hint.className = 'act-note';
+    hint.textContent = 'Науку дают только научные центры на своих планетах. ' +
+      'Кредиты — сами планеты и рудники на них.';
+    box.appendChild(hint);
+    return box;
+  }
+
   // ── панель мира
   function renderPanel() {
     const panel = $('panel');
@@ -274,6 +364,7 @@ export function createGalaxy(ctx, camp) {
         <h3>Система Капелла</h3>
         <p>Выбери мир, чтобы посмотреть его состояние. Свои миры строят и
         снаряжают флот, чужие — берут штурмом.</p></div>`;
+      panel.appendChild(techBlock());
       return;
     }
     const def = GALAXY_MAP.systems.find(s => s.id === id);
@@ -318,7 +409,7 @@ export function createGalaxy(ctx, camp) {
 
     if (mine) {
       // постройки
-      for (const key of ['mine', 'shipyard', 'garrison', 'station']) {
+      for (const key of ['mine', 'lab', 'shipyard', 'garrison', 'station']) {
         if (st.buildings.includes(key)) continue;
         const p = PLANET_BUILDINGS[key];
         const noSlot = st.buildings.length >= def.slots;
@@ -337,13 +428,19 @@ export function createGalaxy(ctx, camp) {
         sep.textContent = 'Верфь';
         actions.appendChild(sep);
         for (const d of SHIPS[my]) {
-          btn(d.name, `${d.cost} кр · ${d.role}`, () => {
-            if (camp.credits[my] < d.cost) return;
+          // Не открытые технологиями корабли показываем, но серыми —
+          // так видно, ради чего копить науку
+          const locked = !techAllows(camp, my, d.tier);
+          const sub = locked
+            ? `нужен ${d.tier}-й уровень технологий`
+            : `${d.cost} кр · ${d.role}`;
+          btn(d.name, sub, () => {
+            if (locked || camp.credits[my] < d.cost) return;
             camp.credits[my] -= d.cost;
             const cur = st.fleet.find(x => x.id === d.id);
             if (cur) cur.count++; else st.fleet.push({ id: d.id, count: 1 });
             refreshAll();
-          }, camp.credits[my] < d.cost);
+          }, locked || camp.credits[my] < d.cost, locked ? 'locked' : '');
         }
       }
       if (st.buildings.includes('garrison')) {
@@ -387,8 +484,14 @@ export function createGalaxy(ctx, camp) {
   function refreshAll() {
     refreshMap();
     renderPanel();
-    $('credits').textContent = Math.floor(camp.credits[camp.playerFaction]);
-    $('income').textContent = `+${incomeOf(camp, camp.playerFaction)} за ход`;
+    const my = camp.playerFaction;
+    $('credits').textContent = Math.floor(camp.credits[my]);
+    $('income').textContent = `+${incomeOf(camp, my)} за ход`;
+    $('science').textContent = Math.floor(camp.research[my] || 0);
+    const nc = nextTechCost(camp, my);
+    $('sciflow').textContent = nc === null
+      ? `+${researchOf(camp, my)} · всё изучено`
+      : `+${researchOf(camp, my)} · ур. ${techOf(camp, my)} из ${MAX_TECH}`;
     $('turn').textContent = camp.turn;
     $('score').innerHTML = FACTION_IDS.map(f => {
       const n = ownedCount(camp, f);
@@ -548,10 +651,14 @@ export function createGalaxy(ctx, camp) {
     m.querySelector('[data-a="fight"]').onclick = () => {
       close();
       ctx.startGroundBattle({
-        player: { faction: camp.playerFaction, regiments: from.regiments, credits: 3000 },
+        player: {
+          faction: camp.playerFaction, regiments: from.regiments, credits: 3000,
+          tech: techOf(camp, camp.playerFaction),
+        },
         enemy: {
           faction: to.owner, regiments: to.regiments, credits: 3000,
           turrets: to.buildings.includes('garrison'),
+          tech: techOf(camp, to.owner),
         },
         biome: toDef.biome,
         title: `Наземная операция · ${toDef.name}`,
@@ -564,8 +671,11 @@ export function createGalaxy(ctx, camp) {
   function endTurn() {
     if (state.busy) return;
     const my = camp.playerFaction;
-    // доход всем
-    for (const f of FACTION_IDS) camp.credits[f] += incomeOf(camp, f);
+    // доход и наука всем
+    for (const f of FACTION_IDS) {
+      camp.credits[f] += incomeOf(camp, f);
+      camp.research[f] = (camp.research[f] || 0) + researchOf(camp, f);
+    }
 
     for (const f of FACTION_IDS) {
       if (f === my) continue;
@@ -582,21 +692,30 @@ export function createGalaxy(ctx, camp) {
     const owned = GALAXY_MAP.systems.filter(s => camp.systems[s.id].owner === f);
     if (!owned.length) return;
 
-    // 1. Строим
+    // 1. Строим. Научный центр ставим сразу после рудника: без него
+    //    ИИ навсегда застрянет на корветах, пока игрок водит флагманы
     for (const def of owned) {
       const st = camp.systems[def.id];
       if (st.buildings.length >= def.slots) continue;
-      const wish = ['shipyard', 'garrison', 'mine', 'station'].find(b => !st.buildings.includes(b));
+      const wish = ['shipyard', 'garrison', 'mine', 'lab', 'station']
+        .find(b => !st.buildings.includes(b));
       if (!wish) continue;
       const cost = PLANET_BUILDINGS[wish].cost;
       if (camp.credits[f] >= cost) { camp.credits[f] -= cost; st.buildings.push(wish); }
+    }
+    // 1б. Копится наука — сразу поднимаем уровень
+    for (;;) {
+      const cost = nextTechCost(camp, f);
+      if (cost === null || (camp.research[f] || 0) < cost) break;
+      camp.research[f] -= cost;
+      camp.tech[f] = techOf(camp, f) + 1;
     }
     // 2. Клепаем корабли и полки на верфях
     for (const def of owned) {
       const st = camp.systems[def.id];
       if (st.buildings.includes('shipyard')) {
-        const list = SHIPS[f];
-        for (let i = 0; i < 3; i++) {
+        const list = SHIPS[f].filter(d => techAllows(camp, f, d.tier));
+        for (let i = 0; i < 3 && list.length; i++) {
           const d = list[Math.floor(rnd(0, list.length))];
           if (camp.credits[f] < d.cost) break;
           camp.credits[f] -= d.cost;

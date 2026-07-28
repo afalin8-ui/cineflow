@@ -529,6 +529,110 @@ export function buildGroundUnit(def, faction) {
       muzzles.push(new THREE.Vector3(0, -0.4, -2.0));
       break;
     }
+    case 'scout': {
+      // Лёгкая разведмашина: маленькая, на колёсах, с тарелкой и антенной
+      g.add(box(1.9, 0.8, 3.4, body, 0, 0.95, 0));
+      g.add(box(1.5, 0.7, 1.3, dark, 0, 1.6, -0.4));
+      g.add(box(1.7, 0.16, 0.4, trim, 0, 1.35, 1.5));
+      g.add(cyl(0.05, 2.6, dark, 0.7, 2.3, 0.9));                 // антенна
+      const dish = cyl(0.62, 0.12, trim, -0.55, 2.1, 0.5);
+      dish.rotation.z = 0.5;
+      g.add(dish);
+      g.add(box(0.1, 0.1, 0.9, dark, 0, 1.9, -1.1));              // пулемёт
+      wheels(g, dark, 1.05, 0.5, [-1.1, 1.1]);
+      muzzles.push(new THREE.Vector3(0, 1.9, -1.7));
+      break;
+    }
+    case 'ifv': {
+      // БМП: корпус ниже танкового, башенка с автопушкой
+      g.add(box(2.6, 0.9, 4.6, body, 0, 0.95, 0));
+      g.add(box(2.9, 0.6, 4.2, dark, 0, 0.5, 0));
+      g.add(box(2.2, 0.5, 1.4, body, 0, 1.6, 1.2));               // скос кормы
+      const tur = new THREE.Group();
+      tur.add(box(1.4, 0.6, 1.5, body, 0, 0, 0));
+      tur.add(box(0.5, 0.22, 0.6, trim, 0, 0.35, 0.3));
+      tur.add(cyl(0.1, 3.0, dark, 0, 0.1, -1.5).rotateX(Math.PI / 2));
+      tur.position.set(0, 1.7, -0.3);
+      g.add(tur);
+      g.userData.turret = tur;
+      muzzles.push(new THREE.Vector3(0, 1.8, -2.6));
+      wheels(g, dark, 1.35, 0.5, [-1.5, 0, 1.5]);
+      break;
+    }
+    case 'eng': {
+      // Ремонтники: двое с ящиком инструмента, без оружия
+      for (let i = 0; i < 2; i++) {
+        const p = new THREE.Group();
+        p.add(box(0.62, 1.0, 0.44, i === 0 ? trim : body, 0, 0.9, 0));
+        p.add(sph(0.32, dark, 0, 1.65, 0));
+        p.add(box(0.5, 0.36, 0.34, dark, 0.5, 0.75, 0.1));        // ящик
+        p.position.set((i - 0.5) * 1.3, 0, (i % 2) * 0.7 - 0.2);
+        p.rotation.y = rnd(-0.25, 0.25);
+        g.add(p);
+      }
+      g.scale.setScalar(1.15);
+      break;
+    }
+    case 'sniper': {
+      // Один стрелок с длинным стволом — силуэт нарочно тоньше отделения
+      const p = new THREE.Group();
+      p.add(box(0.55, 0.95, 0.4, body, 0, 0.85, 0));
+      p.add(sph(0.3, dark, 0, 1.55, 0));
+      p.add(box(0.1, 0.1, 2.1, dark, 0.26, 1.0, -0.8));
+      p.add(box(0.16, 0.16, 0.3, trim, 0.26, 1.16, -0.5));        // прицел
+      g.add(p);
+      g.scale.setScalar(1.2);
+      muzzles.push(new THREE.Vector3(0.3, 1.2, -1.9));
+      break;
+    }
+    case 'mlrs': {
+      // РСЗО: шасси плюс поворотный пакет направляющих
+      g.add(box(2.8, 1.0, 5.2, body, 0, 1.0, 0));
+      g.add(box(2.4, 0.9, 1.5, dark, 0, 1.9, 1.6));               // кабина
+      const tur = new THREE.Group();
+      for (let r = 0; r < 2; r++) {
+        for (let i = 0; i < 4; i++) {
+          tur.add(cyl(0.2, 3.2, dark, (i - 1.5) * 0.5, r * 0.45, -0.4).rotateX(Math.PI / 2));
+        }
+      }
+      tur.add(box(2.4, 0.22, 0.6, trim, 0, -0.35, 0.9));
+      tur.position.set(0, 1.9, -0.6);
+      tur.rotation.x = -0.32;                                     // задрано в небо
+      g.add(tur);
+      g.userData.turret = tur;
+      muzzles.push(new THREE.Vector3(0, 2.9, -2.4));
+      break;
+    }
+    case 'heli': {
+      // Вертолёт: фюзеляж, несущий винт, хвостовая балка, блоки НУРС
+      g.add(box(1.5, 1.4, 4.6, body, 0, 0, 0));
+      g.add(sph(0.85, dark, 0, 0.1, -1.9));                       // кабина
+      g.add(box(0.5, 0.5, 3.2, body, 0, 0.25, 2.9));              // балка
+      g.add(box(0.16, 1.3, 0.8, body, 0, 0.8, 4.2));              // киль
+      for (const s of [-1, 1]) {
+        g.add(box(0.3, 0.2, 1.6, body, s * 1.1, -0.3, -0.2));     // пилон
+        g.add(cyl(0.34, 1.5, dark, s * 1.5, -0.35, -0.2).rotateX(Math.PI / 2));
+      }
+      const rotor = new THREE.Group();
+      rotor.add(cyl(0.16, 0.5, dark, 0, 0, 0));
+      for (let i = 0; i < 4; i++) {
+        const b = box(0.22, 0.06, 6.4, dark, 0, 0.25, 0);
+        b.rotation.y = (i / 4) * Math.PI * 2;
+        rotor.add(b);
+      }
+      rotor.position.set(0, 1.0, -0.2);
+      g.add(rotor);
+      g.userData.rotor = rotor;
+      const tail = cyl(0.05, 1.6, dark, 0.2, 0.9, 4.2);
+      tail.rotation.z = Math.PI / 2;
+      g.add(tail);
+      const e = glowSprite(1.3, 0xff8a3a);
+      e.position.set(0, 0.4, 1.9);
+      g.add(e);
+      g.userData.engines = [e];
+      muzzles.push(new THREE.Vector3(0, -0.35, -1.6));
+      break;
+    }
     default:
       g.add(box(2, 2, 2, body, 0, 1, 0));
   }
@@ -1031,7 +1135,10 @@ const GEO_MID = sphereGeo(48);
 const GEO_LO = sphereGeo(24);
 
 export function buildPlanet(biome, radius, seed, id) {
-  const tex = planetTextures(biome, seed === undefined ? 1 : seed, id || null);
+  // Крупная развёртка только той планете, что во весь экран в бою;
+  // мирам на карте системы хватает мелкой, и экран не подвисает
+  const tex = planetTextures(biome, seed === undefined ? 1 : seed, id || null,
+    radius > 400 ? 2 : radius > 20 ? 1 : 0);
   const g = new THREE.Group();
   const geo = radius > 400 ? GEO_HI : radius > 40 ? GEO_MID : GEO_LO;
 

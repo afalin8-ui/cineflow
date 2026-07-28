@@ -3,7 +3,7 @@
    Задача простая: игра целиком лежит рядом (three.js вшит в vendor/),
    так что после первого запуска она работает без интернета. */
 
-const VERSION = 'capella-v3';
+const VERSION = 'capella-v4';
 const CACHE = VERSION;
 
 const SHELL = [

@@ -127,6 +127,13 @@ select {
   font-family: var(--mono); font-size: 22px; color: var(--accent); font-weight: 600;
 }
 .res small { font-size: 11px; color: var(--muted); }
+/* Наука — вторая валюта, но не главная: цифра мельче кредитов
+   и другого цвета, чтобы шапка не превращалась в две одинаковые. */
+.res.science { margin-left: 14px; }
+.res .sci {
+  font-family: var(--mono); font-size: 17px; color: #8fd0ff; font-weight: 600;
+}
+.res .sci::after { content: ' ☉'; font-size: 11px; opacity: 0.7; }
 
 .speedctl { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .speedctl button { min-width: 48px; padding: 10px 12px; font-family: var(--mono); }
@@ -189,6 +196,9 @@ button.act {
 }
 button.act b { font-size: 13px; font-weight: 600; }
 button.act small { font-size: 10.5px; color: var(--muted); line-height: 1.3; }
+/* Не открытая технологиями техника: видно, что она есть, но не сейчас */
+button.act.locked { opacity: 0.45; border-style: dashed; }
+button.act.locked small { color: #8fd0ff; }
 .act-note {
   font-size: 11px; color: var(--muted); align-self: center;
   background: var(--panel-2); border: 1px solid var(--line-soft);
@@ -288,6 +298,27 @@ button.act small { font-size: 10.5px; color: var(--muted); line-height: 1.3; }
   border-top: 1px solid var(--line-soft);
 }
 .gp-actions .act-note { max-width: none; }
+
+/* Экран развития: текущий уровень, полоса накопления и что дальше */
+.tech-block {
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.tech-block .act { width: 100%; max-width: none; min-width: 0; margin-top: 10px; }
+.tech-block .act-note { max-width: none; margin-top: 8px; }
+.tech-now, .tech-next {
+  font-size: 12.5px; line-height: 1.45; color: var(--text-2);
+  background: var(--panel-2); border: 1px solid var(--line-soft);
+  border-radius: 8px; padding: 8px 10px; margin: 6px 0;
+}
+.tech-now b { color: var(--text); }
+.tech-next b { color: #8fd0ff; }
+.tech-now small, .tech-next small { color: var(--muted); font-size: 11.5px; }
+.tech-bar {
+  height: 6px; border-radius: 3px; background: var(--panel-2);
+  border: 1px solid var(--line-soft); overflow: hidden; margin: 8px 0 4px;
+}
+.tech-bar i { display: block; height: 100%; background: #8fd0ff; }
 
 /* ─────────── экраны меню ─────────── */
 
