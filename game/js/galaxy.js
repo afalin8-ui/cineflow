@@ -9,7 +9,7 @@ import {
   THREE, TacticalCamera, Controls, Fx, starfield, screenOf,
   clamp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
-import { buildPlanet } from './models.js';
+import { buildPlanet, buildNebula } from './models.js';
 import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
@@ -34,14 +34,19 @@ export function newCampaign(playerFaction) {
     st.owner = s.start;
     st.buildings = ['shipyard', 'garrison', 'mine'];
     st.regiments = 4;
-    st.fleet = [{ id: 'escort', count: 3 }, { id: 'cruiser', count: 1 }, { id: 'carrier', count: 1 }];
+    st.fleet = [
+      { id: 'corvette', count: 2 }, { id: 'frigate', count: 2 },
+      { id: 'destroyer', count: 1 }, { id: 'cruiser', count: 1 }, { id: 'carrier', count: 1 },
+    ];
     if (s.station) st.buildings.push('station');
   }
   // Клото — родина Тройден, но её держит Девиан: с неё и начинается война
   systems.klotho.owner = 'devian';
   systems.klotho.buildings = ['garrison', 'mine'];
   systems.klotho.regiments = 5;
-  systems.klotho.fleet = [{ id: 'escort', count: 2 }, { id: 'cruiser', count: 1 }];
+  systems.klotho.fleet = [
+    { id: 'corvette', count: 2 }, { id: 'frigate', count: 1 }, { id: 'cruiser', count: 1 },
+  ];
 
   const credits = {};
   for (const f of FACTION_IDS) credits[f] = 2200;
@@ -125,16 +130,19 @@ export function createGalaxy(ctx, camp) {
   const star = new THREE.PointLight(0xffd9a0, 2.6, 700, 1.4);
   star.position.set(0, 40, -20);
   scene.add(star);
-  scene.add(starfield(2200, 1800));
+  scene.add(buildNebula(2600, 7));
+  scene.add(starfield(2600, 1500));
 
+  viewport.setBloom({ strength: 0.7, radius: 0.6, threshold: 0.7, exposure: 1.0 });
   const fx = new Fx(scene);
+  fx.setCamera(tcam.cam);
 
   // ── узлы карты
   const nodes = {};
   const SCALE = 1.6;
   for (const def of GALAXY_MAP.systems) {
     const radius = 3.0 + def.slots * 0.45;
-    const g = buildPlanet(def.biome, radius);
+    const g = buildPlanet(def.biome, radius, 1);
     g.position.set(def.pos[0] * SCALE * 0.55, def.pos[1] * SCALE * 0.42, def.pos[2] * SCALE * 0.55);
     scene.add(g);
 

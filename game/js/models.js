@@ -7,6 +7,7 @@
 
 import { THREE, rnd, GLOW_TEX } from './engine.js';
 import { customModel } from './assets.js';
+import { planetTextures, nebulaTexture } from './textures.js';
 
 const matCache = new Map();
 function mat(color, opts = {}) {
@@ -559,50 +560,96 @@ export function buildSupplyField() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// ПЛАНЕТЫ (галактическая карта)
+// ПЛАНЕТЫ
+// Поверхность, облака и атмосферный ободок. Текстуры процедурные
+// (textures.js), считаются один раз на биом и кладутся в кэш.
 // ─────────────────────────────────────────────────────────────
 
-const PLANET_GEO = new THREE.SphereGeometry(1, 28, 20);
-PLANET_GEO.userData.shared = true;
+const ATMO_VERT = `
+varying vec3 vN; varying vec3 vP;
+void main() {
+  vN = normalize(normalMatrix * normal);
+  vP = (modelViewMatrix * vec4(position, 1.0)).xyz;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
 
-export function buildPlanet(biome, radius) {
-  const colors = {
-    city:   [0x4b5560, 0x76839a],
-    green:  [0x3f6b46, 0x6f9a5c],
-    rock:   [0x6b5744, 0x8a7358],
-    ice:    [0x8fa8b8, 0xd6e6ef],
-    desert: [0xa08858, 0xc8ab72],
-  }[biome] || [0x66707a, 0x8a95a0];
+const ATMO_FRAG = `
+uniform vec3 uColor; uniform float uPower;
+varying vec3 vN; varying vec3 vP;
+void main() {
+  // Чем острее угол взгляда к поверхности, тем ярче ободок —
+  // так атмосфера светится по краю диска, как на снимках.
+  float f = 1.0 - abs(dot(normalize(vN), normalize(-vP)));
+  f = pow(clamp(f, 0.0, 1.0), 3.2);
+  gl_FragColor = vec4(uColor, f * uPower);
+}`;
 
+function sphereGeo(segments) {
+  const g = new THREE.SphereGeometry(1, segments, Math.round(segments / 2));
+  g.userData.shared = true;
+  return g;
+}
+const GEO_HI = sphereGeo(64);
+const GEO_MID = sphereGeo(40);
+const GEO_LO = sphereGeo(24);
+
+export function buildPlanet(biome, radius, seed) {
+  const tex = planetTextures(biome, seed === undefined ? 1 : seed);
   const g = new THREE.Group();
+  const geo = radius > 400 ? GEO_HI : radius > 40 ? GEO_MID : GEO_LO;
+
   const surface = new THREE.MeshStandardMaterial({
-    color: colors[0], roughness: 0.95, metalness: 0.05, flatShading: true,
+    map: tex.map,
+    normalMap: tex.normalMap,
+    normalScale: new THREE.Vector2(0.9, 0.9),
+    emissiveMap: tex.emissiveMap || null,
+    emissive: tex.emissiveMap ? 0xffffff : 0x000000,
+    emissiveIntensity: tex.emissiveMap ? 1.1 : 0,
+    roughness: 0.92, metalness: 0.02,
   });
-  const sphere = new THREE.Mesh(PLANET_GEO, surface);
+  const sphere = new THREE.Mesh(geo, surface);
   sphere.scale.setScalar(radius);
   g.add(sphere);
 
-  // «Континенты» — несколько плоских пятен на поверхности
-  const patch = new THREE.MeshStandardMaterial({ color: colors[1], roughness: 0.9, flatShading: true });
-  for (let i = 0; i < 6; i++) {
-    const p = new THREE.Mesh(PLANET_GEO, patch);
-    const s = radius * rnd(0.25, 0.5);
-    p.scale.set(s, s * 0.35, s);
-    const u = rnd(-1, 1), a = rnd(0, Math.PI * 2), k = Math.sqrt(1 - u * u);
-    p.position.set(Math.cos(a) * k, u, Math.sin(a) * k).multiplyScalar(radius * 0.94);
-    p.lookAt(0, 0, 0);
-    p.rotateX(Math.PI / 2);
-    g.add(p);
-  }
-  // Атмосфера
-  const atmo = new THREE.Mesh(PLANET_GEO, new THREE.MeshBasicMaterial({
-    color: biome === 'ice' ? 0x9fd0ff : biome === 'desert' ? 0xffcf90 : 0x8fc4ff,
-    transparent: true, opacity: 0.13, side: THREE.BackSide, depthWrite: false, toneMapped: false,
+  // Облака отдельной оболочкой — они и вращаются отдельно
+  const clouds = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: tex.cloudMap, transparent: true, opacity: 0.85,
+    roughness: 1, metalness: 0, depthWrite: false,
   }));
-  atmo.scale.setScalar(radius * 1.12);
+  clouds.scale.setScalar(radius * 1.013);
+  g.add(clouds);
+
+  const atmo = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(tex.atmo) },
+      uPower: { value: tex.atmoPower * 6.5 },
+    },
+    vertexShader: ATMO_VERT, fragmentShader: ATMO_FRAG,
+    side: THREE.BackSide, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  atmo.scale.setScalar(radius * 1.09);
   g.add(atmo);
+
   g.userData.sphere = sphere;
+  g.userData.clouds = clouds;
   return g;
+}
+
+// Фон космоса: туманность на дальней сфере. Ставится в scene.background
+// нельзя — там нужен куб, поэтому это просто очень большая сфера.
+export function buildNebula(radius = 5200, seed = 11) {
+  // toneMapped обязателен: иначе яркие точки фона проскакивают мимо
+  // тональной компрессии и свечение превращает их в белые пятна.
+  const m = new THREE.MeshBasicMaterial({
+    map: nebulaTexture(seed), side: THREE.BackSide,
+    depthWrite: false, toneMapped: true, fog: false,
+  });
+  const mesh = new THREE.Mesh(GEO_MID, m);
+  mesh.scale.setScalar(radius);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -1000;
+  return mesh;
 }
 
 export { mat, glowMat, glowSprite, box, cyl, cone, sph };

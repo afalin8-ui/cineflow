@@ -3,7 +3,7 @@
    Задача простая: игра целиком лежит рядом (three.js вшит в vendor/),
    так что после первого запуска она работает без интернета. */
 
-const VERSION = 'capella-v1';
+const VERSION = 'capella-v2';
 const CACHE = VERSION;
 
 const SHELL = [
@@ -15,8 +15,20 @@ const SHELL = [
   './vendor/three.module.min.js',
   './vendor/GLTFLoader.js',
   './vendor/BufferGeometryUtils.js',
+  './vendor/EffectComposer.js',
+  './vendor/Pass.js',
+  './vendor/RenderPass.js',
+  './vendor/ShaderPass.js',
+  './vendor/MaskPass.js',
+  './vendor/UnrealBloomPass.js',
+  './vendor/OutputPass.js',
+  './vendor/CopyShader.js',
+  './vendor/LuminosityHighPassShader.js',
+  './vendor/OutputShader.js',
   './js/main.js',
   './js/assets.js',
+  './js/noise.js',
+  './js/textures.js',
   './js/engine.js',
   './js/data.js',
   './js/models.js',

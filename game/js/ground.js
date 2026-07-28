@@ -14,8 +14,10 @@ import {
   clamp, lerp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
 import { buildGroundUnit, buildStructure, buildSupplyField, mat } from './models.js';
+import { Noise, seedFrom } from './noise.js';
 import {
-  FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, dmgMult, unitDef,
+  FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
+  dmgMult, unitDef,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -24,16 +26,53 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const UPV = new THREE.Vector3(0, 1, 0);
 
+/* КАРТА ВЫСОТ.
+   Складываем несколько слоёв шума: крупные складки задают общий
+   рельеф, хребтовый шум добавляет гряды, мелкий — неровности почвы.
+   Площадки под базы принудительно выравниваются, иначе штаб уезжает
+   в овраг, а сборщики застревают на склоне. */
+
+const HEIGHT_SCALE = 36;      // перепад высот от низины до гребня
+let heightNoise = null;
+let flatSpots = [];           // {x, z, r, h} — выровненные площадки
+
+export function makeHeightField(seed) {
+  heightNoise = { a: new Noise(seed), b: new Noise(seed + 8123), c: new Noise(seed + 55) };
+  flatSpots = [];
+}
+
+export function addFlatSpot(x, z, r) {
+  flatSpots.push({ x, z, r, h: rawHeight(x, z) });
+}
+
+function rawHeight(x, z) {
+  if (!heightNoise) return 0;
+  const s = 0.0045;
+  const base = heightNoise.a.fbm2(x * s, z * s, 5) * 0.5 + 0.5;      // 0..1 складки
+  const ridge = heightNoise.b.ridged2(x * s * 2.1, z * s * 2.1, 4);   // гряды
+  const grain = heightNoise.c.fbm2(x * s * 9, z * s * 9, 3) * 0.5;    // шероховатость
+  // Гряды проявляются только на возвышенностях — в низинах остаются поля
+  const h = base * 0.70 + ridge * base * 0.72 + grain * 0.10;
+  return (h - 0.45) * HEIGHT_SCALE;
+}
+
 export function terrainH(x, z) {
-  return Math.sin(x * 0.021) * Math.cos(z * 0.019) * 9
-       + Math.sin((x + z) * 0.013) * 6
-       + Math.cos(x * 0.043) * Math.sin(z * 0.037) * 3
-       + Math.sin(x * 0.008) * Math.sin(z * 0.009) * 5;
+  let h = rawHeight(x, z);
+  for (const f of flatSpots) {
+    const d = Math.hypot(x - f.x, z - f.z);
+    if (d >= f.r) continue;
+    // плавный переход от площадки к рельефу, без ступеньки по краю
+    const k = 1 - (d / f.r) * (d / f.r);
+    h += (f.h - h) * k;
+  }
+  return h;
 }
 
 export function createGroundBattle(ctx, config) {
   const { viewport, hudRoot } = ctx;
   const biome = BIOME_COLORS[config.biome] || BIOME_COLORS.rock;
+  const seed = seedFrom(config.seed || config.title || 'капелла');
+  makeHeightField(seed);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(biome.sky);
@@ -44,28 +83,50 @@ export function createGroundBattle(ctx, config) {
     bounds: { x: MAP - 20, z: MAP - 20 }, far: 2600,
   });
 
-  scene.add(new THREE.AmbientLight(0x8a94a8, 0.95));
-  const sun = new THREE.DirectionalLight(0xfff0d8, 3.1);
-  sun.position.set(180, 210, 120);
+  // Ровные площадки: базы и поля снабжения. Задаём до построения меша
+  const BX0 = MAP * 0.62;
+  addFlatSpot(-BX0, BX0, 78);
+  addFlatSpot(BX0, -BX0, 78);
+  const FIELD_SPOTS = [
+    [-0.66, 0.48], [-0.40, 0.79], [0.66, -0.48], [0.40, -0.79],
+    [-0.17, -0.25], [0.17, 0.25], [-0.79, -0.32], [0.79, 0.32],
+  ].map(([fx, fz]) => [fx * MAP, fz * MAP]);
+  for (const [fx, fz] of FIELD_SPOTS) addFlatSpot(fx, fz, 26);
+
+  scene.add(new THREE.AmbientLight(0x93a0b4, 1.35));
+  const sun = new THREE.DirectionalLight(0xfff2dc, 3.6);
+  sun.position.set(210, 190, 130);
   scene.add(sun);
   const bounce = new THREE.DirectionalLight(0x6a7a90, 0.6);
   bounce.position.set(-160, 80, -140);
   scene.add(bounce);
 
   // ── ЛАНДШАФТ ─────────────────────────────────────────────
-  const segs = IS_TOUCH ? 64 : 96;
+  const segs = IS_TOUCH ? 140 : 200;
   const tGeo = new THREE.PlaneGeometry(TERRAIN * 2, TERRAIN * 2, segs, segs);
   tGeo.rotateX(-Math.PI / 2);
   const posAttr = tGeo.attributes.position;
   const colors = new Float32Array(posAttr.count * 3);
-  const cA = new THREE.Color(biome.ground), cB = new THREE.Color(biome.accent);
+  const cLow = new THREE.Color(biome.ground);
+  const cHigh = new THREE.Color(biome.accent);
+  const cRock = new THREE.Color(biome.rock || 0x6a5f52);
   const tmpC = new THREE.Color();
+  const step = (TERRAIN * 2) / segs;
   for (let i = 0; i < posAttr.count; i++) {
     const x = posAttr.getX(i), z = posAttr.getZ(i);
     const h = terrainH(x, z);
     posAttr.setY(i, h);
-    tmpC.copy(cA).lerp(cB, clamp((h + 14) / 28, 0, 1) * 0.85 + Math.random() * 0.15);
-    colors[i * 3] = tmpC.r; colors[i * 3 + 1] = tmpC.g; colors[i * 3 + 2] = tmpC.b;
+    // уклон: крутые склоны — голый камень, пологие — грунт
+    const dx = (terrainH(x + step, z) - terrainH(x - step, z)) / (2 * step);
+    const dz = (terrainH(x, z + step) - terrainH(x, z - step)) / (2 * step);
+    const slope = Math.min(1, Math.hypot(dx, dz) * 2.6);
+    const alt = clamp((h + HEIGHT_SCALE * 0.45) / HEIGHT_SCALE, 0, 1);
+    tmpC.copy(cLow).lerp(cHigh, Math.pow(alt, 1.4));
+    tmpC.lerp(cRock, Math.pow(slope, 0.8) * 0.9);
+    const jitter = 0.94 + Math.random() * 0.12;
+    colors[i * 3] = tmpC.r * jitter;
+    colors[i * 3 + 1] = tmpC.g * jitter;
+    colors[i * 3 + 2] = tmpC.b * jitter;
   }
   tGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   tGeo.computeVertexNormals();
@@ -73,6 +134,7 @@ export function createGroundBattle(ctx, config) {
     vertexColors: true, roughness: 1, metalness: 0, flatShading: true,
   }));
   scene.add(terrain);
+  viewport.setBloom({ strength: 0.34, radius: 0.5, threshold: 0.84, exposure: 1.18 });
 
   // камни для масштаба
   const rockMat = mat(biome.accent, { rough: 1, metal: 0 });
@@ -91,6 +153,7 @@ export function createGroundBattle(ctx, config) {
   }
 
   const fx = new Fx(scene);
+  fx.setCamera(tcam.cam);
 
   // ── СОСТОЯНИЕ ────────────────────────────────────────────
   const state = {
@@ -107,11 +170,7 @@ export function createGroundBattle(ctx, config) {
   let uid = 1;
 
   // ── ПОЛЯ СНАБЖЕНИЯ ───────────────────────────────────────
-  const fieldSpots = [
-    [-0.66, 0.48], [-0.40, 0.79], [0.66, -0.48], [0.40, -0.79],
-    [-0.17, -0.25], [0.17, 0.25], [-0.79, -0.32], [0.79, 0.32],
-  ].map(([fx, fz]) => [fx * MAP, fz * MAP]);
-  for (const [x, z] of fieldSpots) {
+  for (const [x, z] of FIELD_SPOTS) {
     const obj = buildSupplyField();
     obj.position.set(x, terrainH(x, z), z);
     scene.add(obj);
@@ -158,6 +217,7 @@ export function createGroundBattle(ctx, config) {
       heading: rnd(0, 6.28), turretAngle: 0,
       ammo: def.ammo || 0, rearm: 0, phase: 'idle',
       carry: 0, field: null, homeBase: null,
+      stealth: !!def.stealth, revealUntil: 0, exposed: false,
     };
     obj.userData.entity = u;
     obj.rotation.y = u.heading;
@@ -184,7 +244,7 @@ export function createGroundBattle(ctx, config) {
     }
     return hq;
   }
-  const BX = MAP * 0.62;
+  const BX = BX0;
   const myHQ = setupBase('me', -BX, BX, config.player.regiments ?? 3);
   const foeHQ = setupBase('foe', BX, -BX, config.enemy.regiments ?? 3);
   if (config.enemy.turrets) {
@@ -222,6 +282,35 @@ export function createGroundBattle(ctx, config) {
     state.selection = state.selection.filter(s => s !== e);
   }
 
+  // ── СКРЫТНОСТЬ ───────────────────────────────────────────
+  // Техника Девиана не видна, пока не откроет огонь; вплотную её
+  // вскрывают любые войска, а дальше всех видят ЗСУ и зенитки.
+
+  function hiddenU(u) {
+    return !!u.stealth && state.time >= u.revealUntil && !u.exposed;
+  }
+  function revealU(u) {
+    if (u.stealth) u.revealUntil = state.time + STEALTH.revealFor;
+  }
+  function updateExposure() {
+    for (const u of state.units) {
+      if (!u.stealth || u.dead) continue;
+      u.exposed = false;
+      const foe = other(u.side);
+      for (const list of [state.units, state.buildings]) {
+        for (const t of list) {
+          if (t.dead || t.side !== foe) continue;
+          const r = (t.def.id === 'aa' || t.def.id === 'sam')
+            ? STEALTH.groundDetect * 1.8 : STEALTH.groundDetect;
+          if (t.pos.distanceToSquared(u.pos) < r * r) { u.exposed = true; break; }
+        }
+        if (u.exposed) break;
+      }
+      // невидимую технику противника не рисуем вовсе
+      u.obj.visible = !(hiddenU(u) && u.side !== 'me');
+    }
+  }
+
   // ── ПОИСК ────────────────────────────────────────────────
   function nearestEnemy(e, range, needAir) {
     const foe = other(e.side);
@@ -230,6 +319,7 @@ export function createGroundBattle(ctx, config) {
       for (const t of list) {
         if (t.dead || t.side !== foe) continue;
         if (t.air && !needAir) continue;
+        if (t.kind === 'unit' && hiddenU(t)) continue;
         if (dmgMult(GROUND_DMG, e.def.weapon.type, t.cls) <= 0) continue;
         const d = t.pos.distanceToSquared(e.pos);
         if (d < bd) { bd = d; best = t; }
@@ -318,6 +408,7 @@ export function createGroundBattle(ctx, config) {
     e.cd -= dt;
     if (e.cd > 0) return;
     e.cd = w.cd;
+    if (e.kind === 'unit') revealU(e);    // выстрел срывает маскировку
     const from = muzzleOf(e);
     const mine = e.side === state.playerSide;
 
@@ -722,6 +813,7 @@ export function createGroundBattle(ctx, config) {
     for (const s of all) {
       if (s.dead) continue;
       if (s.kind === 'unit' && s.side === 'me' && s.hp >= s.maxHp && !state.selection.includes(s)) continue;
+      if (s.kind === 'unit' && s.side !== 'me' && hiddenU(s)) continue;
       let d = markerPool[i];
       if (!d) {
         d = document.createElement('div');
@@ -773,7 +865,8 @@ export function createGroundBattle(ctx, config) {
   function entityAt(x, y) {
     let ent = controls.pick(x, y);
     if (!ent) {
-      const cands = [...state.units.filter(u => !u.dead), ...state.buildings.filter(b => !b.dead)];
+      const cands = [...state.units.filter(u => !u.dead && !(u.side !== 'me' && hiddenU(u))),
+                     ...state.buildings.filter(b => !b.dead)];
       ent = controls.pickNear(x, y, cands, tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 40 : 20);
     }
     return ent;
@@ -974,6 +1067,7 @@ export function createGroundBattle(ctx, config) {
     const dt = state.paused ? 0 : Math.min(rawDt, 0.05) * state.speed;
     if (dt > 0) {
       state.time += dt;
+      updateExposure();
       updateAI(dt);
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
       for (const u of state.units) if (!u.dead) updateUnit(u, dt);

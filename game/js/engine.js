@@ -10,6 +10,10 @@
             средняя кнопка или Alt — облёт, WASD — двигать карту. */
 
 import * as THREE from '../vendor/three.module.min.js';
+import { EffectComposer } from '../vendor/EffectComposer.js';
+import { RenderPass } from '../vendor/RenderPass.js';
+import { UnrealBloomPass } from '../vendor/UnrealBloomPass.js';
+import { OutputPass } from '../vendor/OutputPass.js';
 
 export { THREE };
 
@@ -36,28 +40,71 @@ export class Viewport {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : 1.75));
     this.renderer.shadowMap.enabled = false;
     this.renderer.setClearColor(0x05070c, 1);
+    // Киношная тональная компрессия: яркое перестаёт «выжигаться» в белое,
+    // а тени не проваливаются. Без неё свечение выглядит дёшево.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
+
     this.w = 1; this.h = 1;
+    this.bloomOn = true;
+    this._buildComposer();
     this.resize();
     addEventListener('resize', () => this.resize());
     addEventListener('orientationchange', () => setTimeout(() => this.resize(), 250));
   }
+
+  _buildComposer() {
+    // Свечение считаем в половинном разрешении — на глаз разницы нет,
+    // а кадров на планшете это экономит заметно.
+    const k = IS_TOUCH ? 0.5 : 0.6;
+    this.composer = new EffectComposer(this.renderer);
+    this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(640 * k, 360 * k), 0.85, 0.55, 0.72);
+    this.outputPass = new OutputPass();
+    this.composer.addPass(this.renderPass);
+    this.composer.addPass(this.bloom);
+    this.composer.addPass(this.outputPass);
+  }
+
+  // Каждый экран задаёт своё свечение: в космосе сильное, на земле мягкое
+  setBloom(opts) {
+    if (!this.bloom) return;
+    if (opts === false) { this.bloomOn = false; return; }
+    this.bloomOn = true;
+    if (opts) {
+      if (opts.strength !== undefined) this.bloom.strength = opts.strength;
+      if (opts.radius !== undefined) this.bloom.radius = opts.radius;
+      if (opts.threshold !== undefined) this.bloom.threshold = opts.threshold;
+    }
+    if (opts && opts.exposure !== undefined) this.renderer.toneMappingExposure = opts.exposure;
+  }
+
   resize() {
     const r = this.canvas.getBoundingClientRect();
     this.w = Math.max(1, Math.floor(r.width));
     this.h = Math.max(1, Math.floor(r.height));
     this.renderer.setSize(this.w, this.h, false);
+    if (this.composer) this.composer.setSize(this.w, this.h);
     if (this.camera) this.syncCamera(this.camera);
   }
+
   syncCamera(cam) {
     this.camera = cam;
     cam.aspect = this.w / this.h;
     cam.updateProjectionMatrix();
   }
+
   render(scene, camera) {
     if (this.camera !== camera) this.syncCamera(camera);
     const r = this.canvas.getBoundingClientRect();
     if (Math.abs(r.width - this.w) > 1 || Math.abs(r.height - this.h) > 1) this.resize();
-    this.renderer.render(scene, camera);
+    if (this.bloomOn && this.composer) {
+      this.renderPass.scene = scene;
+      this.renderPass.camera = camera;
+      this.composer.render();
+    } else {
+      this.renderer.render(scene, camera);
+    }
   }
 }
 
@@ -438,6 +485,7 @@ export function screenOf(pos, camera, w, h) {
 
 const BEAM_GEO = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true);
 BEAM_GEO.translate(0, 0.5, 0);
+const RING_GEO = new THREE.RingGeometry(0.82, 1, 44);
 
 function glowTexture() {
   const c = document.createElement('canvas');
@@ -461,6 +509,8 @@ export class Fx {
     this.scene = scene;
     this.beams = [];
     this.sprites = [];
+    this.rings = [];
+    this.camera = null;
     this.maxBeams = budget.beams || (IS_TOUCH ? 90 : 160);
     this.maxSprites = budget.sprites || (IS_TOUCH ? 160 : 300);
     this.group = new THREE.Group();
@@ -517,6 +567,50 @@ export class Fx {
     return this.beam(from, to, { color, life, width });
   }
 
+  // Главный калибр — именно лазер: добела раскалённое ядро,
+  // вокруг него цветной ореол, на цели — вспышка и ударное кольцо.
+  laser(from, to, opts = {}) {
+    const color = opts.color ?? 0x7fd8ff;
+    const w = opts.width ?? 2;
+    const life = opts.life ?? 0.5;
+    this.beam(from, to, { color, life, width: w * 2.6 });        // ореол
+    this.beam(from, to, { color: 0xffffff, life: life * 0.75, width: w * 0.55 }); // ядро
+    this.flash(from, w * 5, 0xffffff, 0.22);
+    this.flash(to, w * 6, color, 0.4);
+    this.flash(to, w * 3, 0xffffff, 0.18);
+    this.ring(to, w * 3, w * 16, color, 0.45);
+  }
+
+  // Расходящееся кольцо: попадание и взрывы читаются мгновенно
+  ring(pos, r0, r1, color = 0x9fe8ff, life = 0.4) {
+    const s = this._ringObj();
+    s.live = true; s.t = 0; s.life = life;
+    s.r0 = r0; s.r1 = r1;
+    s.mesh.visible = true;
+    s.mesh.material.color.set(color);
+    s.mesh.material.opacity = 1;
+    s.mesh.position.copy(pos);
+    s.mesh.scale.setScalar(r0);
+    return s;
+  }
+
+  _ringObj() {
+    if (!this.rings) this.rings = [];
+    for (const r of this.rings) if (!r.live) return r;
+    if (this.rings.length >= (IS_TOUCH ? 14 : 26)) return this.rings[0];
+    const geo = RING_GEO;
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 1, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+    }));
+    m.visible = false;
+    m.frustumCulled = false;
+    const r = { mesh: m, live: false, t: 0, life: 1, r0: 1, r1: 2 };
+    this.rings.push(r);
+    this.group.add(m);
+    return r;
+  }
+
   flash(pos, size = 6, color = 0xffd08a, life = 0.25) {
     const s = this._sprite();
     s.live = true; s.t = 0; s.life = life;
@@ -565,8 +659,20 @@ export class Fx {
         s.vel.multiplyScalar(1 - dt * 2.2);
       }
     }
+    for (const r of this.rings || []) {
+      if (!r.live) continue;
+      r.t += dt;
+      const k = r.t / r.life;
+      if (k >= 1) { r.live = false; r.mesh.visible = false; continue; }
+      r.mesh.scale.setScalar(lerp(r.r0, r.r1, Math.sqrt(k)));
+      r.mesh.material.opacity = (1 - k) * (1 - k);
+      if (this.camera) r.mesh.quaternion.copy(this.camera.quaternion);
+    }
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 2);
   }
+
+  // Кольца всегда развёрнуты к зрителю — эффектам нужна камера
+  setCamera(cam) { this.camera = cam; }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -592,9 +698,13 @@ export function starfield(count = 2600, radius = 4000) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  // Точки обязательно с круглой текстурой и скромного размера: без карты
+  // они рисуются квадратами, а свечение раздувает их в белые кубики.
   const m = new THREE.PointsMaterial({
-    size: radius * 0.0035, vertexColors: true, sizeAttenuation: true,
-    transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false,
+    size: radius * 0.0016, vertexColors: true, sizeAttenuation: true,
+    map: GLOW_TEX, alphaTest: 0.02,
+    transparent: true, opacity: 0.55, depthWrite: false, toneMapped: true,
+    blending: THREE.AdditiveBlending,
   });
   const p = new THREE.Points(g, m);
   p.frustumCulled = false;

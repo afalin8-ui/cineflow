@@ -7,7 +7,7 @@ import { THREE, Viewport, TacticalCamera, starfield, IS_TOUCH, rnd, disposeScene
 import { createGalaxy, newCampaign, ownedCount } from './galaxy.js';
 import { createSpaceBattle, autoResolveSpace } from './space.js';
 import { createGroundBattle, autoResolveGround } from './ground.js';
-import { buildPlanet } from './models.js';
+import { buildPlanet, buildNebula } from './models.js';
 import { loadModelLibrary, modelCount } from './assets.js';
 import {
   FACTIONS, FACTION_IDS, NEURO_BRIEF, SHIPS, STRIKE, STRIKE_ROLES,
@@ -111,11 +111,13 @@ function createBackdrop() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x05070d);
   const tcam = new TacticalCamera({ dist: 150, pitch: 0.2, yaw: 0.4, far: 6000 });
-  scene.add(new THREE.AmbientLight(0x6a7a96, 1.2));
-  const key = new THREE.DirectionalLight(0xffe0bb, 2.4);
+  viewport.setBloom({ strength: 0.75, radius: 0.65, threshold: 0.75, exposure: 1.05 });
+  scene.add(new THREE.AmbientLight(0x7a8aa8, 1.6));
+  const key = new THREE.DirectionalLight(0xffe0bb, 3.0);
   key.position.set(-160, 90, 120);
   scene.add(key);
-  scene.add(starfield(2400, 2400));
+  scene.add(buildNebula(3200, 21));
+  scene.add(starfield(2800, 1900));
   const planet = buildPlanet('green', 60);
   planet.position.set(70, -22, -40);
   scene.add(planet);
@@ -251,21 +253,25 @@ function showSkirmish() {
   el.querySelector('[data-a="back"]').onclick = () => el.remove();
 
   const sizes = {
-    small: { escort: 2, cruiser: 1, carrier: 1, capital: 0, regiments: 2 },
-    mid:   { escort: 4, cruiser: 2, carrier: 1, capital: 1, regiments: 4 },
-    big:   { escort: 6, cruiser: 3, carrier: 2, capital: 2, regiments: 6 },
+    small: { corvette: 2, frigate: 2, destroyer: 1, cruiser: 1, carrier: 1, capital: 0, regiments: 2 },
+    mid:   { corvette: 3, frigate: 3, destroyer: 2, cruiser: 2, carrier: 1, capital: 1, regiments: 4 },
+    big:   { corvette: 4, frigate: 4, destroyer: 3, cruiser: 3, carrier: 2, capital: 2, regiments: 6 },
   };
   const fleetOf = s => Object.entries(sizes[s])
     .filter(([k, v]) => k !== 'regiments' && v > 0)
     .map(([id, count]) => ({ id, count }));
+  // Плэктор воюет числом: тех же кораблей у него вдвое больше
+  const scaleFor = (f, list) => f === 'plektor'
+    ? list.map(x => ({ ...x, count: Math.round(x.count * 2) }))
+    : f === 'troyden' ? list.map(x => ({ ...x, count: Math.max(1, Math.round(x.count * 0.7)) })) : list;
 
   el.querySelector('[data-a="space"]').onclick = () => {
     const mine = sel('mine'), foe = sel('foe'), size = sel('size');
     el.remove();
     campaign = null;
     setMode(() => createSpaceBattle(ctx, {
-      attacker: { faction: mine, ships: fleetOf(size) },
-      defender: { faction: foe, ships: fleetOf(size), station: size === 'big' },
+      attacker: { faction: mine, ships: scaleFor(mine, fleetOf(size)), reserve: scaleFor(mine, fleetOf('small')) },
+      defender: { faction: foe, ships: scaleFor(foe, fleetOf(size)), station: size === 'big' },
       playerSide: 'attacker', biome: 'rock', title: 'Быстрый бой · орбита',
       onEnd: () => showMenu(),
     }));
