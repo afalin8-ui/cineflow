@@ -8,7 +8,7 @@ import { createGalaxy, newCampaign, ownedCount } from './galaxy.js';
 import { createSpaceBattle, autoResolveSpace } from './space.js';
 import { createGroundBattle, autoResolveGround } from './ground.js';
 import { buildPlanet, buildNebula } from './models.js';
-import { loadModelLibrary, modelCount } from './assets.js';
+import { loadModelLibrary, modelCount, loadPlanetTextures, planetCount } from './assets.js';
 import { createHangar } from './hangar.js';
 import {
   FACTIONS, FACTION_IDS, NEURO_BRIEF, SHIPS, STRIKE, STRIKE_ROLES,
@@ -403,8 +403,11 @@ document.addEventListener('touchmove', e => {
 
 // Сначала пробуем подтянуть внешние модели (game/models/manifest.json).
 // Нет манифеста — молча работаем на процедурных, игра от этого не зависит.
-loadModelLibrary()
-  .then(n => { if (n) console.info(`Загружено внешних моделей: ${n} из ${modelCount()}`); })
+Promise.all([loadModelLibrary(), loadPlanetTextures()])
+  .then(([m, p]) => {
+    if (m) console.info(`Загружено внешних моделей: ${m} из ${modelCount()}`);
+    if (p) console.info(`Загружено текстур планет: ${p} из ${planetCount()}`);
+  })
   .catch(() => {})
   .finally(() => showMenu());
 

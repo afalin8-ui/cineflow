@@ -146,7 +146,7 @@ export function createGalaxy(ctx, camp) {
   const SCALE = 1.6;
   for (const def of GALAXY_MAP.systems) {
     const radius = 3.0 + def.slots * 0.45;
-    const g = buildPlanet(def.biome, radius, 1);
+    const g = buildPlanet(def.biome, radius, 1, def.id);
     g.position.set(def.pos[0] * SCALE * 0.55, def.pos[1] * SCALE * 0.42, def.pos[2] * SCALE * 0.55);
     // солнце считаем уже от итоговой позиции мира, иначе венец смотрит не туда
     g.userData.setSun(star.position.clone().sub(g.position).normalize());
@@ -494,6 +494,7 @@ export function createGalaxy(ctx, camp) {
     } else {
       ctx.startSpaceBattle({
         attacker, defender, playerSide: 'attacker', biome: toDef.biome,
+        system: toDef.id,
         title: `Бой на орбите · ${toDef.name}`,
         onEnd: apply,
       });
@@ -718,6 +719,7 @@ export function createGalaxy(ctx, camp) {
         },
         playerSide: 'defender',
         biome: toDef.biome,
+        system: toDef.id,
         title: `Оборона · ${toDef.name}`,
         onEnd: r => apply({
           result: r.result === 'victory' ? 'defender' : 'attacker',

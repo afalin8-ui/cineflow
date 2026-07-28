@@ -72,7 +72,7 @@ export function createSpaceBattle(ctx, config) {
   scene.add(starfield(3200, 4600));
 
   // Планета под ногами — бой идёт на её орбите
-  const planet = buildPlanet(config.biome || 'rock', 1150, config.planetSeed || 1);
+  const planet = buildPlanet(config.biome || 'rock', 1150, config.planetSeed || 1, config.system);
   planet.position.set(340, -1560, -420);
   // Направление на звезду: от него зависит терминатор и венец атмосферы
   planet.userData.setSun(key.position.clone().normalize());
@@ -1505,7 +1505,9 @@ export function createSpaceBattle(ctx, config) {
   tcam.focus(new THREE.Vector3(0, 0, state.playerSide === 'attacker' ? 110 : -110), 980);
   tcam.apply(1, true);
 
-  if (typeof window !== 'undefined') window.__sp = state;   // ВРЕМЕННО: отладка
+  // Состояние боя наружу — по нему автотесты проверяют скрытность,
+  // гипер и боезапас. На игру не влияет, читать можно из консоли.
+  if (typeof window !== 'undefined') window.__sp = state;
   return { scene, camera: tcam.cam, update, dispose, state };
 }
 

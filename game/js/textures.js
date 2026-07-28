@@ -6,6 +6,7 @@
 
 import { THREE, IS_TOUCH } from './engine.js';
 import { Noise } from './noise.js';
+import { customPlanet } from './assets.js';
 
 const cache = new Map();
 
@@ -97,11 +98,31 @@ function canvasTexture(canvas, srgb = true) {
    Считается на равнопрямоугольной развёртке: для каждого пикселя
    берём точку на сфере и щупаем в ней трёхмерный шум — тогда
    не будет ни шва по долготе, ни каши на полюсах. */
-export function planetTextures(biome, seed = 1) {
-  const key = `${biome}|${seed}`;
+export function planetTextures(biome, seed = 1, id = null) {
+  const key = `${id || ''}|${biome}|${seed}`;
   if (cache.has(key)) return cache.get(key);
 
   const P = PALETTES[biome] || PALETTES.rock;
+
+  // Если положена своя картинка — берём её, а недостающие карты
+  // добираем значениями палитры. Сперва ищем по имени планеты
+  // («klotho»), потом по биому — так у Клото может быть своё лицо,
+  // а у безымянных ледяных миров одна общая картинка на всех.
+  const custom = customPlanet(id) || customPlanet(biome);
+  if (custom) {
+    const out = {
+      map: custom.map,
+      roughnessMap: custom.roughnessMap || null,
+      normalMap: custom.normalMap || null,
+      cloudMap: custom.cloudMap || null,
+      emissiveMap: custom.emissiveMap || null,
+      atmo: custom.atmo !== undefined ? custom.atmo : P.atmo,
+      atmoPower: custom.atmoPower !== undefined ? custom.atmoPower : P.atmoPower,
+      custom: true,
+    };
+    cache.set(key, out);
+    return out;
+  }
   const W = IS_TOUCH ? 1024 : 2048;
   const H = W / 2;
   const oct = IS_TOUCH ? 6 : 7;

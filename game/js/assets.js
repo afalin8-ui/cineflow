@@ -116,3 +116,96 @@ export function customModel(kind, faction, id) {
 }
 
 export function modelCount() { return library.size; }
+
+/* ─────────────────────────────────────────────────────────────
+   ТЕКСТУРЫ ПЛАНЕТ.
+
+   Планеты — не модели, а картинки: равнопрямоугольная развёртка
+   (соотношение ровно 2:1). Кладёшь в game/planets/ и вписываешь
+   в game/planets/manifest.json — игра возьмёт их вместо
+   процедурных. Обязательна только карта цвета; облака, ночные огни
+   и рельеф — по желанию. Ключ в манифесте — либо биом (одна картинка
+   на все такие миры), либо имя конкретной планеты. Промты для
+   генератора и разбор формата — в game/planets/README.md.
+   ───────────────────────────────────────────────────────────── */
+
+const PLANET_BASE = new URL('../planets/', import.meta.url);
+// ключ (биом или имя планеты) → {map, cloudMap, emissiveMap, normalMap}
+const planetLib = new Map();
+
+export async function loadPlanetTextures() {
+  let manifest;
+  try {
+    const res = await fetch(new URL('manifest.json', PLANET_BASE), { cache: 'no-cache' });
+    if (!res.ok) return 0;
+    manifest = await res.json();
+  } catch (e) { return 0; }
+
+  const entries = Object.entries(manifest.planets || {});
+  if (!entries.length) return 0;
+  const loader = new THREE.TextureLoader();
+
+  const load = (file, srgb) => new Promise(resolve => {
+    loader.load(new URL(file, PLANET_BASE).href, t => {
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = THREE.RepeatWrapping;
+      t.wrapT = THREE.ClampToEdgeWrapping;
+      t.anisotropy = 8;
+      resolve(t);
+    }, undefined, () => resolve(null));
+  });
+
+  let ok = 0;
+  await Promise.all(entries.map(async ([key, spec]) => {
+    const cfg = typeof spec === 'string' ? { map: spec } : spec;
+    if (!cfg || !cfg.map) return;
+    const set = {};
+    set.map = await load(cfg.map, true);
+    if (!set.map) { console.warn(`Планета «${key}»: не открылась карта ${cfg.map}`); return; }
+    if (cfg.clouds) set.cloudMap = await load(cfg.clouds, true);
+    if (cfg.lights) set.emissiveMap = await load(cfg.lights, true);
+    if (cfg.normal) set.normalMap = await load(cfg.normal, false);
+    if (cfg.atmo) set.atmo = parseInt(String(cfg.atmo).replace('#', ''), 16);
+    if (cfg.atmoPower !== undefined) set.atmoPower = cfg.atmoPower;
+    // Карту бликов строим сами: тёмные синие пиксели считаем водой.
+    // Так от художника нужна одна картинка, а блик на океане всё равно есть.
+    set.roughnessMap = cfg.water === false ? null : waterRoughness(set.map);
+    planetLib.set(key, set);
+    ok++;
+  }));
+  return ok;
+}
+
+/* Ищем воду по цвету: синева заметно сильнее красного, и пиксель
+   тёмный. Такие места делаем зеркальными, остальное — матовым. */
+function waterRoughness(tex) {
+  const img = tex.image;
+  if (!img || !img.width) return null;
+  const W = Math.min(1024, img.width), H = Math.round(W / 2);
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, W, H);
+  const d = ctx.getImageData(0, 0, W, H);
+  const px = d.data;
+  for (let i = 0; i < W * H; i++) {
+    const o = i * 4;
+    const r = px[o], g = px[o + 1], b = px[o + 2];
+    const lum = (r + g + b) / 3;
+    const blue = b - Math.max(r, g);
+    const water = blue > 12 && lum < 130;
+    const v = water ? 30 : 220;
+    px[o] = px[o + 1] = px[o + 2] = v; px[o + 3] = 255;
+  }
+  ctx.putImageData(d, 0, 0);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
+export function customPlanet(key) {
+  return key ? planetLib.get(key) || null : null;
+}
+export function planetCount() { return planetLib.size; }
+

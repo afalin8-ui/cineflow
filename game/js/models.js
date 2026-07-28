@@ -708,6 +708,84 @@ export function buildProp(biome, rng) {
   return g;
 }
 
+/* ВОДА на наземных картах.
+   Плоскость с двумя бегущими волнами: у берега прозрачная и с пеной,
+   на глубине тёмная и зеркальная. Глубину шейдер берёт из карты,
+   запечённой из рельефа, — поэтому линия прибоя повторяет берег. */
+
+const WATER_VERT = `
+varying vec2 vUv; varying vec3 vP; varying vec3 vW;
+void main() {
+  vUv = uv;
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vW = wp.xyz;
+  vP = (modelViewMatrix * vec4(position, 1.0)).xyz;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const WATER_FRAG = `
+uniform sampler2D uDepth;
+uniform vec3 uShallow; uniform vec3 uDeep; uniform vec3 uSun;
+uniform float uTime;
+varying vec2 vUv; varying vec3 vP; varying vec3 vW;
+
+void main() {
+  float depth = texture2D(uDepth, vUv).r;      // 0 — берег, 1 — глубоко
+
+  // две бегущие волны крест-накрест дают рябь без текстуры
+  float w1 = sin(vW.x * 0.16 + uTime * 1.1) * cos(vW.z * 0.13 - uTime * 0.8);
+  float w2 = sin((vW.x + vW.z) * 0.09 - uTime * 0.6);
+  vec3 n = normalize(vec3(w1 * 0.16 + w2 * 0.1, 1.0, w2 * 0.16 - w1 * 0.1));
+
+  vec3 V = normalize(cameraPosition - vW);
+  float fres = pow(1.0 - max(0.0, dot(n, V)), 3.0);
+
+  // Глубина нормирована по самой глубокой точке карты, поэтому
+  // цвет набирает силу быстро: у берега прозрачная бирюза,
+  // на середине — тёмная толща.
+  vec3 col = mix(uShallow, uDeep, smoothstep(0.02, 0.32, depth));
+  col = mix(col, vec3(0.34, 0.48, 0.60), fres * 0.24);
+
+  // солнечная дорожка
+  vec3 H = normalize(normalize(uSun) + V);
+  float spec = pow(max(0.0, dot(n, H)), 90.0);
+  col += vec3(1.0, 0.94, 0.82) * spec * 1.5;
+
+  // пена узкой полосой у самой кромки, дышит вместе с волной
+  float edge = 1.0 - smoothstep(0.0, 0.022, depth);
+  float foam = edge * (0.45 + 0.55 * sin(uTime * 1.8 + vW.x * 0.5 + vW.z * 0.4));
+  col = mix(col, vec3(0.80, 0.88, 0.92), foam * 0.40);
+
+  // У кромки вода прозрачная — сквозь неё виден грунт, и берег
+  // читается как отмель, а не как обрезанный по линейке край.
+  float alpha = clamp(0.22 + depth * 3.2 + fres * 0.35 + foam * 0.25, 0.0, 0.95);
+  gl_FragColor = vec4(col, alpha);
+}`;
+
+export function buildWater(size, level, depthCanvas, tint) {
+  const geo = new THREE.PlaneGeometry(size * 2, size * 2, 1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const depth = new THREE.CanvasTexture(depthCanvas);
+  depth.wrapS = depth.wrapT = THREE.ClampToEdgeWrapping;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uDepth: { value: depth },
+      uShallow: { value: new THREE.Color(tint && tint.shallow || 0x2f7f96) },
+      uDeep: { value: new THREE.Color(tint && tint.deep || 0x0a2436) },
+      uSun: { value: new THREE.Vector3(0.6, 0.7, 0.4).normalize() },
+      uTime: { value: 0 },
+    },
+    vertexShader: WATER_VERT, fragmentShader: WATER_FRAG,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.y = level;
+  m.renderOrder = 2;
+  m.userData.tick = t => { mat.uniforms.uTime.value = t; };
+  m.userData.setSun = v => mat.uniforms.uSun.value.copy(v).normalize();
+  return m;
+}
+
 // Поле снабжения на наземной карте
 export function buildSupplyField() {
   const g = new THREE.Group();
@@ -952,8 +1030,8 @@ const GEO_HI = sphereGeo(96);
 const GEO_MID = sphereGeo(48);
 const GEO_LO = sphereGeo(24);
 
-export function buildPlanet(biome, radius, seed) {
-  const tex = planetTextures(biome, seed === undefined ? 1 : seed);
+export function buildPlanet(biome, radius, seed, id) {
+  const tex = planetTextures(biome, seed === undefined ? 1 : seed, id || null);
   const g = new THREE.Group();
   const geo = radius > 400 ? GEO_HI : radius > 40 ? GEO_MID : GEO_LO;
 

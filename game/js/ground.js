@@ -13,7 +13,9 @@ import {
   THREE, TacticalCamera, Controls, Fx, screenOf, ringMesh,
   clamp, lerp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
-import { buildGroundUnit, buildStructure, buildSupplyField, buildProp, mat } from './models.js';
+import {
+  buildGroundUnit, buildStructure, buildSupplyField, buildProp, buildWater, mat,
+} from './models.js';
 import { groundTexture } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
@@ -34,16 +36,42 @@ const UPV = new THREE.Vector3(0, 1, 0);
    в овраг, а сборщики застревают на склоне. */
 
 const HEIGHT_SCALE = 36;      // перепад высот от низины до гребня
+const BASIN_DEPTH = 4.5;      // во сколько раз утапливаем дно ниже уреза воды
+let WATER_LEVEL = -7.5;       // ниже этой отметки — вода, туда не заедешь
 let heightNoise = null;
 let flatSpots = [];           // {x, z, r, h} — выровненные площадки
 
-export function makeHeightField(seed) {
+export function makeHeightField(seed, waterFraction = 0.18) {
   heightNoise = { a: new Noise(seed), b: new Noise(seed + 8123), c: new Noise(seed + 55) };
   flatSpots = [];
+  WATER_LEVEL = computeWaterLevel(waterFraction);
+  return WATER_LEVEL;
 }
 
+/* Уровень воды подбираем по самому рельефу: берём нужную долю самых
+   низких точек. Задавать его числом бесполезно — шум от карты к карте
+   гуляет, и вода то заливает всё, то не появляется вовсе. */
+function computeWaterLevel(fraction) {
+  if (fraction <= 0) return -1e6;
+  const N = 72;
+  const vals = [];
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1) - 0.5) * MAP * 2;
+      const z = (j / (N - 1) - 0.5) * MAP * 2;
+      vals.push(rawHeight(x, z));
+    }
+  }
+  vals.sort((a, b) => a - b);
+  return vals[Math.floor(vals.length * fraction)];
+}
+
+export function waterLevel() { return WATER_LEVEL; }
+
 export function addFlatSpot(x, z, r) {
-  flatSpots.push({ x, z, r, h: rawHeight(x, z) });
+  // База не должна оказаться на дне озера — приподнимаем над водой
+  const h = Math.max(rawHeight(x, z), WATER_LEVEL + 4);
+  flatSpots.push({ x, z, r, h });
 }
 
 function rawHeight(x, z) {
@@ -57,8 +85,19 @@ function rawHeight(x, z) {
   return (h - 0.45) * HEIGHT_SCALE;
 }
 
+// Вода занимает низины. Техника в неё не идёт, строить в ней нельзя.
+export function isWater(x, z) {
+  return terrainH(x, z) < WATER_LEVEL;
+}
+
 export function terrainH(x, z) {
   let h = rawHeight(x, z);
+  /* Дно водоёмов утапливаем. Уровень воды берётся долей от рельефа,
+     поэтому без этого озеро выходит плёнкой в палец толщиной: воды
+     не видно, видно только пену по всей луже. Утопив дно, получаем
+     настоящую котловину — у берега мелко и просвечивает грунт,
+     в середине темно. */
+  if (h < WATER_LEVEL) h = WATER_LEVEL - (WATER_LEVEL - h) * BASIN_DEPTH;
   for (const f of flatSpots) {
     const d = Math.hypot(x - f.x, z - f.z);
     if (d >= f.r) continue;
@@ -73,7 +112,11 @@ export function createGroundBattle(ctx, config) {
   const { viewport, hudRoot } = ctx;
   const biome = BIOME_COLORS[config.biome] || BIOME_COLORS.rock;
   const seed = seedFrom(config.seed || config.title || 'капелла');
-  makeHeightField(seed);
+  // Сколько карты под водой: в пустыне почти нет, во льдах много
+  const waterFrac = config.biome === 'desert' ? 0.06
+                  : config.biome === 'ice' ? 0.24
+                  : config.biome === 'city' ? 0.10 : 0.18;
+  makeHeightField(seed, waterFrac);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(biome.sky);
@@ -111,6 +154,7 @@ export function createGroundBattle(ctx, config) {
   const cLow = new THREE.Color(biome.ground);
   const cHigh = new THREE.Color(biome.accent);
   const cRock = new THREE.Color(biome.rock || 0x6a5f52);
+  const cBed = new THREE.Color(config.biome === 'ice' ? 0x6b7d88 : 0x8f8163);  // ил и намытый песок
   const tmpC = new THREE.Color();
   const step = (TERRAIN * 2) / segs;
   for (let i = 0; i < posAttr.count; i++) {
@@ -124,6 +168,14 @@ export function createGroundBattle(ctx, config) {
     const alt = clamp((h + HEIGHT_SCALE * 0.45) / HEIGHT_SCALE, 0, 1);
     tmpC.copy(cLow).lerp(cHigh, Math.pow(alt, 1.4));
     tmpC.lerp(cRock, Math.pow(slope, 0.8) * 0.9);
+    // Под водой не трава, а ил и мокрый песок: у кромки светлая
+    // отмель, дальше темнеет. Без этого сквозь мелководье
+    // просвечивает луг и вода не читается вовсе.
+    if (h < WATER_LEVEL) {
+      const sub = clamp((WATER_LEVEL - h) / (HEIGHT_SCALE * 0.35), 0, 1);
+      tmpC.lerp(cBed, 0.55 + sub * 0.4);
+      tmpC.multiplyScalar(1 - sub * 0.45);
+    }
     const jitter = 0.94 + Math.random() * 0.12;
     colors[i * 3] = tmpC.r * jitter;
     colors[i * 3 + 1] = tmpC.g * jitter;
@@ -140,6 +192,52 @@ export function createGroundBattle(ctx, config) {
     flatShading: false,
   }));
   scene.add(terrain);
+
+  /* ── ВОДА.
+     Пекём карту глубины прямо из рельефа: шейдер по ней рисует
+     прибой у берега и темноту на глубине. */
+  const DW = 256;
+  const depthCv = document.createElement('canvas');
+  depthCv.width = depthCv.height = DW;
+  {
+    const dctx = depthCv.getContext('2d');
+    const img = dctx.createImageData(DW, DW);
+    const dd = img.data;
+    // Сперва меряем, потом нормируем: делить на выдуманное число
+    // нельзя — у горной карты озёра глубокие, у степной мелкие,
+    // и на одной из двух вода вышла бы либо чернилами, либо молоком.
+    const raw = new Float32Array(DW * DW);
+    let deepest = 1e-3;
+    for (let j = 0; j < DW; j++) {
+      for (let i = 0; i < DW; i++) {
+        /* Плоскость воды растянута на TERRAIN*2. Строку j НЕ переворачиваем:
+           three.js грузит канву с flipY, то есть нижняя строка картинки
+           становится v=0, а у повёрнутой плоскости v=0 — это z=+TERRAIN.
+           Одно переворачивание гасит другое. Если ошибиться, карта глубины
+           окажется зеркальной по Z: озёра станут «берегом» и зальются пеной. */
+        const x = (i / (DW - 1) - 0.5) * TERRAIN * 2;
+        const z = (j / (DW - 1) - 0.5) * TERRAIN * 2;
+        const d = Math.max(0, WATER_LEVEL - terrainH(x, z));
+        raw[j * DW + i] = d;
+        if (d > deepest) deepest = d;
+      }
+    }
+    for (let k = 0; k < DW * DW; k++) {
+      const v = Math.min(255, (raw[k] / deepest) * 255);
+      const o = k * 4;
+      dd[o] = dd[o + 1] = dd[o + 2] = v; dd[o + 3] = 255;
+    }
+    dctx.putImageData(img, 0, 0);
+  }
+  const waterTint = config.biome === 'ice'
+    ? { shallow: 0x4a7f96, deep: 0x0d2434 }
+    : config.biome === 'desert'
+      ? { shallow: 0x3f7f7a, deep: 0x0d2a2a }
+      : { shallow: 0x2f7f96, deep: 0x0a2436 };
+  const water = buildWater(TERRAIN, WATER_LEVEL, depthCv, waterTint);
+  water.userData.setSun(sun.position.clone().normalize());
+  scene.add(water);
+
   viewport.setBloom({ strength: 0.34, radius: 0.5, threshold: 0.84, exposure: 1.18 });
 
   // камни и растительность: масштаб и ощущение живой поверхности
@@ -152,6 +250,8 @@ export function createGroundBattle(ctx, config) {
     const near = i % 2 === 0;
     const lim = near ? MAP * 0.95 : TERRAIN * 0.8;
     const x = rnd(-lim, lim), z = rnd(-lim, lim);
+    // На дне камни читаются тёмными кляксами сквозь воду — не сорим туда
+    if (isWater(x, z)) continue;
     const r = new THREE.Mesh(rockGeo, rockMat);
     const s = near ? rnd(2, 6) : rnd(4, 12);
     r.scale.set(s, s * rnd(0.5, 1), s);
@@ -161,7 +261,7 @@ export function createGroundBattle(ctx, config) {
   }
   for (let i = 0; i < (IS_TOUCH ? 40 : 75); i++) {
     const x = rnd(-MAP * 0.98, MAP * 0.98), z = rnd(-MAP * 0.98, MAP * 0.98);
-    if (!freeSpot(x, z)) continue;
+    if (!freeSpot(x, z) || isWater(x, z)) continue;
     const p = buildProp(config.biome || 'rock');
     p.position.set(x, terrainH(x, z), z);
     p.rotation.y = rnd(0, 6.28);
@@ -189,6 +289,7 @@ export function createGroundBattle(ctx, config) {
 
   // ── ПОЛЯ СНАБЖЕНИЯ ───────────────────────────────────────
   for (const [x, z] of FIELD_SPOTS) {
+    if (isWater(x, z)) continue;      // склад посреди озера — нелепо
     const obj = buildSupplyField();
     obj.position.set(x, terrainH(x, z), z);
     scene.add(obj);
@@ -363,6 +464,17 @@ export function createGroundBattle(ctx, config) {
         _v.add(_v2);
       }
     }
+    // вода: наземная техника в неё не лезет, разворачиваем вдоль берега
+    if (!u.air) {
+      const ahead = _v2.set(u.pos.x + _v.x * 6, 0, u.pos.z + _v.z * 6);
+      if (isWater(ahead.x, ahead.z)) {
+        // пробуем обойти: берём касательную к берегу
+        const left = _v2.set(-_v.z, 0, _v.x);
+        const okLeft = !isWater(u.pos.x + left.x * 8, u.pos.z + left.z * 8);
+        _v.set(okLeft ? left.x : -left.x, 0, okLeft ? left.z : -left.z);
+      }
+    }
+
     // обход зданий
     for (const b of state.buildings) {
       if (b.dead) continue;
@@ -648,6 +760,11 @@ export function createGroundBattle(ctx, config) {
   function canPlace(sideId, defId, x, z) {
     const def = GROUND_BUILDINGS[defId];
     if (Math.abs(x) > MAP - 20 || Math.abs(z) > MAP - 20) return false;
+    if (isWater(x, z)) return false;
+    // и края площадки тоже должны быть на суше
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (isWater(x + dx * def.size * 0.8, z + dz * def.size * 0.8)) return false;
+    }
     let nearOwn = false;
     for (const b of state.buildings) {
       if (b.dead) continue;
@@ -1096,6 +1213,7 @@ export function createGroundBattle(ctx, config) {
     }
 
     fx.update(rawDt);
+    water.userData.tick(performance.now() * 0.001);
     if (fx.shake > 0.001) {
       const s = fx.shake * 1.6;
       tcam.cam.position.x += rnd(-s, s);

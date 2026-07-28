@@ -1,0 +1,4 @@
+{
+  "_комментарий": "Развёртки планет, пропорции 2:1. Обязательна только map. Ключ — биом (klotho, green, desert, ice, rock, city) или имя планеты (klotho, tartarus, xanthia...). Промты и подробности — в README.md рядом.",
+  "planets": {}
+}
