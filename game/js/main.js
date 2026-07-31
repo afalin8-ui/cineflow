@@ -334,8 +334,11 @@ function showSkirmish() {
       orbit: ['strike', 'drop', 'emp'],
       enemy: { faction: foe, regiments: sizes[size].regiments, credits: 4000, turrets: size !== 'small' },
       // Биом быстрого боя можно подменить из консоли — удобно смотреть,
-      // как выглядят снег и пустыня, не собирая ради этого кампанию
+      // как выглядят снег и пустыня, не собирая ради этого кампанию.
+      // Тем же способом подменяется мир целиком, вместе с особенностями:
+      // window.__forceWorld = { traits: ['dust'] }
       biome: (typeof window !== 'undefined' && window.__forceBiome) || 'green',
+      world: (typeof window !== 'undefined' && window.__forceWorld) || null,
       title: 'Быстрый бой · планета',
       onEnd: () => showMenu(),
     })));

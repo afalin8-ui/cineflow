@@ -110,6 +110,19 @@ select {
   font-size: 15px; color: var(--text-2); letter-spacing: .02em;
   padding-top: 6px;
 }
+/* Особенности боя — доктрина клана и характер планеты.
+   Строкой под названием: место в шапке единственное, где
+   не спорит ни с панелью построек слева, ни со столбиком справа. */
+.wtags {
+  display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
+  margin-top: 5px;
+}
+.wtag {
+  font-size: 10px; line-height: 1.2; padding: 3px 9px;
+  border: 1px solid var(--line-soft); border-radius: 999px;
+  background: rgba(10, 16, 26, .55); color: var(--text-2);
+  letter-spacing: .04em;
+}
 
 .strength { display: flex; flex-direction: column; gap: 5px; min-width: 210px; }
 .ss-row { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); }
@@ -290,6 +303,12 @@ button.act.locked small { color: #8fd0ff; }
 }
 .gp-list { font-size: 13px; color: var(--text-2); line-height: 1.55; }
 .gp-list i { color: var(--muted); }
+/* особенность мира: название и одна строка объяснения */
+.gp-trait { margin-bottom: 5px; }
+.gp-trait b { font-size: 12.5px; color: var(--accent); font-weight: 600; }
+.gp-trait small {
+  display: block; font-size: 11px; color: var(--muted); line-height: 1.45;
+}
 .gp-actions { display: flex; flex-direction: column; gap: 7px; }
 .gp-actions .act { min-width: 0; width: 100%; max-width: none; }
 .gp-sep {

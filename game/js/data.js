@@ -613,20 +613,20 @@ export function unitDef(faction, id) {
 
 export const GALAXY_MAP = {
   systems: [
-    { id: 'prometheus', name: 'Прометей',     pos: [-4, 6, -70],  income: 240, slots: 5, biome: 'ice',    start: 'troyden', station: true },
-    { id: 'klotho',     name: 'Клото',        pos: [30, -4, -46], income: 280, slots: 5, biome: 'klotho', homeOf: 'troyden' },
-    { id: 'lachesis',   name: 'Лахесис',      pos: [-42, 10, -44],income: 180, slots: 4, biome: 'rock' },
-    { id: 'atropos',    name: 'Атропос',      pos: [2, 14, -24],  income: 160, slots: 3, biome: 'ice' },
-    { id: 'vespa',      name: 'Рудники Веспы',pos: [-58, -6, -6], income: 210, slots: 4, biome: 'rock' },
-    { id: 'erebus',     name: 'Эреб',         pos: [-16, -12, 2], income: 150, slots: 3, biome: 'desert' },
+    { id: 'prometheus', name: 'Прометей',     pos: [-4, 6, -70],  income: 240, slots: 5, biome: 'ice',    start: 'troyden', station: true, traits: ['permafrost'] },
+    { id: 'klotho',     name: 'Клото',        pos: [30, -4, -46], income: 280, slots: 5, biome: 'klotho', homeOf: 'troyden', traits: ['conscript'] },
+    { id: 'lachesis',   name: 'Лахесис',      pos: [-42, 10, -44],income: 180, slots: 4, biome: 'rock',   traits: ['scrapyard'] },
+    { id: 'atropos',    name: 'Атропос',      pos: [2, 14, -24],  income: 160, slots: 3, biome: 'ice',    traits: ['lowg'] },
+    { id: 'vespa',      name: 'Рудники Веспы',pos: [-58, -6, -6], income: 210, slots: 4, biome: 'rock',   traits: ['rich'] },
+    { id: 'erebus',     name: 'Эреб',         pos: [-16, -12, 2], income: 150, slots: 3, biome: 'desert', traits: ['dust'] },
     { id: 'gate',       name: 'Гиперворота',  pos: [18, 4, 2],    income: 320, slots: 5, biome: 'city' },
-    { id: 'xanthia',    name: 'Ксантия',      pos: [54, 10, -4],  income: 170, slots: 3, biome: 'green' },
-    { id: 'phlegethon', name: 'Флегетон',     pos: [-46, 8, 30],  income: 175, slots: 4, biome: 'desert' },
-    { id: 'styx',       name: 'Стикс',        pos: [-6, -8, 34],  income: 155, slots: 3, biome: 'ice' },
-    { id: 'tartarus',   name: 'Тартар',       pos: [48, -10, 38], income: 290, slots: 5, biome: 'city',   start: 'reez' },
-    { id: 'wolfdelta',  name: 'Дельта Волка', pos: [14, 16, 52],  income: 145, slots: 3, biome: 'rock' },
-    { id: 'morbelt',    name: 'Пояс Мора',    pos: [-60, -14, 58],income: 250, slots: 4, biome: 'rock',   start: 'plektor' },
-    { id: 'ferrum',     name: 'Феррум',       pos: [-28, 12, 66], income: 250, slots: 4, biome: 'desert', start: 'devian' },
+    { id: 'xanthia',    name: 'Ксантия',      pos: [54, 10, -4],  income: 170, slots: 3, biome: 'green',  traits: ['conscript'] },
+    { id: 'phlegethon', name: 'Флегетон',     pos: [-46, 8, 30],  income: 175, slots: 4, biome: 'desert', traits: ['dust'] },
+    { id: 'styx',       name: 'Стикс',        pos: [-6, -8, 34],  income: 155, slots: 3, biome: 'ice',    traits: ['permafrost'] },
+    { id: 'tartarus',   name: 'Тартар',       pos: [48, -10, 38], income: 290, slots: 5, biome: 'city',   start: 'reez', traits: ['foundry'] },
+    { id: 'wolfdelta',  name: 'Дельта Волка', pos: [14, 16, 52],  income: 145, slots: 3, biome: 'rock',   traits: ['lowg'] },
+    { id: 'morbelt',    name: 'Пояс Мора',    pos: [-60, -14, 58],income: 250, slots: 4, biome: 'rock',   start: 'plektor', traits: ['scrapyard', 'rich'] },
+    { id: 'ferrum',     name: 'Феррум',       pos: [-28, 12, 66], income: 250, slots: 4, biome: 'desert', start: 'devian', traits: ['foundry'] },
   ],
   links: [
     ['prometheus', 'lachesis'], ['prometheus', 'klotho'], ['prometheus', 'atropos'],
@@ -644,6 +644,67 @@ export const GALAXY_MAP = {
     ['ferrum', 'wolfdelta'],
   ],
 };
+
+/* ─────────────────────────────────────────────────────────────
+   ОСОБЕННОСТИ МИРОВ.
+
+   Планета — не просто картинка под боем: у каждой свой характер,
+   и он меняет наземную операцию для ОБЕИХ сторон. На мире с большим
+   населением дешевеет пехота, на индустриальном — техника, на
+   мерзлоте всё строится вдвое дольше.
+
+   Отсюда берётся смысл выбирать, куда наступать: богатый мир может
+   оказаться неудобным для твоей армии, а дешёвый — родным.
+   Множители: меньше 1 — дешевле/медленнее, больше 1 — дороже/быстрее.
+   ───────────────────────────────────────────────────────────── */
+
+export const PLANET_TRAITS = {
+  conscript: {
+    name: 'Мобилизационный округ', infantry: 0.7,
+    desc: 'Плотное население и старые казармы: пехота на треть дешевле',
+  },
+  foundry: {
+    name: 'Литейные цеха', vehicle: 0.75,
+    desc: 'Заводы работают на войну: техника на четверть дешевле',
+  },
+  scrapyard: {
+    name: 'Поля металлолома', build: 1.4, vehicle: 0.9,
+    desc: 'Стройматериал под ногами: постройки встают почти вдвое быстрее',
+  },
+  permafrost: {
+    name: 'Вечная мерзлота', build: 0.65, infantry: 1.15,
+    desc: 'Грунт не берётся: стройка тянется, пехоте нужно тёплое снаряжение',
+  },
+  dust: {
+    name: 'Пыльные бури', vehicle: 1.2, infantry: 0.85,
+    desc: 'Песок съедает ходовую: техника дороже, зато пехота дёшева',
+  },
+  lowg: {
+    name: 'Слабое тяготение', air: 0.7, vehicle: 1.1,
+    desc: 'Авиации хватает половины тяги: самолёты дешевле, гусеницы буксуют',
+  },
+  rich: {
+    name: 'Богатые залежи', supply: 1.6,
+    desc: 'Поля снабжения держатся куда дольше обычного',
+  },
+};
+
+/* Собирает все особенности мира в один набор множителей.
+   Множители перемножаются: два «богатых» признака дадут больше
+   одного. Возвращается всегда полный набор, чтобы принимающей
+   стороне не приходилось проверять каждое поле. */
+export function planetMods(sys) {
+  const m = { infantry: 1, vehicle: 1, air: 1, build: 1, supply: 1 };
+  for (const id of (sys && sys.traits) || []) {
+    const t = PLANET_TRAITS[id];
+    if (!t) continue;
+    for (const k in m) if (t[k]) m[k] *= t[k];
+  }
+  return m;
+}
+
+export const traitsOf = sys =>
+  ((sys && sys.traits) || []).map(id => PLANET_TRAITS[id]).filter(Boolean);
 
 export const PLANET_BUILDINGS = {
   mine:     { id: 'mine',     name: 'Рудник',              cost: 400,  desc: '+120 кредитов за ход' },
@@ -690,7 +751,7 @@ export const BASE_DOCTRINE = {
     id: 'fortress', name: 'Модульная крепость',
     anywhere: false, needNear: 62, hubOnly: true, costMul: 0.9, buildMul: 0.9,
     hpMul: 1.35,
-    hint: 'Пристраивается вплотную к штабу и никуда больше. Тесно, зато крепко',
+    hint: 'Пристраивается вплотную к штабу и никуда больше — тесно, зато крепко',
   },
   reez: {
     id: 'swarm', name: 'Нанорой',
@@ -968,5 +1029,23 @@ export const NEURO_BRIEF = [
           'по всему средне. Бомбардировщик топит крупные корабли и не ' +
           'может ответить истребителю ничем. Авианосец своего оружия ' +
           'почти не имеет.',
+  },
+  /* Две последние справки собираются из тех же таблиц, по которым
+     работает игра, — так они не разойдутся с числами при правке баланса. */
+  {
+    title: 'Как строятся кланы',
+    text: 'Строительная база у каждого клана своя, и это главное различие ' +
+          'на земле. ' +
+          FACTION_IDS.map(f =>
+            `<b>${FACTIONS[f].short}</b> — ${BASE_DOCTRINE[f].name.toLowerCase()}: ` +
+            `${BASE_DOCTRINE[f].hint.toLowerCase()}`).join('. ') + '.',
+  },
+  {
+    title: 'Характер планет',
+    text: 'Мир под ногами меняет наземную операцию обеим сторонам сразу. ' +
+          'Особенности видны в панели планеты на карте системы — ' +
+          'по ним и стоит выбирать, куда наступать. ' +
+          Object.values(PLANET_TRAITS).map(t =>
+            `<b>${t.name}</b> — ${t.desc.toLowerCase()}`).join('. ') + '.',
   },
 ];

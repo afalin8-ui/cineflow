@@ -22,6 +22,7 @@ import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
   dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT, EXTERMINATUS, doctrineOf,
+  planetMods, traitsOf,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -476,6 +477,15 @@ export function createGroundBattle(ctx, config) {
   };
   const other = s => (s === 'me' ? 'foe' : 'me');
 
+  /* Особенности мира, на котором идёт бой. Действуют на обе стороны
+     одинаково — это свойство планеты, а не клана: на мерзлоте
+     стройка тянется у всех. В быстром бою мира нет, тогда всё по
+     единице. */
+  const LAND = planetMods(config.world);
+  const unitCost = def => Math.round(def.cost * (LAND[def.cls] || 1) / 5) * 5;
+  const buildDur = (def, sideId) =>
+    Math.max(0.1, def.build * sides[sideId].doc.buildMul / LAND.build);
+
   /* Тени вешаем на всё, что стоит на земле. Принимать тень юнитам
      тоже нужно: танк, заехавший под дерево, должен потемнеть, иначе
      тень выглядит нарисованной на грунте, а не лежащей в мире. */
@@ -495,7 +505,8 @@ export function createGroundBattle(ctx, config) {
     const obj = shadowed(buildSupplyField());
     obj.position.set(x, terrainH(x, z), z);
     scene.add(obj);
-    state.fields.push({ kind: 'field', pos: obj.position, obj, left: 5000, uid: uid++ });
+    state.fields.push({ kind: 'field', pos: obj.position, obj,
+                        left: Math.round(5000 * LAND.supply), uid: uid++ });
   }
 
   // ── СОЗДАНИЕ ─────────────────────────────────────────────
@@ -512,7 +523,7 @@ export function createGroundBattle(ctx, config) {
       hp: instant ? def.hp * (side.doc.hpMul || 1) : def.hp * 0.15,
       maxHp: def.hp * (side.doc.hpMul || 1), armor: def.armor,
       dead: false, radius: def.size * 0.75,
-      building: !instant, buildLeft: instant ? 0 : def.build * side.doc.buildMul,
+      building: !instant, buildLeft: instant ? 0 : buildDur(def, sideId),
       queue: [], produceLeft: 0,
       rally: new THREE.Vector3(x + rnd(-1, 1) * 18, y, z + 26),
       cd: 0, target: null,
@@ -1122,7 +1133,7 @@ export function createGroundBattle(ctx, config) {
     if (b.empUntil && state.time < b.empUntil) return;
     if (b.building) {
       b.buildLeft -= dt;
-      const dur = Math.max(0.1, b.def.build * sides[b.side].doc.buildMul);
+      const dur = buildDur(b.def, b.side);
       const k = clamp(1 - b.buildLeft / dur, 0, 1);
       b.obj.scale.y = 0.25 + k * 0.75;
       b.hp = b.maxHp * (0.15 + k * 0.85);
@@ -1161,9 +1172,9 @@ export function createGroundBattle(ctx, config) {
   function enqueue(b, unitId) {
     const def = unitDef(b.faction.id, unitId);
     const side = sides[b.side];
-    if (side.credits < buildCost(sideId, def)) return false;
+    if (side.credits < unitCost(def)) return false;
     if (b.queue.length >= 6) return false;
-    side.credits -= buildCost(sideId, def);
+    side.credits -= unitCost(def);
     b.queue.push(unitId);
     if (b.queue.length === 1) b.produceLeft = def.build;
     return true;
@@ -1295,7 +1306,16 @@ export function createGroundBattle(ctx, config) {
   `;
   hudRoot.appendChild(hud);
   const $ = r => hud.querySelector(`[data-role="${r}"]`);
-  $('banner').textContent = config.title || 'Наземная операция';
+  /* Под названием операции — чем этот бой отличается от прочих:
+     как строится твой клан и что за мир под ногами. В шапке только
+     названия: объяснения занимают три строки и закрывают поле боя,
+     поэтому они приходят сообщениями в начале боя. */
+  const battleTags = [{ name: sides.me.doc.name, desc: sides.me.doc.hint },
+                      ...traitsOf(config.world)];
+  $('banner').innerHTML =
+    `<div class="btitle">${config.title || 'Наземная операция'}</div>` +
+    `<div class="wtags">${battleTags.map(t =>
+      `<span class="wtag">${t.name}</span>`).join('')}</div>`;
   $('hint').innerHTML = IS_TOUCH
     ? 'Касание по своему — выбрать · по врагу — атаковать · по земле — идти · тянуть — карта · щипок — приближение · долгое нажатие — рамка'
     : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · WASD — карта';
@@ -1346,7 +1366,7 @@ export function createGroundBattle(ctx, config) {
       const b = document.createElement('button');
       b.className = 'build-btn';
       b.innerHTML = `<b>${def.name}</b><span class="cost">${buildCost('me', def)}</span><small>${def.desc}</small>`;
-      b.disabled = sides.me.credits < def.cost;
+      b.disabled = sides.me.credits < buildCost('me', def);
       b.onclick = () => {
         state.placing = id;
         buildbar.querySelectorAll('.build-btn').forEach(x => x.classList.remove('on'));
@@ -1479,12 +1499,12 @@ export function createGroundBattle(ctx, config) {
   function tryPlace(world) {
     if (!state.placing || !world) return false;
     const def = GROUND_BUILDINGS[state.placing];
-    if (sides.me.credits < def.cost) return false;
+    if (sides.me.credits < buildCost('me', def)) return false;
     if (!canPlace('me', state.placing, world.x, world.z)) {
       fx.flash(world, 8, 0xff5555, 0.4);
       return true;
     }
-    sides.me.credits -= def.cost;
+    sides.me.credits -= buildCost('me', def);
     makeBuilding('me', state.placing, world.x, world.z, false);
     state.placing = null;
     ghost.visible = false;
@@ -1566,6 +1586,10 @@ export function createGroundBattle(ctx, config) {
   if ((config.recon ?? 99) === 0) {
     setTimeout(() => toast('Разведки нет: высадка вслепую'), 900);
   }
+  // Доктрина и особенности мира — по одному сообщению, с паузой,
+  // чтобы читались по очереди, а не стопкой
+  battleTags.forEach((t, i) =>
+    setTimeout(() => toast(`${t.name}: ${t.desc.toLowerCase()}`), 1600 + i * 2200));
   minimap.el.addEventListener('pointerdown', ev => {
     const r = minimap.el.getBoundingClientRect();
     const x = ((ev.clientX - r.left) / r.width - 0.5) * 2 * MAP;
@@ -1709,8 +1733,8 @@ export function createGroundBattle(ctx, config) {
         btn.className = 'act' + (locked ? ' locked' : '');
         btn.innerHTML = `<b>${def.name}</b><small>${locked
           ? `нужен ${def.tier}-й уровень технологий`
-          : `${def.cost} кр · ${def.build} с`}</small>`;
-        btn.disabled = locked || sides.me.credits < def.cost;
+          : `${unitCost(def)} кр · ${def.build} с`}</small>`;
+        btn.disabled = locked || sides.me.credits < unitCost(def);
         btn.onclick = () => { if (!locked && enqueue(b, id)) refreshSel(); };
         acts.appendChild(btn);
       }
@@ -1850,6 +1874,15 @@ export function createGroundBattle(ctx, config) {
     state.docName = sides.me.doc.name;
     state.canPlaceTest = (id, x, z) => canPlace('me', id, x, z);
     state.setDocTest = d => { sides.me.doc = d; };
+    state.landTest = LAND;
+    state.costTest = id => {
+      const u = unitDef(sides.me.faction.id, id), b = GROUND_BUILDINGS[id];
+      return {
+        unit: u ? unitCost(u) : null,
+        building: b ? buildCost('me', b) : null,
+        dur: b ? +buildDur(b, 'me').toFixed(1) : null,
+      };
+    };
     state.extermTest = (x, z) =>
       callExterminatus(new THREE.Vector3(x, terrainH(x, z), z));
     state.callSupportTest = (id, x, z) =>

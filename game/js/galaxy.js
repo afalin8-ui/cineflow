@@ -15,7 +15,7 @@ import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
   TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom, EXTERMINATUS,
-  shipHasDrive, BREAKER, HYPER,
+  shipHasDrive, BREAKER, HYPER, traitsOf, planetMods,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -99,6 +99,12 @@ export function mergeFleets(a, b) {
   for (const f of [...(a || []), ...(b || [])]) map.set(f.id, (map.get(f.id) || 0) + f.count);
   return [...map.entries()].map(([id, count]) => ({ id, count }));
 }
+
+/* Полк набирается на планете — значит, её характер решает и цену.
+   На мире с мобилизационным округом пехота дешевле и в кампании,
+   не только в наземном бою. */
+export const regimentCost = def =>
+  Math.round(REGIMENT_COST * planetMods(def).infantry / 10) * 10;
 
 export function incomeOf(camp, faction) {
   let sum = 0;
@@ -464,6 +470,14 @@ export function createGalaxy(ctx, camp) {
       ${st.breakers > 0 ? `<div class="gp-line">Взломщиков наготове: ${st.breakers}</div>` : ''}
     </div>`;
 
+    /* Характер мира: почему за него стоит драться помимо дохода.
+       Виден до штурма — иначе выбирать направление не из чего. */
+    const traits = traitsOf(def);
+    if (traits.length) {
+      html += `<div class="gp-block"><h4>Особенности мира</h4>${traits.map(t =>
+        `<div class="gp-trait"><b>${t.name}</b><small>${t.desc}</small></div>`).join('')}</div>`;
+    }
+
     const fleetTxt = st.fleet.length
       ? st.fleet.map(x => {
           const d = shipDef(st.owner || my, x.id);
@@ -589,12 +603,14 @@ export function createGalaxy(ctx, camp) {
         sep.className = 'gp-sep';
         sep.textContent = 'Гарнизон';
         actions.appendChild(sep);
-        btn('Набрать полк', `${REGIMENT_COST} кр · высаживается с флотом`, () => {
-          if (camp.credits[my] < REGIMENT_COST) return;
-          camp.credits[my] -= REGIMENT_COST;
+        // Полк — та же пехота: где её дешевле кормить, там дешевле и набор
+        const rc = regimentCost(def);
+        btn('Набрать полк', `${rc} кр · высаживается с флотом`, () => {
+          if (camp.credits[my] < rc) return;
+          camp.credits[my] -= rc;
           st.regiments++;
           refreshAll();
-        }, camp.credits[my] < REGIMENT_COST);
+        }, camp.credits[my] < rc);
       }
       if (fleetSize(st.fleet) && !st.moved) {
         const note = document.createElement('div');
@@ -914,6 +930,9 @@ export function createGalaxy(ctx, camp) {
           tech: techOf(camp, to.owner),
         },
         biome: toDef.biome,
+        /* Сам мир: его особенности меняют цены и скорость стройки
+           обеим сторонам — это свойство планеты, а не клана. */
+        world: toDef,
         title: `Наземная операция · ${toDef.name}`,
         onEnd: apply,
       });
@@ -976,8 +995,9 @@ export function createGalaxy(ctx, camp) {
           if (cur) cur.count++; else st.fleet.push({ id: d.id, count: 1 });
         }
       }
-      if (st.buildings.includes('garrison') && camp.credits[f] >= REGIMENT_COST && st.regiments < 8) {
-        camp.credits[f] -= REGIMENT_COST;
+      const rc = regimentCost(def);
+      if (st.buildings.includes('garrison') && camp.credits[f] >= rc && st.regiments < 8) {
+        camp.credits[f] -= rc;
         st.regiments++;
       }
     }
@@ -1171,6 +1191,15 @@ export function createGalaxy(ctx, camp) {
     controls.dispose();
     hud.remove();
     disposeScene(scene);
+  }
+
+  /* Наружу — для автотестов, как __gr в наземном бою: маркеры на
+     карте прозрачны для указателя, кликом по ним планету не выбрать. */
+  if (typeof window !== 'undefined') {
+    window.__gal = {
+      state, camp, refreshAll,
+      selectTest: id => { state.selected = id; refreshAll(); },
+    };
   }
 
   return { scene, camera: tcam.cam, update, dispose, state, refreshAll };
