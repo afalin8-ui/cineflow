@@ -15,6 +15,7 @@ import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
   TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom, EXTERMINATUS,
+  shipHasDrive, BREAKER,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -30,6 +31,8 @@ export function newCampaign(playerFaction) {
       id: s.id, owner: null, buildings: [], fleet: [], regiments: 0, moved: false,
       // блокада: {faction, fleet} — чужой флот на орбите без боя
       siege: null,
+      gateJammed: 0,     // до какого хода врата заглушены взломщиком
+      breakers: 0,       // взломщики, готовые к вылету
     };
   }
   for (const s of GALAXY_MAP.systems) {
@@ -142,6 +145,28 @@ export function nextTechCost(camp, faction) {
    считаем первым уровнем, а технику без поля tier — доступной всегда. */
 export function techAllows(camp, faction, tier) {
   return !tier || tier <= techOf(camp, faction);
+}
+
+/* Можно ли увести флот из системы. Большим кораблям врата не нужны —
+   у них свой привод; всем остальным нужны работающие врата на месте
+   старта. Заглушенные взломщиком врата не работают ни у кого. */
+export function jumpCheck(camp, fromId, faction) {
+  const st = camp.systems[fromId];
+  const heavy = [], light = [];
+  for (const item of st.fleet || []) {
+    const d = shipDef(faction, item.id);
+    (shipHasDrive(d) ? heavy : light).push(item);
+  }
+  const gate = st.buildings.includes('warpgate');
+  const jammed = (st.gateJammed || 0) > camp.turn;
+  if (!light.length) return { ok: true, heavy, light: [] };
+  if (gate && !jammed) return { ok: true, heavy, light };
+  return {
+    ok: false, heavy, light,
+    reason: jammed
+      ? 'Врата заглушены взломщиком: лёгкие корабли заперты в системе'
+      : 'Без гиперворот из системы уйдут только флагманы и носители',
+  };
 }
 
 export function ownedCount(camp, faction) {
@@ -390,6 +415,9 @@ export function createGalaxy(ctx, camp) {
       ${st.scorched ? '<div class="gp-line scorched">Экологическая катастрофа: доход шестая часть</div>' : ''}
       ${st.siege ? `<div class="gp-line sieged">Блокада: ${FACTIONS[st.siege.faction].short} держит орбиту,
         доход обнулён</div>` : ''}
+      ${(st.gateJammed || 0) > camp.turn
+        ? `<div class="gp-line sieged">Врата заглушены до ${st.gateJammed} хода</div>` : ''}
+      ${st.breakers > 0 ? `<div class="gp-line">Взломщиков наготове: ${st.breakers}</div>` : ''}
     </div>`;
 
     const fleetTxt = st.fleet.length
@@ -444,7 +472,7 @@ export function createGalaxy(ctx, camp) {
 
     if (mine) {
       // постройки
-      for (const key of ['mine', 'lab', 'shipyard', 'garrison', 'aogun', 'station']) {
+      for (const key of ['mine', 'lab', 'shipyard', 'garrison', 'warpgate', 'aogun', 'station']) {
         if (st.buildings.includes(key)) continue;
         const p = PLANET_BUILDINGS[key];
         const noSlot = st.buildings.length >= def.slots;
@@ -478,6 +506,40 @@ export function createGalaxy(ctx, camp) {
           }, locked || camp.credits[my] < d.cost, locked ? 'locked' : '');
         }
       }
+      // взломщик строится на верфи и ждёт своего часа
+      if (st.buildings.includes('shipyard')) {
+        const sep = document.createElement('div');
+        sep.className = 'gp-sep';
+        sep.textContent = 'Диверсия';
+        actions.appendChild(sep);
+        btn(BREAKER.name, `${BREAKER.cost} кр · ${BREAKER.desc}`, () => {
+          if (camp.credits[my] < BREAKER.cost) return;
+          camp.credits[my] -= BREAKER.cost;
+          st.breakers = (st.breakers || 0) + 1;
+          refreshAll();
+        }, camp.credits[my] < BREAKER.cost);
+
+        if (st.breakers > 0) {
+          /* Цель — любая соседняя чужая система с вратами. Глушим их
+             и теряем взломщика: он уходит в один конец. */
+          for (const nid of neighborsOf(id)) {
+            const n = camp.systems[nid];
+            if (!n.owner || n.owner === my) continue;
+            if (!n.buildings.includes('warpgate')) continue;
+            const nd = GALAXY_MAP.systems.find(x => x.id === nid);
+            const already = (n.gateJammed || 0) > camp.turn;
+            btn(`Заглушить врата · ${nd.name}`,
+              already ? 'уже заглушены' : `${BREAKER.jamTurns} хода · взломщик гибнет`, () => {
+                if (st.breakers <= 0 || already) return;
+                st.breakers--;
+                n.gateJammed = camp.turn + BREAKER.jamTurns;
+                logLine(`${nd.name}: гиперворота заглушены на ${BREAKER.jamTurns} хода.`);
+                refreshAll();
+              }, already);
+          }
+        }
+      }
+
       if (st.buildings.includes('garrison')) {
         const sep = document.createElement('div');
         sep.className = 'gp-sep';
@@ -511,6 +573,18 @@ export function createGalaxy(ctx, camp) {
     }
   }
 
+  /* Короткое окно с объяснением. Нужно именно объяснение, а не отказ
+     молчком: правило про врата неочевидно, и без подсказки игрок
+     решит, что игра съела ему флот. */
+  function notify(title, text) {
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = `<div class="modal-inner"><h3>${title}</h3><p>${text}</p>
+      <div class="modal-actions"><button class="btn primary" data-a="ok">Понятно</button></div></div>`;
+    hudRoot.appendChild(m);
+    m.querySelector('[data-a="ok"]').onclick = () => m.remove();
+  }
+
   function logLine(text) {
     camp.log.push({ turn: camp.turn, text });
     if (camp.log.length > 60) camp.log.shift();
@@ -541,11 +615,28 @@ export function createGalaxy(ctx, camp) {
     if (from.owner !== my || from.moved || !fleetSize(from.fleet)) return;
     if (!neighborsOf(fromId).includes(toId)) return;
 
+    /* Гиперпрыжок. Без врат из системы уйдут только флагманы и
+       носители — у них свой привод. Остальные остаются на месте,
+       и об этом надо сказать прямо, иначе игрок решит, что игра
+       съела половину его флота. */
+    const jump = jumpCheck(camp, fromId, my);
+    if (!jump.ok && !jump.heavy.length) {
+      notify('Прыжок невозможен', jump.reason
+        + '. Построй врата на этой планете или веди сюда тяжёлые корабли.');
+      return;
+    }
+    const goes = jump.ok ? from.fleet : jump.heavy;
+    const stays = jump.ok ? [] : jump.light;
+    if (!jump.ok) {
+      logLine(`${GALAXY_MAP.systems.find(s => s.id === fromId).name}: ` +
+        `без врат ушли только тяжёлые корабли, лёгкие остались.`);
+    }
+
     // свой или ничей мир — просто перелёт
     if (to.owner === my || to.owner === null) {
-      to.fleet = mergeFleets(to.fleet, from.fleet);
+      to.fleet = mergeFleets(to.fleet, goes);
       const regs = from.regiments;
-      from.fleet = [];
+      from.fleet = stays;
       from.moved = true;
       if (to.owner === null) {
         to.owner = my;
@@ -789,7 +880,7 @@ export function createGalaxy(ctx, camp) {
     for (const def of owned) {
       const st = camp.systems[def.id];
       if (st.buildings.length >= def.slots) continue;
-      const wish = ['shipyard', 'garrison', 'mine', 'lab', 'aogun', 'station']
+      const wish = ['shipyard', 'garrison', 'warpgate', 'mine', 'lab', 'aogun', 'station']
         .find(b => !st.buildings.includes(b));
       if (!wish) continue;
       const cost = PLANET_BUILDINGS[wish].cost;
