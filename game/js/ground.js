@@ -15,6 +15,7 @@ import {
 } from './engine.js';
 import {
   buildGroundUnit, buildStructure, buildSupplyField, buildProp, buildWater, mat,
+  buildGrass, buildTreeField,
 } from './models.js';
 import { groundTexture } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
@@ -259,16 +260,42 @@ export function createGroundBattle(ctx, config) {
     r.rotation.set(rnd(0, 3), rnd(0, 3), rnd(0, 3));
     scene.add(r);
   }
-  for (let i = 0; i < (IS_TOUCH ? 40 : 75); i++) {
-    const x = rnd(-MAP * 0.98, MAP * 0.98), z = rnd(-MAP * 0.98, MAP * 0.98);
-    if (!freeSpot(x, z) || isWater(x, z)) continue;
-    const p = buildProp(config.biome || 'rock');
-    p.position.set(x, terrainH(x, z), z);
-    p.rotation.y = rnd(0, 6.28);
-    const k = rnd(0.8, 1.5);
-    p.scale.setScalar(k);
-    scene.add(p);
+  /* ── ПОДЛЕСОК.
+     Раньше здесь было семьдесят пять отдельных ёлок — по мешу на
+     дерево, и между ними голая крашеная сетка. Теперь трава и лес
+     идут инстансами: одна геометрия на всю карту, у каждого кустика
+     своя матрица. Десять тысяч травинок стоят одного вызова
+     отрисовки, поэтому их можно позволить себе даже на планшете.
+
+     Куда сажать, решает одна проверка: не в воду, не на крутой
+     склон (там камень), не на площадки баз и не в поля снабжения. */
+  const canPlant = (x, z) => {
+    if (Math.abs(x) > MAP * 0.99 || Math.abs(z) > MAP * 0.99) return null;
+    if (isWater(x, z)) return null;
+    // Вокруг баз трава растёт, просто не в самом дворе: радиус вдвое
+    // меньше, чем у камней, иначе рядом со штабом голая земля
+    for (const [bx, bz] of [[-BX0, BX0], [BX0, -BX0]]) {
+      if (Math.hypot(x - bx, z - bz) < 46) return null;
+    }
+    const y = terrainH(x, z);
+    const d = 3;
+    const slope = Math.hypot(
+      (terrainH(x + d, z) - terrainH(x - d, z)) / (2 * d),
+      (terrainH(x, z + d) - terrainH(x, z - d)) / (2 * d));
+    if (slope > 0.55) return null;                       // на обрыве не растёт
+    for (const [fx, fz] of FIELD_SPOTS) {
+      if (Math.hypot(x - fx, z - fz) < 30) return null;  // не заслоняем склады
+    }
+    return { y, ok: true };
+  };
+
+  if (config.biome !== 'rock' && config.biome !== 'city') {
+    const grassTint = config.biome === 'desert' ? 0xbca772
+                    : config.biome === 'ice' ? 0x9fb4b8
+                    : config.biome === 'klotho' ? 0xb0a878 : 0xffffff;
+    scene.add(buildGrass(IS_TOUCH ? 9000 : 26000, MAP, canPlant, grassTint));
   }
+  scene.add(buildTreeField(IS_TOUCH ? 90 : 180, MAP, canPlant, config.biome || 'rock'));
 
   const fx = new Fx(scene);
   fx.setCamera(tcam.cam);

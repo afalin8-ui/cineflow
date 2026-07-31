@@ -890,6 +890,167 @@ export function buildWater(size, level, depthCanvas, tint) {
   return m;
 }
 
+/* ── ТРАВА И КУСТЫ ИНСТАНСАМИ.
+
+   Ландшафт без подлеска читается как раскрашенная сетка, но
+   насыпать десять тысяч отдельных мешей нельзя — каждый стоит
+   отдельного вызова отрисовки, и планшет ляжет. InstancedMesh рисует
+   всю траву за один вызов: геометрия одна, у каждого экземпляра своя
+   матрица. Десять тысяч кустиков стоят столько же, сколько один.
+
+   Сама травинка — два скрещённых прямоугольника с прозрачностью:
+   с любой стороны видно плоскость, а не ребро. Прозрачность через
+   alphaTest, а не blending, — тогда трава пишется в буфер глубины
+   и не сортируется каждый кадр. */
+
+function grassBlade() {
+  const g = new THREE.BufferGeometry();
+  const w = 0.5, h = 1.0;
+  const quad = (ax, az) => [
+    -w * ax, 0, -w * az,  w * ax, 0, w * az,  w * ax, h, w * az,
+    -w * ax, 0, -w * az,  w * ax, h, w * az, -w * ax, h, -w * az,
+  ];
+  const pos = [...quad(1, 0), ...quad(0, 1)];
+  const uvq = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1];
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute([...uvq, ...uvq], 2));
+  // нормаль вверх: трава ловит свет как поверхность, а не как стенка
+  const n = new Array(12).fill(0).flatMap(() => [0, 1, 0]);
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(n, 3));
+  return g;
+}
+
+let GRASS_TEX = null;
+function grassTexture() {
+  if (GRASS_TEX) return GRASS_TEX;
+  const S = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, S, S);
+  // пучок из нескольких сужающихся кверху лезвий
+  for (let i = 0; i < 7; i++) {
+    const x = S * (0.15 + Math.random() * 0.7);
+    const top = S * (0.05 + Math.random() * 0.35);
+    const lean = (Math.random() - 0.5) * S * 0.28;
+    const wide = S * (0.035 + Math.random() * 0.03);
+    const g = c.createLinearGradient(0, S, 0, top);
+    g.addColorStop(0, 'rgba(70,86,44,1)');
+    g.addColorStop(1, 'rgba(150,176,96,1)');
+    c.fillStyle = g;
+    c.beginPath();
+    c.moveTo(x - wide, S);
+    c.lineTo(x + wide, S);
+    c.lineTo(x + lean, top);
+    c.closePath();
+    c.fill();
+  }
+  GRASS_TEX = new THREE.CanvasTexture(cv);
+  GRASS_TEX.colorSpace = THREE.SRGBColorSpace;
+  return GRASS_TEX;
+}
+
+/* Ковёр травы. sample(x, z) должен вернуть {y, ok} — высоту рельефа
+   и можно ли туда сажать (не вода, не площадка базы). */
+export function buildGrass(count, extent, sample, tint) {
+  const geo = grassBlade();
+  const mat = new THREE.MeshLambertMaterial({
+    map: grassTexture(), color: tint || 0xffffff,
+    transparent: false, alphaTest: 0.45, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.InstancedMesh(geo, mat, count);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const scl = new THREE.Vector3();
+  const pos = new THREE.Vector3();
+  /* Сажаем купами, а не равномерной сеткой. Равномерная засыпка
+     читается как шум по всему полю; куртинами трава выглядит живой,
+     а между ними остаётся открытая земля, по которой видно рельеф. */
+  let n = 0;
+  for (let tries = 0; tries < count && n < count; tries++) {
+    const cx = (Math.random() - 0.5) * extent * 2;
+    const cz = (Math.random() - 0.5) * extent * 2;
+    if (!sample(cx, cz)) continue;
+    const inClump = 4 + (Math.random() * 7 | 0);
+    const spread = 3 + Math.random() * 7;
+    for (let k = 0; k < inClump && n < count; k++) {
+      const x = cx + (Math.random() - 0.5) * spread * 2;
+      const z = cz + (Math.random() - 0.5) * spread * 2;
+      const s = sample(x, z);
+      if (!s || !s.ok) continue;
+      const h = 2.2 + Math.random() * 2.8;
+      pos.set(x, s.y, z);
+      q.setFromAxisAngle(up, Math.random() * Math.PI);
+      scl.set(h * (0.7 + Math.random() * 0.6), h, h);
+      m.compose(pos, q, scl);
+      mesh.setMatrixAt(n++, m);
+    }
+  }
+  mesh.count = n;
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = false;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/* Деревья тем же приёмом: одна геометрия ствола и одна кроны на всю
+   карту. Разнообразие даём наклоном, поворотом и размером — этого
+   достаточно, чтобы лес не выглядел строем клонов. */
+export function buildTreeField(count, extent, sample, biome) {
+  const g = new THREE.Group();
+  if (biome === 'ice' || biome === 'rock' || biome === 'city') return g;
+
+  const trunkGeo = new THREE.CylinderGeometry(0.16, 0.28, 1, 5);
+  trunkGeo.translate(0, 0.5, 0);
+  const leafGeo = new THREE.ConeGeometry(1, 1, 7);
+  leafGeo.translate(0, 0.5, 0);
+
+  const desert = biome === 'desert';
+  const trunkMat = new THREE.MeshLambertMaterial({ color: desert ? 0x6a5436 : 0x4a3a28 });
+  const leafMat = new THREE.MeshLambertMaterial({ color: desert ? 0x6e7a42 : 0x33552e });
+
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
+  const leaves = new THREE.InstancedMesh(leafGeo, leafMat, count * 2);
+
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  let n = 0, l = 0;
+  for (let i = 0; i < count * 4 && n < count; i++) {
+    const x = (Math.random() - 0.5) * extent * 2;
+    const z = (Math.random() - 0.5) * extent * 2;
+    const s = sample(x, z);
+    if (!s || !s.ok) continue;
+    const h = (desert ? 3.5 : 6) + Math.random() * (desert ? 2 : 6);
+    const lean = (Math.random() - 0.5) * 0.14;
+    q.setFromEuler(new THREE.Euler(lean, Math.random() * Math.PI * 2, lean * 0.6));
+
+    pos.set(x, s.y, z);
+    scl.set(h * 0.24, h, h * 0.24);
+    m.compose(pos, q, scl);
+    trunks.setMatrixAt(n, m);
+
+    // две кроны друг над другом — силуэт перестаёт быть одним конусом
+    const layers = desert ? 1 : 2;
+    for (let k = 0; k < layers && l < leaves.count; k++) {
+      const cw = h * (desert ? 0.42 : 0.36) * (1 - k * 0.3);
+      pos.set(x, s.y + h * (desert ? 0.75 : 0.55 + k * 0.28), z);
+      scl.set(cw, h * (desert ? 0.4 : 0.5 - k * 0.12), cw);
+      m.compose(pos, q, scl);
+      leaves.setMatrixAt(l++, m);
+    }
+    n++;
+  }
+  trunks.count = n; leaves.count = l;
+  trunks.instanceMatrix.needsUpdate = true;
+  leaves.instanceMatrix.needsUpdate = true;
+  trunks.frustumCulled = leaves.frustumCulled = false;
+  g.add(trunks, leaves);
+  return g;
+}
+
 // Поле снабжения на наземной карте
 export function buildSupplyField() {
   const g = new THREE.Group();
