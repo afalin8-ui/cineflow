@@ -21,7 +21,7 @@ import { groundTexture, terrainSet } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
-  dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT, EXTERMINATUS,
+  dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT, EXTERMINATUS, doctrineOf,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -466,10 +466,12 @@ export function createGroundBattle(ctx, config) {
     me: {
       faction: FACTIONS[config.player.faction], credits: config.player.credits ?? 3000,
       tech: config.player.tech ?? MAX_TECH, id: 'me',
+      doc: doctrineOf(config.player.faction),
     },
     foe: {
       faction: FACTIONS[config.enemy.faction], credits: config.enemy.credits ?? 3000,
       tech: config.enemy.tech ?? MAX_TECH, id: 'foe',
+      doc: doctrineOf(config.enemy.faction),
     },
   };
   const other = s => (s === 'me' ? 'foe' : 'me');
@@ -507,9 +509,10 @@ export function createGroundBattle(ctx, config) {
     const b = {
       uid: uid++, kind: 'building', side: sideId, faction: side.faction, def,
       obj, pos: obj.position, cls: 'structure',
-      hp: instant ? def.hp : def.hp * 0.15, maxHp: def.hp, armor: def.armor,
+      hp: instant ? def.hp * (side.doc.hpMul || 1) : def.hp * 0.15,
+      maxHp: def.hp * (side.doc.hpMul || 1), armor: def.armor,
       dead: false, radius: def.size * 0.75,
-      building: !instant, buildLeft: instant ? 0 : def.build,
+      building: !instant, buildLeft: instant ? 0 : def.build * side.doc.buildMul,
       queue: [], produceLeft: 0,
       rally: new THREE.Vector3(x + rnd(-1, 1) * 18, y, z + 26),
       cd: 0, target: null,
@@ -1119,7 +1122,8 @@ export function createGroundBattle(ctx, config) {
     if (b.empUntil && state.time < b.empUntil) return;
     if (b.building) {
       b.buildLeft -= dt;
-      const k = clamp(1 - b.buildLeft / Math.max(0.1, b.def.build), 0, 1);
+      const dur = Math.max(0.1, b.def.build * sides[b.side].doc.buildMul);
+      const k = clamp(1 - b.buildLeft / dur, 0, 1);
       b.obj.scale.y = 0.25 + k * 0.75;
       b.hp = b.maxHp * (0.15 + k * 0.85);
       if (b.buildLeft <= 0) {
@@ -1157,13 +1161,17 @@ export function createGroundBattle(ctx, config) {
   function enqueue(b, unitId) {
     const def = unitDef(b.faction.id, unitId);
     const side = sides[b.side];
-    if (side.credits < def.cost) return false;
+    if (side.credits < buildCost(sideId, def)) return false;
     if (b.queue.length >= 6) return false;
-    side.credits -= def.cost;
+    side.credits -= buildCost(sideId, def);
     b.queue.push(unitId);
     if (b.queue.length === 1) b.produceLeft = def.build;
     return true;
   }
+
+  // Цена постройки зависит от доктрины: у Тройдена модули дороже,
+  // у Плэктора вдвое дешевле — это часть их характера, а не баланс
+  const buildCost = (sideId, def) => Math.round(def.cost * sides[sideId].doc.costMul);
 
   function canPlace(sideId, defId, x, z) {
     const def = GROUND_BUILDINGS[defId];
@@ -1173,15 +1181,23 @@ export function createGroundBattle(ctx, config) {
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       if (isWater(x + dx * def.size * 0.8, z + dz * def.size * 0.8)) return false;
     }
+    /* Правило размещения — главное, чем кланы отличаются на земле.
+       Тройден роняет модули с орбиты куда угодно, Рииз собирает их
+       дронами тоже где угодно, Плэктор расползается от уже стоящего,
+       а Девиан пристраивается вплотную к центральному узлу. */
+    const doc = sides[sideId].doc;
     let nearOwn = false;
     for (const b of state.buildings) {
       if (b.dead) continue;
       const d = Math.hypot(b.pos.x - x, b.pos.z - z);
       if (d < (b.def.size + def.size) * 0.75) return false;
-      if (b.side === sideId && d < 130) nearOwn = true;
+      if (b.side !== sideId) continue;
+      // Девиану считается только штаб: крепость растёт вокруг ядра
+      if (doc.hubOnly && b.def.id !== 'hq') continue;
+      if (d < doc.needNear) nearOwn = true;
     }
     for (const f of state.fields) if (f.left > 0 && f.pos.distanceTo(_v.set(x, f.pos.y, z)) < 22) return false;
-    return nearOwn;
+    return doc.anywhere || nearOwn;
   }
 
   // ── ИИ ───────────────────────────────────────────────────
@@ -1209,11 +1225,11 @@ export function createGroundBattle(ctx, config) {
     if (army.length > 8 && myB.filter(b => b.def.id === 'sam').length < 1) wish.push('sam');
     for (const w of wish) {
       const def = GROUND_BUILDINGS[w];
-      if (side.credits < def.cost) break;
+      if (side.credits < buildCost('foe', def)) break;
       for (let tries = 0; tries < 14; tries++) {
         const a = rnd(0, Math.PI * 2), r = rnd(35, 95);
         const x = hq.pos.x + Math.cos(a) * r, z = hq.pos.z + Math.sin(a) * r;
-        if (canPlace('foe', w, x, z)) { side.credits -= def.cost; makeBuilding('foe', w, x, z, false); break; }
+        if (canPlace('foe', w, x, z)) { side.credits -= buildCost('foe', def); makeBuilding('foe', w, x, z, false); break; }
       }
       break;
     }
@@ -1329,7 +1345,7 @@ export function createGroundBattle(ctx, config) {
       const def = GROUND_BUILDINGS[id];
       const b = document.createElement('button');
       b.className = 'build-btn';
-      b.innerHTML = `<b>${def.name}</b><span class="cost">${def.cost}</span><small>${def.desc}</small>`;
+      b.innerHTML = `<b>${def.name}</b><span class="cost">${buildCost('me', def)}</span><small>${def.desc}</small>`;
       b.disabled = sides.me.credits < def.cost;
       b.onclick = () => {
         state.placing = id;
@@ -1831,6 +1847,9 @@ export function createGroundBattle(ctx, config) {
   // На игру не влияет, читать можно из консоли.
   if (typeof window !== 'undefined') {
     window.__gr = state;
+    state.docName = sides.me.doc.name;
+    state.canPlaceTest = (id, x, z) => canPlace('me', id, x, z);
+    state.setDocTest = d => { sides.me.doc = d; };
     state.extermTest = (x, z) =>
       callExterminatus(new THREE.Vector3(x, terrainH(x, z), z));
     state.callSupportTest = (id, x, z) =>
