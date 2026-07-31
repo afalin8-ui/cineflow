@@ -848,14 +848,39 @@ export function buildProp(biome, rng) {
    на глубине тёмная и зеркальная. Глубину шейдер берёт из карты,
    запечённой из рельефа, — поэтому линия прибоя повторяет берег. */
 
+/* Поверхность воды реально гнётся, а не притворяется картой нормалей:
+   плоскость разбита на сетку, и вершины ходят вверх-вниз по сумме
+   волн. Именно от этого у воды появляется силуэт — блик ползёт по
+   склону волны, берег то заливает, то обнажает. Amplitude гасится
+   у берега глубиной: иначе волна протыкает дно и висит над сушей. */
 const WATER_VERT = `
+uniform sampler2D uDepth;
+uniform float uTime;
 varying vec2 vUv; varying vec3 vP; varying vec3 vW;
+varying float vWave; varying float vDepth;
+
+float wave(vec2 p, vec2 dir, float len, float spd, float t) {
+  return sin(dot(p, dir) * len + t * spd);
+}
+
 void main() {
   vUv = uv;
   vec4 wp = modelMatrix * vec4(position, 1.0);
+  float d = texture2D(uDepth, uv).r;
+  vDepth = d;
+
+  // три волны под разными углами — рисунок не читается как синусоида
+  float amp = smoothstep(0.0, 0.16, d) * 1.9;
+  float h = wave(wp.xz, normalize(vec2(1.0, 0.35)), 0.055, 1.35, uTime) * 0.55
+          + wave(wp.xz, normalize(vec2(-0.4, 1.0)), 0.083, 1.0, uTime) * 0.32
+          + wave(wp.xz, normalize(vec2(0.75, -0.7)), 0.13, 1.9, uTime) * 0.16;
+  vWave = h;
+  wp.y += h * amp;
+
   vW = wp.xyz;
-  vP = (modelViewMatrix * vec4(position, 1.0)).xyz;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 mv = viewMatrix * wp;
+  vP = mv.xyz;
+  gl_Position = projectionMatrix * mv;
 }`;
 
 const WATER_FRAG = `
@@ -864,55 +889,82 @@ uniform sampler2D uRipple;
 uniform vec3 uShallow; uniform vec3 uDeep; uniform vec3 uSun; uniform vec3 uSky;
 uniform float uTime;
 varying vec2 vUv; varying vec3 vP; varying vec3 vW;
+varying float vWave; varying float vDepth;
 
 void main() {
-  float depth = texture2D(uDepth, vUv).r;      // 0 — берег, 1 — глубоко
+  float depth = vDepth;                 // 0 — берег, 1 — глубоко
 
   /* Рябь двумя слоями карты нормалей: разный масштаб, разная
      скорость и разное направление. Слои всё время расходятся,
      поэтому рисунок не повторяется — это и отличает живую воду
      от стеклянной плёнки с бегущей синусоидой. */
-  vec2 uv1 = vW.xz * 0.028 + vec2(uTime * 0.012, uTime * 0.008);
-  vec2 uv2 = vW.xz * 0.061 - vec2(uTime * 0.019, -uTime * 0.014);
+  vec2 uv1 = vW.xz * 0.030 + vec2(uTime * 0.013, uTime * 0.009);
+  vec2 uv2 = vW.xz * 0.068 - vec2(uTime * 0.021, -uTime * 0.016);
   vec3 n1 = texture2D(uRipple, uv1).xyz * 2.0 - 1.0;
   vec3 n2 = texture2D(uRipple, uv2).xyz * 2.0 - 1.0;
-  // у берега рябь мельчает: на отмели волне негде разогнаться
   float amp = 0.35 + smoothstep(0.0, 0.3, depth) * 0.65;
-  vec3 n = normalize(vec3((n1.x + n2.x * 0.6) * amp, 2.2, (n1.y + n2.y * 0.6) * amp));
+  vec3 n = normalize(vec3((n1.x + n2.x * 0.6) * amp, 2.0, (n1.y + n2.y * 0.6) * amp));
 
   vec3 V = normalize(cameraPosition - vW);
   float fres = pow(1.0 - max(0.0, dot(n, V)), 3.0);
 
-  // Глубина нормирована по самой глубокой точке карты, поэтому
-  // цвет набирает силу быстро: у берега прозрачная бирюза,
-  // на середине — тёмная толща.
-  vec3 col = mix(uShallow, uDeep, smoothstep(0.02, 0.32, depth));
-  // По касательной вода отражает небо — именно это делает её
-  // «мокрой». В лоб она прозрачная, вдоль поверхности зеркальная.
-  col = mix(col, uSky, fres * 0.55);
+  /* Цвет. Насыщенная бирюза на отмели, густая синь на глубине —
+     вода должна читаться с высоты тактической камеры, а не быть
+     серой плёнкой. Гребень волны светлее подошвы: так видно, что
+     поверхность движется, даже когда камера стоит. */
+  // Переход к глубине резкий: отмель у нас геометрически широкая,
+  // и на пологом переходе всё озеро становится бледной каймой
+  vec3 col = mix(uShallow, uDeep, smoothstep(0.01, 0.15, depth));
+  col *= 0.86 + vWave * 0.22;
+  // По касательной вода отражает небо — именно это делает её мокрой
+  col = mix(col, uSky, fres * 0.32);
+
+  /* Каустика: сетка света, пляшущая по дну отмели. Берём ту же карту
+     ряби двумя слоями и перемножаем — на пересечении гребней
+     получаются те самые извилистые нити. Работает только на
+     мелководье, куда достаёт солнце. */
+  float c1 = texture2D(uRipple, vW.xz * 0.055 + vec2(uTime * 0.02, uTime * 0.014)).z;
+  float c2 = texture2D(uRipple, vW.xz * 0.071 - vec2(uTime * 0.017, uTime * 0.023)).z;
+  float caustic = pow(max(0.0, c1 * c2), 6.0) * 1.1;
+  /* Каустика живёт не у самой кромки, а чуть глубже: на урезе воды
+     её нечему преломлять, и яркое кольцо по берегу выдаёт подделку.
+     Поэтому маска гаснет и вверх, и вниз. */
+  float cMask = smoothstep(0.015, 0.075, depth) * (1.0 - smoothstep(0.10, 0.30, depth));
+  col += vec3(0.45, 0.85, 0.78) * caustic * cMask;
 
   /* Солнечная дорожка в два слоя: широкий мягкий блик даёт форму
-     воды, а поверх него узкие искры от самой ряби — та самая
-     дрожащая дорожка, по которой вода узнаётся мгновенно. */
+     воды, а поверх него узкие искры от самой ряби. */
   vec3 H = normalize(normalize(uSun) + V);
   float ndh = max(0.0, dot(n, H));
-  float wide = pow(ndh, 26.0);
-  float glint = pow(ndh, 340.0);
-  col += vec3(1.0, 0.95, 0.86) * (wide * 0.55 + glint * 5.0);
+  // Держим блик НИЖЕ порога свечения: выше — и bloom размажет
+  // всю воду в белое зарево вместо дорожки
+  col += vec3(1.0, 0.96, 0.88) * (pow(ndh, 24.0) * 0.35 + pow(ndh, 300.0) * 1.6);
 
-  // пена узкой полосой у самой кромки, дышит вместе с волной
-  float edge = 1.0 - smoothstep(0.0, 0.022, depth);
-  float foam = edge * (0.45 + 0.55 * sin(uTime * 1.8 + vW.x * 0.5 + vW.z * 0.4));
-  col = mix(col, vec3(0.80, 0.88, 0.92), foam * 0.40);
+  /* Прибой. Пена не стоит ровной каймой, а дышит вместе с волной:
+     на гребне накатывает выше по берегу, на подошве отступает.
+     Плюс барашки на гребнях в открытой воде. */
+  float tide = vWave * 0.5 + 0.5;
+  /* Порог пены — в долях глубины, а НЕ в метрах. Дно у нас
+     утоплено (BASIN_DEPTH), поэтому у берега уклон пологий и
+     даже узкий диапазон глубины растягивается на пол-озера.
+     Отсюда числа такие мелкие: это прибой, а не залив пены. */
+  float edge = 1.0 - smoothstep(0.0, 0.0028 + tide * 0.0042, depth);
+  float surf = edge * (0.55 + 0.45 * sin(uTime * 2.2 + vW.x * 0.35 + vW.z * 0.28));
+  float caps = smoothstep(0.78, 1.0, vWave) * smoothstep(0.10, 0.35, depth) * 0.22;
+  col = mix(col, vec3(0.86, 0.93, 0.97), clamp(surf * 0.45 + caps, 0.0, 0.72));
 
-  // У кромки вода прозрачная — сквозь неё виден грунт, и берег
-  // читается как отмель, а не как обрезанный по линейке край.
-  float alpha = clamp(0.22 + depth * 3.2 + fres * 0.35 + foam * 0.25, 0.0, 0.95);
+  // У кромки вода прозрачная — сквозь неё виден грунт
+  // Отмель должна быть бирюзовой, а не прозрачной: сквозь неё
+  // светлый песок читался как белая кайма вокруг каждого озера
+  float alpha = clamp(0.58 + depth * 4.5 + fres * 0.22 + surf * 0.25 + caps, 0.0, 0.97);
   gl_FragColor = vec4(col, alpha);
 }`;
 
 export function buildWater(size, level, depthCanvas, tint) {
-  const geo = new THREE.PlaneGeometry(size * 2, size * 2, 1, 1);
+  /* Сетка, а не один квад: вершинам есть куда ходить. Сто шестьдесят
+     делений на сторону — двадцать шесть тысяч вершин, для видеокарты
+     ничто, а волна получается плавной даже вблизи. */
+  const geo = new THREE.PlaneGeometry(size * 2, size * 2, 160, 160);
   geo.rotateX(-Math.PI / 2);
   const depth = new THREE.CanvasTexture(depthCanvas);
   depth.wrapS = depth.wrapT = THREE.ClampToEdgeWrapping;

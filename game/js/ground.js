@@ -174,7 +174,7 @@ export function createGroundBattle(ctx, config) {
   const cLow = new THREE.Color(biome.ground);
   const cHigh = new THREE.Color(biome.accent);
   const cRock = new THREE.Color(biome.rock || 0x6a5f52);
-  const cBed = new THREE.Color(config.biome === 'ice' ? 0x6b7d88 : 0x8f8163);  // ил и намытый песок
+  const cBed = new THREE.Color(config.biome === 'ice' ? 0x40525c : 0x5a4c34);  // ил и мокрый песок
   const tmpC = new THREE.Color();
   const WHITE = new THREE.Color(0xffffff);
   const step = (TERRAIN * 2) / segs;
@@ -194,9 +194,13 @@ export function createGroundBattle(ctx, config) {
     // отмель, дальше темнеет. Без этого сквозь мелководье
     // просвечивает луг и вода не читается вовсе.
     if (h < WATER_LEVEL) {
+      /* Дно ЗАМЕТНО темнее суши. Светлое дно просвечивает сквозь
+         мелководье и читается бледной каймой вокруг каждого озера —
+         именно оно, а не пена, делало берега белёсыми. Ил и мокрый
+         песок в жизни тоже сильно темнее сухого грунта. */
       const sub = clamp((WATER_LEVEL - h) / (HEIGHT_SCALE * 0.35), 0, 1);
-      tmpC.lerp(cBed, 0.55 + sub * 0.4);
-      tmpC.multiplyScalar(1 - sub * 0.45);
+      tmpC.lerp(cBed, 0.8);
+      tmpC.multiplyScalar(0.42 - sub * 0.22);
     }
     /* Вертексный цвет теперь только подкрашивает биом: рисунок даёт
        фотоскан, а полная насыщенность заливки его душит. Осветляем
@@ -318,11 +322,14 @@ export function createGroundBattle(ctx, config) {
   }
   // Цвет неба идёт в воду: по касательной она отражает именно его,
   // и без этого озеро не связано с окружением
+  /* Палитра насыщенная, по референсу Red Alert 3: вода на тактической
+     камере должна читаться как вода с первого взгляда, а не как серая
+     плёнка. Отмель — яркая бирюза, глубина — густая синь. */
   const waterTint = config.biome === 'ice'
-    ? { shallow: 0x4a7f96, deep: 0x0d2434, sky: 0xb8d4e8 }
+    ? { shallow: 0x1f93b4, deep: 0x0a2f4e, sky: 0xc8e2f2 }
     : config.biome === 'desert'
-      ? { shallow: 0x3f7f7a, deep: 0x0d2a2a, sky: 0xd8c8a0 }
-      : { shallow: 0x2f7f96, deep: 0x0a2436, sky: 0x9fc0e0 };
+      ? { shallow: 0x199a8e, deep: 0x074a4a, sky: 0xe2cfa2 }
+      : { shallow: 0x158da4, deep: 0x073055, sky: 0xa8ceea };
   const water = buildWater(TERRAIN, WATER_LEVEL, depthCv, waterTint);
   water.userData.setSun(sun.position.clone().normalize());
   scene.add(water);
