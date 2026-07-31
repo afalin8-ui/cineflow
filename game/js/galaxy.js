@@ -409,7 +409,7 @@ export function createGalaxy(ctx, camp) {
 
     if (mine) {
       // постройки
-      for (const key of ['mine', 'lab', 'shipyard', 'garrison', 'station']) {
+      for (const key of ['mine', 'lab', 'shipyard', 'garrison', 'aogun', 'station']) {
         if (st.buildings.includes(key)) continue;
         const p = PLANET_BUILDINGS[key];
         const noSlot = st.buildings.length >= def.slots;
@@ -598,6 +598,8 @@ export function createGalaxy(ctx, camp) {
       ctx.startSpaceBattle({
         attacker, defender, playerSide: 'attacker', biome: toDef.biome,
         system: toDef.id,
+        // Противоорбитальное орудие защитника вмешивается в бой снизу
+        groundGun: to.buildings.includes('aogun') ? to.owner : null,
         title: `Бой на орбите · ${toDef.name}`,
         onEnd: apply,
       });
@@ -697,7 +699,7 @@ export function createGalaxy(ctx, camp) {
     for (const def of owned) {
       const st = camp.systems[def.id];
       if (st.buildings.length >= def.slots) continue;
-      const wish = ['shipyard', 'garrison', 'mine', 'lab', 'station']
+      const wish = ['shipyard', 'garrison', 'mine', 'lab', 'aogun', 'station']
         .find(b => !st.buildings.includes(b));
       if (!wish) continue;
       const cost = PLANET_BUILDINGS[wish].cost;
@@ -839,6 +841,7 @@ export function createGalaxy(ctx, camp) {
         playerSide: 'defender',
         biome: toDef.biome,
         system: toDef.id,
+        groundGun: to.buildings.includes('aogun') ? to.owner : null,
         title: `Оборона · ${toDef.name}`,
         onEnd: r => apply({
           result: r.result === 'victory' ? 'defender' : 'attacker',

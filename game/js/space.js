@@ -22,7 +22,7 @@ import {
 import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE_OF, STATION, STEALTH, HYPER,
-  ECM, ECM_OF,
+  ECM, ECM_OF, ORBITAL_DEFENCE_OF,
   dmgMult, shipDef,
 } from './data.js';
 
@@ -83,6 +83,95 @@ export function createSpaceBattle(ctx, config) {
   const fx = new Fx(scene);
   fx.setCamera(tcam.cam);
 
+  /* ── ДАВЛЕНИЕ ЗЕМЛИ ──────────────────────────────────────
+     Если у защитника на планете стоит противоорбитальное орудие, оно
+     бьёт снизу вверх с постоянным периодом. Таймер виден в шапке:
+     атакующий может рассчитать заход, но выжидать не выйдет.
+
+     Стреляет орудие ВСЕГДА по атакующему — это оборона планеты,
+     а не оружие поля боя. Поэтому в обороне игрока оно помогает. */
+  const GUN_ORIGIN = new THREE.Vector3(340, -1180, -420);   // макушка планеты
+
+  function gunTargets() {
+    return state.ships.filter(e => !e.dead && !e.hyper && e.side === state.gun.side);
+  }
+
+  function updateGroundGun(dt) {
+    const g = state.gun;
+    if (!g) return;
+    const list = gunTargets();
+    if (!list.length) return;
+
+    // предупреждение: наводка загорается заранее, от неё можно уйти
+    if (!g.warned && state.time >= g.next - g.def.warn) {
+      g.warned = true;
+      g.aim = list[Math.floor(rnd(0, list.length))].pos.clone();
+      toast(`Планета наводит: ${g.def.name}`);
+      fx.ring(g.aim, 6, g.def.kind === 'nuke' ? g.def.radius : 60, g.def.color, g.def.warn);
+    }
+    if (state.time < g.next) return;
+
+    fireGroundGun(g, list);
+    g.next = state.time + g.def.period;
+    g.warned = false;
+    g.aim = null;
+  }
+
+  function fireGroundGun(g, list) {
+    const d = g.def;
+    const shoot = (to, w) => fx.laser(GUN_ORIGIN, to, { color: d.color, width: w, life: 0.8 });
+
+    if (d.kind === 'beam') {
+      // Ионный луч: один корабль, много урона и мёртвые двигатели
+      const t = nearestTo(g.aim, list) || list[0];
+      shoot(t.pos, 3.2);
+      damage(t, d.dmg, 'heavy');
+      t.ionUntil = state.time + d.disable;
+      toast(`${d.name}: ${t.def.name} обездвижен`);
+
+    } else if (d.kind === 'nuke') {
+      // Ядерная: площадь по месту наводки — кто ушёл, тот цел
+      const at = g.aim || list[0].pos;
+      shoot(at, 5);
+      fx.explosion(at, d.radius * 0.5, d.color);
+      let hit = 0;
+      for (const e of list) {
+        const dist = e.pos.distanceTo(at);
+        if (dist > d.radius) continue;
+        damage(e, d.dmg * (1 - dist / d.radius), 'heavy');
+        hit++;
+      }
+      toast(hit ? `${d.name}: накрыто кораблей — ${hit}` : `${d.name}: мимо`);
+
+    } else if (d.kind === 'blind') {
+      // РЭБ снизу: весь флот слепнет, наведение сбито
+      for (const e of list) { e.blindUntil = state.time + d.blind; fx.ring(e.pos, 4, 26, d.color, 0.6); }
+      if (g.side === state.playerSide) state.blindUntil = state.time + d.blind;
+      toast(`${d.name}: флот ослеплён на ${d.blind} с`);
+
+    } else if (d.kind === 'emp') {
+      // ЭМИ-капсулы: липнут к крупным, глушат ангары
+      const big = list.filter(e => e.def.hangar || e.cls === 'capital');
+      const targets = big.length ? big : list;
+      for (const e of targets.slice(0, 2)) {
+        shoot(e.pos, 2.2);
+        e.sabotageUntil = state.time + d.sabotage;
+        fx.ring(e.pos, 3, 20, d.color, 0.7);
+      }
+      toast(`${d.name}: ангары заглушены на ${d.sabotage} с`);
+    }
+  }
+
+  function nearestTo(pos, list) {
+    if (!pos) return null;
+    let best = null, bd = Infinity;
+    for (const e of list) {
+      const dd = e.pos.distanceSquared ? e.pos.distanceSquared(pos) : e.pos.distanceTo(pos);
+      if (dd < bd) { bd = dd; best = e; }
+    }
+    return best;
+  }
+
   const vortexes = [];   // {obj, ship, mode, t, life, radius}
 
   function openVortex(pos, dir, radius, mode) {
@@ -127,12 +216,26 @@ export function createSpaceBattle(ctx, config) {
     },
     reinforceAt: { attacker: 0, defender: 0 },
     conceded: null,
+    gun: null,          // противоорбитальное орудие защитника, см. ниже
+    blindUntil: 0,      // до какого времени флот игрока ослеплён помехами снизу
   };
   const sides = {
     attacker: { faction: FACTIONS[config.attacker.faction], id: 'attacker', sign: 1 },
     defender: { faction: FACTIONS[config.defender.faction], id: 'defender', sign: -1 },
   };
   const enemyOf = s => (s === 'attacker' ? 'defender' : 'attacker');
+
+  /* Орудие защитника заводим здесь, а не рядом с его логикой выше:
+     объявления функций поднимаются, а `const state` — нет, и обращение
+     к нему раньше строки объявления валит модуль целиком. */
+  if (config.groundGun) {
+    const gdef = ORBITAL_DEFENCE_OF(config.groundGun);
+    state.gun = {
+      def: gdef, side: 'attacker',   // цель орудия — всегда атакующий флот
+      next: gdef.period * 0.7,       // первый залп раньше, чтобы обозначить себя
+      warned: false, aim: null,
+    };
+  }
   const myFaction = sides[state.playerSide].faction;
 
   let uid = 1;
@@ -209,6 +312,8 @@ export function createSpaceBattle(ctx, config) {
 
   function launchSquadron(carrier, role) {
     if (!carrier.hangar || carrier.hangar.free <= 0 || carrier.dead) return false;
+    // ЭМИ-капсулы с планеты: ангары заглушены, авиация не выходит
+    if (carrier.sabotageUntil && state.time < carrier.sabotageUntil) return false;
     carrier.hangar.free--;
     const def = STRIKE[carrier.faction.id][role];
     const squad = {
@@ -560,6 +665,7 @@ export function createSpaceBattle(ctx, config) {
 
   // Разворот корпуса. От вектора скорости не зависит — в этом вся соль.
   function face(e, dir, dt, turnRate) {
+    if (e.ionized) return;      // маневровые тоже выжжены
     if (!dir || dir.lengthSq() < 1e-8) return;
     _v3.copy(dir).normalize();
     quatFromDir(_v3, _q);
@@ -570,6 +676,9 @@ export function createSpaceBattle(ctx, config) {
   // Тяга: доводим вектор скорости до желаемого. Двигатель работает
   // в полную силу только по курсу — вбок толкают слабые маневровые.
   function thrustTo(e, desiredVel, dt, thrust) {
+    // Выжженные ионным лучом двигатели не тянут вовсе: корабль
+    // продолжает лететь по инерции, но управлять им нечем
+    if (e.ionized) { e.thrustNow = 0; return; }
     _v.subVectors(desiredVel, e.vel);
     const need = _v.length();
     if (need < 1e-4) { e.thrustNow = 0; return; }
@@ -597,6 +706,11 @@ export function createSpaceBattle(ctx, config) {
   function updateShip(e, dt) {
     // Переход в гипер: корабль замирает, копит энергию и беззащитен
     if (e.hyper) { updateHyper(e, dt); return; }
+    /* Ионный луч с планеты выжигает двигатели: корабль не тянет и не
+       поворачивает, только висит по инерции и огрызается орудиями.
+       Это и делает противоорбитальную оборону страшной — обездвиженный
+       крейсер ловит следующий залп уже гарантированно. */
+    e.ionized = e.ionUntil && state.time < e.ionUntil;
     // Линкор с повреждениями больше 80% уходит сам, не спрашивая
     if (e.def.flee && e.hp / e.maxHp < (e.def.flee || HYPER.fleeThreshold) && !e.station) {
       beginJump(e);
@@ -687,6 +801,8 @@ export function createSpaceBattle(ctx, config) {
       // Помехи: под чужим куполом наведение работает только вблизи
       const jam = jamProfile(e.pos, e.side);
       if (jam && d > jam.lockRange) continue;
+      // РЭБ-излучатель с планеты слепит так же, как чужой купол
+      if (e.blindUntil && state.time < e.blindUntil && d > ECM.lockRange) continue;
 
       if (g.def.charge && g.cd <= g.def.charge && g.cd > 0) {
         if (state.time - g.chargeFx > 0.09) {
@@ -965,6 +1081,8 @@ export function createSpaceBattle(ctx, config) {
           <span class="bar"><i data-role="def-bar"></i></span><em data-role="def-num"></em></div>
       </div>
       <div class="title" data-role="banner"></div>
+      <div class="gunclock" data-role="gunclock" hidden>
+        <b data-role="gun-name"></b><span data-role="gun-time"></span></div>
       <div class="speedctl">
         <button data-speed="0" aria-label="Пауза">❚❚</button>
         <button data-speed="1" class="on">1×</button>
@@ -1015,6 +1133,11 @@ export function createSpaceBattle(ctx, config) {
   $('atk-name').textContent = sides.attacker.faction.tag;
   $('def-name').textContent = sides.defender.faction.tag;
   $('banner').textContent = config.title || 'Бой на орбите';
+  if (state.gun) {
+    $('gunclock').hidden = false;
+    $('gun-name').textContent = state.gun.def.short;
+    $('gunclock').title = state.gun.def.desc;
+  }
   $('hint').innerHTML = IS_TOUCH
     ? 'Касание по своему кораблю — выбрать · по врагу — атаковать · по пустоте — идти · тянуть — двигать карту · щипок — приближение · долгое нажатие — рамка'
     : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · Alt+ЛКМ или средняя кнопка — облёт · WASD — карта · R/F — выше/ниже';
@@ -1424,6 +1547,7 @@ export function createSpaceBattle(ctx, config) {
     if (dt > 0) {
       state.time += dt;
       updateEcm(dt);
+      updateGroundGun(dt);
       updateExposure();
       for (const sd of ['attacker', 'defender']) {
         const at = state.reinforceAt[sd];
@@ -1491,6 +1615,14 @@ export function createSpaceBattle(ctx, config) {
     db.style.background = sides.defender.faction.colorCss;
     $('atk-num').textContent = na;
     $('def-num').textContent = nd;
+
+    // Часы давления земли: сколько осталось до залпа с планеты
+    if (state.gun) {
+      const left = Math.max(0, state.gun.next - state.time);
+      const el = $('gunclock');
+      $('gun-time').textContent = left < 1 ? 'залп' : Math.ceil(left) + ' с';
+      el.classList.toggle('warn', left <= state.gun.def.warn);
+    }
 
     if (state.selection.some(s => s.dead)) {
       state.selection = state.selection.filter(s => !s.dead);

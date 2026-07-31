@@ -526,3 +526,18 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
   .hangar-left { width: 220px; }
   .hangar-right { width: 250px; }
 }
+
+/* Часы «Давления Земли»: сколько осталось до залпа с планеты.
+   Перед выстрелом мигают — это единственное предупреждение игроку. */
+.gunclock {
+  display: flex; align-items: baseline; gap: 7px; pointer-events: auto;
+  padding: 5px 11px; border-radius: 9px;
+  background: var(--panel-2); border: 1px solid var(--line-soft);
+  font-family: var(--mono); font-size: 12px; color: var(--text-2);
+}
+.gunclock b { font-size: 10.5px; letter-spacing: .08em; color: var(--muted); }
+.gunclock.warn {
+  border-color: #e06a4a; color: #ffb9a3;
+  animation: gunpulse .7s ease-in-out infinite;
+}
+@keyframes gunpulse { 50% { background: #3a1c14; } }

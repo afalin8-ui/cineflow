@@ -288,6 +288,9 @@ function showSkirmish() {
       attacker: { faction: mine, ships: scaleFor(mine, fleetOf(size)), reserve: scaleFor(mine, fleetOf('small')) },
       defender: { faction: foe, ships: scaleFor(foe, fleetOf(size)), station: size === 'big' },
       playerSide: 'attacker', biome: 'klotho', title: 'Быстрый бой · орбита',
+      // В быстром бою планета всегда огрызается: иначе «Давление Земли»
+      // можно увидеть только в кампании, построив орудие
+      groundGun: foe,
       onEnd: () => showMenu(),
     }));
   };
