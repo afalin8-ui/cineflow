@@ -28,6 +28,8 @@ export function newCampaign(playerFaction) {
   for (const s of GALAXY_MAP.systems) {
     systems[s.id] = {
       id: s.id, owner: null, buildings: [], fleet: [], regiments: 0, moved: false,
+      // блокада: {faction, fleet} — чужой флот на орбите без боя
+      siege: null,
     };
   }
   for (const s of GALAXY_MAP.systems) {
@@ -103,6 +105,11 @@ export function incomeOf(camp, faction) {
     /* Планета после тотальной бомбардировки почти ничего не приносит:
        это и есть цена Экстерминатуса, и платится она до конца
        кампании, а не один ход. */
+    /* Блокада обнуляет доход целиком: пока на орбите чужой флот,
+       с планеты ничего не вывезти, сколько бы рудников на ней ни
+       стояло. Это и делает флот инструментом давления, а не только
+       тараном. */
+    if (st.siege) continue;
     const base = def.income + (st.buildings.includes('mine') ? 120 : 0);
     sum += st.scorched ? Math.round(base * EXTERMINATUS.ecoPenalty) : base;
   }
@@ -381,6 +388,8 @@ export function createGalaxy(ctx, camp) {
       <div class="gp-owner" style="color:${f.colorCss}">${st.owner ? f.name : 'Ничей мир'}</div>
       <div class="gp-line">Доход ${def.income}${st.buildings.includes('mine') ? ' + 120' : ''} кр/ход · мест под постройки: ${def.slots}</div>
       ${st.scorched ? '<div class="gp-line scorched">Экологическая катастрофа: доход шестая часть</div>' : ''}
+      ${st.siege ? `<div class="gp-line sieged">Блокада: ${FACTIONS[st.siege.faction].short} держит орбиту,
+        доход обнулён</div>` : ''}
     </div>`;
 
     const fleetTxt = st.fleet.length
@@ -410,6 +419,28 @@ export function createGalaxy(ctx, camp) {
       actions.appendChild(b);
       return b;
     };
+
+    /* Блокада. Свой флот, стоящий над чужим миром, может пойти на
+       штурм в любой ход. Владелец блокированной планеты — наоборот,
+       обязан её снимать, иначе останется без денег. */
+    if (st.siege && st.siege.faction === my) {
+      btn('Начать штурм', 'Флот с орбиты идёт в бой', () => {
+        const keep = st.siege;
+        st.siege = null;
+        // штурм ведёт стоявший флот: подкладываем его как атакующий
+        startSiegeAssault(id, keep);
+      });
+      const note = document.createElement('div');
+      note.className = 'act-note';
+      note.textContent = 'Пока блокада стоит, планета не приносит владельцу ничего.';
+      actions.appendChild(note);
+    } else if (st.siege && st.owner === my) {
+      const note = document.createElement('div');
+      note.className = 'act-note';
+      note.textContent = `Орбиту держит ${FACTIONS[st.siege.faction].short}. `
+        + 'Доход мира обнулён, пока блокада не снята: подведи флот из соседней системы.';
+      actions.appendChild(note);
+    }
 
     if (mine) {
       // постройки
@@ -526,8 +557,43 @@ export function createGalaxy(ctx, camp) {
       refreshAll();
       return;
     }
-    // враг — предлагаем бой
+    // враг — предлагаем выбор: штурмовать сейчас или встать блокадой
     offerBattle(fromId, toId);
+  }
+
+  /* Штурм с блокады. Отличается от обычной атаки только тем, что
+     атакующий флот берётся не из соседней системы, а из самой
+     блокады — он уже стоит на орбите. */
+  function startSiegeAssault(toId, siege) {
+    const to = camp.systems[toId];
+    const toDef = GALAXY_MAP.systems.find(s => s.id === toId);
+    const my = camp.playerFaction;
+    const attacker = { faction: my, ships: siege.fleet.map(x => ({ ...x })), reserve: [] };
+    const defender = {
+      faction: to.owner, ships: to.fleet.map(x => ({ ...x })),
+      station: to.buildings.includes('station'),
+    };
+    const apply = res => {
+      if (res.result === 'victory' || res.result === 'attacker') {
+        to.fleet = res.attacker || [];
+        to.owner = my;               // орбита и мир переходят разом:
+        to.regiments = 0;            // блокада уже выморила гарнизон
+        logLine(`${toDef.name}: блокада перешла в штурм, мир взят.`);
+      } else {
+        logLine(`${toDef.name}: штурм с блокады отбит, флот потерян.`);
+        to.fleet = res.defender || to.fleet;
+      }
+      state.selected = toId;
+      refreshAll();
+      checkVictory();
+    };
+    ctx.startSpaceBattle({
+      attacker, defender, playerSide: 'attacker', biome: toDef.biome,
+      system: toDef.id,
+      groundGun: to.buildings.includes('aogun') ? to.owner : null,
+      title: `Штурм с блокады · ${toDef.name}`,
+      onEnd: apply,
+    });
   }
 
   function offerBattle(fromId, toId) {
@@ -542,13 +608,26 @@ export function createGalaxy(ctx, camp) {
         to.buildings.includes('station') ? ' и орбитальная станция' : ''}.
       Наземных полков у противника: ${to.regiments}.</p>
       <p>Твой флот: ${fleetSize(from.fleet)} кораблей, полков к высадке: ${from.regiments}.</p>
+      <p class="gp-line">Можно не штурмовать, а встать на орбите: пока флот
+      висит над планетой, она не приносит владельцу ни кредита. Но и твой
+      флот всё это время занят.</p>
       <div class="modal-actions">
         <button class="btn primary" data-a="fight">В бой</button>
+        <button class="btn" data-a="siege">Встать блокадой</button>
         <button class="btn" data-a="auto">Быстрый расчёт</button>
         <button class="btn ghost" data-a="cancel">Отмена</button>
       </div></div>`;
     hudRoot.appendChild(modal);
     modal.querySelector('[data-a="cancel"]').onclick = () => modal.remove();
+    modal.querySelector('[data-a="siege"]').onclick = () => {
+      modal.remove();
+      to.siege = { faction: my, fleet: from.fleet.map(x => ({ ...x })) };
+      from.fleet = [];
+      from.moved = true;
+      logLine(`${toDef.name}: блокада. Планета отрезана от снабжения.`);
+      state.selected = toId;
+      refreshAll();
+    };
     modal.querySelector('[data-a="fight"]').onclick = () => { modal.remove(); startSpace(fromId, toId, false); };
     modal.querySelector('[data-a="auto"]').onclick = () => { modal.remove(); startSpace(fromId, toId, true); };
   }

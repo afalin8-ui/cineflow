@@ -582,3 +582,5 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 .orbit-btn.exterm.on { border-color: var(--bad); background: #2a1210; }
 
 .gp-line.scorched { color: #ff9a86; }
+
+.gp-line.sieged { color: #ffc27a; }
