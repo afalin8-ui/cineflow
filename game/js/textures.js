@@ -490,6 +490,36 @@ export function groundTexture(biome, seed = 5) {
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+
+  /* Карта нормалей из той же яркости. Без неё грунт под солнцем
+     плоский, как крашеная бумага: свет одинаков по всей поверхности,
+     и никакой рельеф вблизи не читается. Считаем наклон по соседним
+     пикселям — комки и трещины начинают ловить тень. */
+  const nrm = document.createElement('canvas');
+  nrm.width = nrm.height = S;
+  const nctx = nrm.getContext('2d');
+  const nimg = nctx.createImageData(S, S);
+  const nd = nimg.data;
+  const at = (x, y) => d[(((y + S) % S) * S + ((x + S) % S)) * 4] / 255;
+  const STR = 3.4;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = (at(x - 1, y) - at(x + 1, y)) * STR;
+      const dy = (at(x, y - 1) - at(x, y + 1)) * STR;
+      const len = Math.hypot(dx, dy, 1);
+      const o = (y * S + x) * 4;
+      nd[o] = (dx / len * 0.5 + 0.5) * 255;
+      nd[o + 1] = (dy / len * 0.5 + 0.5) * 255;
+      nd[o + 2] = (1 / len * 0.5 + 0.5) * 255;
+      nd[o + 3] = 255;
+    }
+  }
+  nctx.putImageData(nimg, 0, 0);
+  const nt = new THREE.CanvasTexture(nrm);
+  nt.wrapS = nt.wrapT = THREE.RepeatWrapping;
+  nt.anisotropy = 8;
+  t.userData.normal = nt;
+
   cache.set(key, t);
   return t;
 }

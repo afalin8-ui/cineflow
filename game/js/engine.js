@@ -38,7 +38,14 @@ export class Viewport {
     });
     // На планшете полное разрешение Retina съедает кадры без видимой пользы
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : 1.75));
-    this.renderer.shadowMap.enabled = false;
+    /* Тени. Без них любая сцена читается как плоская аппликация —
+       это первое, чем отличается картинка нулевых от картинки
+       девяностых. Мягкая фильтрация (PCFSoft) стоит немного дороже
+       жёсткой, но жёсткая на планшете даёт пиксельную лесенку по
+       краю тени, и лучше бы её тогда не было вовсе. */
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = true;
     this.renderer.setClearColor(0x05070c, 1);
     // Киношная тональная компрессия: яркое перестаёт «выжигаться» в белое,
     // а тени не проваливаются. Без неё свечение выглядит дёшево.

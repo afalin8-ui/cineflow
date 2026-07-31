@@ -141,6 +141,23 @@ export function createGroundBattle(ctx, config) {
   scene.add(new THREE.AmbientLight(0x93a0b4, 1.35));
   const sun = new THREE.DirectionalLight(0xfff2dc, 3.6);
   sun.position.set(210, 190, 130);
+  /* Солнце отбрасывает тени. Ортографическая камера тени натянута на
+     игровую зону — не на весь ландшафт: он вчетверо шире, и растянув
+     карту теней на него, мы получили бы кашу вместо контуров.
+     Карта 2048 на планшете тянется нормально, потому что она одна
+     и обновляется не каждый кадр. */
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
+  const SH = MAP * 1.15;
+  sun.shadow.camera.left = -SH; sun.shadow.camera.right = SH;
+  sun.shadow.camera.top = SH; sun.shadow.camera.bottom = -SH;
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 900;
+  // без сдвига тень «отрывается» от подошвы юнита и ползёт полосами
+  sun.shadow.bias = -0.0012;
+  sun.shadow.normalBias = 0.9;
+  sun.position.multiplyScalar(1.6);
+  sun.target.position.set(0, 0, 0);
+  scene.add(sun.target);
   scene.add(sun);
   const bounce = new THREE.DirectionalLight(0x6a7a90, 0.6);
   bounce.position.set(-160, 80, -140);
@@ -188,10 +205,17 @@ export function createGroundBattle(ctx, config) {
   // видно крупицы и трещины — полигонов при этом не прибавилось.
   const detail = groundTexture(config.biome || 'rock');
   detail.repeat.set(48, 48);
+  if (detail.userData.normal) detail.userData.normal.repeat.set(48, 48);
   const terrain = new THREE.Mesh(tGeo, new THREE.MeshStandardMaterial({
-    vertexColors: true, map: detail, roughness: 0.98, metalness: 0,
+    vertexColors: true, map: detail,
+    // Карта нормалей грунта: комки и трещины ловят солнце, и земля
+    // перестаёт быть крашеной бумагой. Повтор тот же, что у детали.
+    normalMap: detail.userData.normal || null,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughness: 0.95, metalness: 0,
     flatShading: false,
   }));
+  terrain.receiveShadow = true;
   scene.add(terrain);
 
   /* ── ВОДА.
@@ -254,6 +278,7 @@ export function createGroundBattle(ctx, config) {
     // На дне камни читаются тёмными кляксами сквозь воду — не сорим туда
     if (isWater(x, z)) continue;
     const r = new THREE.Mesh(rockGeo, rockMat);
+    r.castShadow = true; r.receiveShadow = true;
     const s = near ? rnd(2, 6) : rnd(4, 12);
     r.scale.set(s, s * rnd(0.5, 1), s);
     r.position.set(x, terrainH(x, z) + s * 0.3, z);
@@ -293,9 +318,13 @@ export function createGroundBattle(ctx, config) {
     const grassTint = config.biome === 'desert' ? 0xbca772
                     : config.biome === 'ice' ? 0x9fb4b8
                     : config.biome === 'klotho' ? 0xb0a878 : 0xffffff;
-    scene.add(buildGrass(IS_TOUCH ? 9000 : 26000, MAP, canPlant, grassTint));
+    const grass = buildGrass(IS_TOUCH ? 9000 : 26000, MAP, canPlant, grassTint);
+    // Трава тень принимает, но не отбрасывает: двадцать шесть тысяч
+    // травинок в карте теней стоят дороже, чем видно на глаз
+    grass.receiveShadow = true;
+    scene.add(grass);
   }
-  scene.add(buildTreeField(IS_TOUCH ? 90 : 180, MAP, canPlant, config.biome || 'rock'));
+  scene.add(shadowed(buildTreeField(IS_TOUCH ? 90 : 180, MAP, canPlant, config.biome || 'rock')));
 
   const fx = new Fx(scene);
   fx.setCamera(tcam.cam);
@@ -330,12 +359,24 @@ export function createGroundBattle(ctx, config) {
     },
   };
   const other = s => (s === 'me' ? 'foe' : 'me');
+
+  /* Тени вешаем на всё, что стоит на земле. Принимать тень юнитам
+     тоже нужно: танк, заехавший под дерево, должен потемнеть, иначе
+     тень выглядит нарисованной на грунте, а не лежащей в мире. */
+  function shadowed(obj, receive = true) {
+    obj.traverse(o => {
+      if (!o.isMesh && !o.isInstancedMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = receive;
+    });
+    return obj;
+  }
   let uid = 1;
 
   // ── ПОЛЯ СНАБЖЕНИЯ ───────────────────────────────────────
   for (const [x, z] of FIELD_SPOTS) {
     if (isWater(x, z)) continue;      // склад посреди озера — нелепо
-    const obj = buildSupplyField();
+    const obj = shadowed(buildSupplyField());
     obj.position.set(x, terrainH(x, z), z);
     scene.add(obj);
     state.fields.push({ kind: 'field', pos: obj.position, obj, left: 5000, uid: uid++ });
@@ -345,7 +386,7 @@ export function createGroundBattle(ctx, config) {
   function makeBuilding(sideId, defId, x, z, instant) {
     const def = GROUND_BUILDINGS[defId];
     const side = sides[sideId];
-    const obj = buildStructure(def, side.faction);
+    const obj = shadowed(buildStructure(def, side.faction));
     const y = terrainH(x, z);
     obj.position.set(x, y, z);
     scene.add(obj);
@@ -368,7 +409,7 @@ export function createGroundBattle(ctx, config) {
   function makeUnit(sideId, defId, x, z) {
     const side = sides[sideId];
     const def = unitDef(side.faction.id, defId);
-    const obj = buildGroundUnit(def, side.faction);
+    const obj = shadowed(buildGroundUnit(def, side.faction));
     const y = def.air ? 45 : terrainH(x, z);
     obj.position.set(x, y, z);
     scene.add(obj);
