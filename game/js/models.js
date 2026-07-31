@@ -10,15 +10,46 @@ import { customModel } from './assets.js';
 import { planetTextures, nebulaTexture } from './textures.js';
 
 const matCache = new Map();
+/* ── ОБШИВКА КОРАБЛЕЙ.
+   Плоский цвет — главная причина, по которой корабль из примитивов
+   выглядит макетом: у настоящей брони есть швы, заклёпки, потёртости
+   и грязь. Один скан металла (ambientCG, CC0), натянутый на все
+   детали корпуса, снимает эту проблему разом: силуэт остаётся
+   прежним, а поверхность перестаёт быть заливкой.
+
+   Тайлим мелко и на всё сразу — UV у примитивов простые, и рисунок
+   ложится по-разному на разные грани, что как раз и нужно. */
+
+const TEX_BASE = new URL('../textures/', import.meta.url);
+let HULL_TEX = null;
+function hullMaps() {
+  if (HULL_TEX) return HULL_TEX;
+  const L = new THREE.TextureLoader();
+  const get = (f, srgb, rep) => {
+    const t = L.load(new URL(f, TEX_BASE).href);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(rep, rep);
+    t.anisotropy = 8;
+    return t;
+  };
+  HULL_TEX = { map: get('hull_diff.jpg', true, 3), nor: get('hull_nor.jpg', false, 3) };
+  return HULL_TEX;
+}
+
 function mat(color, opts = {}) {
   const key = color + '|' + JSON.stringify(opts);
   let m = matCache.get(key);
   if (!m) {
+    const skin = opts.skin ? hullMaps() : null;
     m = new THREE.MeshStandardMaterial({
       color, roughness: opts.rough ?? 0.7, metalness: opts.metal ?? 0.35,
       emissive: opts.emissive ?? 0x000000, emissiveIntensity: opts.ei ?? 1,
       transparent: !!opts.transparent, opacity: opts.opacity ?? 1,
       flatShading: opts.flat !== false,
+      map: skin ? skin.map : null,
+      normalMap: skin ? skin.nor : null,
+      normalScale: skin ? new THREE.Vector2(0.8, 0.8) : undefined,
     });
     m.userData.shared = true;
     matCache.set(key, m);
@@ -153,9 +184,9 @@ export function buildShip(def, faction) {
                   : style === 'wedge' ? 0x5f7a72 : 0x7a4a44;   // бордовые панели
   const darkColor = style === 'stealth' ? 0x23232e : 0x3f444c;
 
-  const hull = mat(hullColor, { rough: 0.6, metal: 0.5 });
-  const deck = mat(deckColor, { rough: 0.7, metal: 0.35 });
-  const dark = mat(darkColor, { rough: 0.85, metal: 0.3 });
+  const hull = mat(hullColor, { rough: 0.6, metal: 0.5, skin: true });
+  const deck = mat(deckColor, { rough: 0.7, metal: 0.35, skin: true });
+  const dark = mat(darkColor, { rough: 0.85, metal: 0.3, skin: true });
   const trim = mat(faction.color, { rough: 0.35, metal: 0.4, emissive: faction.color, ei: 1.1 });
   const glass = mat(0xffe8b0, { rough: 0.2, metal: 0.1, emissive: 0xffcc70, ei: 2.2 });
 

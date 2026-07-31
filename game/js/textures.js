@@ -537,27 +537,46 @@ export function groundTexture(biome, seed = 5) {
    потому что текстура повторяется десятки раз на карту. */
 
 const TERRAIN_BASE = new URL('../textures/', import.meta.url);
-let terrainSetCache = null;
+const texCache = new Map();
+const setCache = new Map();
 
-export function terrainSet() {
-  if (terrainSetCache) return terrainSetCache;
-  const loader = new THREE.TextureLoader();
-  const get = (file, srgb, rep) => {
-    const t = loader.load(new URL(file, TERRAIN_BASE).href);
-    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = 8;
-    t.repeat.set(rep, rep);
-    return t;
+function terrainTex(file, srgb) {
+  if (texCache.has(file)) return texCache.get(file);
+  const t = new THREE.TextureLoader().load(new URL(file, TERRAIN_BASE).href);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  texCache.set(file, t);
+  return t;
+}
+
+/* Набор грунтов на биом. Три слоя: «пологое», «среднее», «обрыв».
+   На зелёной планете это трава, глина и скала; на ледяной — снег,
+   мёрзлый грунт и та же скала; в пустыне — песок, щебень, скала.
+   Файлы общие, меняется только раскладка, поэтому новый биом стоит
+   одной строки, а не нового комплекта текстур. */
+const TERRAIN_SETS = {
+  green:  { flat: 'grass', mid: 'dirt', steep: 'cliff' },
+  klotho: { flat: 'sand',  mid: 'dirt', steep: 'cliff' },
+  desert: { flat: 'sand',  mid: 'dirt', steep: 'cliff' },
+  ice:    { flat: 'snow',  mid: 'rock', steep: 'cliff' },
+  rock:   { flat: 'rock',  mid: 'dirt', steep: 'cliff' },
+  city:   { flat: 'dirt',  mid: 'rock', steep: 'cliff' },
+};
+
+export function terrainSet(biome) {
+  const key = TERRAIN_SETS[biome] ? biome : 'green';
+  if (setCache.has(key)) return setCache.get(key);
+  const s = TERRAIN_SETS[key];
+  const out = {
+    grass: terrainTex(`${s.flat}_diff.jpg`, true),
+    grassN: terrainTex(`${s.flat}_nor.jpg`, false),
+    dirt: terrainTex(`${s.mid}_diff.jpg`, true),
+    rock: terrainTex(`${s.steep}_diff.jpg`, true),
+    rockN: terrainTex(`${s.steep}_nor.jpg`, false),
   };
-  terrainSetCache = {
-    grass: get('grass_diff.jpg', true, 1),
-    rock: get('rock_diff.jpg', true, 1),
-    dirt: get('dirt_diff.jpg', true, 1),
-    grassN: get('grass_nor.jpg', false, 1),
-    rockN: get('rock_nor.jpg', false, 1),
-  };
-  return terrainSetCache;
+  setCache.set(key, out);
+  return out;
 }
 
 export function clearTextureCache() {

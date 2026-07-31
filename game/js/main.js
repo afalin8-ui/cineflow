@@ -304,7 +304,10 @@ function showSkirmish() {
       // только в кампании, и то если выиграть орбиту нужными кораблями
       orbit: ['strike', 'drop', 'emp'],
       enemy: { faction: foe, regiments: sizes[size].regiments, credits: 4000, turrets: size !== 'small' },
-      biome: 'green', title: 'Быстрый бой · планета',
+      // Биом быстрого боя можно подменить из консоли — удобно смотреть,
+      // как выглядят снег и пустыня, не собирая ради этого кампанию
+      biome: (typeof window !== 'undefined' && window.__forceBiome) || 'green',
+      title: 'Быстрый бой · планета',
       onEnd: () => showMenu(),
     }));
   };

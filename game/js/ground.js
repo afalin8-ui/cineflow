@@ -221,7 +221,7 @@ export function createGroundBattle(ctx, config) {
      а рисунок поверхности дают сканы. Вмешиваемся через
      onBeforeCompile, а не пишем свой материал: так у ландшафта
      сохраняется штатное освещение three.js и, главное, тени. */
-  const T = terrainSet();
+  const T = terrainSet(config.biome);
   const terrainMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     normalMap: T.grassN,
@@ -400,11 +400,20 @@ export function createGroundBattle(ctx, config) {
     return { y, ok: true };
   };
 
-  if (config.biome !== 'rock' && config.biome !== 'city') {
-    const grassTint = config.biome === 'desert' ? 0xbca772
-                    : config.biome === 'ice' ? 0x9fb4b8
-                    : config.biome === 'klotho' ? 0xb0a878 : 0xffffff;
-    const grass = buildGrass(IS_TOUCH ? 9000 : 26000, MAP, canPlant, grassTint);
+  /* Подлесок по биому. Зелёная трава на снегу и в барханах — первое,
+     что выдаёт подделку, поэтому меняем не только цвет, но и густоту:
+     во льдах и песках это редкие сухие кустики, а не луг. */
+  const FLORA = {
+    green:  { n: 1.00, tint: 0xffffff },
+    klotho: { n: 0.55, tint: 0x9d9464 },
+    desert: { n: 0.30, tint: 0x8f8148 },
+    ice:    { n: 0.22, tint: 0x6d7168 },
+  };
+  const flora = FLORA[config.biome];
+  if (flora) {
+    const grassTint = flora.tint;
+    const grass = buildGrass(
+      Math.round((IS_TOUCH ? 9000 : 26000) * flora.n), MAP, canPlant, grassTint);
     // Трава тень принимает, но не отбрасывает: двадцать шесть тысяч
     // травинок в карте теней стоят дороже, чем видно на глаз
     grass.receiveShadow = true;
