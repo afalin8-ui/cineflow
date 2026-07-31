@@ -536,6 +536,55 @@ export function groundTexture(biome, seed = 5) {
    Файлы лежат в game/textures/, ужаты до 512 — на глаз этого хватает,
    потому что текстура повторяется десятки раз на карту. */
 
+/* ── КАРТА РЯБИ ДЛЯ ВОДЫ.
+   Готовой воды в бесплатных библиотеках нет: их снимают с
+   поверхностей, а вода — движение, её сканом не возьмёшь. Зато карта
+   нормалей ряби отлично считается из шума. Щупаем его на торе, чтобы
+   текстура сходилась краями, и берём наклон по соседним пикселям.
+
+   Дальше в шейдере эта карта ползёт двумя слоями с разной скоростью
+   и в разном масштабе — приём старый, но именно он превращает
+   стеклянную плёнку в живую воду: волны не повторяются, потому что
+   два слоя всё время расходятся. */
+let WATER_NRM = null;
+export function waterNormalTexture() {
+  if (WATER_NRM) return WATER_NRM;
+  const S = 256;
+  const n = new Noise(9161);
+  const h = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const a = (x / S) * Math.PI * 2, b = (y / S) * Math.PI * 2;
+      h[y * S + x] = n.fbm3(Math.cos(a) * 2.2, Math.sin(a) * 2.2,
+                            Math.cos(b) * 2.2 + Math.sin(b) * 2.2, 4);
+    }
+  }
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const d = img.data;
+  const at = (x, y) => h[(((y % S) + S) % S) * S + (((x % S) + S) % S)];
+  const STR = 2.2;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = (at(x - 1, y) - at(x + 1, y)) * STR;
+      const dy = (at(x, y - 1) - at(x, y + 1)) * STR;
+      const len = Math.hypot(dx, dy, 1);
+      const o = (y * S + x) * 4;
+      d[o] = (dx / len * 0.5 + 0.5) * 255;
+      d[o + 1] = (dy / len * 0.5 + 0.5) * 255;
+      d[o + 2] = (1 / len * 0.5 + 0.5) * 255;
+      d[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  WATER_NRM = new THREE.CanvasTexture(cv);
+  WATER_NRM.wrapS = WATER_NRM.wrapT = THREE.RepeatWrapping;
+  WATER_NRM.anisotropy = 8;
+  return WATER_NRM;
+}
+
 const TERRAIN_BASE = new URL('../textures/', import.meta.url);
 const texCache = new Map();
 const setCache = new Map();

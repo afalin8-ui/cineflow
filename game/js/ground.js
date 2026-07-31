@@ -15,7 +15,7 @@ import {
 } from './engine.js';
 import {
   buildGroundUnit, buildStructure, buildSupplyField, buildProp, buildWater, mat,
-  buildGrass, buildTreeField, buildTrackField,
+  buildGrass, buildTreeField, buildTrackField, buildScorchField,
 } from './models.js';
 import { groundTexture, terrainSet } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
@@ -316,11 +316,13 @@ export function createGroundBattle(ctx, config) {
     }
     dctx.putImageData(img, 0, 0);
   }
+  // Цвет неба идёт в воду: по касательной она отражает именно его,
+  // и без этого озеро не связано с окружением
   const waterTint = config.biome === 'ice'
-    ? { shallow: 0x4a7f96, deep: 0x0d2434 }
+    ? { shallow: 0x4a7f96, deep: 0x0d2434, sky: 0xb8d4e8 }
     : config.biome === 'desert'
-      ? { shallow: 0x3f7f7a, deep: 0x0d2a2a }
-      : { shallow: 0x2f7f96, deep: 0x0a2436 };
+      ? { shallow: 0x3f7f7a, deep: 0x0d2a2a, sky: 0xd8c8a0 }
+      : { shallow: 0x2f7f96, deep: 0x0a2436, sky: 0x9fc0e0 };
   const water = buildWater(TERRAIN, WATER_LEVEL, depthCv, waterTint);
   water.userData.setSun(sun.position.clone().normalize());
   scene.add(water);
@@ -424,6 +426,9 @@ export function createGroundBattle(ctx, config) {
   // Колея от гусениц и колёс: техника пишет её на ходу
   const tracks = buildTrackField(IS_TOUCH ? 260 : 460);
   scene.add(tracks.mesh);
+  // Копоть от взрывов: поле боя должно помнить, где горело
+  const scorch = buildScorchField(IS_TOUCH ? 90 : 170);
+  scene.add(scorch.mesh);
 
   const fx = new Fx(scene);
   fx.setCamera(tcam.cam);
@@ -566,6 +571,11 @@ export function createGroundBattle(ctx, config) {
   }
 
   function splash(pos, radius, amount, weapon, side) {
+    // Воронка на грунте: не на каждое попадание, а только на площадное
+    if (radius > 8 && pos.y > WATER_LEVEL) {
+      scorch.drop(pos.x, terrainH(pos.x, pos.z), pos.z,
+        rnd(0, 6.28), radius * 1.7, radius * 1.7);
+    }
     for (const list of [state.units, state.buildings]) {
       for (const e of list) {
         if (e.dead || e.side === side || e.air) continue;
@@ -740,12 +750,15 @@ export function createGroundBattle(ctx, config) {
   function resolveSupport(c) {
     const d = c.def;
     const ground = new THREE.Vector3(c.pos.x, terrainH(c.pos.x, c.pos.z), c.pos.z);
-    const sky = ground.clone().setY(ground.y + 700);
+    // Столб короткий и тонкий: длинный широкий цилиндр в аддитивном
+    // смешивании засвечивает пол-экрана и прячет сам удар
+    const sky = ground.clone().setY(ground.y + 240);
 
     if (d.id === 'strike') {
       // Главный калибр сверху: столб света и воронка
-      fx.laser(sky, ground, { color: 0x9fe8ff, width: 5, life: 0.9 });
-      fx.explosion(ground, d.radius * 0.9, 0xbfe8ff);
+      fx.laser(sky, ground, { color: 0x9fe8ff, width: 1.8, life: 0.7 });
+      fx.explosion(ground, d.radius * 0.6, 0xbfe8ff);
+      fx.ring(ground, d.radius * 0.3, d.radius * 1.8, 0x9fe8ff, 0.55);
       fx.shake = Math.min(1, fx.shake + 0.5);
       splash(ground, d.radius, d.dmg, 'arty', 'me');
 
@@ -1000,6 +1013,7 @@ export function createGroundBattle(ctx, config) {
         const hit = t.pos.clone();
         fx.explosion(hit, def.weapon.splash, 0xffb060);
         fx.shake = Math.min(1, fx.shake + 0.12);
+        fx.sparks(hit, 9, 0xffd08a, 22);
         splash(hit, def.weapon.splash, def.weapon.dmg, def.weapon.type, u.side);
       }
       return;
@@ -1599,6 +1613,7 @@ export function createGroundBattle(ctx, config) {
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
       updateSupport(dt);
       tracks.tick(dt);
+      scorch.tick(dt);
       refreshOrbit();
       for (const u of state.units) if (!u.dead) updateUnit(u, dt);
       for (const p of state.proj) if (!p.dead) updateShell(p, dt);

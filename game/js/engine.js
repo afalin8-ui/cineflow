@@ -553,8 +553,11 @@ export class Fx {
   }
 
   _sprite() {
-    for (const s of this.sprites) if (!s.live) return s;
-    if (this.sprites.length >= this.maxSprites) return this.sprites[(Math.random() * this.sprites.length) | 0];
+    const reset = s => { s.vel = null; s.grav = 0; s.fadeIn = false; s.mesh.material.opacity = 1; return s; };
+    for (const s of this.sprites) if (!s.live) return reset(s);
+    if (this.sprites.length >= this.maxSprites) {
+      return reset(this.sprites[(Math.random() * this.sprites.length) | 0]);
+    }
     const m = new THREE.Sprite(new THREE.SpriteMaterial({
       map: GLOW_TEX, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, toneMapped: false,
@@ -640,9 +643,49 @@ export class Fx {
     return s;
   }
 
+  /* ── ИСКРЫ.
+     Раскалённые крупицы, летящие веером и гаснущие на лету. Именно
+     они читаются как «попало»: вспышка одна сообщает только «здесь
+     что-то произошло», а искры показывают, куда ударило и с какой
+     силой. Живут в том же пуле спрайтов, поэтому бесплатны. */
+  sparks(pos, count = 10, color = 0xffd08a, speed = 26, gravity = true) {
+    const n = clamp(Math.round(count * (IS_TOUCH ? 0.55 : 1)), 2, 26);
+    for (let i = 0; i < n; i++) {
+      const s = this._sprite();
+      s.live = true; s.t = 0; s.life = rnd(0.25, 0.7);
+      s.r0 = rnd(0.5, 1.4); s.r1 = 0.05;
+      s.mesh.visible = true;
+      s.mesh.material.color.set(color);
+      s.mesh.position.copy(pos);
+      s.vel = new THREE.Vector3(rnd(-1, 1), rnd(gravity ? 0.2 : -1, 1.4), rnd(-1, 1))
+        .normalize().multiplyScalar(speed * rnd(0.5, 1.5));
+      s.grav = gravity ? -42 : 0;
+    }
+  }
+
+  /* Дым: несколько клубов, которые всплывают и разбухают. Без него
+     после взрыва не остаётся ничего — как будто ничего и не было. */
+  smoke(pos, size = 6, color = 0x4a4238, count = 4) {
+    const n = clamp(Math.round(count * (IS_TOUCH ? 0.6 : 1)), 1, 8);
+    for (let i = 0; i < n; i++) {
+      const s = this._sprite();
+      s.live = true; s.t = 0; s.life = rnd(1.1, 2.2);
+      s.r0 = size * rnd(0.4, 0.7); s.r1 = size * rnd(1.6, 2.6);
+      s.mesh.visible = true;
+      s.mesh.material.color.set(color);
+      s.mesh.position.copy(pos).add(
+        new THREE.Vector3(rnd(-1, 1), rnd(0, 1), rnd(-1, 1)).multiplyScalar(size * 0.3));
+      s.vel = new THREE.Vector3(rnd(-2, 2), rnd(3, 7), rnd(-2, 2));
+      s.grav = 0;
+      s.fadeIn = true;
+    }
+  }
+
   explosion(pos, size = 10, color = 0xffa050) {
     this.flash(pos, size, 0xffffff, 0.16);
     this.flash(pos, size * 1.5, color, 0.55);
+    this.sparks(pos, Math.round(size * 1.1), 0xffe0a0, size * 2.4);
+    this.smoke(pos, size * 0.8, 0x3c352c, Math.round(size * 0.35));
     const n = clamp(Math.round(size * (IS_TOUCH ? 0.6 : 0.9)), 3, 14);
     for (let i = 0; i < n; i++) {
       const s = this._sprite();
@@ -675,7 +718,10 @@ export class Fx {
       if (s.vel) {
         s.mesh.position.addScaledVector(s.vel, dt);
         s.vel.multiplyScalar(1 - dt * 2.2);
+        if (s.grav) s.vel.y += s.grav * dt;
       }
+      // дым не выпрыгивает из ниоткуда, а наплывает
+      if (s.fadeIn) s.mesh.material.opacity *= Math.min(1, k * 6);
     }
     for (const r of this.rings || []) {
       if (!r.live) continue;

@@ -7,7 +7,7 @@
 
 import { THREE, rnd, GLOW_TEX } from './engine.js';
 import { customModel } from './assets.js';
-import { planetTextures, nebulaTexture } from './textures.js';
+import { planetTextures, nebulaTexture, waterNormalTexture } from './textures.js';
 
 const matCache = new Map();
 /* ── ОБШИВКА КОРАБЛЕЙ.
@@ -860,17 +860,25 @@ void main() {
 
 const WATER_FRAG = `
 uniform sampler2D uDepth;
-uniform vec3 uShallow; uniform vec3 uDeep; uniform vec3 uSun;
+uniform sampler2D uRipple;
+uniform vec3 uShallow; uniform vec3 uDeep; uniform vec3 uSun; uniform vec3 uSky;
 uniform float uTime;
 varying vec2 vUv; varying vec3 vP; varying vec3 vW;
 
 void main() {
   float depth = texture2D(uDepth, vUv).r;      // 0 — берег, 1 — глубоко
 
-  // две бегущие волны крест-накрест дают рябь без текстуры
-  float w1 = sin(vW.x * 0.16 + uTime * 1.1) * cos(vW.z * 0.13 - uTime * 0.8);
-  float w2 = sin((vW.x + vW.z) * 0.09 - uTime * 0.6);
-  vec3 n = normalize(vec3(w1 * 0.16 + w2 * 0.1, 1.0, w2 * 0.16 - w1 * 0.1));
+  /* Рябь двумя слоями карты нормалей: разный масштаб, разная
+     скорость и разное направление. Слои всё время расходятся,
+     поэтому рисунок не повторяется — это и отличает живую воду
+     от стеклянной плёнки с бегущей синусоидой. */
+  vec2 uv1 = vW.xz * 0.028 + vec2(uTime * 0.012, uTime * 0.008);
+  vec2 uv2 = vW.xz * 0.061 - vec2(uTime * 0.019, -uTime * 0.014);
+  vec3 n1 = texture2D(uRipple, uv1).xyz * 2.0 - 1.0;
+  vec3 n2 = texture2D(uRipple, uv2).xyz * 2.0 - 1.0;
+  // у берега рябь мельчает: на отмели волне негде разогнаться
+  float amp = 0.35 + smoothstep(0.0, 0.3, depth) * 0.65;
+  vec3 n = normalize(vec3((n1.x + n2.x * 0.6) * amp, 2.2, (n1.y + n2.y * 0.6) * amp));
 
   vec3 V = normalize(cameraPosition - vW);
   float fres = pow(1.0 - max(0.0, dot(n, V)), 3.0);
@@ -879,12 +887,18 @@ void main() {
   // цвет набирает силу быстро: у берега прозрачная бирюза,
   // на середине — тёмная толща.
   vec3 col = mix(uShallow, uDeep, smoothstep(0.02, 0.32, depth));
-  col = mix(col, vec3(0.34, 0.48, 0.60), fres * 0.24);
+  // По касательной вода отражает небо — именно это делает её
+  // «мокрой». В лоб она прозрачная, вдоль поверхности зеркальная.
+  col = mix(col, uSky, fres * 0.55);
 
-  // солнечная дорожка
+  /* Солнечная дорожка в два слоя: широкий мягкий блик даёт форму
+     воды, а поверх него узкие искры от самой ряби — та самая
+     дрожащая дорожка, по которой вода узнаётся мгновенно. */
   vec3 H = normalize(normalize(uSun) + V);
-  float spec = pow(max(0.0, dot(n, H)), 90.0);
-  col += vec3(1.0, 0.94, 0.82) * spec * 1.5;
+  float ndh = max(0.0, dot(n, H));
+  float wide = pow(ndh, 26.0);
+  float glint = pow(ndh, 340.0);
+  col += vec3(1.0, 0.95, 0.86) * (wide * 0.55 + glint * 5.0);
 
   // пена узкой полосой у самой кромки, дышит вместе с волной
   float edge = 1.0 - smoothstep(0.0, 0.022, depth);
@@ -905,8 +919,10 @@ export function buildWater(size, level, depthCanvas, tint) {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uDepth: { value: depth },
+      uRipple: { value: waterNormalTexture() },
       uShallow: { value: new THREE.Color(tint && tint.shallow || 0x2f7f96) },
       uDeep: { value: new THREE.Color(tint && tint.deep || 0x0a2436) },
+      uSky: { value: new THREE.Color(tint && tint.sky || 0x8fb4d8) },
       uSun: { value: new THREE.Vector3(0.6, 0.7, 0.4).normalize() },
       uTime: { value: 0 },
     },
@@ -1179,14 +1195,46 @@ function trackTexture() {
   return TRACK_TEX;
 }
 
-export function buildTrackField(max = 420) {
+let SCORCH_TEX = null;
+function scorchTexture() {
+  if (SCORCH_TEX) return SCORCH_TEX;
+  const S = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const c = cv.getContext('2d');
+  // рваное пятно копоти: несколько кругов внахлёст, к краю бледнее
+  for (let i = 0; i < 26; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.pow(Math.random(), 0.5) * S * 0.34;
+    const x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r;
+    const rad = S * (0.20 - r / S * 0.13);
+    const g = c.createRadialGradient(x, y, 0, x, y, Math.max(1, rad));
+    g.addColorStop(0, 'rgba(255,255,255,0.85)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.beginPath(); c.arc(x, y, Math.max(1, rad), 0, Math.PI * 2); c.fill();
+  }
+  SCORCH_TEX = new THREE.CanvasTexture(cv);
+  return SCORCH_TEX;
+}
+
+/* Копоть от взрывов — тот же кольцевой буфер, что и у колеи, только
+   текстура другая и живёт пятно дольше: воронка не зарастает за
+   полминуты. Отдельный пул, чтобы плотный бой не стирал следы
+   техники и наоборот. */
+export function buildScorchField(max = 160) {
+  const f = buildTrackField(max, scorchTexture(), 0x140f0a, 90);
+  return f;
+}
+
+export function buildTrackField(max = 420, tex = null, tint = 0x241c14, lifeSec = 26) {
   const geo = new THREE.PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI / 2);
   const fade = new Float32Array(max);
   geo.setAttribute('aFade', new THREE.InstancedBufferAttribute(fade, 1));
 
   const mat = new THREE.MeshBasicMaterial({
-    map: trackTexture(), color: 0x241c14,
+    map: tex || trackTexture(), color: tint,
     transparent: true, depthWrite: false, toneMapped: true,
   });
   mat.onBeforeCompile = sh => {
@@ -1235,7 +1283,7 @@ export function buildTrackField(max = 420) {
       let dirty = false;
       for (let i = 0; i < max; i++) {
         if (life[i] <= 0) continue;
-        life[i] -= dt / 26;                // колея живёт около полминуты
+        life[i] -= dt / lifeSec;           // колея живёт около полминуты
         fade[i] = Math.max(0, life[i]) * 0.85;
         dirty = true;
       }
