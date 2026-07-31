@@ -54,11 +54,14 @@ export function dmgMult(table, weapon, targetClass) {
 // КЛАНЫ
 //
 // Тройден  — технологичный кулак: дорого, мало, но каждый юнит сильнее
-//            чужого. Ближе всего к США из Generals.
-// Плэктор  — рой: дёшево, быстро, много. По одному не стоит ничего,
-//            толпой сносит всё.
-// Рииз   — спецоперации: скрытность у всех юнитов без исключения,
-//            мощные орудия, но броня бумажная.
+//            чужого. Ближе всего к США из Generals. Базу не строит —
+//            сбрасывает готовые модули с орбиты.
+// Плэктор  — тяжёлая индустрия и рой: дёшево, быстро, много. Разворачивает
+//            левиафан-MCV, застраивается бульдозерами, копит бетон.
+// Рииз     — скрытность и авиация: вся техника невидима, пока не выстрелит,
+//            орудия сильные, броня бумажная. Носители просторнее чужих.
+// Девиан   — помехи и крепости: сам бьёт средне, зато чужой залп не
+//            наводится. Строит модули вплотную к центральному узлу.
 // ─────────────────────────────────────────────────────────────
 
 const TROYDEN = {
@@ -97,35 +100,38 @@ const PLEKTOR = {
 
 const REEZ = {
   id: 'reez', name: 'Клан Рииз', short: 'Рииз', tag: 'РИЗ',
-  color: 0x6ee0b0, colorCss: '#6ee0b0', style: 'wedge', doctrine: 'carrier',
-  motto: 'Верфей нет — есть ангары',
+  color: 0x6ee0b0, colorCss: '#6ee0b0', style: 'wedge', doctrine: 'stealth',
+  motto: 'Верфей нет — есть ангары и тени',
   desc: 'У клана нет производственных мощностей для больших кораблей: ' +
         '«Касатка» построена на заказ и осталась единственным линейным ' +
-        'кораблём, причём она же служит носителем. Отсюда доктрина — ' +
-        'воевать авиацией. Ангары просторнее чужих, звенья крупнее и ' +
-        'живучее, а вот линия у Рииза слабая.',
+        'кораблём, причём она же служит носителем. Воевать приходится ' +
+        'авиацией и внезапностью: вся техника Рииза несёт маскировочное ' +
+        'поле и не видна, пока не откроет огонь. Экономия веса ушла из ' +
+        'брони в орудия — бьют они больнее всех, но раскрытый риизец ' +
+        'живёт недолго.',
   perks: [
-    'Носители несут на два звена больше',
-    'Авиакрылья живучее и точнее на четверть',
-    'Звено — семь машин вместо пяти',
+    'Скрытность у всех юнитов: невидимы, пока не выстрелят',
+    'Орудия бьют на пятую часть сильнее',
+    'Носители несут на два звена больше, звено — семь машин',
   ],
-  weakness: 'Слабая линия: крейсеры и флагман хуже чужих',
+  weakness: 'Броня вдвое тоньше. Под главным калибром рассыпаются',
 };
 
 const DEVIAN = {
   id: 'devian', name: 'Клан Девиан', short: 'Девиан', tag: 'ДВН',
-  color: 0xb07ae0, colorCss: '#b07ae0', style: 'stealth', doctrine: 'stealth',
-  motto: 'Тебя убьёт то, чего ты не видел',
-  desc: 'Клан тайных операций. Вся техника Девиана несёт маскировочное ' +
-        'поле: корабли не видно, пока они не откроют огонь. Вся экономия ' +
-        'веса ушла из брони в орудия — бьют они больнее всех в системе, ' +
-        'но раскрытый девианец живёт недолго.',
+  color: 0xb07ae0, colorCss: '#b07ae0', style: 'fortress', doctrine: 'ecm',
+  motto: 'Пусть стреляют. Попасть — не дадим',
+  desc: 'Клан радиоэлектронной борьбы и крепостей. Девиан не выигрывает ' +
+        'перестрелку — он делает её невозможной: поля помех глушат чужое ' +
+        'наведение, ракеты теряют цель, ПВО бьёт вполсилы. Корабли крепкие ' +
+        'и терпеливые, орудия средние. На земле Девиан не расползается по ' +
+        'карте, а наращивает модули вплотную к центральному узлу.',
   perks: [
-    'Скрытность у всех юнитов: невидимы, пока не выстрелят',
-    'Орудия бьют на четверть сильнее',
-    'Раскрытые снова исчезают через несколько секунд',
+    'Поле помех шире и держится дольше чужого',
+    'Корпуса крепче и лучше бронированы',
+    'Хакеры вместо сборщиков: доход взламывают, а не возят',
   ],
-  weakness: 'Броня вдвое тоньше. Под главным калибром рассыпаются',
+  weakness: 'Орудия слабее чужих: в лоб Девиан перестрелку не выигрывает',
 };
 
 export const FACTIONS = { troyden: TROYDEN, reez: REEZ, plektor: PLEKTOR, devian: DEVIAN };
@@ -144,6 +150,14 @@ export const ECM = {
   pdPenalty: 0.55,
   spinUp: 2.5,
 };
+
+/* У Девиана помехи — не приложение к флоту, а сам флот. Его блин
+   заметно шире чужого, разворачивается быстрее и глушит наведение
+   даже вблизи. Это то, чем клан заменяет недостающую огневую мощь. */
+export const ECM_OF = faction => (faction === 'devian'
+  ? { ...ECM, radius: ECM.radius * 1.45, lockRange: ECM.lockRange * 0.6,
+      pdPenalty: 0.40, spinUp: ECM.spinUp * 0.6 }
+  : ECM);
 
 // ─────────────────────────────────────────────────────────────
 // КОСМИЧЕСКИЕ КОРАБЛИ
@@ -188,14 +202,14 @@ function strikeCraft(faction) {
       hp: Math.round(70 * tough), armor: 0,
       maxSpeed: plk ? 175 : 155, thrust: 105, turn: 2.7 * turnMod,
       weaponKind: 'gun', weapon: 'gunInt',
-      dmg: 14 * gun, cd: 0.5, range: 60, stealth: dvn,
+      dmg: 14 * gun, cd: 0.5, range: 60, stealth: rez,
     },
     fighter: {
       id: 'fighter', role: 'fighter', ...nm('fighter'), cls: 'strike',
       hp: Math.round(95 * tough), armor: 0.05,
       maxSpeed: 128, thrust: 82, turn: 2.1 * turnMod,
       weaponKind: 'missile', weapon: 'gunFig',
-      dmg: 95 * gun, cd: 1.7, range: 95, stealth: dvn,
+      dmg: 95 * gun, cd: 1.7, range: 95, stealth: rez,
       ammo: 8, reloads: 4, reloadTime: 7, missChance: 0.25,
       missileSpeed: 150, missileHp: 20,
     },
@@ -204,7 +218,7 @@ function strikeCraft(faction) {
       hp: Math.round(160 * tough), armor: 0.1,
       maxSpeed: 72, thrust: 38, turn: 1.05,
       weaponKind: 'missile', weapon: 'torp',
-      dmg: 260 * (dvn ? 1.25 : 1), cd: 3.4, range: 120, stealth: dvn,
+      dmg: 260 * (dvn ? 1.25 : 1), cd: 3.4, range: 120, stealth: rez,
       ammo: 6, reloads: 2, reloadTime: 11, missChance: 0.10,
       missileSpeed: 88, missileHp: 34, torpedo: true,
     },
@@ -238,9 +252,13 @@ const SHIP_NAMES = {
 function shipsFor(faction) {
   const trd = faction === 'troyden', plk = faction === 'plektor';
   const rez = faction === 'reez', dvn = faction === 'devian';
-  const hpMod    = trd ? 1.30 : plk ? 0.68 : rez ? 0.95 : 0.82;
-  const armorMod = trd ? 1.25 : plk ? 0.75 : rez ? 0.95 : 0.55;
-  const gunMod   = trd ? 1.10 : plk ? 0.78 : rez ? 0.82 : 1.25;
+  /* Рииз забрал скрытность, а вместе с ней её цену: броня тоньше всех,
+     зато орудия бьют сильнее. Девиан стал кланом помех и крепостей —
+     он крепкий и терпеливый, но сам по себе бьёт средне: его сила
+     не в залпе, а в том, что чужой залп не наводится. */
+  const hpMod    = trd ? 1.30 : plk ? 0.68 : rez ? 0.85 : 1.05;
+  const armorMod = trd ? 1.25 : plk ? 0.75 : rez ? 0.55 : 1.10;
+  const gunMod   = trd ? 1.10 : plk ? 0.78 : rez ? 1.20 : 0.90;
   const costMod  = trd ? 1.35 : plk ? 0.50 : rez ? 1.00 : 0.95;
   const buildMod = trd ? 1.30 : plk ? 0.50 : 1.0;
   const pdRange  = trd ? 1.35 : dvn ? 0.85 : 1.0;
@@ -346,7 +364,7 @@ function shipsFor(faction) {
       role: d.hangar ? `Носитель · ${bays} звена` : d.role,
       hp: H(d.hp), armor: A(d.armor), cost: C(d.cost),
       build: Math.max(1, Math.round(d.build * buildMod)),
-      stealth: dvn, hangar: bays,
+      stealth: rez, hangar: bays,
       guns: (d.guns || []).map(g => ({ ...g, dmg: G(g.dmg), cd: +(g.cd * cdMod).toFixed(2) })),
       pd: d.pd ? { ...d.pd, dmg: +(d.pd.dmg * pdDmg).toFixed(1), range: Math.round(d.pd.range * pdRange) } : null,
     };
@@ -430,9 +448,9 @@ function groundUnits(faction) {
   const trd = faction === 'troyden', rez = faction === 'reez', plk = faction === 'plektor';
   // Та же доктрина, что и в космосе: Тройден дорог и крепок,
   // Плэктор дёшев и многочислен, Рииз невидим и зубаст, но хрупок.
-  const hpMod    = trd ? 1.25 : plk ? 0.70 : 0.85;
-  const armorMod = trd ? 1.25 : plk ? 0.75 : 0.50;
-  const dmgMod   = trd ? 1.10 : plk ? 0.80 : 1.30;
+  const hpMod    = trd ? 1.25 : plk ? 0.70 : rez ? 0.80 : 1.05;
+  const armorMod = trd ? 1.25 : plk ? 0.75 : rez ? 0.50 : 1.10;
+  const dmgMod   = trd ? 1.10 : plk ? 0.80 : rez ? 1.30 : 0.90;
   const costMod  = trd ? 1.35 : plk ? 0.50 : 0.95;
   const buildMod = trd ? 1.30 : plk ? 0.50 : 1.0;
   const H = h => Math.round(h * hpMod);

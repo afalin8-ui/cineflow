@@ -21,7 +21,8 @@ import {
 } from './models.js';
 import { nebulaTexture } from './textures.js';
 import {
-  FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE_OF, STATION, STEALTH, HYPER, ECM,
+  FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE_OF, STATION, STEALTH, HYPER,
+  ECM, ECM_OF,
   dmgMult, shipDef,
 } from './data.js';
 
@@ -160,7 +161,8 @@ export function createSpaceBattle(ctx, config) {
       ecm: def.ecm ? { mode: 'jam', power: 0 } : null,
     };
     if (e.ecm) {
-      const dome = buildEcmDome(ECM.radius, side.faction.color, ECM.height);
+      const E = ECM_OF(side.faction.id);
+      const dome = buildEcmDome(E.radius, side.faction.color, E.height);
       dome.visible = false;
       scene.add(dome);
       e.dome = dome;
@@ -296,13 +298,14 @@ export function createSpaceBattle(ctx, config) {
     for (const e of state.ships) {
       if (!e.ecm || e.dead) continue;
       const want = (e.ecm.mode === 'off' || e.hyper) ? 0 : 1;
-      e.ecm.power += (want - e.ecm.power) * Math.min(1, dt / ECM.spinUp * 2.5);
+      const E = ECM_OF(e.faction.id);
+      e.ecm.power += (want - e.ecm.power) * Math.min(1, dt / E.spinUp * 2.5);
       if (e.ecm.power > 0.05) {
         const emit = e.obj.userData.emitter;
         const ey = emit ? emit.y * 1.25 : -e.radius;
         _fields.push({
           pos: new THREE.Vector3(e.pos.x, e.pos.y + ey, e.pos.z),
-          side: e.side, mode: e.ecm.mode,
+          side: e.side, mode: e.ecm.mode, prof: E,
         });
       }
       if (e.dome) {
@@ -317,27 +320,32 @@ export function createSpaceBattle(ctx, config) {
     }
   }
 
-  const R2 = ECM.radius * ECM.radius;
-  // Поле — блин: по горизонтали круг, по вертикали тонкий слой.
-  // Поднявшись над ним или нырнув под него, из помех можно выйти.
+  /* Поле — блин: по горизонтали круг, по вертикали тонкий слой.
+     Поднявшись над ним или нырнув под него, из помех можно выйти.
+     Радиус берём из профиля клана: у Девиана блин заметно шире. */
   function inField(f, pos) {
-    if (Math.abs(pos.y - f.pos.y) > ECM.height * 1.6) return false;
+    const E = f.prof || ECM;
+    if (Math.abs(pos.y - f.pos.y) > E.height * 1.6) return false;
     const dx = pos.x - f.pos.x, dz = pos.z - f.pos.z;
-    return dx * dx + dz * dz < R2;
+    return dx * dx + dz * dz < E.radius * E.radius;
   }
-  function jammed(pos, side) {
-    let hit = false;
+  /* Возвращает профиль глушащего поля, а не просто «да/нет»: от того,
+     чей это блин, зависит и дальность, на которой наведение всё же
+     работает, и насколько просядет ПВО. У Девиана оба числа злее. */
+  function jamProfile(pos, side) {
+    let hit = null;
     for (const f of _fields) {
       if (f.mode !== 'jam' || f.side === side) continue;
-      if (inField(f, pos)) { hit = true; break; }
+      if (inField(f, pos)) { hit = f.prof || ECM; break; }
     }
-    if (!hit) return false;
+    if (!hit) return null;
     for (const f of _fields) {
       if (f.mode !== 'shield' || f.side !== side) continue;
-      if (inField(f, pos)) return false;
+      if (inField(f, pos)) return null;      // свой щит снял чужие помехи
     }
-    return true;
+    return hit;
   }
+  const jammed = (pos, side) => jamProfile(pos, side) !== null;
 
   // ── СКРЫТНОСТЬ ───────────────────────────────────────────
   // Юнит Рииза невидим, пока молчит. Выстрелил — виден пять секунд.
@@ -677,7 +685,8 @@ export function createSpaceBattle(ctx, config) {
       _v.subVectors(t.pos, e.pos).divideScalar(d || 1);
       if (e.dir.dot(_v) < (e.station ? -0.3 : 0.25)) continue;   // башня не довернулась
       // Помехи: под чужим куполом наведение работает только вблизи
-      if (d > ECM.lockRange && jammed(e.pos, e.side)) continue;
+      const jam = jamProfile(e.pos, e.side);
+      if (jam && d > jam.lockRange) continue;
 
       if (g.def.charge && g.cd <= g.def.charge && g.cd > 0) {
         if (state.time - g.chargeFx > 0.09) {
@@ -702,7 +711,8 @@ export function createSpaceBattle(ctx, config) {
                || nearest(e.pos, state.craft, pd.range, x => x.side === foe);
         if (!t) { e.pdCd[i] = 0.2; continue; }
         e.pdCd[i] = pd.cd * rnd(0.85, 1.2);
-        const pdMult = jammed(e.pos, e.side) ? ECM.pdPenalty : 1;
+        const jamPd = jamProfile(e.pos, e.side);
+        const pdMult = jamPd ? jamPd.pdPenalty : 1;
         reveal(e);
         fx.tracer(pdWorld(e, i), t.pos, e.side === state.playerSide ? 0x9fe8ff : 0xffc07a, 0.1, 0.24);
         damage(t, pd.dmg * pdMult, 'pd');
