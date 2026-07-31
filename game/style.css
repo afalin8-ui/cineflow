@@ -572,3 +572,13 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
   animation: orbitnoise .28s steps(3) infinite;
 }
 @keyframes orbitnoise { 50% { transform: translateY(2px); } }
+
+/* Экстерминатус — не способность, а решение: кнопка отделена
+   и окрашена в тревожный, чтобы её нельзя было нажать походя. */
+.orbit-btn.exterm {
+  margin-top: 10px; border-color: #6b2d26; color: #ffb3a8;
+}
+.orbit-btn.exterm b { color: #ff8a72; }
+.orbit-btn.exterm.on { border-color: var(--bad); background: #2a1210; }
+
+.gp-line.scorched { color: #ff9a86; }

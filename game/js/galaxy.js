@@ -14,7 +14,7 @@ import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
-  TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom,
+  TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom, EXTERMINATUS,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -100,8 +100,11 @@ export function incomeOf(camp, faction) {
   for (const def of GALAXY_MAP.systems) {
     const st = camp.systems[def.id];
     if (st.owner !== faction) continue;
-    sum += def.income;
-    if (st.buildings.includes('mine')) sum += 120;
+    /* Планета после тотальной бомбардировки почти ничего не приносит:
+       это и есть цена Экстерминатуса, и платится она до конца
+       кампании, а не один ход. */
+    const base = def.income + (st.buildings.includes('mine') ? 120 : 0);
+    sum += st.scorched ? Math.round(base * EXTERMINATUS.ecoPenalty) : base;
   }
   return sum;
 }
@@ -377,6 +380,7 @@ export function createGalaxy(ctx, camp) {
       <h3>${def.name}</h3>
       <div class="gp-owner" style="color:${f.colorCss}">${st.owner ? f.name : 'Ничей мир'}</div>
       <div class="gp-line">Доход ${def.income}${st.buildings.includes('mine') ? ' + 120' : ''} кр/ход · мест под постройки: ${def.slots}</div>
+      ${st.scorched ? '<div class="gp-line scorched">Экологическая катастрофа: доход шестая часть</div>' : ''}
     </div>`;
 
     const fleetTxt = st.fleet.length
@@ -627,6 +631,10 @@ export function createGalaxy(ctx, camp) {
     m.querySelector('[data-a="wait"]').onclick = () => { close(); refreshAll(); };
 
     const apply = res => {
+      if (res.scorched && !to.scorched) {
+        to.scorched = true;
+        logLine(`${toDef.name}: экологическая катастрофа. Доход мира упал почти до нуля.`);
+      }
       if (res.result === 'victory' || res.result === 'attacker') {
         to.owner = camp.playerFaction;
         to.regiments = Math.max(1, res.regiments || 1);

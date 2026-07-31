@@ -21,7 +21,7 @@ import { groundTexture, terrainSet } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
-  dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT,
+  dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT, EXTERMINATUS,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -448,6 +448,11 @@ export function createGroundBattle(ctx, config) {
       aiming: null,
       calls: [],           // отложенные удары: {id, at, pos, def}
     },
+    /* Экстерминатус. Флот считаем по тому же списку способностей:
+       чем больше классов уцелело, тем он полнее. Одноразовый —
+       после залпа флот уходит в долгую перезарядку, а планета
+       остаётся выжженной до конца кампании. */
+    exterm: { used: false, at: 0, pos: null, left: 0 },
   };
   /* Уровень технологий приезжает с галактической карты и решает,
      какая техника вообще есть в меню. В быстром бою его не передают —
@@ -734,6 +739,51 @@ export function createGroundBattle(ctx, config) {
     state.support.calls[state.support.calls.length - 1].mark = mark;
     toast(`${def.name}: наводка принята`);
     return true;
+  }
+
+  /* ── ЭКСТЕРМИНАТУС ───────────────────────────────────────
+     Не «сильный удар», а решение: он выжигает квадрат вместе со
+     своими и лишает планету дохода на всю оставшуюся кампанию.
+     Поэтому подтверждение обязательно, а кнопка одна на бой. */
+  function extermAvailable() {
+    return !state.exterm.used
+      && state.support.list.length >= 2;   // нужен серьёзный флот наверху
+  }
+
+  function callExterminatus(pos) {
+    if (!extermAvailable() || !pos) return false;
+    const E = EXTERMINATUS;
+    state.exterm.used = true;
+    state.exterm.pos = pos.clone();
+    state.exterm.at = state.time + E.delay;
+    state.exterm.left = E.volleys;
+    fx.ring(pos, 8, E.radius, 0xff8a5a, E.delay);
+    toast(`${E.name}: флот наводится. ${E.delay} секунд`);
+    return true;
+  }
+
+  function updateExterminatus(dt) {
+    const x = state.exterm;
+    if (!x.pos || x.left <= 0 || state.time < x.at) return;
+    const E = EXTERMINATUS;
+    // Залп очередью: семь ударов подряд, а не одна вспышка
+    x.at = state.time + 0.45;
+    x.left--;
+    const a = rnd(0, Math.PI * 2), r = Math.sqrt(Math.random()) * E.radius;
+    const p = new THREE.Vector3(x.pos.x + Math.cos(a) * r, 0, x.pos.z + Math.sin(a) * r);
+    p.y = terrainH(p.x, p.z);
+    fx.laser(p.clone().setY(p.y + 260), p, { color: 0xffb060, width: 2.6, life: 0.6 });
+    fx.explosion(p, 26, 0xffa050);
+    fx.shake = 1;
+    scorch.drop(p.x, p.y, p.z, rnd(0, 6.28), 62, 62);
+    // Бьёт по ОБЕИМ сторонам: с орбиты не разбирают, кто внизу
+    for (const side of ['me', 'foe']) {
+      splash(p, E.radius * 0.42, E.dmg / E.volleys, 'arty', other(side));
+    }
+    if (x.left === 0) {
+      toast('Квадрат выжжен. Планета потеряна для экономики');
+      state.exterm.pos = null;
+    }
   }
 
   function updateSupport(dt) {
@@ -1419,6 +1469,13 @@ export function createGroundBattle(ctx, config) {
     onBoxModeChange: on => boxBtn.classList.toggle('on', on),
     onTap({ x, y, shift, touch }) {
       const world = controls.worldAt(x, y);
+      if (state.support.aiming === 'exterm') {
+        if (callExterminatus(world)) {
+          state.support.aiming = null;
+          refreshOrbit();
+          return;
+        }
+      }
       if (state.support.aiming) {
         if (callSupport(state.support.aiming, world)) {
           state.support.aiming = null;
@@ -1488,7 +1545,45 @@ export function createGroundBattle(ctx, config) {
     orbitBtns[def.id] = b;
   }
 
+  /* Кнопка Экстерминатуса стоит отдельно от остальных и красная:
+     это не способность, а решение, которое нельзя отменить. */
+  const extermBtn = document.createElement('button');
+  extermBtn.className = 'orbit-btn exterm';
+  extermBtn.innerHTML = `<b>${EXTERMINATUS.short}</b><small data-role="cd"></small><i></i>`;
+  extermBtn.title = EXTERMINATUS.desc;
+  extermBtn.onclick = () => {
+    if (!extermAvailable()) return;
+    confirmModal(EXTERMINATUS.name, EXTERMINATUS.desc, () => {
+      state.support.aiming = 'exterm';
+      state.placing = null; ghost.visible = false;
+      refreshOrbit();
+    });
+  };
+  orbitBar.appendChild(extermBtn);
+
+  function confirmModal(title, text, onYes) {
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = `<div class="modal-inner"><h3>${title}</h3><p>${text}</p>
+      <p><b>Отменить это будет нельзя.</b></p>
+      <div class="modal-actions">
+        <button class="btn danger" data-a="yes">Отдать приказ</button>
+        <button class="btn ghost" data-a="no">Отставить</button>
+      </div></div>`;
+    hud.appendChild(m);
+    m.querySelector('[data-a="no"]').onclick = () => m.remove();
+    m.querySelector('[data-a="yes"]').onclick = () => { m.remove(); onYes(); };
+  }
+
   function refreshOrbit() {
+    const eb = extermBtn;
+    const ok = extermAvailable();
+    eb.disabled = !ok;
+    eb.classList.toggle('lost', !ok);
+    eb.classList.toggle('on', state.support.aiming === 'exterm');
+    eb.querySelector('[data-role="cd"]').textContent =
+      state.exterm.used ? 'израсходован'
+      : state.support.list.length < 2 ? 'мало флота' : 'готов';
     for (const def of Object.values(ORBITAL_SUPPORT)) {
       const b = orbitBtns[def.id];
       const have = state.support.list.includes(def.id);
@@ -1588,7 +1683,11 @@ export function createGroundBattle(ctx, config) {
       <button class="btn primary" data-role="cont">Продолжить</button></div>`;
     card.querySelector('[data-role="cont"]').onclick = () => {
       const left = state.units.filter(u => !u.dead && u.side === 'me' && u.def.id !== 'worker').length;
-      config.onEnd && config.onEnd({ result, regiments: Math.max(0, Math.round(left / 2)) });
+      config.onEnd && config.onEnd({
+        result, regiments: Math.max(0, Math.round(left / 2)),
+        // Выжженная планета уносит свой доход на карту
+        scorched: state.exterm.used,
+      });
     };
   }
 
@@ -1612,6 +1711,7 @@ export function createGroundBattle(ctx, config) {
       updateAI(dt);
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
       updateSupport(dt);
+      updateExterminatus(dt);
       tracks.tick(dt);
       scorch.tick(dt);
       refreshOrbit();
@@ -1669,6 +1769,8 @@ export function createGroundBattle(ctx, config) {
   // На игру не влияет, читать можно из консоли.
   if (typeof window !== 'undefined') {
     window.__gr = state;
+    state.extermTest = (x, z) =>
+      callExterminatus(new THREE.Vector3(x, terrainH(x, z), z));
     state.callSupportTest = (id, x, z) =>
       callSupport(id, new THREE.Vector3(x, terrainH(x, z), z));
     state.spawnTest = (id, x, z, side = 'me') => makeUnit(
