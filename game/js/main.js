@@ -300,6 +300,9 @@ function showSkirmish() {
     campaign = null;
     setMode(() => createGroundBattle(ctx, {
       player: { faction: mine, regiments: sizes[size].regiments, credits: 4000 },
+      // В быстром бою даём всю орбитальную поддержку: иначе её видно
+      // только в кампании, и то если выиграть орбиту нужными кораблями
+      orbit: ['strike', 'drop', 'emp'],
       enemy: { faction: foe, regiments: sizes[size].regiments, credits: 4000, turrets: size !== 'small' },
       biome: 'green', title: 'Быстрый бой · планета',
       onEnd: () => showMenu(),

@@ -41,7 +41,7 @@ function quatFromDir(dir, out) {
   return (out || _q).setFromRotationMatrix(_m4);
 }
 
-const FIELD = 1700;   // половина размера поля боя
+const FIELD = 2600;   // половина размера поля боя
 
 export function createSpaceBattle(ctx, config) {
   const { viewport, hudRoot } = ctx;
@@ -49,7 +49,7 @@ export function createSpaceBattle(ctx, config) {
   scene.background = new THREE.Color(0x03050a);
 
   const tcam = new TacticalCamera({
-    dist: 980, maxDist: 2400, minDist: 60, pitch: 0.52, yaw: 0,
+    dist: 1250, maxDist: 3400, minDist: 60, pitch: 0.52, yaw: 0,
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
   });
 
@@ -70,7 +70,7 @@ export function createSpaceBattle(ctx, config) {
   // Отражения: металл должен что-то отражать, иначе он чёрный
   scene.environment = viewport.environmentFrom(nebulaTexture(config.nebulaSeed || 11));
   scene.environmentIntensity = 1.6;
-  scene.add(starfield(3200, 4600));
+  scene.add(starfield(4800, 4600));
 
   // Планета под ногами — бой идёт на её орбите
   const planet = buildPlanet(config.biome || 'rock', 1150, config.planetSeed || 1, config.system);
@@ -298,14 +298,20 @@ export function createSpaceBattle(ctx, config) {
     if (station) spawnShip(sideId, STATION, new THREE.Vector3(rnd(-70, 70), 40, baseZ + side.sign * 190));
   }
 
-  spawnFleet('attacker', config.attacker.ships, 330, false);
-  spawnFleet('defender', config.defender.ships, -330, config.defender.station);
+  /* Флоты разводим далеко: между ними почти два километра игровых
+     единиц, дальше главного калибра. Это и есть время на тактику —
+     успеть построиться, поднять авиацию, развернуть помехи. */
+  spawnFleet('attacker', config.attacker.ships, 950, false);
+  spawnFleet('defender', config.defender.ships, -950, config.defender.station);
 
-  // Стартовый приказ обеим сторонам — сходиться. Иначе бой начинается
-  // с того, что оба флота неподвижно смотрят друг на друга.
+  /* Свой флот НЕ трогаем: он стоит там, где вышел из гипера, и ждёт
+     приказа. Это и даёт время осмотреться, перестроиться и решить,
+     чем заходить. Противник тем временем идёт навстречу, но не до
+     упора, а на рубеж — иначе он проскакивает сквозь строй. */
   for (const s of state.ships) {
-    if (s.station) continue;
-    s.moveTo = new THREE.Vector3(s.pos.x * 0.5, s.pos.y * 0.5, s.pos.z > 0 ? 150 : -150);
+    if (s.station || s.side === state.playerSide) continue;
+    const line = s.pos.z > 0 ? 420 : -420;
+    s.moveTo = new THREE.Vector3(s.pos.x * 0.7, s.pos.y * 0.7, line);
   }
 
   // ── АВИАЦИЯ ──────────────────────────────────────────────
@@ -559,7 +565,7 @@ export function createSpaceBattle(ctx, config) {
     state.reserve[side] = [];
     state.reinforceAt[side] = 0;
     const sign = sides[side].sign;
-    const baseZ = sign * 520;
+    const baseZ = sign * 1200;
     let i = 0;
     for (const item of list) {
       const def = shipDef(sides[side].faction.id, item.id);
@@ -1644,7 +1650,11 @@ export function createSpaceBattle(ctx, config) {
   // Точка взгляда смещена вперёд, за спину своим, иначе корабли уезжают
   // под нижнюю панель интерфейса.
   tcam.yaw = state.playerSide === 'attacker' ? 0 : Math.PI;
-  tcam.focus(new THREE.Vector3(0, 0, state.playerSide === 'attacker' ? 110 : -110), 980);
+  /* Камера садится над своим флотом, а не посередине поля: флоты
+     теперь стоят далеко, и вид из центра показал бы пустоту.
+     Точку смещаем вперёд по курсу — свои корабли должны оказаться
+     в нижней трети экрана, а не под панелью интерфейса. */
+  tcam.focus(new THREE.Vector3(0, 0, state.playerSide === 'attacker' ? 620 : -620), 1250);
   tcam.apply(1, true);
 
   // Состояние боя наружу — по нему автотесты проверяют скрытность,

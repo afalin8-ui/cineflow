@@ -937,8 +937,12 @@ void main() {
     smoothstep(0.985, 1.0, abs(sin(vUv.x * 62.831))),
     smoothstep(0.990, 1.0, abs(sin(vUv.y * 37.699))));
   float wave = smoothstep(0.14, 0.0, abs(fract(vUv.y * 2.0 - uTime * 0.35) - 0.5));
-  float a = (rim * 0.30 + grid * 0.10 + wave * 0.05) * uPower;
-  gl_FragColor = vec4(uColor * (0.8 + wave * 0.6), a);
+  /* Поле должно ЧИТАТЬСЯ, а не закрывать бой. Почти вся яркость —
+     в тонкой кромке по касательной; сетка и бегущая волна оставлены
+     на уровне намёка. Раньше эти числа были втрое выше, и купол
+     перекрывал собой всё, что под ним происходило. */
+  float a = (rim * 0.11 + grid * 0.035 + wave * 0.015) * uPower;
+  gl_FragColor = vec4(uColor * (0.7 + wave * 0.4), a);
 }`;
 
 /* Поле помех — плоский блин в плоскости боя, а не шар: сразу видно,
@@ -979,7 +983,7 @@ export function buildEcmDome(radius, color, height) {
   const rimGeo = new THREE.TorusGeometry(1, 0.006, 6, 96);
   rimGeo.rotateX(Math.PI / 2);
   const rimMat = new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity: 0.8,
+    color, transparent: true, opacity: 0.45,
     blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: true,
   });
   const rims = [];
@@ -994,7 +998,7 @@ export function buildEcmDome(radius, color, height) {
   // Луч от излучателя вниз к плоскости блина
   const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 12, 1, true);
   const beamMat = new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity: 0.5,
+    color, transparent: true, opacity: 0.22,
     blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: true,
   });
   const beam = new THREE.Mesh(beamGeo, beamMat);
@@ -1002,9 +1006,11 @@ export function buildEcmDome(radius, color, height) {
 
   g.renderOrder = 3;
   g.userData.set = (t, power, col, emitY) => {
-    for (const m of [edgeMat, faceMat]) {
+    // Плоскости блина светятся вчетверо слабее обода: именно они
+    // раньше заливали молоком всё, что происходило под полем.
+    for (const [m, k] of [[edgeMat, 1], [faceMat, 0.25]]) {
       m.uniforms.uTime.value = t;
-      m.uniforms.uPower.value = power;
+      m.uniforms.uPower.value = power * k;
       if (col !== undefined) m.uniforms.uColor.value.set(col);
     }
     if (col !== undefined) { rimMat.color.set(col); beamMat.color.set(col); }

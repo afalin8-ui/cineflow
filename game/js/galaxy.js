@@ -14,7 +14,7 @@ import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
-  TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE,
+  TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -657,6 +657,9 @@ export function createGalaxy(ctx, camp) {
           faction: camp.playerFaction, regiments: from.regiments, credits: 3000,
           tech: techOf(camp, camp.playerFaction),
         },
+        /* Что уцелело на орбите, то и поддерживает десант с неба.
+           Флот после победы стоит уже в системе-цели. */
+        orbit: supportFrom(camp.playerFaction, to.fleet),
         enemy: {
           faction: to.owner, regiments: to.regiments, credits: 3000,
           turrets: to.buildings.includes('garrison'),

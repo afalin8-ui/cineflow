@@ -20,7 +20,7 @@ import { groundTexture } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
-  dmgMult, unitDef, MAX_TECH,
+  dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -279,6 +279,15 @@ export function createGroundBattle(ctx, config) {
     time: 0, speed: 1, paused: false,
     selection: [], placing: null, rallyMode: false,
     playerSide: 'me',
+    /* Орбитальная поддержка: что уцелело в космосе, то и доступно.
+       aiming — выбранная, но ещё не наведённая способность; следующее
+       касание по полю указывает ей точку. */
+    support: {
+      list: config.orbit || [],
+      cd: {},              // id -> время, когда снова можно
+      aiming: null,
+      calls: [],           // отложенные удары: {id, at, pos, def}
+    },
   };
   /* Уровень технологий приезжает с галактической карты и решает,
      какая техника вообще есть в меню. В быстром бою его не передают —
@@ -521,6 +530,84 @@ export function createGroundBattle(ctx, config) {
     u.obj.rotation.y = u.heading;
     u.obj.rotation.z = clamp(-diff * 0.9, -0.7, 0.7);
     return false;
+  }
+
+  /* ── ОРБИТАЛЬНАЯ ПОДДЕРЖКА ───────────────────────────────
+     Обратная сторона «Давления Земли». Выигранная орбита не просто
+     даёт право высадиться — уцелевшие корабли продолжают работать по
+     поверхности. Погиб последний носитель в космосе — кнопка десанта
+     на земле мертва. Именно это связывает два слоя. */
+
+  function supportReady(id) {
+    if (!state.support.list.includes(id)) return false;
+    return (state.support.cd[id] || 0) <= state.time;
+  }
+
+  function callSupport(id, pos) {
+    const def = ORBITAL_SUPPORT[id];
+    if (!def || !supportReady(id) || !pos) return false;
+    state.support.cd[id] = state.time + def.cooldown;
+    state.support.calls.push({ id, def, pos: pos.clone(), at: state.time + def.delay });
+
+    // Метка наводки: игрок должен видеть, куда и когда прилетит
+    const mark = ringMesh(def.radius || 30, sides.me.faction.color);
+    mark.position.set(pos.x, terrainH(pos.x, pos.z) + 0.6, pos.z);
+    scene.add(mark);
+    state.support.calls[state.support.calls.length - 1].mark = mark;
+    toast(`${def.name}: наводка принята`);
+    return true;
+  }
+
+  function updateSupport(dt) {
+    const calls = state.support.calls;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const c = calls[i];
+      if (state.time < c.at) continue;
+      if (c.mark) { scene.remove(c.mark); c.mark = null; }
+      resolveSupport(c);
+      calls.splice(i, 1);
+    }
+  }
+
+  function resolveSupport(c) {
+    const d = c.def;
+    const ground = new THREE.Vector3(c.pos.x, terrainH(c.pos.x, c.pos.z), c.pos.z);
+    const sky = ground.clone().setY(ground.y + 700);
+
+    if (d.id === 'strike') {
+      // Главный калибр сверху: столб света и воронка
+      fx.laser(sky, ground, { color: 0x9fe8ff, width: 5, life: 0.9 });
+      fx.explosion(ground, d.radius * 0.9, 0xbfe8ff);
+      fx.shake = Math.min(1, fx.shake + 0.5);
+      splash(ground, d.radius, d.dmg, 'arty', 'me');
+
+    } else if (d.id === 'drop') {
+      // Капсулы с носителя: техника появляется прямо на месте
+      for (let i = 0; i < d.count; i++) {
+        const a = (i / d.count) * Math.PI * 2;
+        const x = ground.x + Math.cos(a) * 11, z = ground.z + Math.sin(a) * 11;
+        if (isWater(x, z)) continue;
+        fx.beam(new THREE.Vector3(x, ground.y + 400, z), new THREE.Vector3(x, ground.y, z),
+          { color: 0x8fffc8, width: 2.2, life: 0.6 });
+        fx.ring(new THREE.Vector3(x, ground.y + 0.5, z), 3, 16, 0x8fffc8, 0.6);
+        const u = makeUnit('me', d.unit, x, z);
+        u.hp = u.maxHp;
+      }
+      fx.shake = Math.min(1, fx.shake + 0.25);
+
+    } else if (d.id === 'emp') {
+      // Обесточиваем чужие постройки: не стреляют и не производят
+      fx.ring(ground, 4, d.radius, 0xc79fff, 1.1);
+      let n = 0;
+      for (const b of state.buildings) {
+        if (b.dead || b.side === 'me') continue;
+        if (b.pos.distanceTo(ground) > d.radius) continue;
+        b.empUntil = state.time + d.disable;
+        fx.flash(b.pos, 7, 0xc79fff, 0.5);
+        n++;
+      }
+      toast(n ? `ЭМИ: обесточено построек — ${n}` : 'ЭМИ: в радиусе пусто');
+    }
   }
 
   // ── СТРЕЛЬБА ─────────────────────────────────────────────
@@ -770,6 +857,8 @@ export function createGroundBattle(ctx, config) {
 
   // ── ЗДАНИЯ ───────────────────────────────────────────────
   function updateBuilding(b, dt) {
+    // ЭМИ-удар с орбиты: постройка обесточена — не стреляет и не строит
+    if (b.empUntil && state.time < b.empUntil) return;
     if (b.building) {
       b.buildLeft -= dt;
       const k = clamp(1 - b.buildLeft / Math.max(0.1, b.def.build), 0, 1);
@@ -921,10 +1010,12 @@ export function createGroundBattle(ctx, config) {
       <button data-role="boxmode">Рамка</button>
     </div>
     <div class="buildbar" data-role="buildbar" style="display:none"></div>
+    <div class="orbitbar" data-role="orbitbar"></div>
     <div class="botpanel">
       <div class="sel-info" data-role="sel"></div>
       <div class="sel-actions" data-role="acts"></div>
     </div>
+    <div class="toasts" data-role="toasts"></div>
     <div class="hint" data-role="hint"></div>
     <div class="endcard" data-role="end" style="display:none"></div>
   `;
@@ -1134,6 +1225,13 @@ export function createGroundBattle(ctx, config) {
     onBoxModeChange: on => boxBtn.classList.toggle('on', on),
     onTap({ x, y, shift, touch }) {
       const world = controls.worldAt(x, y);
+      if (state.support.aiming) {
+        if (callSupport(state.support.aiming, world)) {
+          state.support.aiming = null;
+          refreshOrbit();
+          return;
+        }
+      }
       if (state.placing) { if (tryPlace(world)) return; }
       const ent = entityAt(x, y);
       if (!touch) { selectEntity(ent, shift); return; }
@@ -1162,6 +1260,54 @@ export function createGroundBattle(ctx, config) {
   });
 
   // ── панель выделения ─────────────────────────────────────
+  /* Короткие сообщения по центру — как в бою на орбите. Наводка,
+     подтверждение удара, отчёт по ЭМИ: без них игрок не понимает,
+     сработала способность или нет. */
+  const toastBox = $('toasts');
+  function toast(text) {
+    const d = document.createElement('div');
+    d.className = 'toast';
+    d.textContent = text;
+    toastBox.appendChild(d);
+    setTimeout(() => d.classList.add('out'), 2600);
+    setTimeout(() => d.remove(), 3400);
+  }
+
+  /* Панель орбитальной поддержки. Показываем ВСЕ три способности
+     всегда: если корабля нужного класса в космосе не осталось, кнопка
+     не исчезает, а покрывается помехами — игрок должен видеть, что он
+     потерял и почему. */
+  const orbitBar = $('orbitbar');
+  const orbitBtns = {};
+  for (const def of Object.values(ORBITAL_SUPPORT)) {
+    const b = document.createElement('button');
+    b.className = 'orbit-btn';
+    b.innerHTML = `<b>${def.short}</b><small data-role="cd"></small><i></i>`;
+    b.title = def.desc;
+    b.onclick = () => {
+      if (!supportReady(def.id)) return;
+      state.support.aiming = state.support.aiming === def.id ? null : def.id;
+      state.placing = null; ghost.visible = false;
+      refreshOrbit();
+    };
+    orbitBar.appendChild(b);
+    orbitBtns[def.id] = b;
+  }
+
+  function refreshOrbit() {
+    for (const def of Object.values(ORBITAL_SUPPORT)) {
+      const b = orbitBtns[def.id];
+      const have = state.support.list.includes(def.id);
+      const left = Math.ceil((state.support.cd[def.id] || 0) - state.time);
+      b.classList.toggle('lost', !have);
+      b.classList.toggle('on', state.support.aiming === def.id);
+      b.disabled = !have || left > 0;
+      b.querySelector('[data-role="cd"]').textContent =
+        !have ? 'нет корабля' : left > 0 ? left + ' с' : 'готово';
+    }
+  }
+  refreshOrbit();
+
   function refreshSel() {
     const sel = $('sel'), acts = $('acts');
     const list = state.selection.filter(s => !s.dead);
@@ -1227,7 +1373,8 @@ export function createGroundBattle(ctx, config) {
   function onKey(e) {
     if (e.target && /input|textarea/i.test(e.target.tagName)) return;
     if (e.code === 'Space') { e.preventDefault(); hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); }
-    if (e.code === 'Escape') { state.selection = []; state.placing = null; ghost.visible = false; refreshSel(); }
+    if (e.code === 'Escape') { state.selection = []; state.placing = null; state.support.aiming = null;
+      ghost.visible = false; refreshSel(); refreshOrbit(); }
   }
   addEventListener('keydown', onKey);
 
@@ -1270,6 +1417,8 @@ export function createGroundBattle(ctx, config) {
       updateExposure();
       updateAI(dt);
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
+      updateSupport(dt);
+      refreshOrbit();
       for (const u of state.units) if (!u.dead) updateUnit(u, dt);
       for (const p of state.proj) if (!p.dead) updateShell(p, dt);
       state.proj = state.proj.filter(p => !p.dead);
@@ -1324,6 +1473,8 @@ export function createGroundBattle(ctx, config) {
   // На игру не влияет, читать можно из консоли.
   if (typeof window !== 'undefined') {
     window.__gr = state;
+    state.callSupportTest = (id, x, z) =>
+      callSupport(id, new THREE.Vector3(x, terrainH(x, z), z));
     state.spawnTest = (id, x, z, side = 'me') => makeUnit(
       side, id,
       x === undefined ? rnd(-60, 60) : x,
