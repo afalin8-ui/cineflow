@@ -453,6 +453,7 @@ export function createGroundBattle(ctx, config) {
        после залпа флот уходит в долгую перезарядку, а планета
        остаётся выжженной до конца кампании. */
     exterm: { used: false, at: 0, pos: null, left: 0 },
+    burns: [],           // выжженные круги: {x, z, r, until}
   };
   /* Уровень технологий приезжает с галактической карты и решает,
      какая техника вообще есть в меню. В быстром бою его не передают —
@@ -686,7 +687,14 @@ export function createGroundBattle(ctx, config) {
       }
     }
     _v.normalize();
-    const step = u.def.speed * speedMul * dt;
+    let burnMul = 1;
+    if (!u.air && state.burns.length) {
+      for (const b of state.burns) {
+        if (state.time > b.until) continue;
+        if (Math.hypot(u.pos.x - b.x, u.pos.z - b.z) < b.r) { burnMul = EXTERMINATUS.burnSlow; break; }
+      }
+    }
+    const step = u.def.speed * speedMul * burnMul * dt;
     u.moved0 = step;             // пройдено за кадр — по нему кладём колею
     u.pos.x = clamp(u.pos.x + _v.x * step, -MAP + 8, MAP - 8);
     u.pos.z = clamp(u.pos.z + _v.z * step, -MAP + 8, MAP - 8);
@@ -767,7 +775,7 @@ export function createGroundBattle(ctx, config) {
     if (!x.pos || x.left <= 0 || state.time < x.at) return;
     const E = EXTERMINATUS;
     // Залп очередью: семь ударов подряд, а не одна вспышка
-    x.at = state.time + 0.45;
+    x.at = state.time + 0.48;
     x.left--;
     const a = rnd(0, Math.PI * 2), r = Math.sqrt(Math.random()) * E.radius;
     const p = new THREE.Vector3(x.pos.x + Math.cos(a) * r, 0, x.pos.z + Math.sin(a) * r);
@@ -775,7 +783,9 @@ export function createGroundBattle(ctx, config) {
     fx.laser(p.clone().setY(p.y + 260), p, { color: 0xffb060, width: 2.6, life: 0.6 });
     fx.explosion(p, 26, 0xffa050);
     fx.shake = 1;
-    scorch.drop(p.x, p.y, p.z, rnd(0, 6.28), 62, 62);
+    scorch.drop(p.x, p.y, p.z, rnd(0, 6.28), 78, 78);
+    // Пепелище: техника здесь вязнет — это тоже часть цены
+    state.burns.push({ x: p.x, z: p.z, r: 46, until: state.time + EXTERMINATUS.burnFor });
     // Бьёт по ОБЕИМ сторонам: с орбиты не разбирают, кто внизу
     for (const side of ['me', 'foe']) {
       splash(p, E.radius * 0.42, E.dmg / E.volleys, 'arty', other(side));
@@ -1712,6 +1722,9 @@ export function createGroundBattle(ctx, config) {
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
       updateSupport(dt);
       updateExterminatus(dt);
+      if (state.burns.length && state.time % 1 < dt) {
+        state.burns = state.burns.filter(b => state.time <= b.until);
+      }
       tracks.tick(dt);
       scorch.tick(dt);
       refreshOrbit();
