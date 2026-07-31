@@ -524,6 +524,42 @@ export function groundTexture(biome, seed = 5) {
   return t;
 }
 
+/* ── ФОТОСКАНЫ ГРУНТА (Poly Haven, CC0).
+
+   Процедурная канва даёт «шум», а не поверхность: у неё нет ни зерна,
+   ни камешков, ни того, за что цепляется глаз. Три реальных скана —
+   трава, скала, глина — смешиваются по уклону прямо в шейдере:
+   на пологом трава, на обрыве камень, между ними глина. Это тот же
+   приём, что в больших движках зовётся splatting, и делает он больше,
+   чем любая правка освещения.
+
+   Файлы лежат в game/textures/, ужаты до 512 — на глаз этого хватает,
+   потому что текстура повторяется десятки раз на карту. */
+
+const TERRAIN_BASE = new URL('../textures/', import.meta.url);
+let terrainSetCache = null;
+
+export function terrainSet() {
+  if (terrainSetCache) return terrainSetCache;
+  const loader = new THREE.TextureLoader();
+  const get = (file, srgb, rep) => {
+    const t = loader.load(new URL(file, TERRAIN_BASE).href);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 8;
+    t.repeat.set(rep, rep);
+    return t;
+  };
+  terrainSetCache = {
+    grass: get('grass_diff.jpg', true, 1),
+    rock: get('rock_diff.jpg', true, 1),
+    dirt: get('dirt_diff.jpg', true, 1),
+    grassN: get('grass_nor.jpg', false, 1),
+    rockN: get('rock_nor.jpg', false, 1),
+  };
+  return terrainSetCache;
+}
+
 export function clearTextureCache() {
   for (const v of cache.values()) {
     if (v && v.dispose) v.dispose();

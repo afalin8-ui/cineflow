@@ -17,7 +17,7 @@ import {
   buildGroundUnit, buildStructure, buildSupplyField, buildProp, buildWater, mat,
   buildGrass, buildTreeField,
 } from './models.js';
-import { groundTexture } from './textures.js';
+import { groundTexture, terrainSet } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
@@ -169,11 +169,13 @@ export function createGroundBattle(ctx, config) {
   tGeo.rotateX(-Math.PI / 2);
   const posAttr = tGeo.attributes.position;
   const colors = new Float32Array(posAttr.count * 3);
+  const slopes = new Float32Array(posAttr.count);   // для смешивания текстур
   const cLow = new THREE.Color(biome.ground);
   const cHigh = new THREE.Color(biome.accent);
   const cRock = new THREE.Color(biome.rock || 0x6a5f52);
   const cBed = new THREE.Color(config.biome === 'ice' ? 0x6b7d88 : 0x8f8163);  // ил и намытый песок
   const tmpC = new THREE.Color();
+  const WHITE = new THREE.Color(0xffffff);
   const step = (TERRAIN * 2) / segs;
   for (let i = 0; i < posAttr.count; i++) {
     const x = posAttr.getX(i), z = posAttr.getZ(i);
@@ -183,6 +185,7 @@ export function createGroundBattle(ctx, config) {
     const dx = (terrainH(x + step, z) - terrainH(x - step, z)) / (2 * step);
     const dz = (terrainH(x, z + step) - terrainH(x, z - step)) / (2 * step);
     const slope = Math.min(1, Math.hypot(dx, dz) * 2.6);
+    slopes[i] = slope;
     const alt = clamp((h + HEIGHT_SCALE * 0.45) / HEIGHT_SCALE, 0, 1);
     tmpC.copy(cLow).lerp(cHigh, Math.pow(alt, 1.4));
     tmpC.lerp(cRock, Math.pow(slope, 0.8) * 0.9);
@@ -194,27 +197,65 @@ export function createGroundBattle(ctx, config) {
       tmpC.lerp(cBed, 0.55 + sub * 0.4);
       tmpC.multiplyScalar(1 - sub * 0.45);
     }
-    const jitter = 0.94 + Math.random() * 0.12;
+    /* Вертексный цвет теперь только подкрашивает биом: рисунок даёт
+       фотоскан, а полная насыщенность заливки его душит. Осветляем
+       к белому — под водой не трогаем, там цвет несёт ил. */
+    if (h >= WATER_LEVEL) tmpC.lerp(WHITE, 0.5);
+    const jitter = 0.96 + Math.random() * 0.08;
     colors[i * 3] = tmpC.r * jitter;
     colors[i * 3 + 1] = tmpC.g * jitter;
     colors[i * 3 + 2] = tmpC.b * jitter;
   }
   tGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  tGeo.setAttribute('aSlope', new THREE.BufferAttribute(slopes, 1));
   tGeo.computeVertexNormals();
   // Гладкое затенение плюс тайловая деталь: фасетки уходят, а вблизи
   // видно крупицы и трещины — полигонов при этом не прибавилось.
   const detail = groundTexture(config.biome || 'rock');
   detail.repeat.set(48, 48);
   if (detail.userData.normal) detail.userData.normal.repeat.set(48, 48);
-  const terrain = new THREE.Mesh(tGeo, new THREE.MeshStandardMaterial({
-    vertexColors: true, map: detail,
-    // Карта нормалей грунта: комки и трещины ловят солнце, и земля
-    // перестаёт быть крашеной бумагой. Повтор тот же, что у детали.
-    normalMap: detail.userData.normal || null,
-    normalScale: new THREE.Vector2(0.85, 0.85),
+  /* Три фотоскана, смешанные по уклону прямо в шейдере: на пологом
+     трава, на обрыве камень, между ними глина. Вертексные цвета
+     остаются, но приглушены — они теперь только подкрашивают биом,
+     а рисунок поверхности дают сканы. Вмешиваемся через
+     onBeforeCompile, а не пишем свой материал: так у ландшафта
+     сохраняется штатное освещение three.js и, главное, тени. */
+  const T = terrainSet();
+  const terrainMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    normalMap: T.grassN,
+    normalScale: new THREE.Vector2(1.1, 1.1),
     roughness: 0.95, metalness: 0,
-    flatShading: false,
-  }));
+  });
+  terrainMat.onBeforeCompile = sh => {
+    sh.uniforms.uGrass = { value: T.grass };
+    sh.uniforms.uRock = { value: T.rock };
+    sh.uniforms.uDirt = { value: T.dirt };
+    sh.uniforms.uTexScale = { value: 0.055 };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>',
+        '#include <common>\nattribute float aSlope;\nvarying float vSlope;\nvarying vec3 vWPosT;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvSlope = aSlope;\nvWPosT = (modelMatrix * vec4(position, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nuniform sampler2D uGrass;\nuniform sampler2D uRock;\n'
+        + 'uniform sampler2D uDirt;\nuniform float uTexScale;\n'
+        + 'varying float vSlope;\nvarying vec3 vWPosT;')
+      .replace('#include <map_fragment>', [
+        'vec2 tuv = vWPosT.xz * uTexScale;',
+        // разный масштаб у слоёв: одинаковый выдаёт повтор сеткой
+        'vec3 cG = texture2D(uGrass, tuv).rgb;',
+        'vec3 cR = texture2D(uRock, tuv * 0.62).rgb;',
+        'vec3 cD = texture2D(uDirt, tuv * 1.45).rgb;',
+        'float rockK = smoothstep(0.30, 0.70, vSlope);',
+        'float dirtK = smoothstep(0.17, 0.45, vSlope) * (1.0 - rockK);',
+        'vec3 blend = mix(mix(cG, cD, dirtK), cR, rockK);',
+        'diffuseColor.rgb *= blend * 1.75;',
+      ].join('\n'));
+    terrainMat.userData.shader = sh;
+  };
+  const terrain = new THREE.Mesh(tGeo, terrainMat);
   terrain.receiveShadow = true;
   scene.add(terrain);
 
@@ -266,9 +307,33 @@ export function createGroundBattle(ctx, config) {
   viewport.setBloom({ strength: 0.34, radius: 0.5, threshold: 0.84, exposure: 1.18 });
 
   // камни и растительность: масштаб и ощущение живой поверхности
-  const rockMat = mat(biome.rock || biome.accent, { rough: 1, metal: 0 });
-  const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-  rockGeo.userData.shared = true;
+  /* Камни. Додекаэдр читается как гранёная деталь конструктора, а не
+     как валун. Берём сферу низкого разбиения, гнём её шумом и слегка
+     приплющиваем — получается неровный обломок. Форм несколько, чтобы
+     по карте не лежали клоны, и одеты они в тот же скан скалы, что
+     и обрывы рельефа. */
+  const rockMat = new THREE.MeshStandardMaterial({
+    map: T.rock, normalMap: T.rockN, normalScale: new THREE.Vector2(1.2, 1.2),
+    color: biome.rock || biome.accent, roughness: 0.95, metalness: 0,
+  });
+  const rockShapes = [];
+  for (let v = 0; v < 4; v++) {
+    const g = new THREE.IcosahedronGeometry(1, 2);
+    const pos = g.attributes.position;
+    const nz = new Noise(seed + 400 + v * 37);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      // крупные грани плюс мелкая щербатость
+      const big = nz.fbm3(x * 1.1, y * 1.1, z * 1.1, 3) * 0.34;
+      const fine = nz.fbm3(x * 4.5, y * 4.5, z * 4.5, 2) * 0.11;
+      const k = 1 + big + fine;
+      pos.setXYZ(i, x * k, y * k * 0.78, z * k);   // приплюснутость
+    }
+    g.computeVertexNormals();
+    g.userData.shared = true;
+    rockShapes.push(g);
+  }
+  const rockGeo = rockShapes[0];
   const busy = [[-BX0, BX0, 90], [BX0, -BX0, 90]];   // рядом с базами не сорим
   const freeSpot = (x, z) => !busy.some(([bx, bz, r]) => Math.hypot(x - bx, z - bz) < r);
   for (let i = 0; i < (IS_TOUCH ? 70 : 120); i++) {
@@ -277,7 +342,7 @@ export function createGroundBattle(ctx, config) {
     const x = rnd(-lim, lim), z = rnd(-lim, lim);
     // На дне камни читаются тёмными кляксами сквозь воду — не сорим туда
     if (isWater(x, z)) continue;
-    const r = new THREE.Mesh(rockGeo, rockMat);
+    const r = new THREE.Mesh(rockShapes[i % rockShapes.length], rockMat);
     r.castShadow = true; r.receiveShadow = true;
     const s = near ? rnd(2, 6) : rnd(4, 12);
     r.scale.set(s, s * rnd(0.5, 1), s);
