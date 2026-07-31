@@ -806,12 +806,26 @@ export function createSpaceBattle(ctx, config) {
         }
       }
 
-      thrustTo(e, desiredVel, dt, def.thrust);
-      if (e.vel.length() > def.maxSpeed * 1.25) e.vel.setLength(def.maxSpeed * 1.25);
+      /* ДРИФТ. С выключенными гасителями инерции корабль не правит
+         вектор скорости вовсе — он скользит по нему, как есть, зато
+         корпус разворачивается свободно. Смысл в том, чтобы уходить
+         от одного противника, продолжая расстреливать другого: курс
+         и прицел перестают быть одним и тем же. Цена — потеря
+         управления: остановиться или свернуть, не включив гасители
+         обратно, нельзя. */
+      if (!e.drift) {
+        thrustTo(e, desiredVel, dt, def.thrust);
+        if (e.vel.length() > def.maxSpeed * 1.25) e.vel.setLength(def.maxSpeed * 1.25);
+      } else {
+        e.thrustNow = 0;
+      }
 
       // ── куда смотрим: цель важнее курса
       let look = null;
-      if (e.target && e.pos.distanceTo(e.target.pos) < (e.guns[0] ? e.guns[0].def.range : 400) * 1.5) {
+      if (e.drift && e.target) {
+        // в дрифте корпус всегда на цели, куда бы корабль ни летел
+        look = _v2.subVectors(e.target.pos, e.pos);
+      } else if (e.target && e.pos.distanceTo(e.target.pos) < (e.guns[0] ? e.guns[0].def.range : 400) * 1.5) {
         look = _v2.subVectors(e.target.pos, e.pos);
       } else if (desiredVel && desiredVel.lengthSq() > 1) {
         look = _v2.copy(desiredVel);
@@ -1129,6 +1143,7 @@ export function createSpaceBattle(ctx, config) {
         <button data-speed="1" class="on">1×</button>
         <button data-speed="2">2×</button>
         <button data-speed="4">4×</button>
+        <button data-role="drift">Дрифт</button>
         <button data-role="reinforce">Подкрепление</button>
         <button data-role="retreat" class="danger">Отход</button>
       </div>
@@ -1217,6 +1232,21 @@ export function createSpaceBattle(ctx, config) {
       hud.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', +x.dataset.speed === v));
     };
   });
+  /* Дрифт включается на выделенные корабли. Кнопка, а не горячая
+     клавиша: планшет — основное устройство, клавиатуры там нет. */
+  $('drift').onclick = () => {
+    const mine = state.selection.filter(e => !e.dead && e.side === state.playerSide && !e.station);
+    if (!mine.length) { toast('Сначала выбери корабли'); return; }
+    const on = !mine.every(e => e.drift);
+    for (const e of mine) {
+      e.drift = on;
+      if (on) fx.ring(e.pos, e.radius * 1.5, e.radius * 5, 0xffc27a, 0.5);
+    }
+    $('drift').classList.toggle('on', on);
+    toast(on ? 'Гасители инерции отключены: корабль скользит по вектору'
+             : 'Гасители инерции включены');
+  };
+
   $('retreat').onclick = () => finish(state.playerSide === 'attacker' ? 'retreat' : 'defeat');
 
   const reinfBtn = $('reinforce');
@@ -1397,6 +1427,9 @@ export function createSpaceBattle(ctx, config) {
       dest.y = s.kind === 'ship' ? s.pos.y : world.y;
       s.moveTo = dest;
       s.target = null;
+      /* Приказ идти сам включает гасители: иначе корабль продолжит
+         скользить мимо точки, и приказ будет выглядеть как баг. */
+      s.drift = false;
       if (s.kind === 'ship') s.forced = null;
       else { s.recall = false; for (const c of s.craft) c.target = null; }
     });

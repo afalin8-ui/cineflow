@@ -609,3 +609,10 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 .far-btn.flying small { color: var(--accent); }
 .far-btn.done { opacity: .5; }
 .far-btn.done small { color: var(--good); }
+
+/* Кнопка дрифта в шапке боя: включённые гасители — обычная,
+   выключенные — тревожная, потому что это потеря управления. */
+.speedctl button[data-role="drift"] { font-family: var(--font); min-width: 0; }
+.speedctl button[data-role="drift"].on {
+  border-color: #d8a04a; color: #ffd08a; background: #241a08;
+}
