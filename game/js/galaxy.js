@@ -903,6 +903,11 @@ export function createGalaxy(ctx, camp) {
         /* Что уцелело на орбите, то и поддерживает десант с неба.
            Флот после победы стоит уже в системе-цели. */
         orbit: supportFrom(camp.playerFaction, to.fleet),
+        /* Разведка перед высадкой: корветы — глаза флота. Уцелели —
+           десант знает, где враг, ещё до касания земли. Не уцелели —
+           садимся вслепую. */
+        recon: (to.fleet || []).reduce((a, x) =>
+          a + (x.id === 'corvette' || x.id === 'frigate' ? x.count : 0), 0),
         enemy: {
           faction: to.owner, regiments: to.regiments, credits: 3000,
           turrets: to.buildings.includes('garrison'),

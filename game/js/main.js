@@ -77,10 +77,15 @@ const ctx = {
     }));
   },
   startGroundBattle(cfg) {
-    setMode(() => createGroundBattle(ctx, {
+    /* Высадка идёт «нырком» сквозь облака, а не сменой экрана.
+       Смысл приёма в том, что густой туман закрывает не переход,
+       а ЗАГРУЗКУ: пока экран заволочён, собирается наземная сцена —
+       рельеф, вода, тысячи травинок. Игрок видит спуск, а не
+       ожидание. */
+    dive(() => setMode(() => createGroundBattle(ctx, {
       ...cfg,
       onEnd: res => { cfg.onEnd && cfg.onEnd(res); backToGalaxy(); },
-    }));
+    })));
   },
   autoSpace(attacker, defender, cb) {
     const res = autoResolveSpace(attacker, defender);
@@ -101,6 +106,30 @@ const ctx = {
       () => cb(res));
   },
 };
+
+/* ── НЫРОК СКВОЗЬ ОБЛАКА.
+   Три слоя облаков едут вниз с разной скоростью — так получается
+   ощущение падения, а не просто затемнения. Сцену меняем в самой
+   плотной точке, когда экран закрыт целиком: смена мгновенная, но
+   увидеть её нельзя.
+
+   Слои разной скорости важнее их вида: параллакс и есть то, что
+   читается как движение вниз. */
+function dive(swap) {
+  const el = document.createElement('div');
+  el.className = 'dive';
+  el.innerHTML = '<i class="c1"></i><i class="c2"></i><i class="c3"></i>';
+  hudRoot.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('in'));
+
+  setTimeout(() => {
+    swap();
+    // setMode вычищает HUD целиком, поэтому слой возвращаем поверх
+    hudRoot.appendChild(el);
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 900);
+  }, 760);
+}
 
 function backToGalaxy() {
   save();
@@ -298,7 +327,7 @@ function showSkirmish() {
     const mine = sel('mine'), foe = sel('foe'), size = sel('size');
     el.remove();
     campaign = null;
-    setMode(() => createGroundBattle(ctx, {
+    dive(() => setMode(() => createGroundBattle(ctx, {
       player: { faction: mine, regiments: sizes[size].regiments, credits: 4000 },
       // В быстром бою даём всю орбитальную поддержку: иначе её видно
       // только в кампании, и то если выиграть орбиту нужными кораблями
@@ -309,7 +338,7 @@ function showSkirmish() {
       biome: (typeof window !== 'undefined' && window.__forceBiome) || 'green',
       title: 'Быстрый бой · планета',
       onEnd: () => showMenu(),
-    }));
+    })));
   };
 }
 

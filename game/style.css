@@ -627,3 +627,37 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
   pointer-events: auto; line-height: 0;
 }
 .minimap canvas { display: block; }
+
+/* НЫРОК СКВОЗЬ ОБЛАКА.
+   Три слоя едут вниз с разной скоростью — параллакс и читается как
+   падение. Слой закрывает экран целиком в самой плотной точке:
+   под ним меняется сцена, и смены не видно. */
+.dive {
+  position: absolute; inset: -20%; pointer-events: none; z-index: 90;
+  opacity: 0; transition: opacity .55s ease-in;
+}
+.dive.in { opacity: 1; }
+.dive.out { opacity: 0; transition: opacity .85s ease-out; }
+.dive i {
+  position: absolute; inset: -30% -10%; display: block;
+  background-repeat: repeat;
+  will-change: transform;
+}
+.dive .c1 {
+  background: radial-gradient(closest-side, rgba(226,236,246,.95), rgba(226,236,246,0) 70%)
+              0 0 / 46% 38%;
+  animation: dive1 1.6s linear forwards;
+}
+.dive .c2 {
+  background: radial-gradient(closest-side, rgba(206,220,236,.9), rgba(206,220,236,0) 70%)
+              22% 14% / 62% 50%;
+  animation: dive2 1.6s linear forwards;
+}
+.dive .c3 {
+  background: radial-gradient(closest-side, rgba(178,196,216,.85), rgba(178,196,216,0) 72%)
+              9% 41% / 88% 72%;
+  animation: dive3 1.6s linear forwards;
+}
+@keyframes dive1 { from { transform: translateY(-34%) scale(1);   } to { transform: translateY(64%) scale(1.5); } }
+@keyframes dive2 { from { transform: translateY(-52%) scale(1.1); } to { transform: translateY(92%) scale(1.9); } }
+@keyframes dive3 { from { transform: translateY(-72%) scale(1.2); } to { transform: translateY(126%) scale(2.4); } }

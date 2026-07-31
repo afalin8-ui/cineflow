@@ -454,6 +454,10 @@ export function createGroundBattle(ctx, config) {
        остаётся выжженной до конца кампании. */
     exterm: { used: false, at: 0, pos: null, left: 0 },
     burns: [],           // выжженные круги: {x, z, r, until}
+    /* Разведка с орбиты. Уцелевшие корветы дают десанту карту
+       противника ещё до касания земли; без них садимся вслепую
+       и видим только то, до чего дотягивается своё зрение. */
+    recon: config.recon ?? 99,
   };
   /* Уровень технологий приезжает с галактической карты и решает,
      какая техника вообще есть в меню. В быстром бою его не передают —
@@ -1543,6 +1547,9 @@ export function createGroundBattle(ctx, config) {
      камеру — на планшете это единственный быстрый способ попасть
      на другой край карты. */
   const minimap = createMinimap(hud, MAP);
+  if ((config.recon ?? 99) === 0) {
+    setTimeout(() => toast('Разведки нет: высадка вслепую'), 900);
+  }
   minimap.el.addEventListener('pointerdown', ev => {
     const r = minimap.el.getBoundingClientRect();
     const x = ((ev.clientX - r.left) / r.width - 0.5) * 2 * MAP;
@@ -1622,13 +1629,25 @@ export function createGroundBattle(ctx, config) {
   function drawMinimap(dt) {
     const dots = [];
     for (const f of state.fields) dots.push({ x: f.pos.x, z: f.pos.z, color: '#e8a33d', r: 3 });
+    /* Чужое на миникарте показываем только если есть разведка или
+       если до цели дотягивается собственное зрение. Слепая высадка
+       должна ощущаться слепой. */
+    const seen = e => {
+      if (e.side === 'me') return true;
+      if (state.recon > 0) return true;
+      for (const u of state.units) {
+        if (u.dead || u.side !== 'me') continue;
+        if (u.pos.distanceTo(e.pos) < (u.def.vision || 40)) return true;
+      }
+      return false;
+    };
     for (const b of state.buildings) {
-      if (b.dead) continue;
+      if (b.dead || !seen(b)) continue;
       dots.push({ x: b.pos.x, z: b.pos.z, r: 4,
         color: b.side === 'me' ? '#8fffc8' : '#ff6b5a' });
     }
     for (const u of state.units) {
-      if (u.dead || hiddenU(u)) continue;
+      if (u.dead || hiddenU(u) || !seen(u)) continue;
       dots.push({ x: u.pos.x, z: u.pos.z, r: 2,
         color: u.side === 'me' ? '#5ce0a0' : '#e05a4a' });
     }
