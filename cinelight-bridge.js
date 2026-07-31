@@ -22,6 +22,8 @@ const ARTNET_PORT = 6454;
 const SACN_PORT = 5568;
 const target = process.argv[2] || '255.255.255.255';
 
+function log(msg) { console.log(new Date().toLocaleTimeString() + '  ' + msg); }
+
 const udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 udp.bind(() => {
     try { udp.setBroadcast(true); } catch (e) {}
@@ -29,12 +31,38 @@ udp.bind(() => {
 });
 udp.on('error', () => {});
 
+/* Широковещательные адреса всех сетей компьютера.
+   Если в машине и Wi-Fi, и кабель, простой 255.255.255.255 уходит только
+   в одну из сетей — и нода в другой ничего не получает. Поэтому шлём
+   в каждую сеть её собственный broadcast. */
+function broadcastAddrs() {
+    const out = [];
+    Object.values(os.networkInterfaces()).forEach(list => (list || []).forEach(i => {
+        if (i.family !== 'IPv4' || i.internal || !i.netmask) return;
+        const ip = i.address.split('.').map(Number);
+        const mask = i.netmask.split('.').map(Number);
+        if (ip.length !== 4 || mask.length !== 4) return;
+        out.push(ip.map((o, k) => (o & mask[k]) | (~mask[k] & 255)).join('.'));
+    }));
+    return out.filter((v, k, a) => a.indexOf(v) === k);
+}
+
+let artTargets = process.argv[2] ? [target] : (broadcastAddrs().length ? broadcastAddrs() : [target]);
+// сети могут появиться позже (подключили Wi-Fi) — пересматриваем раз в 5 секунд
+if (!process.argv[2]) setInterval(() => {
+    const fresh = broadcastAddrs();
+    if (fresh.length && fresh.join() !== artTargets.join()) {
+        artTargets = fresh;
+        log('Сети изменились, Art-Net теперь уходит на: ' + artTargets.join(', '));
+    }
+}, 5000);
+
 /* Пульт шлёт готовые пакеты: Art-Net или sACN. Различаем по первым байтам
    и отправляем каждый по своим правилам — sACN идёт в мультикаст-группу,
    номер которой зависит от юниверса. */
 function routePacket(buf) {
     if (buf.length >= 8 && buf.toString('ascii', 0, 7) === 'Art-Net') {
-        udp.send(buf, ARTNET_PORT, target);
+        artTargets.forEach(a => udp.send(buf, ARTNET_PORT, a));
         return 'artnet';
     }
     if (buf.length >= 126 && buf.readUInt16BE(0) === 0x0010 && buf.toString('ascii', 4, 13) === 'ASC-E1.17') {
@@ -46,8 +74,6 @@ function routePacket(buf) {
     }
     return null;
 }
-
-function log(msg) { console.log(new Date().toLocaleTimeString() + '  ' + msg); }
 
 /* Все подключённые пульты. Текстовые сообщения (не DMX) мост пересылает
    остальным — так оператор и пультовик видят одну и ту же картину. */
@@ -142,7 +168,7 @@ server.on('upgrade', (req, socket) => {
                     gotFirst = kind;
                     log(kind === 'sacn'
                         ? 'Пошли кадры sACN → ' + (process.argv[2] ? target : 'мультикаст 239.255.x.x') + ':' + SACN_PORT
-                        : 'Пошли кадры Art-Net → ' + target + ':' + ARTNET_PORT);
+                        : 'Пошли кадры Art-Net → ' + artTargets.join(', ') + ':' + ARTNET_PORT);
                 }
             }
         }
@@ -177,10 +203,13 @@ server.listen(PORT, () => {
     if (process.argv[2]) {
         console.log('  Art-Net и sACN уходят на: ' + target);
     } else {
-        console.log('  Art-Net уходит всем в сети (' + target + ':' + ARTNET_PORT + ')');
+        console.log('  Art-Net уходит в сети: ' + artTargets.join(', ') + '  (порт ' + ARTNET_PORT + ')');
         console.log('  sACN уходит в мультикаст 239.255.x.x:' + SACN_PORT + ' — как требует стандарт');
-        console.log('  Нужен конкретный приёмник? node cinelight-bridge.js 192.168.1.60');
+        console.log('  Нода не отвечает? Укажите её адрес: cinelight-bridge.bat 192.168.1.60');
     }
+    console.log('');
+    console.log('  Если Windows спросит про доступ в сеть — разрешите, иначе');
+    console.log('  ни iPad, ни нода до моста не достучатся.');
     console.log('  В пульте: Настройки → «Подключить мост». Окно не закрывайте.');
     console.log('');
 });
