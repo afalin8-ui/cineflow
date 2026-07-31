@@ -15,7 +15,7 @@ import {
 } from './engine.js';
 import {
   buildGroundUnit, buildStructure, buildSupplyField, buildProp, buildWater, mat,
-  buildGrass, buildTreeField,
+  buildGrass, buildTreeField, buildTrackField,
 } from './models.js';
 import { groundTexture, terrainSet } from './textures.js';
 import { Noise, seedFrom } from './noise.js';
@@ -164,7 +164,8 @@ export function createGroundBattle(ctx, config) {
   scene.add(bounce);
 
   // ── ЛАНДШАФТ ─────────────────────────────────────────────
-  const segs = IS_TOUCH ? 140 : 200;
+  // Плотнее сетка — мельче ступенька там, где рельеф уходит под воду
+  const segs = IS_TOUCH ? 170 : 260;
   const tGeo = new THREE.PlaneGeometry(TERRAIN * 2, TERRAIN * 2, segs, segs);
   tGeo.rotateX(-Math.PI / 2);
   const posAttr = tGeo.attributes.position;
@@ -262,7 +263,12 @@ export function createGroundBattle(ctx, config) {
   /* ── ВОДА.
      Пекём карту глубины прямо из рельефа: шейдер по ней рисует
      прибой у берега и темноту на глубине. */
-  const DW = 256;
+  /* Разрешение карты глубины решает, насколько плавен урез воды.
+     На 256 текселях один тексель накрывает десять игровых единиц, и
+     вблизи берег читается ступеньками. На 512 их пять, а лёгкое
+     размытие добивает остаток лесенки — линия воды становится
+     похожей на линию воды, а не на пиксельную границу. */
+  const DW = 512;
   const depthCv = document.createElement('canvas');
   depthCv.width = depthCv.height = DW;
   {
@@ -288,8 +294,23 @@ export function createGroundBattle(ctx, config) {
         if (d > deepest) deepest = d;
       }
     }
+    // размытие 3x3: сглаживает ступеньки на кромке
+    const sm = new Float32Array(DW * DW);
+    for (let j = 0; j < DW; j++) {
+      for (let i = 0; i < DW; i++) {
+        let acc = 0, n = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          const jj = j + dj; if (jj < 0 || jj >= DW) continue;
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di; if (ii < 0 || ii >= DW) continue;
+            acc += raw[jj * DW + ii]; n++;
+          }
+        }
+        sm[j * DW + i] = acc / n;
+      }
+    }
     for (let k = 0; k < DW * DW; k++) {
-      const v = Math.min(255, (raw[k] / deepest) * 255);
+      const v = Math.min(255, (sm[k] / deepest) * 255);
       const o = k * 4;
       dd[o] = dd[o + 1] = dd[o + 2] = v; dd[o + 3] = 255;
     }
@@ -390,6 +411,10 @@ export function createGroundBattle(ctx, config) {
     scene.add(grass);
   }
   scene.add(shadowed(buildTreeField(IS_TOUCH ? 90 : 180, MAP, canPlant, config.biome || 'rock')));
+
+  // Колея от гусениц и колёс: техника пишет её на ходу
+  const tracks = buildTrackField(IS_TOUCH ? 260 : 460);
+  scene.add(tracks.mesh);
 
   const fx = new Fx(scene);
   fx.setCamera(tcam.cam);
@@ -638,6 +663,7 @@ export function createGroundBattle(ctx, config) {
     }
     _v.normalize();
     const step = u.def.speed * speedMul * dt;
+    u.moved0 = step;             // пройдено за кадр — по нему кладём колею
     u.pos.x = clamp(u.pos.x + _v.x * step, -MAP + 8, MAP - 8);
     u.pos.z = clamp(u.pos.z + _v.z * step, -MAP + 8, MAP - 8);
     u.pos.y = terrainH(u.pos.x, u.pos.z);
@@ -866,6 +892,18 @@ export function createGroundBattle(ctx, config) {
   function updateUnit(u, dt) {
     const def = u.def;
     spinRotor(u, dt);
+    /* Отпечаток кладём не каждый кадр, а раз в несколько метров пути:
+       иначе колея превращается в сплошную кляксу, а пул забивается
+       за пару секунд. Авиация и пехота следов не оставляют. */
+    if (def.cls === 'vehicle' && !u.air) {
+      u.trackLeft = (u.trackLeft || 0) - (u.moved0 || 0);
+      u.moved0 = 0;
+      if (u.trackLeft <= 0) {
+        u.trackLeft = 3.6;   // с запасом на перекрытие: колея сплошная
+        const w = def.id === 'scout' ? 4.5 : 7;
+        tracks.drop(u.pos.x, terrainH(u.pos.x, u.pos.z), u.pos.z, u.heading, w, 7);
+      }
+    }
     if (u.target && u.target.dead) u.target = null;
     if (u.forced && u.forced.dead) u.forced = null;
 
@@ -1551,6 +1589,7 @@ export function createGroundBattle(ctx, config) {
       updateAI(dt);
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
       updateSupport(dt);
+      tracks.tick(dt);
       refreshOrbit();
       for (const u of state.units) if (!u.dead) updateUnit(u, dt);
       for (const p of state.proj) if (!p.dead) updateShell(p, dt);

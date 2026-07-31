@@ -995,6 +995,65 @@ export function buildGrass(count, extent, sample, tint) {
   return mesh;
 }
 
+/* ── ЛИСТВА КАРТАМИ.
+   Сплошной конус — это силуэт ёлки из восьмидесятых: у него нет ни
+   просветов, ни рваного края, и в любом ракурсе он остаётся конусом.
+   Настоящие игровые деревья делают иначе: несколько плоскостей с
+   вырезанной по прозрачности листвой, поставленных крест-накрест.
+   Крона получается рыхлой, сквозь неё видно небо, а стоит она
+   столько же, сколько две плоскости. */
+
+let LEAF_TEX = null;
+function leafTexture() {
+  if (LEAF_TEX) return LEAF_TEX;
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, S, S);
+  // куст из полусотни листьев: к краю мельче и реже — рваный контур
+  for (let i = 0; i < 90; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.pow(Math.random(), 0.62) * S * 0.46;
+    const x = S / 2 + Math.cos(a) * r;
+    const y = S / 2 + Math.sin(a) * r * 0.85;
+    const size = S * (0.10 - r / S * 0.055) * (0.7 + Math.random() * 0.6);
+    if (size < 1) continue;
+    const shade = 42 + Math.random() * 58 - (r / S) * 26;
+    c.fillStyle = `rgb(${Math.round(shade * 0.55)},${Math.round(shade * 1.5)},${Math.round(shade * 0.6)})`;
+    c.save();
+    c.translate(x, y);
+    c.rotate(Math.random() * Math.PI);
+    c.beginPath();
+    c.ellipse(0, 0, size, size * 0.55, 0, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  }
+  LEAF_TEX = new THREE.CanvasTexture(cv);
+  LEAF_TEX.colorSpace = THREE.SRGBColorSpace;
+  return LEAF_TEX;
+}
+
+// Крона: три плоскости крест-накрест, развёрнутые веером
+function leafCardGeo() {
+  const g = new THREE.BufferGeometry();
+  const pos = [], uv = [], nrm = [];
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI;
+    const cx = Math.cos(a), cz = Math.sin(a);
+    const quad = [
+      [-cx, -1, -cz], [cx, -1, cz], [cx, 1, cz],
+      [-cx, -1, -cz], [cx, 1, cz], [-cx, 1, -cz],
+    ];
+    for (const [x, y, z] of quad) { pos.push(x, y, z); nrm.push(0, 1, 0); }
+    uv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+  }
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  return g;
+}
+
 /* Деревья тем же приёмом: одна геометрия ствола и одна кроны на всю
    карту. Разнообразие даём наклоном, поворотом и размером — этого
    достаточно, чтобы лес не выглядел строем клонов. */
@@ -1002,17 +1061,19 @@ export function buildTreeField(count, extent, sample, biome) {
   const g = new THREE.Group();
   if (biome === 'ice' || biome === 'rock' || biome === 'city') return g;
 
-  const trunkGeo = new THREE.CylinderGeometry(0.16, 0.28, 1, 5);
+  const trunkGeo = new THREE.CylinderGeometry(0.13, 0.26, 1, 6);
   trunkGeo.translate(0, 0.5, 0);
-  const leafGeo = new THREE.ConeGeometry(1, 1, 7);
-  leafGeo.translate(0, 0.5, 0);
+  const leafGeo = leafCardGeo();
 
   const desert = biome === 'desert';
   const trunkMat = new THREE.MeshLambertMaterial({ color: desert ? 0x6a5436 : 0x4a3a28 });
-  const leafMat = new THREE.MeshLambertMaterial({ color: desert ? 0x6e7a42 : 0x33552e });
+  const leafMat = new THREE.MeshLambertMaterial({
+    map: leafTexture(), color: desert ? 0xb8b070 : 0xcfe8b0,
+    alphaTest: 0.4, side: THREE.DoubleSide,
+  });
 
   const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
-  const leaves = new THREE.InstancedMesh(leafGeo, leafMat, count * 2);
+  const leaves = new THREE.InstancedMesh(leafGeo, leafMat, count * 3);
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion();
   const pos = new THREE.Vector3(), scl = new THREE.Vector3();
@@ -1032,12 +1093,18 @@ export function buildTreeField(count, extent, sample, biome) {
     m.compose(pos, q, scl);
     trunks.setMatrixAt(n, m);
 
-    // две кроны друг над другом — силуэт перестаёт быть одним конусом
-    const layers = desert ? 1 : 2;
+    /* Крона — два-три пятна листвы вразнобой, а не один симметричный
+       конус: смещаем их по горизонтали и меняем размер, тогда дерево
+       читается как дерево с любой стороны. */
+    const layers = desert ? 2 : 3;
     for (let k = 0; k < layers && l < leaves.count; k++) {
-      const cw = h * (desert ? 0.42 : 0.36) * (1 - k * 0.3);
-      pos.set(x, s.y + h * (desert ? 0.75 : 0.55 + k * 0.28), z);
-      scl.set(cw, h * (desert ? 0.4 : 0.5 - k * 0.12), cw);
+      const cw = h * (desert ? 0.34 : 0.30) * (1 - k * 0.18);
+      const off = h * 0.09;
+      pos.set(x + (Math.random() - 0.5) * off,
+              s.y + h * (desert ? 0.72 : 0.6) + k * h * 0.14,
+              z + (Math.random() - 0.5) * off);
+      scl.set(cw, cw * (0.72 + Math.random() * 0.3), cw);
+      q.setFromAxisAngle(up, Math.random() * Math.PI);
       m.compose(pos, q, scl);
       leaves.setMatrixAt(l++, m);
     }
@@ -1049,6 +1116,101 @@ export function buildTreeField(count, extent, sample, biome) {
   trunks.frustumCulled = leaves.frustumCulled = false;
   g.add(trunks, leaves);
   return g;
+}
+
+/* ── СЛЕДЫ ГУСЕНИЦ.
+
+   Техника, проезжающая по чистому полю и не оставляющая ничего, —
+   один из главных признаков, что поле не настоящее. Отпечатки живут
+   в общем пуле: кольцевой буфер на несколько сотен, самый старый
+   затирается новым. Один InstancedMesh на все следы, прозрачность
+   у каждого своя — она приезжает отдельным атрибутом и гасится
+   со временем, поэтому колея зарастает, а не исчезает разом. */
+
+let TRACK_TEX = null;
+function trackTexture() {
+  if (TRACK_TEX) return TRACK_TEX;
+  const S = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, S, S);
+  // две колеи с поперечными грунтозацепами
+  for (const cx of [S * 0.27, S * 0.73]) {
+    c.fillStyle = 'rgba(255,255,255,0.5)';
+    c.fillRect(cx - S * 0.11, 0, S * 0.22, S);
+    c.fillStyle = 'rgba(255,255,255,0.95)';
+    for (let y = 0; y < S; y += 7) {
+      c.fillRect(cx - S * 0.13, y, S * 0.26, 3.4);
+    }
+  }
+  TRACK_TEX = new THREE.CanvasTexture(cv);
+  return TRACK_TEX;
+}
+
+export function buildTrackField(max = 420) {
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const fade = new Float32Array(max);
+  geo.setAttribute('aFade', new THREE.InstancedBufferAttribute(fade, 1));
+
+  const mat = new THREE.MeshBasicMaterial({
+    map: trackTexture(), color: 0x241c14,
+    transparent: true, depthWrite: false, toneMapped: true,
+  });
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aFade;\nvarying float vFade;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFade = aFade;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vFade;')
+      .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.a *= vFade;');
+  };
+
+  const mesh = new THREE.InstancedMesh(geo, mat, max);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 1;          // поверх грунта, но под юнитами
+  mesh.count = max;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const p = new THREE.Vector3(), sc = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  // все отпечатки начинают невидимыми
+  for (let i = 0; i < max; i++) {
+    m.compose(p.set(0, -9999, 0), q.identity(), sc.set(1, 1, 1));
+    mesh.setMatrixAt(i, m);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+
+  let head = 0;
+  const life = new Float32Array(max);
+
+  return {
+    mesh,
+    /* Положить отпечаток. y уже приподнят над рельефом: вровень
+       с землёй он мерцает, борясь с ней за пиксели буфера глубины. */
+    drop(x, y, z, heading, width, len) {
+      const i = head; head = (head + 1) % max;
+      p.set(x, y + 0.22, z);
+      q.setFromAxisAngle(up, heading);
+      sc.set(width, 1, len);
+      m.compose(p, q, sc);
+      mesh.setMatrixAt(i, m);
+      life[i] = 1;
+      fade[i] = 0.85;
+      mesh.instanceMatrix.needsUpdate = true;
+      geo.attributes.aFade.needsUpdate = true;
+    },
+    tick(dt) {
+      let dirty = false;
+      for (let i = 0; i < max; i++) {
+        if (life[i] <= 0) continue;
+        life[i] -= dt / 26;                // колея живёт около полминуты
+        fade[i] = Math.max(0, life[i]) * 0.85;
+        dirty = true;
+      }
+      if (dirty) geo.attributes.aFade.needsUpdate = true;
+    },
+  };
 }
 
 // Поле снабжения на наземной карте
