@@ -15,7 +15,7 @@ import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
   TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom, EXTERMINATUS,
-  shipHasDrive, BREAKER,
+  shipHasDrive, BREAKER, HYPER,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -167,6 +167,50 @@ export function jumpCheck(camp, fromId, faction) {
       ? 'Врата заглушены взломщиком: лёгкие корабли заперты в системе'
       : 'Без гиперворот из системы уйдут только флагманы и носители',
   };
+}
+
+/* Сколько прыжков между системами. Обычный обход в ширину по
+   гипер-линиям: дальше `limit` не считаем — нам нужны только соседи
+   в пределах досягаемости дальнего гипера. */
+export function hopsFrom(startId, limit = 3) {
+  const dist = { [startId]: 0 };
+  let front = [startId];
+  for (let d = 1; d <= limit && front.length; d++) {
+    const next = [];
+    for (const id of front) {
+      for (const n of neighborsOf(id)) {
+        if (dist[n] !== undefined) continue;
+        dist[n] = d;
+        next.push(n);
+      }
+    }
+    front = next;
+  }
+  return dist;
+}
+
+/* Флот, который можно дёрнуть дальним гипером к месту боя: свои
+   системы в пределах трёх прыжков, у которых есть что послать.
+   Врата обязательны там же, где и обычно, — лёгкие корабли без них
+   никуда не уйдут, поэтому шлём только то, что реально долетит. */
+export function farReserveFor(camp, faction, atId) {
+  const dist = hopsFrom(atId, HYPER.farMaxHops);
+  const out = [];
+  for (const def of GALAXY_MAP.systems) {
+    const hops = dist[def.id];
+    if (!hops || def.id === atId) continue;
+    const st = camp.systems[def.id];
+    if (st.owner !== faction || !fleetSize(st.fleet)) continue;
+    const check = jumpCheck(camp, def.id, faction);
+    const ships = check.ok ? st.fleet : check.heavy;
+    if (!ships.length) continue;
+    out.push({
+      id: def.id, name: def.name, hops,
+      delay: HYPER.farBaseDelay + (hops - 1) * HYPER.farPerHop,
+      ships: ships.map(x => ({ ...x })),
+    });
+  }
+  return out.sort((a, b) => a.hops - b.hops);
 }
 
 export function ownedCount(camp, faction) {
@@ -655,6 +699,20 @@ export function createGalaxy(ctx, camp) {
   /* Штурм с блокады. Отличается от обычной атаки только тем, что
      атакующий флот берётся не из соседней системы, а из самой
      блокады — он уже стоит на орбите. */
+  /* Разбиваем флот на авангард и второй эшелон. Гипер не выстраивает
+     эскадру в линию: часть кораблей выходит позже, и это тот самый
+     запас, который потом зовут «Подкреплением». */
+  function splitWave(fleet) {
+    const wave = [], rest = [];
+    for (const item of fleet || []) {
+      const now = Math.max(1, Math.round(item.count * HYPER.firstWave));
+      wave.push({ id: item.id, count: Math.min(item.count, now) });
+      const left = item.count - now;
+      if (left > 0) rest.push({ id: item.id, count: left });
+    }
+    return { wave, rest };
+  }
+
   function startSiegeAssault(toId, siege) {
     const to = camp.systems[toId];
     const toDef = GALAXY_MAP.systems.find(s => s.id === toId);
@@ -769,8 +827,15 @@ export function createGalaxy(ctx, camp) {
     if (auto) {
       ctx.autoSpace(attacker, defender, apply);
     } else {
+      const split = splitWave(attacker.ships);
       ctx.startSpaceBattle({
-        attacker, defender, playerSide: 'attacker', biome: toDef.biome,
+        attacker: {
+          ...attacker, ships: split.wave,
+          reserve: mergeFleets(attacker.reserve || [], split.rest),
+        },
+        // Флот из своих систем в трёх прыжках: долетит не сразу
+        farReserve: farReserveFor(camp, camp.playerFaction, toId),
+        defender, playerSide: 'attacker', biome: toDef.biome,
         system: toDef.id,
         // Противоорбитальное орудие защитника вмешивается в бой снизу
         groundGun: to.buildings.includes('aogun') ? to.owner : null,

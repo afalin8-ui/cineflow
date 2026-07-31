@@ -584,3 +584,28 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 .gp-line.scorched { color: #ff9a86; }
 
 .gp-line.sieged { color: #ffc27a; }
+
+/* ДАЛЬНИЙ ГИПЕР — слева под шапкой. Показывает свои системы в
+   пределах трёх прыжков и время подлёта: решение звать или нет
+   упирается именно во время, поэтому оно на кнопке крупно. */
+.farbar {
+  position: absolute; left: calc(10px + var(--safe-l));
+  top: calc(96px + var(--safe-t));
+  display: flex; flex-direction: column; gap: 6px; width: 152px;
+  pointer-events: none;
+}
+.farhead {
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--muted); padding-left: 2px;
+}
+.far-btn {
+  pointer-events: auto; display: flex; flex-direction: column;
+  align-items: flex-start; gap: 2px; padding: 7px 10px; text-align: left;
+  background: var(--panel); backdrop-filter: blur(8px); min-height: 40px;
+}
+.far-btn b { font-size: 12px; }
+.far-btn small { font-size: 10px; color: var(--muted); }
+.far-btn.flying { border-color: var(--accent); }
+.far-btn.flying small { color: var(--accent); }
+.far-btn.done { opacity: .5; }
+.far-btn.done small { color: var(--good); }

@@ -215,6 +215,10 @@ export function createSpaceBattle(ctx, config) {
       defender: (config.defender.reserve || []).map(x => ({ ...x })),
     },
     reinforceAt: { attacker: 0, defender: 0 },
+    /* Дальний гипер: корабли из своих систем в нескольких
+       прыжках. Каждый вызов летит своё время и приходит
+       отдельно — их может быть несколько в воздухе разом. */
+    far: (config.farReserve || []).map(x => ({ ...x, called: 0 })),
     conceded: null,
     gun: null,          // противоорбитальное орудие защитника, см. ниже
     blindUntil: 0,      // до какого времени флот игрока ослеплён помехами снизу
@@ -560,10 +564,42 @@ export function createSpaceBattle(ctx, config) {
     return true;
   }
 
+  /* ── ДАЛЬНИЙ ГИПЕР ───────────────────────────────────────
+     Обычное подкрепление — это то, что не поместилось в первую волну
+     и уже висит на подходе. Дальний гипер — другое: он тянет корабли
+     из соседних систем, и пока они летят, их родной мир стоит пустым.
+     Поэтому и время полёта честное: сорок пять секунд за прыжок. */
+  function callFar(entry) {
+    if (entry.called) return false;
+    entry.called = state.time + entry.delay;
+    toast(`${entry.name}: флот идёт на помощь, ${Math.round(entry.delay)} с`);
+    refreshFar();
+    return true;
+  }
+
+  function updateFar() {
+    for (const e of state.far) {
+      if (!e.called || e.called > state.time || e.done) continue;
+      e.done = true;
+      dropIn(state.playerSide, e.ships);
+      toast(`${e.name}: подмога вышла из гипера`);
+      refreshFar();
+    }
+  }
+
   function arriveReinforcements(side) {
     const list = state.reserve[side];
     state.reserve[side] = [];
     state.reinforceAt[side] = 0;
+    dropIn(side, list);
+    toast(side === state.playerSide ? 'Подкрепление вышло из гипера'
+                                    : 'Противник получил подкрепление');
+  }
+
+  /* Выход из гипера: общий для обычных подкреплений и для дальнего
+     гипера. Корабли вываливаются с края поля на скорости, воронка
+     раскрывается позади — торможение здесь не эффект, а физика. */
+  function dropIn(side, list) {
     const sign = sides[side].sign;
     const baseZ = sign * 1200;
     let i = 0;
@@ -585,7 +621,6 @@ export function createSpaceBattle(ctx, config) {
       }
     }
     fx.shake = Math.min(1, fx.shake + 0.3);
-    toast(side === state.playerSide ? 'Подкрепление вышло из гипера' : 'Противник получил подкрепление');
   }
 
   // ── УРОН ─────────────────────────────────────────────────
@@ -1135,6 +1170,32 @@ export function createSpaceBattle(ctx, config) {
     setTimeout(() => d.remove(), 3400);
   }
 
+  /* Панель дальнего гипера: список своих систем в пределах трёх
+     прыжков. Показываем сразу время подлёта — решение «звать или
+     нет» упирается именно в него. */
+  const farBox = document.createElement('div');
+  farBox.className = 'farbar';
+  hud.appendChild(farBox);
+
+  function refreshFar() {
+    if (!state.far.length) { farBox.hidden = true; return; }
+    farBox.innerHTML = '<div class="farhead">Дальний гипер</div>';
+    for (const e of state.far) {
+      const b = document.createElement('button');
+      const left = e.called ? Math.max(0, Math.ceil(e.called - state.time)) : 0;
+      b.className = 'far-btn' + (e.done ? ' done' : e.called ? ' flying' : '');
+      b.innerHTML = `<b>${e.name}</b><small>${
+        e.done ? 'на месте'
+        : e.called ? `в пути · ${left} с`
+        : `${fleetCount(e.ships)} кор. · ${e.hops} пр. · ${Math.round(e.delay)} с`}</small>`;
+      b.disabled = !!e.called;
+      b.onclick = () => callFar(e);
+      farBox.appendChild(b);
+    }
+  }
+  const fleetCount = list => (list || []).reduce((a, x) => a + x.count, 0);
+  refreshFar();
+
   hud.querySelectorAll('.dot').forEach(d => { d.style.background = sides[d.dataset.side].faction.colorCss; });
   $('atk-name').textContent = sides.attacker.faction.tag;
   $('def-name').textContent = sides.defender.faction.tag;
@@ -1554,6 +1615,7 @@ export function createSpaceBattle(ctx, config) {
       state.time += dt;
       updateEcm(dt);
       updateGroundGun(dt);
+      updateFar();
       updateExposure();
       for (const sd of ['attacker', 'defender']) {
         const at = state.reinforceAt[sd];
