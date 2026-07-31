@@ -11,7 +11,7 @@
 
 import {
   THREE, TacticalCamera, Controls, Fx, screenOf, ringMesh,
-  clamp, lerp, rnd, disposeScene, IS_TOUCH,
+  clamp, lerp, rnd, disposeScene, IS_TOUCH, createMinimap,
 } from './engine.js';
 import {
   buildGroundUnit, buildStructure, buildSupplyField, buildProp, buildWater, mat,
@@ -1538,6 +1538,18 @@ export function createGroundBattle(ctx, config) {
      всегда: если корабля нужного класса в космосе не осталось, кнопка
      не исчезает, а покрывается помехами — игрок должен видеть, что он
      потерял и почему. */
+  /* Миникарта наземного боя: свои зелёным, чужие красным, постройки
+     крупнее юнитов, поля снабжения жёлтым. Клик по ней переводит
+     камеру — на планшете это единственный быстрый способ попасть
+     на другой край карты. */
+  const minimap = createMinimap(hud, MAP);
+  minimap.el.addEventListener('pointerdown', ev => {
+    const r = minimap.el.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width - 0.5) * 2 * MAP;
+    const z = ((ev.clientY - r.top) / r.height - 0.5) * 2 * MAP;
+    tcam.focus(new THREE.Vector3(x, 0, z));
+  });
+
   const orbitBar = $('orbitbar');
   const orbitBtns = {};
   for (const def of Object.values(ORBITAL_SUPPORT)) {
@@ -1606,6 +1618,22 @@ export function createGroundBattle(ctx, config) {
     }
   }
   refreshOrbit();
+
+  function drawMinimap(dt) {
+    const dots = [];
+    for (const f of state.fields) dots.push({ x: f.pos.x, z: f.pos.z, color: '#e8a33d', r: 3 });
+    for (const b of state.buildings) {
+      if (b.dead) continue;
+      dots.push({ x: b.pos.x, z: b.pos.z, r: 4,
+        color: b.side === 'me' ? '#8fffc8' : '#ff6b5a' });
+    }
+    for (const u of state.units) {
+      if (u.dead || hiddenU(u)) continue;
+      dots.push({ x: u.pos.x, z: u.pos.z, r: 2,
+        color: u.side === 'me' ? '#5ce0a0' : '#e05a4a' });
+    }
+    minimap.draw(dt, dots, { x: tcam.target.x, z: tcam.target.z, r: tcam.dist * 0.55 });
+  }
 
   function refreshSel() {
     const sel = $('sel'), acts = $('acts');
@@ -1714,6 +1742,8 @@ export function createGroundBattle(ctx, config) {
   // ── цикл ─────────────────────────────────────────────────
   function update(rawDt) {
     tcam.update(rawDt);
+    // Миникарта рисуется и на паузе: на ней как раз и планируют
+    drawMinimap(rawDt);
     const dt = state.paused ? 0 : Math.min(rawDt, 0.05) * state.speed;
     if (dt > 0) {
       state.time += dt;

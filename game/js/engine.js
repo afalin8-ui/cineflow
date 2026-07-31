@@ -743,6 +743,61 @@ export class Fx {
 // МЕЛОЧИ ДЛЯ СЦЕН
 // ─────────────────────────────────────────────────────────────
 
+/* ── МИНИКАРТА.
+   Одна на все слои: и бой на орбите, и наземная операция рисуют в неё
+   одинаково — точки по позициям и рамка обзора. Рисуем на канве, а не
+   вторым рендером сцены: второй проход стоит кадров, а нужна нам
+   схема, а не картинка.
+
+   Перерисовываем не каждый кадр: на планшете это заметная доля
+   времени кадра, а на глаз десять раз в секунду неотличимо. */
+export function createMinimap(root, extent, opts = {}) {
+  const box = document.createElement('div');
+  box.className = 'minimap';
+  const cv = document.createElement('canvas');
+  const S = opts.size || (IS_TOUCH ? 132 : 168);
+  cv.width = cv.height = S * 2;            // ретина: рисуем вдвое крупнее
+  cv.style.width = cv.style.height = S + 'px';
+  box.appendChild(cv);
+  root.appendChild(box);
+  const ctx = cv.getContext('2d');
+  let acc = 0;
+
+  const toMap = (x, z) => [
+    (x / extent * 0.5 + 0.5) * cv.width,
+    (z / extent * 0.5 + 0.5) * cv.height,
+  ];
+
+  return {
+    el: box,
+    /* dots — [{x, z, color, r}], view — {x, z, r} область обзора.
+       Обе величины в игровых координатах, пересчёт здесь. */
+    draw(dt, dots, view) {
+      acc += dt;
+      if (acc < 0.1) return;
+      acc = 0;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = opts.bg || 'rgba(6,10,17,0.72)';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+
+      for (const d of dots) {
+        const [px, py] = toMap(d.x, d.z);
+        ctx.fillStyle = d.color;
+        const r = (d.r || 2) * 2;
+        ctx.fillRect(px - r / 2, py - r / 2, r, r);
+      }
+      if (view) {
+        const [vx, vy] = toMap(view.x, view.z);
+        const vr = view.r / extent * 0.5 * cv.width;
+        ctx.strokeStyle = 'rgba(230,240,250,0.65)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(vx - vr, vy - vr, vr * 2, vr * 2);
+      }
+    },
+    dispose() { box.remove(); },
+  };
+}
+
 export function starfield(count = 2600, radius = 4000) {
   const n = IS_TOUCH ? Math.round(count * 0.6) : count;
   const pos = new Float32Array(n * 3);

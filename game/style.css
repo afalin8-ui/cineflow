@@ -616,3 +616,14 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 .speedctl button[data-role="drift"].on {
   border-color: #d8a04a; color: #ffd08a; background: #241a08;
 }
+
+/* МИНИКАРТА — правый нижний угол, над безопасной зоной планшета.
+   Ловит указатель, чтобы по ней можно было ткнуть и перевести камеру. */
+.minimap {
+  position: absolute; right: calc(10px + var(--safe-r));
+  bottom: calc(10px + var(--safe-b));
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--panel); backdrop-filter: blur(8px);
+  pointer-events: auto; line-height: 0;
+}
+.minimap canvas { display: block; }

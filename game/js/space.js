@@ -14,7 +14,7 @@
 
 import {
   THREE, TacticalCamera, Controls, Fx, starfield, screenOf, ringMesh,
-  clamp, lerp, rnd, disposeScene, IS_TOUCH,
+  clamp, lerp, rnd, disposeScene, IS_TOUCH, createMinimap,
 } from './engine.js';
 import {
   buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula, buildHyperVortex, buildEcmDome,
@@ -1188,6 +1188,36 @@ export function createSpaceBattle(ctx, config) {
   /* Панель дальнего гипера: список своих систем в пределах трёх
      прыжков. Показываем сразу время подлёта — решение «звать или
      нет» упирается именно в него. */
+  /* Миникарта боя на орбите. Поле теперь больше двух с половиной
+     тысяч единиц в сторону — без схемы половина флота оказывается
+     за экраном и о ней просто забываешь. Скрытые корабли Рииза
+     на неё не попадают: маскировка должна работать и здесь. */
+  const minimap = createMinimap(hud, FIELD);
+  minimap.el.addEventListener('pointerdown', ev => {
+    const r = minimap.el.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width - 0.5) * 2 * FIELD;
+    const z = ((ev.clientY - r.top) / r.height - 0.5) * 2 * FIELD;
+    tcam.focus(new THREE.Vector3(x, 0, z));
+  });
+
+  function drawMinimap(dt) {
+    const dots = [];
+    for (const e of state.ships) {
+      if (e.dead) continue;
+      if (e.side !== state.playerSide && hidden(e)) continue;
+      const mine = e.side === state.playerSide;
+      dots.push({ x: e.pos.x, z: e.pos.z,
+        r: e.cls === 'capital' || e.cls === 'carrier' ? 5 : 3,
+        color: mine ? '#8fffc8' : '#ff6b5a' });
+    }
+    for (const sq of state.squads) {
+      if (sq.dead) continue;
+      dots.push({ x: sq.pos.x, z: sq.pos.z, r: 2,
+        color: sq.side === state.playerSide ? '#5ce0a0' : '#e05a4a' });
+    }
+    minimap.draw(dt, dots, { x: tcam.target.x, z: tcam.target.z, r: tcam.dist * 0.5 });
+  }
+
   const farBox = document.createElement('div');
   farBox.className = 'farbar';
   hud.appendChild(farBox);
@@ -1643,6 +1673,8 @@ export function createSpaceBattle(ctx, config) {
   // ── ЦИКЛ ─────────────────────────────────────────────────
   function update(rawDt) {
     tcam.update(rawDt);
+    // Миникарта рисуется и на паузе: на ней как раз и планируют
+    drawMinimap(rawDt);
     const dt = state.paused ? 0 : Math.min(rawDt, 0.05) * state.speed;
     if (dt > 0) {
       state.time += dt;
