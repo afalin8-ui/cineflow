@@ -5,7 +5,7 @@
 <canvas id="view"></canvas>
 <script type="module">
 import { THREE, Viewport } from './js/engine.js';
-import { buildShip } from './js/models.js';
+import { buildShip, buildSupplyField, buildGreebleShip } from './js/models.js';
 import { FACTIONS, SHIPS } from './js/data.js';
 
 const viewport = new Viewport(document.getElementById('view'));
@@ -13,17 +13,38 @@ viewport.setBloom({ strength: 0.8, radius: 0.6, threshold: 0.7, exposure: 1.05 }
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05070c);
 scene.add(new THREE.AmbientLight(0x8090b0, 1.4));
-const key = new THREE.DirectionalLight(0xffe8cc, 3.0);
+const key = new THREE.DirectionalLight(0xffe8cc, 3.4);
 key.position.set(-120, 90, 140);
 scene.add(key);
+const rim = new THREE.DirectionalLight(0x7fa8ff, 1.6);
+rim.position.set(160, 40, -120);
+scene.add(rim);
 
 const params = new URLSearchParams(location.search);
 const shipId = params.get('ship') || 'capital';
+// стенд умеет показывать не только корабли
+const what = params.get('what') || 'ship';
 const thrust = Number(params.get('thrust') ?? 2.4);
-const def = SHIPS.troyden.find(s => s.id === shipId) || SHIPS.troyden[0];
-const ship = buildShip(def, FACTIONS.troyden);
+let def, ship;
+if (what === 'greeble') {
+  const t0 = performance.now();
+  ship = buildGreebleShip(Number(params.get('count') ?? 100000), 7);
+  const ms = Math.round(performance.now() - t0);
+  def = { radius: 30 };
+  window.__built = { count: ship.userData.count, ms, draws: ship.children.length };
+  console.log(`ГРИБЛЫ: ${ship.userData.count} деталей за ${ms} мс`);
+} else if (what === 'field') {
+  def = { radius: 9 };
+  ship = buildSupplyField();
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 48).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x5f5a44, roughness: 1 }));
+  scene.add(ground);
+} else {
+  def = SHIPS.troyden.find(s => s.id === shipId) || SHIPS.troyden[0];
+  ship = buildShip(def, FACTIONS.troyden);
+  for (const en of ship.userData.engines || []) en.scale.set(0.95, 0.95, thrust);
+}
 scene.add(ship);
-for (const en of ship.userData.engines || []) en.scale.set(0.95, 0.95, thrust);
 
 const cam = new THREE.PerspectiveCamera(45, 1, 0.5, 5000);
 const R = def.radius;

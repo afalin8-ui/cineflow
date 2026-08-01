@@ -462,8 +462,12 @@ export function buildStrike(role, faction) {
     g.add(box(0.32, 0.32, 0.9, trim, 0, 0.36, 0.1));
     g.add(box(0.16, 0.45, 0.4, dark, 0, 0.42, 0.95));
   }
-  const e = glowSprite(0.95, 0xff8a3a);
-  e.position.set(0, 0, 1.05);
+  // Форсаж истребителя — тот же факел, что у больших кораблей,
+  // только короткий: у машины на пять метров длинный язык выглядит
+  // ракетой, а не двигателем
+  const e = enginePlume(0.62, 0xff9a44);
+  e.position.set(0, 0, 0.95);
+  e.scale.set(1, 1, 0.75);
   g.add(e);
   g.userData.engines = [e];
   g.scale.setScalar(1.7);
@@ -1391,18 +1395,64 @@ export function buildTrackField(max = 420, tex = null, tint = 0x241c14, lifeSec 
 }
 
 // Поле снабжения на наземной карте
+/* ── ПОЛЕ СНАБЖЕНИЯ.
+
+   Точка, за которую идёт вся наземная война, была стопкой ящиков
+   на блине. Теперь это склад: посадочная площадка с разметкой,
+   ярусы контейнеров, светящиеся цистерны и мачта с маяком.
+   Смысл не в красоте — точку должно быть видно издалека и с любого
+   ракурса, иначе игрок не понимает, за что дерётся.
+
+   Маяк и цистерны светятся тем же приёмом, что и факел двигателя:
+   мягкая карта вместо резкой геометрии. */
 export function buildSupplyField() {
   const g = new THREE.Group();
-  const crate = mat(0xb8a05a, { rough: 0.8, metal: 0.2, emissive: 0x3a2f10, ei: 0.6 });
-  const dark = mat(0x3a352c, { rough: 0.95 });
-  g.add(cyl(7, 0.4, dark, 0, 0.2, 0));
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2, r = 3.2;
-    const b = box(1.8, 1.4, 1.8, crate, Math.cos(a) * r, 0.9, Math.sin(a) * r);
-    b.rotation.y = a;
-    g.add(b);
+  const crate = mat(0xb8a05a, { rough: 0.75, metal: 0.25, skin: true });
+  const crate2 = mat(0x8e7a44, { rough: 0.8, metal: 0.2, skin: true });
+  const dark = mat(0x33302a, { rough: 0.95 });
+  const steel = mat(0x6b7078, { rough: 0.55, metal: 0.7, skin: true });
+  const glow = mat(0xffc861, { rough: 0.4, emissive: 0xffb03a, ei: 1.3 });
+
+  // площадка с бортиком и разметкой
+  g.add(cyl(8.6, 0.5, dark, 0, 0.25, 0));
+  g.add(cyl(8.9, 0.22, steel, 0, 0.1, 0));
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const m = box(0.5, 0.06, 2.2, glow, Math.cos(a) * 7.4, 0.55, Math.sin(a) * 7.4);
+    m.rotation.y = -a;
+    g.add(m);
   }
-  g.add(box(2.4, 2.0, 2.4, crate, 0, 1.2, 0));
+
+  // ярусы контейнеров: два ряда, второй вразнобой и пониже
+  const stack = (x, z, h, rot) => {
+    for (let k = 0; k < h; k++) {
+      const b = box(2.4, 1.3, 1.7, k % 2 ? crate2 : crate, x, 0.95 + k * 1.35, z);
+      b.rotation.y = rot + (k % 2 ? 0.06 : -0.05);
+      g.add(b);
+      // светящаяся полоса-маркировка на торце
+      g.add(box(0.35, 0.5, 0.08, glow, x + 1.15 * Math.cos(rot), 1.0 + k * 1.35, z + 1.15 * Math.sin(rot)));
+    }
+  };
+  stack(-3.4, -2.2, 3, 0.2);
+  stack(-3.0, 1.6, 2, -0.3);
+  stack(3.2, -1.4, 2, 0.5);
+  stack(2.4, 2.6, 3, -0.15);
+
+  // цистерны с горючим
+  for (const [x, z] of [[0, -4.4], [1.4, 4.2]]) {
+    const t = cyl(1.15, 3.4, steel, x, 1.9, z);
+    t.rotation.z = Math.PI / 2;
+    g.add(t);
+    g.add(cyl(1.2, 0.25, glow, x - 1.7, 1.9, z).rotateZ(Math.PI / 2));
+  }
+
+  // мачта с маяком — по ней поле видно за половину карты
+  g.add(cyl(0.22, 7.5, steel, 0, 3.9, 0));
+  g.add(box(1.5, 0.3, 1.5, steel, 0, 7.4, 0));
+  const beacon = glowSprite(3.2, 0xffc861);
+  beacon.position.set(0, 8.0, 0);
+  g.add(beacon);
+  g.userData.beacon = beacon;
   return g;
 }
 
@@ -1696,6 +1746,65 @@ export function buildPlanet(biome, radius, seed, id) {
 
 // Фон космоса: туманность на дальней сфере. Ставится в scene.background
 // нельзя — там нужен куб, поэтому это просто очень большая сфера.
+/* ── КОЛЬЦА ПЛАНЕТЫ.
+
+   На всех трёх референсах (Homeworld, Empire at War) кадр держит
+   не корабль, а фон: огромный газовый гигант с кольцом поперёк
+   экрана. Кольцо — самая дешёвая деталь с самым большим эффектом:
+   оно задаёт масштаб, глубину и линию, вдоль которой строится
+   композиция боя.
+
+   Полосы рисуем процедурно: пыль неоднородна, и ровная заливка
+   выдаёт подделку сразу. */
+export function planetRings(inner, outer, seed = 1) {
+  const S = 512;
+  const cv = document.createElement('canvas');
+  cv.width = S; cv.height = 4;
+  const c = cv.getContext('2d');
+  let n = seed * 9301 + 49297;
+  const rand = () => ((n = (n * 9301 + 49297) % 233280) / 233280);
+  const img = c.createImageData(S, 4);
+  const bands = [];
+  for (let i = 0; i < 26; i++) bands.push({ at: rand(), w: 0.01 + rand() * 0.07, a: 0.25 + rand() * 0.75 });
+  for (let x = 0; x < S; x++) {
+    const t = x / (S - 1);
+    let a = 0.35;
+    for (const b of bands) a += b.a * Math.exp(-Math.pow((t - b.at) / b.w, 2));
+    // щель Кассини и мягкие края
+    a *= 1 - Math.exp(-Math.pow((t - 0.62) / 0.02, 2)) * 0.9;
+    a *= Math.min(1, t / 0.05) * Math.min(1, (1 - t) / 0.08);
+    a = Math.min(1, a * 0.5);
+    const warm = 0.82 + 0.18 * Math.sin(t * 9 + seed);
+    for (let y = 0; y < 4; y++) {
+      const o = (y * S + x) * 4;
+      img.data[o] = 235 * warm;
+      img.data[o + 1] = 208 * warm;
+      img.data[o + 2] = 176 * warm;
+      img.data[o + 3] = a * 255;
+    }
+  }
+  c.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+
+  const geo = new THREE.RingGeometry(inner, outer, 256, 1);
+  // развёртка по радиусу: RingGeometry кладёт uv квадратом, нам нужен радиус
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    uv.setXY(i, (v.length() - inner) / (outer - inner), 0.5);
+  }
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, side: THREE.DoubleSide,
+    depthWrite: false, toneMapped: true, opacity: 0.95,
+  }));
+  m.rotation.x = -Math.PI / 2;
+  m.renderOrder = -900;
+  return m;
+}
+
 export function buildNebula(radius = 5200, seed = 11) {
   // toneMapped обязателен: иначе яркие точки фона проскакивают мимо
   // тональной компрессии и свечение превращает их в белые пятна.
@@ -1708,6 +1817,90 @@ export function buildNebula(radius = 5200, seed = 11) {
   mesh.frustumCulled = false;
   mesh.renderOrder = -1000;
   return mesh;
+}
+
+/* ── КОРАБЛЬ ИЗ СТА ТЫСЯЧ ПРИМИТИВОВ.
+
+   Опыт ради интереса: можно ли собрать корпус не из двух десятков
+   коробок, а из ста тысяч мелких деталей — и остаться в кадре.
+   Можно, но только инстансами: сто тысяч отдельных мешей — это сто
+   тысяч вызовов отрисовки, и браузер ляжет. InstancedMesh рисует
+   всю россыпь за один вызов, у каждой детали своя матрица.
+
+   Деталей четыре сорта — плиты, блоки, трубки и светящиеся полосы, —
+   то есть всего ЧЕТЫРЕ вызова отрисовки на весь корабль. Раскладка
+   по поверхности корпуса: профиль задаёт силуэт, а по нему сыпется
+   обшивка со случайным разворотом и размером. Именно эта мелкая
+   неоднородность («гриблы» на языке макетчиков) и отличает модель
+   от коробки: глазу не за что зацепиться на ровной грани.  */
+export function buildGreebleShip(count = 100000, seed = 7) {
+  const g = new THREE.Group();
+  let n = seed * 9301 + 49297;
+  const rnd2 = () => ((n = (n * 9301 + 49297) % 233280) / 233280);
+  const R = 12, L = 62;
+
+  // Профиль корпуса: нос сходит на конус, корма шире, сверху надстройка
+  const profile = u => {
+    const t = Math.abs(u);
+    let r = 1 - Math.pow(t, 2.4) * 0.85;
+    if (u > 0.55) r *= 1 - (u - 0.55) * 0.8;       // сужение к носу
+    return Math.max(0.08, r);
+  };
+  const sect = (a, u) => {
+    // сечение приплюснутое, с килем и «плечами»
+    const c = Math.cos(a), s2 = Math.sin(a);
+    return { x: c * 1.35, y: s2 * (s2 > 0 ? 0.55 : 0.75) + (u < -0.1 ? 0.06 : 0) };
+  };
+
+  const kinds = [
+    { part: 0.52, geo: new THREE.BoxGeometry(1, 1, 1), col: 0x9aa4b0, rough: 0.55, metal: 0.75, sx: [1.4, 3.6], sy: [0.14, 0.3], sz: [1.4, 3.4] },
+    { part: 0.30, geo: new THREE.BoxGeometry(1, 1, 1), col: 0x5c636d, rough: 0.7, metal: 0.6, sx: [0.5, 1.6], sy: [0.3, 1.1], sz: [0.5, 1.6] },
+    { part: 0.13, geo: new THREE.CylinderGeometry(0.5, 0.5, 1, 6), col: 0x3a3f47, rough: 0.85, metal: 0.5, sx: [0.18, 0.5], sy: [0.8, 3.2], sz: [0.18, 0.5] },
+    { part: 0.05, geo: new THREE.BoxGeometry(1, 1, 1), col: 0xffb45a, rough: 0.4, metal: 0.2, sx: [0.25, 1.2], sy: [0.08, 0.16], sz: [0.25, 1.2], glow: true },
+  ];
+
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+  let made = 0;
+  for (const k of kinds) {
+    const num = Math.round(count * k.part);
+    const material = k.glow
+      ? mat(k.col, { rough: k.rough, metal: k.metal, emissive: k.col, ei: 2.4 })
+      : mat(k.col, { rough: k.rough, metal: k.metal, skin: true });
+    const mesh = new THREE.InstancedMesh(k.geo, material, num);
+    for (let i = 0; i < num; i++) {
+      const u = rnd2() * 2 - 1;                       // вдоль корпуса
+      const a = rnd2() * Math.PI * 2;                 // вокруг
+      const p = profile(u);
+      const c = sect(a, u);
+      // надстройка: часть деталей поднимаем ярусом ближе к корме
+      const deck = (rnd2() < 0.18 && u < 0.2 && u > -0.7) ? rnd2() * 0.55 : 0;
+      pos.set(c.x * R * p, c.y * R * p + deck * R, u * L);
+      scl.set(k.sx[0] + rnd2() * (k.sx[1] - k.sx[0]),
+              k.sy[0] + rnd2() * (k.sy[1] - k.sy[0]),
+              k.sz[0] + rnd2() * (k.sz[1] - k.sz[0]));
+      // разворот вдоль обшивки, с лёгким разбросом
+      e.set(rnd2() * 0.12 - 0.06, a * (rnd2() < 0.8 ? 0 : 1) + rnd2() * 0.2, -a * 0.85 + rnd2() * 0.15);
+      q.setFromEuler(e);
+      m4.compose(pos, q, scl);
+      mesh.setMatrixAt(i, m4);
+      made++;
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    g.add(mesh);
+  }
+
+  // сопла — те же, что у обычных кораблей: чтобы было видно масштаб
+  for (const x of [-R * 0.6, 0, R * 0.6]) {
+    const plume = enginePlume(R * 0.5, 0xff8a34);
+    plume.position.set(x, 0, L * 0.98);
+    plume.scale.set(0.95, 0.95, 1.8);
+    g.add(plume);
+  }
+  g.userData.count = made;
+  return g;
 }
 
 export { mat, glowMat, glowSprite, box, cyl, cone, sph };

@@ -901,7 +901,9 @@ export class Fx {
      `opts.chain` — серия догорающих вторичных взрывов: так гибнет
      большой корабль, у которого рвутся погреба. */
   explosion(pos, size = 10, color = 0xffa050, opts = {}) {
-    this.flash(pos, size, 0xffffff, 0.16);
+    // Белое ядро держим мелким: в аддитивном режиме несколько
+    // белых пятен подряд дают молоко, а не огонь
+    this.flash(pos, size * 0.55, 0xffffff, 0.13);
     this.flash(pos, size * 1.5, color, 0.55);
     this.sparks(pos, Math.round(size * 1.1), 0xffe0a0, size * 2.4);
     this.smoke(pos, size * 0.8, 0x3c352c, Math.round(size * 0.35));
@@ -911,8 +913,8 @@ export class Fx {
     }
     if (opts.ground) {
       // Пыль по грунту и волна, лежащая на земле
-      this.ringFlat(pos, size * 0.4, size * 3.2, 0xb9a487, 0.5);
-      this.smoke(pos, size * 1.1, 0x6b5f4c, Math.round(size * 0.4));
+      this.ringFlat(pos, size * 0.4, size * 3.2, 0x9c7f58, 0.45);
+      this.smoke(pos, size * 1.1, 0x4f4437, Math.round(size * 0.4));
     }
     if (opts.chain) {
       for (let i = 0; i < opts.chain; i++) {

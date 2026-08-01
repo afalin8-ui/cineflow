@@ -18,6 +18,7 @@ import {
 } from './engine.js';
 import {
   buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula, buildHyperVortex, buildEcmDome,
+  planetRings,
 } from './models.js';
 import { nebulaTexture } from './textures.js';
 import {
@@ -53,12 +54,16 @@ export function createSpaceBattle(ctx, config) {
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
   });
 
-  // Заливки мало нарочно: иначе теневая сторона планеты светится
-  scene.add(new THREE.AmbientLight(0x4a5a76, 0.35));
-  const key = new THREE.DirectionalLight(0xffe8cf, 2.9);
+  /* Свет по референсам: холодный сине-фиолетовый объём и тёплый
+     ключ сбоку. Корабль в таком свете читается силуэтом с горячей
+     кромкой, а не серой коробкой, равномерно залитой со всех
+     сторон. Заливки мало нарочно: иначе теневая сторона планеты
+     начинает светиться. */
+  scene.add(new THREE.AmbientLight(0x3d4a72, 0.42));
+  const key = new THREE.DirectionalLight(0xffdcb0, 3.2);
   key.position.set(-500, 400, -300);
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0x3d5f92, 0.55);
+  const fill = new THREE.DirectionalLight(0x5a4d9a, 0.75);
   fill.position.set(400, -250, 500);
   scene.add(fill);
   // Свет «со стороны зрителя»: без него корпуса на теневой стороне
@@ -73,11 +78,20 @@ export function createSpaceBattle(ctx, config) {
   scene.add(starfield(4800, 4600));
 
   // Планета под ногами — бой идёт на её орбите
-  const planet = buildPlanet(config.biome || 'rock', 1150, config.planetSeed || 1, config.system);
-  planet.position.set(340, -1560, -420);
+  /* Планета — главный предмет в кадре, а не задник: на референсах
+     газовый гигант занимает треть экрана, и кольцо тянется поперёк
+     всего боя. Отсюда и масштаб, и глубина. */
+  const planet = buildPlanet(config.biome || 'rock', 1450, config.planetSeed || 1, config.system);
+  planet.position.set(340, -1760, -420);
   // Направление на звезду: от него зависит терминатор и венец атмосферы
   planet.userData.setSun(key.position.clone().normalize());
   scene.add(planet);
+
+  // Кольцо: наклонено и повёрнуто, чтобы пересекало кадр по диагонали
+  const rings = planetRings(1450 * 1.45, 1450 * 2.5, config.planetSeed || 1);
+  rings.position.copy(planet.position);
+  rings.rotation.set(-Math.PI / 2 + 0.30, 0, 0.16);
+  scene.add(rings);
 
   viewport.setBloom({ strength: 0.72, radius: 0.55, threshold: 0.85, exposure: 0.92 });
   const fx = new Fx(scene);
@@ -917,7 +931,15 @@ export function createSpaceBattle(ctx, config) {
         const jamPd = jamProfile(e.pos, e.side);
         const pdMult = jamPd ? jamPd.pdPenalty : 1;
         reveal(e);
-        fx.tracer(pdWorld(e, i), t.pos, e.side === state.playerSide ? 0x9fe8ff : 0xffc07a, 0.1, 0.24);
+        /* Зенитный огонь — длинный росчерк, а не мгновенная нитка.
+           На референсах именно эти трассы держат кадр: десятки
+           длинных линий, идущих через полэкрана. Мгновенная линия
+           во всю дистанцию читается подсветкой цели, а короткая
+           искра теряется. */
+        const from = pdWorld(e, i);
+        const col = e.side === state.playerSide ? 0x8fe0ff : 0xffb45a;
+        fx.shot(from, t.pos, { color: col, width: 0.55, len: 46, speed: 780 });
+        fx.flash(from, 1.6, col, 0.1);
         damage(t, pd.dmg * pdMult, 'pd');
       }
     }
@@ -981,6 +1003,21 @@ export function createSpaceBattle(ctx, config) {
   function updateCraft(c, dt) {
     const squad = c.squad;
     if (c.target && c.target.dead) c.target = null;
+
+    /* Инверсионный след. На референсах именно эти тонкие дуги
+       превращают точки истребителей в живой рой: без следа звено
+       читается как несколько мушек, со следом — как маневр.
+       Кладём по времени, а не по кадрам: на ускорении след должен
+       быть той же густоты. */
+    if (!craftHidden(c)) {
+      c.trailAt = (c.trailAt || 0) - dt;
+      if (c.trailAt <= 0) {
+        c.trailAt = 0.05;
+        const back = _v.copy(c.pos).addScaledVector(c.dir, -3.2);
+        const warm = c.side === state.playerSide ? 0x9fd8ff : 0xffc38a;
+        fx.puff(back, 1.5, warm, 0.55);
+      }
+    }
 
     // ── боезапас: пусто → перезарядка прямо в космосе, пока есть запас
     if (c.def.weaponKind === 'missile') {

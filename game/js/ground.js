@@ -533,8 +533,9 @@ export function createGroundBattle(ctx, config) {
     const obj = shadowed(buildSupplyField());
     obj.position.set(x, terrainH(x, z), z);
     scene.add(obj);
+    const total = Math.round(5000 * LAND.supply);
     state.fields.push({ kind: 'field', pos: obj.position, obj,
-                        left: Math.round(5000 * LAND.supply), uid: uid++ });
+                        left: total, max: total, uid: uid++ });
   }
 
   // ── СОЗДАНИЕ ─────────────────────────────────────────────
@@ -890,25 +891,32 @@ export function createGroundBattle(ctx, config) {
   function orbitalBolt(at, color, power) {
     const H = 300;
     const sky = at.clone().setY(at.y + H);
-    fx.flash(sky, power * 0.7, 0xffffff, 0.3);
-    fx.ring(sky, power * 0.3, power * 2.2, color, 0.45);
+    /* Белого тут почти нет НАМЕРЕННО. Аддитивное смешивание
+       складывается само с собой: белая вспышка поверх белого кольца
+       поверх светлой пыли — и на месте удара получается молочное
+       пятно вместо взрыва. Держим всё в цвете залпа, а чисто белым
+       оставляем только крошечное ядро в момент касания. */
+    fx.flash(sky, power * 0.5, color, 0.3);
+    fx.ring(sky, power * 0.3, power * 1.8, color, 0.4);
     const fall = 0.34;
-    fx.shot(sky, at, { color, width: power * 0.10, len: H * 0.22, speed: H / fall, life: fall });
+    fx.shot(sky, at, { color, width: power * 0.07, len: H * 0.26, speed: H / fall, life: fall });
     fx.delay(fall, () => {
-      // удар
-      fx.flash(at, power * 1.2, 0xffffff, 0.16);
+      // ядро удара — единственное белое пятно, и оно мелкое и короткое
+      fx.flash(at, power * 0.45, 0xffffff, 0.1);
       fx.explosion(at, power * 0.8, color, { ground: true });
-      // две волны: быстрая узкая и медленная широкая
-      fx.ringFlat(at, power * 0.2, power * 1.6, 0xffffff, 0.28);
-      fx.ringFlat(at, power * 0.4, power * 4.2, color, 0.75);
+      // две волны: быстрая в цвете залпа, медленная — цвета пыли
+      fx.ringFlat(at, power * 0.2, power * 1.6, color, 0.3);
+      fx.ringFlat(at, power * 0.4, power * 4.2, 0xb08c60, 0.75);
       // канал ещё мгновение светится
-      fx.beam(at, at.clone().setY(at.y + H * 0.45), { color, width: power * 0.08, life: 0.3 });
-      // столб пыли
+      fx.beam(at, at.clone().setY(at.y + H * 0.45), { color, width: power * 0.06, life: 0.3 });
+      /* Столб пыли — ЗЕМЛЯНОЙ, а не световой: тёмно-бурый и
+         непрозрачный. Светлая пыль в аддитивном режиме и есть та
+         самая белесость, из-за которой удар выглядел паром. */
       for (let k = 0; k < 7; k++) {
         fx.delay(k * 0.05, () => {
           const p = at.clone().add(new THREE.Vector3(rnd(-1, 1), 0, rnd(-1, 1)).multiplyScalar(power * 0.5));
           p.y += k * power * 0.35;
-          fx.puff(p, power * (0.5 + k * 0.14), 0x8a7f6c, 1.2 + k * 0.1);
+          fx.smoke(p, power * (0.45 + k * 0.12), 0x4a4034, 2);
         });
       }
       fx.debris(at, Math.round(power * 0.6), 0x5b4f40, power * 3.4);
@@ -2088,6 +2096,20 @@ export function createGroundBattle(ctx, config) {
   }
   refreshOrbit();
 
+  /* Маяк поля снабжения дышит, а по мере выработки гаснет: игрок
+     видит, сколько осталось, не выделяя поле. */
+  function updateFields(dt) {
+    for (const f of state.fields) {
+      const b = f.obj.userData.beacon;
+      if (!b) continue;
+      const left = clamp(f.left / f.max, 0, 1);
+      if (left <= 0) { b.visible = false; continue; }
+      const pulse = 0.75 + Math.sin(state.time * 2.2 + f.uid) * 0.25;
+      b.scale.setScalar(3.2 * pulse * (0.45 + left * 0.55));
+      b.material.opacity = 0.35 + left * 0.65;
+    }
+  }
+
   function drawMinimap(dt) {
     const dots = [];
     for (const f of state.fields) dots.push({ x: f.pos.x, z: f.pos.z, color: '#e8a33d', r: 3 });
@@ -2272,6 +2294,7 @@ export function createGroundBattle(ctx, config) {
       state.time += dt;
       updateExposure();
       updateAI(dt);
+      updateFields(dt);
       for (const b of state.buildings) if (!b.dead) updateBuilding(b, dt);
       updateSupport(dt);
       updateExterminatus(dt);
