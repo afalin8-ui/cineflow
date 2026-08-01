@@ -234,6 +234,10 @@ export function createGroundBattle(ctx, config) {
     sh.uniforms.uRock = { value: T.rock };
     sh.uniforms.uDirt = { value: T.dirt };
     sh.uniforms.uTexScale = { value: 0.055 };
+    // Мокрая полоса у уреза: земля у воды темнее и глянцевее сухой.
+    // Это та деталь, по которой берег читается берегом, а не линией,
+    // где кончилась одна заливка и началась другая
+    sh.uniforms.uWater = { value: WATER_LEVEL };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>',
         '#include <common>\nattribute float aSlope;\nvarying float vSlope;\nvarying vec3 vWPosT;')
@@ -242,7 +246,7 @@ export function createGroundBattle(ctx, config) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
         '#include <common>\nuniform sampler2D uGrass;\nuniform sampler2D uRock;\n'
-        + 'uniform sampler2D uDirt;\nuniform float uTexScale;\n'
+        + 'uniform sampler2D uDirt;\nuniform float uTexScale;\nuniform float uWater;\n'
         + 'varying float vSlope;\nvarying vec3 vWPosT;')
       .replace('#include <map_fragment>', [
         'vec2 tuv = vWPosT.xz * uTexScale;',
@@ -253,8 +257,15 @@ export function createGroundBattle(ctx, config) {
         'float rockK = smoothstep(0.30, 0.70, vSlope);',
         'float dirtK = smoothstep(0.17, 0.45, vSlope) * (1.0 - rockK);',
         'vec3 blend = mix(mix(cG, cD, dirtK), cR, rockK);',
-        'diffuseColor.rgb *= blend * 1.75;',
-      ].join('\n'));
+        'float wet = 1.0 - smoothstep(0.0, 3.4, vWPosT.y - uWater);',
+        'diffuseColor.rgb *= blend * 1.75 * mix(1.0, 0.55, wet);',
+      ].join('\n'))
+      // мокрое отражает: снижаем шероховатость у самой воды
+      .replace('#include <roughnessmap_fragment>',
+        '#include <roughnessmap_fragment>\n'
+        // чуть-чуть: сильнее — и берег вспыхивает бликом вместо того,
+        // чтобы выглядеть мокрым
+        + 'roughnessFactor *= mix(1.0, 0.78, 1.0 - smoothstep(0.0, 3.4, vWPosT.y - uWater));');
     terrainMat.userData.shader = sh;
   };
   const terrain = new THREE.Mesh(tGeo, terrainMat);
@@ -319,11 +330,15 @@ export function createGroundBattle(ctx, config) {
   }
   // Цвет неба идёт в воду: по касательной она отражает именно его,
   // и без этого озеро не связано с окружением
+  /* Мелководье держим тёмным. Светлая бирюза кажется правильной на
+     палитре, но на карте она ложится дымкой поверх грунта и озеро
+     выглядит утонувшим в тумане: сквозь тонкий слой воды видно
+     землю, а земля тут бурая. */
   const waterTint = config.biome === 'ice'
-    ? { shallow: 0x4a7f96, deep: 0x0d2434, sky: 0xb8d4e8 }
+    ? { shallow: 0x2d5f74, deep: 0x0b1f2e, sky: 0xb8d4e8 }
     : config.biome === 'desert'
-      ? { shallow: 0x3f7f7a, deep: 0x0d2a2a, sky: 0xd8c8a0 }
-      : { shallow: 0x2f7f96, deep: 0x0a2436, sky: 0x9fc0e0 };
+      ? { shallow: 0x275f5c, deep: 0x0b2222, sky: 0xd8c8a0 }
+      : { shallow: 0x1e6072, deep: 0x081c2b, sky: 0x9fc0e0 };
   const water = buildWater(TERRAIN, WATER_LEVEL, depthCv, waterTint);
   water.userData.setSun(sun.position.clone().normalize());
   scene.add(water);
@@ -2066,6 +2081,7 @@ export function createGroundBattle(ctx, config) {
     state.canPlaceTest = (id, x, z) => canPlace('me', id, x, z);
     state.setDocTest = d => { sides.me.doc = d; };
     state.landTest = LAND;
+    state.isWaterTest = (x, z) => isWater(x, z);
     // Навести камеру на точку — чтобы снимки в автотестах смотрели туда,
     // куда нужно, а не всегда на штаб
     state.camTest = (x, z, dist) => {
