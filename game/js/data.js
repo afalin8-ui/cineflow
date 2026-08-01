@@ -455,6 +455,15 @@ export const GROUND_BUILDINGS = {
     weapon: { type: 'aa', dmg: 95, cd: 1.1, range: 110, air: true },
     desc: 'Ракетная батарея ПВО. Только по воздуху.',
   },
+  /* Экстрактор — вся экономика Тройдена. Ставится ТОЛЬКО на поле
+     снабжения (`onField`) и качает его сам, без грузовиков. Поэтому
+     у клана нет сборщиков вообще: качает постройка, а не колонна. */
+  extractor: {
+    id: 'extractor', name: 'Экстрактор', cls: 'structure', hp: 1500, armor: 0.32,
+    cost: 350, build: 5, size: 8, vision: 45, onField: true, drain: 22,
+    desc: 'Падает с орбиты прямо на поле снабжения и качает его сам. ' +
+          'Сборщики Тройдену не нужны, зато экстрактор неподвижен.',
+  },
 };
 
 function groundUnits(faction) {
@@ -489,13 +498,36 @@ function groundUnits(faction) {
   const mk = (o) => ({ ...o, hp: H(o.hp), armor: A(o.armor), cost: C(o.cost),
                        build: B(o.build), weapon: W(o.weapon), stealth: rez });
 
+  /* Добыча у каждого клана своя — это вторая половина парадигмы базы.
+     Плэктор гоняет рой дешёвых харвестеров и сгружает в любую свою
+     постройку, Рииз летает над рельефом невидимыми дронами, Девиан
+     вообще ничего не возит: хакер садится на поле и качает его на
+     расстоянии. У Тройдена сборщика нет — за него работает экстрактор,
+     поэтому здесь его определение остаётся только для совместимости
+     и в производство никогда не попадает (см. `eco.worker`). */
+  const worker =
+    plk ? { name: 'Харвестер', hp: 220, speed: 15.5, cost: 150, build: 3,
+            cargo: 38, mine: 20, dropAny: true,
+            desc: 'Мелкий и дешёвый: возит понемногу, зато сгружает в ЛЮБУЮ ' +
+                  'свою постройку, а не только в штаб. Чем шире расползлась ' +
+                  'база, тем короче ездка.' }
+  : rez ? { name: 'Дрон-сборщик', hp: 200, speed: 21, cost: 190, build: 5,
+            cargo: 85, mine: 36, fly: true,
+            desc: 'Летит над рельефом и водой по прямой и невидим, как вся техника ' +
+                  'клана. Зато сбить его может кто угодно.' }
+  : faction === 'devian'
+      ? { name: 'Хакер', hp: 300, speed: 10, cost: 240, build: 6,
+          cargo: 0, siphon: 16,
+          desc: 'Ничего не возит: садится у поля снабжения и качает его напрямую. ' +
+                'Деньги идут постоянно, пока хакер жив и стоит на месте.' }
+      : { name: 'Транспортёр', hp: 260, speed: 13, cost: 180, build: 5,
+          cargo: 90, mine: 30,
+          desc: 'Возит снабжение с полей на штаб.' };
+
   return {
     worker: mk({
-      id: 'worker', name: 'Сборщик', cls: 'vehicle', from: 'hq', tier: 1,
-      hp: 260, armor: 0.1, speed: 13, cost: 180, build: 5,
-      cargo: 90, vision: 35, weapon: null,
-      desc: 'Возит снабжение с полей на штаб. Безоружен. Без сборщиков ' +
-            'быстро кончатся деньги.',
+      id: 'worker', cls: 'vehicle', from: 'hq', tier: 1,
+      armor: 0.1, vision: 35, weapon: null, ...worker,
     }),
     rifle: mk({
       id: 'rifle', name: nm.rifle, cls: 'infantry', from: 'barracks', tier: 1,
@@ -741,22 +773,38 @@ export const BASE_DOCTRINE = {
     id: 'orbital', name: 'Сброс с орбиты',
     anywhere: true, needNear: 0, costMul: 1.35, buildMul: 0.25,
     hint: 'Модули падают с орбиты куда угодно и разворачиваются почти мгновенно, но дороги',
+    eco: {
+      id: 'extractor', name: 'Экстракторы', worker: false, extractor: true, start: 2,
+      hint: 'Сборщиков у клана нет — экстрактор падает прямо на поле снабжения и качает его сам',
+    },
   },
   plektor: {
     id: 'sprawl', name: 'Тяжёлая индустрия',
     anywhere: false, needNear: 150, costMul: 0.65, buildMul: 0.6,
     hint: 'Строит только рядом с уже стоящим, зато дёшево и быстро',
+    eco: {
+      id: 'swarm', name: 'Рой харвестеров', worker: true, start: 5, aiKeep: 8,
+      hint: 'Харвестеры дёшевы и сгружают в любую свою постройку, а не только в штаб',
+    },
   },
   devian: {
     id: 'fortress', name: 'Модульная крепость',
     anywhere: false, needNear: 62, hubOnly: true, costMul: 0.9, buildMul: 0.9,
     hpMul: 1.35,
     hint: 'Пристраивается вплотную к штабу и никуда больше — тесно, зато крепко',
+    eco: {
+      id: 'hacker', name: 'Хакеры', worker: true, start: 3, aiKeep: 4,
+      hint: 'Хакер не возит ничего: садится у поля и качает его напрямую, пока жив',
+    },
   },
   reez: {
     id: 'swarm', name: 'Нанорой',
     anywhere: true, needNear: 0, costMul: 1.0, buildMul: 1.8,
     hint: 'Дроны собирают постройку в любой точке карты, но долго',
+    eco: {
+      id: 'drone', name: 'Дроны-сборщики', worker: true, start: 3, aiKeep: 5,
+      hint: 'Дроны летают над рельефом и водой по прямой и невидимы, пока целы',
+    },
   },
 };
 
@@ -1039,6 +1087,14 @@ export const NEURO_BRIEF = [
           FACTION_IDS.map(f =>
             `<b>${FACTIONS[f].short}</b> — ${BASE_DOCTRINE[f].name.toLowerCase()}: ` +
             `${BASE_DOCTRINE[f].hint.toLowerCase()}`).join('. ') + '.',
+  },
+  {
+    title: 'Чем добывают',
+    text: 'Деньги на земле дают поля снабжения, но берут их все по-разному. ' +
+          FACTION_IDS.map(f =>
+            `<b>${FACTIONS[f].short}</b> — ${BASE_DOCTRINE[f].eco.name.toLowerCase()}: ` +
+            `${BASE_DOCTRINE[f].eco.hint.toLowerCase()}`).join('. ') + '. ' +
+          'Поле не бесконечно: выкачал — ищи следующее.',
   },
   {
     title: 'Характер планет',

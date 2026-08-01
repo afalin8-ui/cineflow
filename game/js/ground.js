@@ -564,9 +564,24 @@ export function createGroundBattle(ctx, config) {
     const away = bx > 0 ? -1 : 1;      // достройки — в сторону противника
     makeBuilding(sideId, 'barracks', bx + away * 40, bz + 8, true);
     makeBuilding(sideId, 'factory', bx - 8, bz - away * 42, true);
-    for (let i = 0; i < 3; i++) {
-      const u = makeUnit(sideId, 'worker', bx + rnd(-28, 28), bz + rnd(-28, 28));
-      u.homeBase = hq;
+    /* Стартовая экономика — по доктрине клана. Тройден высаживается
+       уже с экстракторами на ближних полях: сборщиков у него нет
+       вовсе, и без этого он остался бы без единого источника денег. */
+    const eco = sides[sideId].doc.eco;
+    if (eco.extractor) {
+      const near = state.fields
+        .filter(f => f.left > 0)
+        .sort((a, b) => a.pos.distanceToSquared(hq.pos) - b.pos.distanceToSquared(hq.pos))
+        .slice(0, eco.start);
+      for (const f of near) {
+        const a = Math.atan2(hq.pos.z - f.pos.z, hq.pos.x - f.pos.x);
+        makeBuilding(sideId, 'extractor', f.pos.x + Math.cos(a) * 14, f.pos.z + Math.sin(a) * 14, true);
+      }
+    } else {
+      for (let i = 0; i < (eco.start || 3); i++) {
+        const u = makeUnit(sideId, 'worker', bx + rnd(-28, 28), bz + rnd(-28, 28));
+        u.homeBase = hq;
+      }
     }
     // полки, привезённые с орбиты
     const roster = ['rifle', 'rifle', 'rocket', 'tank'];
@@ -989,6 +1004,130 @@ export function createGroundBattle(ctx, config) {
     }
   }
 
+  /* Дрон Рииза летает, но не считается авиацией: сбить его может кто
+     угодно, а не только ПВО. Поэтому не moveAir (тот тянет к точке
+     в трёх измерениях и живёт на высоте авиации), а свой ход —
+     по прямой над рельефом и водой, на высоте пары этажей. */
+  // Висеть дрон должен всегда, а не только пока летит: иначе он
+  // садится на землю каждый раз, когда стоит у поля и грузится
+  function hoverY(u, dt) {
+    const want = terrainH(u.pos.x, u.pos.z) + 13;
+    u.pos.y += (want - u.pos.y) * Math.min(1, dt * 2.5);
+  }
+
+  function moveHover(u, dest, dt) {
+    _v.subVectors(dest, u.pos).setY(0);
+    const d = _v.length();
+    hoverY(u, dt);
+    if (d < 4) return true;
+    _v.divideScalar(d);
+    u.pos.addScaledVector(_v, u.def.speed * dt);
+    u.pos.x = clamp(u.pos.x, -MAP, MAP);
+    u.pos.z = clamp(u.pos.z, -MAP, MAP);
+    const face = Math.atan2(-_v.x, -_v.z);
+    let diff = ((face - u.heading + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    u.heading += clamp(diff, -3 * dt, 3 * dt);
+    u.obj.rotation.y = u.heading;
+    u.obj.rotation.z = clamp(-diff * 0.7, -0.5, 0.5);
+    return false;
+  }
+
+  /* ── ДОБЫЧА ──────────────────────────────────────────────
+     Способ добычи — вторая половина парадигмы базы, и он у каждого
+     клана свой:
+       Плэктор — рой харвестеров, сгружают в ЛЮБУЮ свою постройку;
+       Рииз    — дроны летят по прямой над рельефом и водой;
+       Девиан  — хакер не возит ничего: садится у поля и качает
+                 напрямую, деньги идут постоянно, пока он жив;
+       Тройден — сборщиков нет вовсе, за него работает экстрактор
+                 (см. updateBuilding).
+     Общий у всех только поиск ближайшего непустого поля. */
+  function nearestField(pos, side) {
+    let best = null, bd = Infinity;
+    for (const f of state.fields) {
+      if (f.left <= 0) continue;
+      let d = f.pos.distanceToSquared(pos);
+      /* Хакеры не возят, а сидят — и всей троицей усядутся на одно
+         поле, если их не разводить. Занятое поле «отодвигаем»: пусть
+         клан держит несколько точек, это его манера играть от места. */
+      if (side) {
+        const busy = state.units.filter(u =>
+          !u.dead && u.side === side && u.def.siphon && u.field === f).length;
+        d *= 1 + busy * 2.5;
+      }
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
+  }
+
+  function updateHarvester(u, dt) {
+    const def = u.def;
+    const move = dest => (def.fly ? moveHover(u, dest, dt) : moveGround(u, dest, dt));
+    /* Расстояние берём ПО ЗЕМЛЕ. Дрон Рииза висит в тринадцати метрах
+       над полем, и обычное расстояние в трёх измерениях у него никогда
+       не окажется меньше двенадцати — он бесконечно висел бы над
+       складом, ничего не грузя. */
+    const flat = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+    if (def.fly) hoverY(u, dt);
+    if (u.moveTo) { if (move(u.moveTo)) u.moveTo = null; return; }
+    if (!u.field || u.field.left <= 0) u.field = nearestField(u.pos, def.siphon ? u.side : null);
+    if (!u.field) return;
+
+    // Девиан: качаем с места, обратных ездок нет
+    if (def.siphon) {
+      if (flat(u.pos, u.field.pos) > 16) { move(u.field.pos); u.mining = false; return; }
+      const take = Math.min(def.siphon * dt, u.field.left);
+      sides[u.side].credits += take;
+      u.field.left -= take;
+      u.mining = true;
+      if (u.field.left <= 0) u.field.obj.visible = false;
+      u.hackBlink = (u.hackBlink || 0) - dt;
+      if (u.hackBlink <= 0) {
+        u.hackBlink = 0.7;
+        fx.ring(u.field.pos, 3, 12, 0x9ad8ff, 0.3);
+      }
+      return;
+    }
+
+    // Все остальные возят. Плэктор сгружает в ближайшую свою постройку,
+    // остальные — только в штаб
+    let drop = null;
+    if (def.dropAny) {
+      let bd = Infinity;
+      for (const b of state.buildings) {
+        if (b.dead || b.building || b.side !== u.side) continue;
+        const d = b.pos.distanceToSquared(u.pos);
+        if (d < bd) { bd = d; drop = b; }
+      }
+    }
+    if (!drop) {
+      drop = (u.homeBase && !u.homeBase.dead) ? u.homeBase
+        : state.buildings.find(b => !b.dead && b.side === u.side && b.def.id === 'hq') || null;
+      u.homeBase = drop;
+    }
+    if (!drop) return;
+
+    if (u.carry >= def.cargo) {
+      u.mining = false;
+      if (flat(u.pos, drop.pos) < drop.radius + 9) {
+        sides[u.side].credits += u.carry;
+        u.carry = 0;
+        fx.flash(drop.pos.clone().setY(drop.pos.y + 10), 6, 0xffd76a, 0.45);
+      } else move(drop.pos);
+      return;
+    }
+    if (flat(u.pos, u.field.pos) < 12) {
+      /* Скорость погрузки — своё число, а не доля кузова: иначе
+         большой кузов грузился бы ровно столько же, сколько мелкий,
+         и «рой мелких» превращался бы в «рой больших». */
+      const take = Math.min((def.mine || 30) * dt, u.field.left, def.cargo - u.carry);
+      u.carry += take;
+      u.field.left -= take;
+      u.mining = true;
+      if (u.field.left <= 0) u.field.obj.visible = false;
+    } else { u.mining = false; move(u.field.pos); }
+  }
+
   function updateUnit(u, dt) {
     const def = u.def;
     spinRotor(u, dt);
@@ -1015,35 +1154,7 @@ export function createGroundBattle(ctx, config) {
 
     // ── сборщик
     if (def.id === 'worker') {
-      const hq = (u.homeBase && !u.homeBase.dead) ? u.homeBase
-        : state.buildings.find(b => !b.dead && b.side === u.side && b.def.id === 'hq');
-      u.homeBase = hq || null;
-      if (u.moveTo) { if (moveGround(u, u.moveTo, dt)) u.moveTo = null; return; }
-      if (!hq) return;
-      if (u.carry >= def.cargo) {
-        if (u.pos.distanceTo(hq.pos) < hq.radius + 9) {
-          sides[u.side].credits += u.carry;
-          u.carry = 0;
-          fx.flash(hq.pos.clone().setY(hq.pos.y + 10), 6, 0xffd76a, 0.45);
-        } else moveGround(u, hq.pos, dt);
-        return;
-      }
-      if (!u.field || u.field.left <= 0) {
-        let best = null, bd = Infinity;
-        for (const f of state.fields) {
-          if (f.left <= 0) continue;
-          const d = f.pos.distanceToSquared(u.pos);
-          if (d < bd) { bd = d; best = f; }
-        }
-        u.field = best;
-      }
-      if (!u.field) return;
-      if (u.pos.distanceTo(u.field.pos) < 12) {
-        const take = Math.min(def.cargo * 0.6 * dt, u.field.left, def.cargo - u.carry);
-        u.carry += take;
-        u.field.left -= take;
-        if (u.field.left <= 0) u.field.obj.visible = false;
-      } else moveGround(u, u.field.pos, dt);
+      updateHarvester(u, dt);
       return;
     }
 
@@ -1145,6 +1256,29 @@ export function createGroundBattle(ctx, config) {
       }
       return;
     }
+    /* Экстрактор Тройдена: качает поле, у которого стоит. Ни ездок,
+       ни сборщиков — но и увезти его нельзя, поле кончилось, и модуль
+       остался бесполезной коробкой. */
+    if (b.def.drain) {
+      if (!b.field || b.field.left <= 0) {
+        b.field = null;
+        for (const f of state.fields) {
+          if (f.left > 0 && f.pos.distanceTo(b.pos) < 26) { b.field = f; break; }
+        }
+      }
+      if (b.field) {
+        const take = Math.min(b.def.drain * dt, b.field.left);
+        sides[b.side].credits += take;
+        b.field.left -= take;
+        if (b.field.left <= 0) b.field.obj.visible = false;
+        b.pumpBlink = (b.pumpBlink || 0) - dt;
+        if (b.pumpBlink <= 0) {
+          b.pumpBlink = 0.9;
+          fx.ring(b.field.pos, 3, 13, 0xffd76a, 0.28);
+        }
+      }
+    }
+
     // производство
     if (b.queue.length) {
       b.produceLeft -= dt;
@@ -1207,6 +1341,17 @@ export function createGroundBattle(ctx, config) {
       if (doc.hubOnly && b.def.id !== 'hq') continue;
       if (d < doc.needNear) nearOwn = true;
     }
+    /* У экстрактора правило обратное всем прочим: он ОБЯЗАН стоять
+       у поля снабжения и никуда больше не ставится. Правило близости
+       к базе на него не распространяется — модуль падает с орбиты
+       на поле, где бы оно ни лежало. */
+    if (def.onField) {
+      const f = nearestField(_v.set(x, 0, z));
+      if (!f || Math.hypot(f.pos.x - x, f.pos.z - z) > 20) return false;
+      const busy = state.buildings.some(b =>
+        !b.dead && b.def.drain && b.pos.distanceTo(f.pos) < 26);
+      return !busy;
+    }
     for (const f of state.fields) if (f.left > 0 && f.pos.distanceTo(_v.set(x, f.pos.y, z)) < 22) return false;
     return doc.anywhere || nearOwn;
   }
@@ -1245,8 +1390,29 @@ export function createGroundBattle(ctx, config) {
       break;
     }
 
-    // производство
-    if (workers < 5) { const h = myB.find(b => b.def.id === 'hq'); if (h && !h.queue.length) enqueue(h, 'worker'); }
+    /* Экономика — по своей доктрине. Клан без сборщиков расширяется
+       экстракторами: ищет непустое поле, у которого ещё никто не
+       качает, и роняет модуль туда. */
+    const eco = side.doc.eco;
+    if (eco.extractor) {
+      const pumps = myB.filter(b => b.def.drain).length;
+      const def = GROUND_BUILDINGS.extractor;
+      if (pumps < 4 && side.credits > buildCost('foe', def) + 400) {
+        for (const f of state.fields) {
+          if (f.left <= 0) continue;
+          const a = rnd(0, Math.PI * 2);
+          const x = f.pos.x + Math.cos(a) * 14, z = f.pos.z + Math.sin(a) * 14;
+          if (canPlace('foe', 'extractor', x, z)) {
+            side.credits -= buildCost('foe', def);
+            makeBuilding('foe', 'extractor', x, z, false);
+            break;
+          }
+        }
+      }
+    } else if (workers < (eco.aiKeep || 5)) {
+      const h = myB.find(b => b.def.id === 'hq');
+      if (h && !h.queue.length) enqueue(h, 'worker');
+    }
     const bar = myB.find(b => b.def.id === 'barracks' && !b.building);
     if (bar && bar.queue.length < 2) enqueue(bar, Math.random() < 0.55 ? 'rifle' : 'rocket');
     const fac = myB.find(b => b.def.id === 'factory' && !b.building);
@@ -1290,7 +1456,7 @@ export function createGroundBattle(ctx, config) {
       <button data-q="army">Все<br>войска</button>
       <button data-q="tank">Техника</button>
       <button data-q="infantry">Пехота</button>
-      <button data-q="worker">Сбор-<br>щики</button>
+      <button data-q="worker">${sides.me.doc.eco.worker ? 'Сбор-<br>щики' : 'Экстрак-<br>торы'}</button>
       <button data-role="buildmenu">Строить</button>
       <button data-role="boxmode">Рамка</button>
     </div>
@@ -1333,11 +1499,15 @@ export function createGroundBattle(ctx, config) {
   hud.querySelectorAll('[data-q]').forEach(b => {
     b.onclick = () => {
       const q = b.dataset.q;
-      state.selection = state.units.filter(u => !u.dead && u.side === 'me' && (
-        q === 'army' ? u.def.id !== 'worker'
-          : q === 'worker' ? u.def.id === 'worker'
-          : q === 'infantry' ? u.cls === 'infantry'
-          : u.cls === 'vehicle' && u.def.id !== 'worker' || u.air));
+      /* У клана без сборщиков та же кнопка собирает экстракторы:
+         это его добыча, и смотреть игрок будет туда же. */
+      state.selection = (q === 'worker' && !sides.me.doc.eco.worker)
+        ? state.buildings.filter(b => !b.dead && b.side === 'me' && b.def.drain)
+        : state.units.filter(u => !u.dead && u.side === 'me' && (
+          q === 'army' ? u.def.id !== 'worker'
+            : q === 'worker' ? u.def.id === 'worker'
+            : q === 'infantry' ? u.cls === 'infantry'
+            : u.cls === 'vehicle' && u.def.id !== 'worker' || u.air));
       if (state.selection.length) {
         const c = new THREE.Vector3();
         for (const e of state.selection) c.add(e.pos);
@@ -1361,7 +1531,10 @@ export function createGroundBattle(ctx, config) {
 
   function renderBuildBar() {
     buildbar.innerHTML = '';
-    for (const id of ['barracks', 'factory', 'airfield', 'turret', 'sam']) {
+    // Экстрактор — только у клана, который добывает постройками
+    const list = ['barracks', 'factory', 'airfield', 'turret', 'sam'];
+    if (sides.me.doc.eco.extractor) list.unshift('extractor');
+    for (const id of list) {
       const def = GROUND_BUILDINGS[id];
       const b = document.createElement('button');
       b.className = 'build-btn';
@@ -1708,7 +1881,15 @@ export function createGroundBattle(ctx, config) {
       let sub = e.kind === 'building'
         ? (e.building ? `Строится · ${Math.ceil(e.buildLeft)} с` : e.def.name)
         : `${e.def.cls === 'infantry' ? 'Пехота' : e.air ? 'Авиация' : 'Техника'}`;
-      if (e.def.id === 'worker') sub += ` · груз ${Math.round(e.carry)}/${e.def.cargo}`;
+      // Хакер груза не возит — у него состояние «качает / идёт»
+      if (e.def.id === 'worker') {
+        sub += e.def.siphon
+          ? (e.mining ? ' · качает поле' : ' · идёт к полю')
+          : ` · груз ${Math.round(e.carry)}/${e.def.cargo}`;
+      }
+      if (e.def.drain) {
+        sub += e.field ? ` · качает ${e.def.drain} кр/с` : ' · поле рядом пусто';
+      }
       if (e.air) sub += ` · боезапас ${e.ammo}/${e.def.ammo}`;
       sel.innerHTML = `<div class="sel-title">${e.def.name} ${foreign}</div>
         <div class="sel-sub">${sub} · ${Math.max(0, Math.round(e.hp))}/${e.maxHp}</div>
@@ -1725,7 +1906,17 @@ export function createGroundBattle(ctx, config) {
     const prod = list.filter(e => e.kind === 'building' && e.side === 'me' && !e.building && e.def.produces);
     if (prod.length) {
       const b = prod[0];
-      for (const id of b.def.produces) {
+      /* У Тройдена штаб не делает сборщиков: их у клана нет вообще,
+         вместо них — экстракторы в панели построек. */
+      const canMake = b.def.produces.filter(id =>
+        id !== 'worker' || sides.me.doc.eco.worker);
+      if (b.def.id === 'hq' && !canMake.length) {
+        const n = document.createElement('div');
+        n.className = 'act-note';
+        n.textContent = 'Сборщиков у клана нет: ставь экстракторы на поля снабжения.';
+        acts.appendChild(n);
+      }
+      for (const id of canMake) {
         const def = unitDef(b.faction.id, id);
         // Закрытую технику показываем серой: видно, ради чего копить науку
         const locked = (def.tier || 1) > sides.me.tech;
@@ -1875,6 +2066,14 @@ export function createGroundBattle(ctx, config) {
     state.canPlaceTest = (id, x, z) => canPlace('me', id, x, z);
     state.setDocTest = d => { sides.me.doc = d; };
     state.landTest = LAND;
+    // Навести камеру на точку — чтобы снимки в автотестах смотрели туда,
+    // куда нужно, а не всегда на штаб
+    state.camTest = (x, z, dist) => {
+      tcam.focus(new THREE.Vector3(x, terrainH(x, z), z), dist);
+      tcam.apply(1, true);
+    };
+    Object.defineProperty(state, 'creditsMe', { get: () => Math.round(sides.me.credits) });
+    Object.defineProperty(state, 'creditsFoe', { get: () => Math.round(sides.foe.credits) });
     state.costTest = id => {
       const u = unitDef(sides.me.faction.id, id), b = GROUND_BUILDINGS[id];
       return {

@@ -471,9 +471,29 @@ export function buildGroundUnit(def, faction) {
 
   switch (def.id) {
     case 'worker': {
+      /* Сборщик у кланов разный. Летающий дрон Рииза — не грузовик
+         на весу: у него нет колёс, зато есть винты и подвешенный
+         под брюхо контейнер. Хакер Девиана возит не груз, а антенну. */
+      if (def.fly) {
+        g.add(box(2.0, 0.9, 3.0, body, 0, 1.4, 0));
+        g.add(box(1.5, 0.5, 1.2, trim, 0, 0.75, 0.2));      // контейнер снизу
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+          g.add(box(0.25, 0.2, 1.6, dark, sx * 1.1, 1.7, sz * 1.0));
+          g.add(cyl(1.0, 0.08, dark, sx * 1.5, 2.0, sz * 1.35));
+        }
+        g.add(sph(0.34, trim, 0, 1.95, -1.2));
+        break;
+      }
       g.add(box(2.4, 1.3, 4.2, body, 0, 1.1, 0));
       g.add(box(2.0, 1.2, 1.6, dark, 0, 1.9, -1.2));
-      g.add(box(2.6, 0.4, 0.5, trim, 0, 1.75, 1.9));
+      if (def.siphon) {
+        // хакер: вместо кузова — мачта с тарелкой
+        g.add(cyl(0.16, 3.2, dark, 0, 3.2, 0.6));
+        g.add(cyl(1.1, 0.12, trim, 0, 4.8, 0.6));
+        g.add(sph(0.26, trim, 0, 5.1, 0.6));
+      } else {
+        g.add(box(2.6, 0.4, 0.5, trim, 0, 1.75, 1.9));
+      }
       wheels(g, dark, 1.3, 0.55, [-1.3, 0, 1.3]);
       break;
     }
@@ -764,6 +784,25 @@ export function buildStructure(def, faction) {
       g.add(tur);
       g.userData.turret = tur;
       g.add(box(S * 0.2, 0.6, S * 0.2, trim, 0, 1.6, S * 0.4));
+      break;
+    }
+    /* Экстрактор: буровой модуль, сброшенный с орбиты. Посадочные
+       опоры и мачта важнее самой бочки — по ним он и читается как
+       что-то приземлившееся, а не построенное. */
+    case 'extractor': {
+      g.add(cyl(S * 0.6, 1.2, dark, 0, 0.6, 0));
+      for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2 + Math.PI / 4;
+        const leg = box(0.6, 3.4, 0.6, dark, Math.cos(a) * S * 0.7, 1.7, Math.sin(a) * S * 0.7);
+        leg.rotation.set(Math.sin(a) * 0.3, 0, -Math.cos(a) * 0.3);
+        g.add(leg);
+      }
+      g.add(cyl(S * 0.5, 5.6, wall, 0, 4.0, 0));
+      g.add(cyl(S * 0.56, 0.5, trim, 0, 6.6, 0));
+      g.add(cyl(0.45, 8.0, dark, 0, 10.6, 0));            // буровая мачта
+      g.add(box(1.6, 0.5, 1.6, trim, 0, 14.4, 0));
+      g.add(cyl(S * 0.2, 3.4, wall, S * 0.62, 3.4, S * 0.24));  // бак
+      g.add(box(S * 1.05, 0.35, 0.5, trim, 0, 1.8, 0));
       break;
     }
     default:
