@@ -327,6 +327,13 @@ button.act.locked small { color: #8fd0ff; }
 .gp-trait small {
   display: block; font-size: 11px; color: var(--muted); line-height: 1.45;
 }
+/* Тактика поведения: три кнопки в ряд, выбранная подсвечена */
+.sel-actions .act.stance { max-width: 168px; }
+.sel-actions .act.stance.on {
+  border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent);
+}
+.sel-actions .act.stance.on b { color: var(--accent); }
+
 .gp-actions { display: flex; flex-direction: column; gap: 7px; }
 .gp-actions .act { min-width: 0; width: 100%; max-width: none; }
 .gp-sep {

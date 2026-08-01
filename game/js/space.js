@@ -562,8 +562,9 @@ export function createSpaceBattle(ctx, config) {
     if (e.hyper.left < 2.0) {
       e.vel.addScaledVector(e.dir, e.def.thrust * 2.2 * dt);
       e.pos.addScaledVector(e.vel, dt);
+      // Разгон в гипер: факел вытягивается в несколько корпусов
       for (const en of e.obj.userData.engines || []) {
-        en.scale.setScalar(e.def.radius * (1.4 + (2.0 - e.hyper.left) * 0.9));
+        en.scale.set(1.3, 1.3, 1.6 + (2.0 - e.hyper.left) * 3.2);
       }
     }
     if (e.hyper.left <= 0) completeJump(e);
@@ -858,9 +859,17 @@ export function createSpaceBattle(ctx, config) {
       face(e, look, dt, def.turn);
       integrate(e, dt);
 
-      const glow = 0.55 + e.thrustNow * 0.9;
+      /* Факел ВЫТЯГИВАЕТСЯ с тягой, а не раздувается во все стороны:
+         длина по оси сопла (местная Z), ширина почти не меняется.
+         Плюс мелкая дрожь — ровное пламя выглядит нарисованным. */
+      const thr = e.thrustNow;
+      const flick = 1 + Math.sin(state.time * 26 + e.uid) * 0.07;
+      const wide = 0.72 + thr * 0.30;
+      const long = (0.55 + thr * 1.5) * flick;
       for (const en of e.obj.userData.engines || []) {
-        en.scale.setScalar(lerp(en.scale.x, def.radius * glow, clamp(dt * 5, 0, 1)));
+        const k = clamp(dt * 6, 0, 1);
+        en.scale.set(lerp(en.scale.x, wide, k), lerp(en.scale.y, wide, k),
+                     lerp(en.scale.z, long, k));
       }
     } else if (e.target) {
       face(e, _v2.subVectors(e.target.pos, e.pos), dt, def.turn);

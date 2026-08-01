@@ -22,7 +22,7 @@ import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
   dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT, EXTERMINATUS, doctrineOf,
-  planetMods, traitsOf, diffOf,
+  planetMods, traitsOf, diffOf, stanceOf, STANCE_IDS, STANCES,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -578,6 +578,10 @@ export function createGroundBattle(ctx, config) {
       heading: rnd(0, 6.28), turretAngle: 0,
       ammo: def.ammo || 0, rearm: 0, phase: 'idle',
       carry: 0, field: null, homeBase: null,
+      /* Тактика поведения и точка, которую юнит считает своей.
+         «Охрана» отпускает её недалеко и возвращается, «Оборона»
+         не отпускает вовсе, «Нападение» не помнит про неё. */
+      stance: 'guard', anchor: null,
       stealth: !!def.stealth, revealUntil: 0, exposed: false,
     };
     obj.userData.entity = u;
@@ -841,7 +845,16 @@ export function createGroundBattle(ctx, config) {
     const a = rnd(0, Math.PI * 2), r = Math.sqrt(Math.random()) * E.radius;
     const p = new THREE.Vector3(x.pos.x + Math.cos(a) * r, 0, x.pos.z + Math.sin(a) * r);
     p.y = terrainH(p.x, p.z);
-    fx.laser(p.clone().setY(p.y + 260), p, { color: 0xffb060, width: 2.6, life: 0.6 });
+    // Экстерминатус — тот же снаряд с орбиты, но втрое крупнее и залпом
+    orbitalBolt(p, 0xffb060, 34);
+    for (let i = 0; i < 5; i++) {
+      fx.delay(0.5 + i * 0.28, () => {
+        const a = rnd(0, Math.PI * 2), r = rnd(20, 70);
+        const q = new THREE.Vector3(p.x + Math.cos(a) * r, 0, p.z + Math.sin(a) * r);
+        q.y = terrainH(q.x, q.z);
+        orbitalBolt(q, 0xffb060, 22);
+      });
+    }
     fx.explosion(p, 26, 0xffa050, { ground: true, chain: 5 });
     fx.ringFlat(p, 10, 150, 0xffc890, 1.4);
     fx.shake = 1;
@@ -869,6 +882,41 @@ export function createGroundBattle(ctx, config) {
     }
   }
 
+  /* ── СНАРЯД С ОРБИТЫ.
+     Разложен по времени, чтобы читался как удар, а не как вспышка:
+     накачка в небе → спуск головы со шлейфом → удар → пыль столбом.
+     Всё на `fx.delay`, то есть на игровом времени: на паузе не
+     догорает, на ускорении не отстаёт. */
+  function orbitalBolt(at, color, power) {
+    const H = 300;
+    const sky = at.clone().setY(at.y + H);
+    fx.flash(sky, power * 0.7, 0xffffff, 0.3);
+    fx.ring(sky, power * 0.3, power * 2.2, color, 0.45);
+    const fall = 0.34;
+    fx.shot(sky, at, { color, width: power * 0.10, len: H * 0.22, speed: H / fall, life: fall });
+    fx.delay(fall, () => {
+      // удар
+      fx.flash(at, power * 1.2, 0xffffff, 0.16);
+      fx.explosion(at, power * 0.8, color, { ground: true });
+      // две волны: быстрая узкая и медленная широкая
+      fx.ringFlat(at, power * 0.2, power * 1.6, 0xffffff, 0.28);
+      fx.ringFlat(at, power * 0.4, power * 4.2, color, 0.75);
+      // канал ещё мгновение светится
+      fx.beam(at, at.clone().setY(at.y + H * 0.45), { color, width: power * 0.08, life: 0.3 });
+      // столб пыли
+      for (let k = 0; k < 7; k++) {
+        fx.delay(k * 0.05, () => {
+          const p = at.clone().add(new THREE.Vector3(rnd(-1, 1), 0, rnd(-1, 1)).multiplyScalar(power * 0.5));
+          p.y += k * power * 0.35;
+          fx.puff(p, power * (0.5 + k * 0.14), 0x8a7f6c, 1.2 + k * 0.1);
+        });
+      }
+      fx.debris(at, Math.round(power * 0.6), 0x5b4f40, power * 3.4);
+      scorch.drop(at.x, at.y, at.z, rnd(0, 6.28), power * 1.6, power * 1.6);
+      fx.shake = Math.min(1, fx.shake + 0.3);
+    });
+  }
+
   function resolveSupport(c) {
     const d = c.def;
     const ground = new THREE.Vector3(c.pos.x, terrainH(c.pos.x, c.pos.z), c.pos.z);
@@ -877,22 +925,18 @@ export function createGroundBattle(ctx, config) {
     const sky = ground.clone().setY(ground.y + 240);
 
     if (d.id === 'strike') {
-      /* Главный калибр сверху бьёт ЗАЛПОМ: четыре столба один за
-         другим по площади, а не единственная вспышка. Урон при этом
-         считается один раз — залп тут для читаемости, а не для
-         баланса. Столбы короткие и тонкие: длинный широкий цилиндр
-         в аддитивном смешивании засвечивает пол-экрана. */
+      /* Залп с орбиты — не «цилиндр в землю», а последовательность:
+         накачка в небе, спуск снаряда со шлейфом, удар с двумя
+         волнами по грунту и столб пыли следом. Четыре удара идут
+         вразнобой по площади. Урон считается ОДИН раз, по центру:
+         зрелище тут для читаемости, а не для баланса. */
       const shots = 4;
       for (let i = 0; i < shots; i++) {
-        fx.delay(i * 0.16, () => {
-          const a = rnd(0, Math.PI * 2), r = i === 0 ? 0 : rnd(6, d.radius * 0.55);
+        fx.delay(i * 0.22, () => {
+          const a = rnd(0, Math.PI * 2), r = i === 0 ? 0 : rnd(8, d.radius * 0.6);
           const at = new THREE.Vector3(ground.x + Math.cos(a) * r, 0, ground.z + Math.sin(a) * r);
           at.y = terrainH(at.x, at.z);
-          fx.laser(at.clone().setY(at.y + 240), at, { color: 0x9fe8ff, width: 1.15, life: 0.5 });
-          fx.explosion(at, d.radius * 0.35, 0xbfe8ff, { ground: true });
-          fx.ringFlat(at, d.radius * 0.2, d.radius * 1.4, 0x7fc8e8, 0.5);
-          fx.shake = Math.min(1, fx.shake + 0.22);
-          scorch.drop(at.x, at.y, at.z, rnd(0, 6.28), d.radius * 0.6, d.radius * 0.6);
+          orbitalBolt(at, 0x9fe8ff, d.radius * 0.4);
         });
       }
       splash(ground, d.radius, d.dmg, 'arty', 'me');
@@ -1272,10 +1316,15 @@ export function createGroundBattle(ctx, config) {
     }
 
     // ── наземные боевые
+    const st = stanceOf(u.stance);
+    if (!u.anchor) u.anchor = u.pos.clone();
     u.retarget -= dt;
     if (!u.target || u.retarget <= 0) {
-      u.target = u.forced || nearestEnemy(u, def.vision + (def.weapon ? def.weapon.range : 0),
-        !!(def.weapon && def.weapon.air));
+      /* Насколько широко юнит вообще ищет противника — первая
+         половина тактики. «Оборона» не ищет дальше выстрела,
+         «Нападение» шарит вдвое дальше обычного. */
+      const reach = (def.vision + (def.weapon ? def.weapon.range : 0)) * st.see;
+      u.target = u.forced || nearestEnemy(u, reach, !!(def.weapon && def.weapon.air));
       u.retarget = rnd(0.5, 1.1);
     }
 
@@ -1300,14 +1349,27 @@ export function createGroundBattle(ctx, config) {
       const d = u.pos.distanceTo(u.target.pos);
       const w = def.weapon;
       if (d > w.range) {
-        if (u.forced) moveGround(u, u.target.pos, dt);      // приказ — идём добивать
-        else if (d < def.vision * 1.6) moveGround(u, u.target.pos, dt);
+        /* Вторая половина тактики — поводок. Приказ атаковать
+           конкретную цель сильнее любой тактики: раз игрок ткнул
+           пальцем, юнит идёт добивать. */
+        if (u.forced) moveGround(u, u.target.pos, dt);
+        else if (st.leash > 0 && u.anchor.distanceTo(u.target.pos) < st.leash + w.range) {
+          moveGround(u, u.target.pos, dt);
+        }
       } else if (w.minRange && d < w.minRange) {
         _v2.subVectors(u.pos, u.target.pos).setY(0).setLength(w.minRange + 12).add(u.target.pos);
         moveGround(u, _v2, dt);
       }
       aimTurret(u, u.target, dt);
       tryFire(u, u.target, dt);
+      return;
+    }
+    /* Драться не с кем — «Охрана» возвращается на свою точку.
+       Без возврата отряд после каждой стычки оказывается на
+       десяток метров в стороне, и через три боя прикрытие базы
+       стоит уже посреди поля. */
+    if (st.leash > 0 && st.leash < 1e8 && u.anchor.distanceTo(u.pos) > 14) {
+      moveGround(u, u.anchor, dt);
     }
   }
 
@@ -1506,10 +1568,16 @@ export function createGroundBattle(ctx, config) {
       ai.wave = Math.min(6, ai.wave + 1);
       const targets = state.buildings.filter(b => !b.dead && b.side === 'me');
       const t = targets.find(b => b.def.id === 'hq') || targets[0];
-      if (t) for (const u of army) { u.forced = t; u.moveTo = null; }
+      // Волна ИИ переключается в нападение: идёт и не отвлекается
+      if (t) for (const u of army) { u.forced = t; u.moveTo = null; u.stance = 'hunt'; }
     } else if (ai.attacking && army.length < 3) {
       ai.attacking = false;
-      for (const u of army) { u.forced = null; u.moveTo = hq.pos.clone(); }
+      for (const u of army) {
+        u.forced = null;
+        u.moveTo = hq.pos.clone();
+        u.stance = 'guard';
+        u.anchor = hq.pos.clone();
+      }
     }
   }
 
@@ -1841,6 +1909,7 @@ export function createGroundBattle(ctx, config) {
       u.moveTo = d;
       u.forced = null;
       u.target = null;
+      u.anchor = d.clone();          // новая точка, которую он держит
       // «С боем»: идём к точке, но останавливаемся на каждого встречного
       u.amove = state.amove;
       if (u.def.id === 'worker') u.field = null;
@@ -2071,6 +2140,7 @@ export function createGroundBattle(ctx, config) {
         sub += e.field ? ` · качает ${e.def.drain} кр/с` : ' · поле рядом пусто';
       }
       if (e.air) sub += ` · боезапас ${e.ammo}/${e.def.ammo}`;
+      if (e.kind === 'unit' && e.def.weapon) sub += ` · ${stanceOf(e.stance).short.toLowerCase()}`;
       sel.innerHTML = `<div class="sel-title">${e.def.name} ${foreign}</div>
         <div class="sel-sub">${sub} · ${Math.max(0, Math.round(e.hp))}/${e.maxHp}</div>
         <div class="sel-hpbar"><i style="width:${clamp(e.hp / e.maxHp, 0, 1) * 100}%"></i></div>
@@ -2117,6 +2187,29 @@ export function createGroundBattle(ctx, config) {
       }
     }
     const units = list.filter(e => e.kind === 'unit' && e.side === 'me');
+    /* Тактика поведения — для БОЕВЫХ юнитов: сборщику и ремонтнику
+       она ни к чему, а кнопки место занимают. */
+    const fighters = units.filter(u => u.def.weapon);
+    if (fighters.length) {
+      const now = fighters[0].stance;
+      const same = fighters.every(u => u.stance === now);
+      for (const id of STANCE_IDS) {
+        const d = STANCES[id];
+        const b = document.createElement('button');
+        b.className = 'act stance' + (same && now === id ? ' on' : '');
+        b.innerHTML = `<b>${d.name}</b><small>${d.hint}</small>`;
+        b.onclick = () => {
+          for (const u of fighters) {
+            u.stance = id;
+            u.anchor = u.pos.clone();     // тактика задаётся ЗДЕСЬ и сейчас
+            if (id === 'hold') { u.moveTo = null; u.forced = null; }
+          }
+          toast(`${d.name}: ${d.hint.toLowerCase()}`);
+          refreshSel();
+        };
+        acts.appendChild(b);
+      }
+    }
     if (units.length) {
       const stop = document.createElement('button');
       stop.className = 'act';

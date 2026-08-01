@@ -64,7 +64,18 @@ export class Viewport {
     // Свечение считаем в половинном разрешении — на глаз разницы нет,
     // а кадров на планшете это экономит заметно.
     const k = IS_TOUCH ? 0.5 : 0.6;
-    this.composer = new EffectComposer(this.renderer);
+    /* СГЛАЖИВАНИЕ. Флаг antialias у рендерера работает только при
+       прямой отрисовке в канву. Мы же рисуем через постобработку —
+       кадр уходит в промежуточный буфер, а у него сглаживания нет
+       по умолчанию, и все грани получают лесенку. Отсюда и берётся
+       ощущение «пиксельности» у эффектов: не текстуры виноваты,
+       а край. Просим буфер с мультисэмплингом явно. */
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    const rt = new THREE.WebGLRenderTarget(size.width, size.height, {
+      type: THREE.HalfFloatType,
+      samples: IS_TOUCH ? 2 : 4,
+    });
+    this.composer = new EffectComposer(this.renderer, rt);
     this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
     this.bloom = new UnrealBloomPass(new THREE.Vector2(640 * k, 360 * k), 0.85, 0.55, 0.72);
     this.outputPass = new OutputPass();
@@ -501,27 +512,126 @@ export function screenOf(pos, camera, w, h) {
 // ЭФФЕКТЫ
 // ─────────────────────────────────────────────────────────────
 
-const BEAM_GEO = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true);
-BEAM_GEO.translate(0, 0.5, 0);
-const RING_GEO = new THREE.RingGeometry(0.82, 1, 44);
-const UP = new THREE.Vector3(0, 1, 0);
+/* ── ТЕКСТУРЫ ЭФФЕКТОВ.
 
-function glowTexture() {
+   Всё светящееся рисуется мягкими картами, а не геометрией с резким
+   краем. Причина простая: край многоугольника даёт на экране лесенку,
+   и чем ярче объект, тем она заметнее — свечение её ещё и раздувает.
+   У мягкой карты края нет вовсе, поэтому луч, кольцо и искра остаются
+   гладкими на любом приближении.
+
+   Размер карт — 256: на 64 пикселях градиент идёт ступеньками, стоит
+   растянуть спрайт на пол-экрана. Мип-уровни и анизотропия добивают
+   остаток ряби на мелких искрах. */
+
+const BEAM_GEO = new THREE.PlaneGeometry(1, 1, 1, 1);
+BEAM_GEO.translate(0, 0.5, 0);          // растёт вдоль +Y от начала
+const RING_GEO = new THREE.PlaneGeometry(1, 1, 1, 1);
+const UP = new THREE.Vector3(0, 1, 0);
+const _bv = new THREE.Vector3(), _bx = new THREE.Vector3(), _bz = new THREE.Vector3();
+const _bm = new THREE.Matrix4();
+
+function canvasTex(size, draw, opts = {}) {
   const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d');
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.25, 'rgba(255,240,210,0.85)');
-  grad.addColorStop(0.6, 'rgba(255,160,80,0.30)');
-  grad.addColorStop(1, 'rgba(255,120,40,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 64, 64);
+  c.width = size; c.height = opts.height || size;
+  draw(c.getContext('2d'), c.width, c.height);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.anisotropy = 4;
   return t;
 }
+
+function glowTexture() {
+  return canvasTex(256, (g, S) => {
+    const h = S / 2;
+    const grad = g.createRadialGradient(h, h, 0, h, h, h);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.14, 'rgba(255,248,232,0.92)');
+    grad.addColorStop(0.34, 'rgba(255,206,150,0.46)');
+    grad.addColorStop(0.62, 'rgba(255,150,70,0.14)');
+    grad.addColorStop(1, 'rgba(255,120,40,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, S, S);
+  });
+}
 export const GLOW_TEX = glowTexture();
+
+/* Луч: поперёк — раскалённая сердцевина с мягким спадом, вдоль —
+   затухание к обоим концам, чтобы отрезок не обрывался поперечной
+   линией. */
+function beamTexture() {
+  return canvasTex(64, (g, W, H) => {
+    const grad = g.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.28, 'rgba(255,255,255,0.35)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.72, 'rgba(255,255,255,0.35)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, W, H);
+    const ends = g.createLinearGradient(0, 0, 0, H);
+    ends.addColorStop(0, 'rgba(0,0,0,1)');
+    ends.addColorStop(0.06, 'rgba(0,0,0,0)');
+    ends.addColorStop(0.94, 'rgba(0,0,0,0)');
+    ends.addColorStop(1, 'rgba(0,0,0,1)');
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = ends;
+    g.fillRect(0, 0, W, H);
+  }, { height: 256 });
+}
+export const BEAM_TEX = beamTexture();
+
+// Кольцо ударной волны: тонкий светящийся обод с размытыми краями
+function ringTexture() {
+  return canvasTex(256, (g, S) => {
+    const h = S / 2;
+    const grad = g.createRadialGradient(h, h, 0, h, h, h);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.62, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.80, 'rgba(255,255,255,0.55)');
+    grad.addColorStop(0.90, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.97, 'rgba(255,255,255,0.30)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, S, S);
+  });
+}
+export const RING_TEX = ringTexture();
+
+/* Факел двигателя: сверху раскалённое горло, книзу — рыжий язык,
+   сходящий на нет. Плоская карта на скрещённых плоскостях читается
+   пламенем с любой стороны, круглый спрайт — только кляксой. */
+function plumeTexture() {
+  return canvasTex(128, (g, W, H) => {
+    /* Рисуем строку за строкой, БЕЗ масок вырезания. Ловушка тут в
+       том, что `destination-in` действует на весь холст, а не на
+       нарисованный прямоугольник: в цикле по строкам каждая
+       следующая стирала всё, что нарисовали раньше, и от факела
+       оставалась одна полоска. */
+    for (let y = 0; y < H; y++) {
+      const t = y / (H - 1);
+      // яркость вдоль струи: раскалённое горло → рыжий язык → ничего
+      const a = Math.pow(1 - t, 1.7);
+      const r = 255;
+      const gr = Math.round(250 - 130 * t);
+      const b = Math.round(224 - 200 * t);
+      // ширина: сопло у среза, сходит на нет к хвосту
+      const wide = W * (0.5 - 0.40 * Math.pow(t, 0.6));
+      const grad = g.createLinearGradient(W / 2 - wide, 0, W / 2 + wide, 0);
+      grad.addColorStop(0, `rgba(${r},${gr},${b},0)`);
+      grad.addColorStop(0.35, `rgba(${r},${gr},${b},${(a * 0.55).toFixed(3)})`);
+      grad.addColorStop(0.5, `rgba(255,255,255,${(a * (0.35 + 0.65 * (1 - t))).toFixed(3)})`);
+      grad.addColorStop(0.65, `rgba(${r},${gr},${b},${(a * 0.55).toFixed(3)})`);
+      grad.addColorStop(1, `rgba(${r},${gr},${b},0)`);
+      g.fillStyle = grad;
+      g.fillRect(W / 2 - wide, y, wide * 2, 1);
+    }
+  }, { height: 256 });
+}
+export const PLUME_TEX = plumeTexture();
 
 export class Fx {
   constructor(scene, budget = {}) {
@@ -548,8 +658,9 @@ export class Fx {
     for (const b of this.beams) if (!b.live) return b;
     if (this.beams.length >= this.maxBeams) return this.beams[(Math.random() * this.beams.length) | 0];
     const m = new THREE.Mesh(BEAM_GEO, new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
-      depthWrite: false, toneMapped: false,
+      map: BEAM_TEX, color: 0xffffff, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      side: THREE.DoubleSide,
     }));
     m.visible = false;
     m.frustumCulled = false;
@@ -576,6 +687,25 @@ export class Fx {
     return s;
   }
 
+  /* Плоскость луча разворачиваем так, чтобы её нормаль смотрела на
+     камеру: иначе с некоторых ракурсов луч виден с ребра и исчезает.
+     Ось (длина) при этом остаётся на месте — крутим только вокруг неё. */
+  _faceBeam(b) {
+    const ax = b.axis;
+    if (!ax) return;
+    if (!this.camera) {
+      b.mesh.quaternion.setFromUnitVectors(UP, ax.dir);
+      return;
+    }
+    _bv.subVectors(this.camera.position, b.mesh.position);
+    _bx.crossVectors(_bv, ax.dir);
+    if (_bx.lengthSq() < 1e-6) _bx.set(1, 0, 0).cross(ax.dir);   // смотрим вдоль луча
+    _bx.normalize();
+    _bz.crossVectors(_bx, ax.dir).normalize();
+    _bm.makeBasis(_bx, ax.dir, _bz);
+    b.mesh.quaternion.setFromRotationMatrix(_bm);
+  }
+
   beam(from, to, opts = {}) {
     const b = this._beam();
     b.live = true; b.t = 0; b.life = opts.life ?? 0.35; b.travel = null; b.trail = null;
@@ -585,9 +715,15 @@ export class Fx {
     b.mesh.material.opacity = 1;
     const dir = new THREE.Vector3().subVectors(to, from);
     const len = dir.length() || 0.001;
+    dir.divideScalar(len);
+    /* Луч — не труба, а плоскость, развёрнутая ребром к зрителю.
+       У трубы виден шестигранный силуэт и жёсткий край; плоскость
+       с мягкой картой края не имеет вовсе и всегда смотрит на
+       камеру, как и положено свечению. */
+    b.axis = { from: from.clone(), dir, len };
     b.mesh.position.copy(from);
-    b.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-    b.mesh.scale.set(b.w, len, b.w);
+    b.mesh.scale.set(b.w * 2, len, 1);
+    this._faceBeam(b);
     return b;
   }
 
@@ -610,14 +746,15 @@ export class Fx {
     b.life = opts.life ?? Math.max(0.12, dist / (opts.speed ?? 320));
     b.w = opts.width ?? 0.5;
     b.travel = { from: from.clone(), dir, dist, len: Math.min(opts.len ?? 9, dist * 0.6) };
+    b.axis = { from: from.clone(), dir, len: b.travel.len };
     // Ракете нужен след: без него она неотличима от болванки
     b.trail = opts.trail ? { every: 0.03, at: 0 } : null;
     b.mesh.visible = true;
     b.mesh.material.color.set(opts.color ?? 0xffe08a);
     b.mesh.material.opacity = 1;
-    b.mesh.quaternion.setFromUnitVectors(UP, dir);
-    b.mesh.scale.set(b.w, b.travel.len, b.w);
+    b.mesh.scale.set(b.w * 2, b.travel.len, 1);
     b.mesh.position.copy(from);
+    this._faceBeam(b);
     return b;
   }
 
@@ -689,7 +826,7 @@ export class Fx {
     s.mesh.material.color.set(color);
     s.mesh.material.opacity = 1;
     s.mesh.position.copy(pos);
-    s.mesh.scale.setScalar(r0);
+    s.mesh.scale.setScalar(r0 * 2);
     return s;
   }
 
@@ -697,9 +834,8 @@ export class Fx {
     if (!this.rings) this.rings = [];
     for (const r of this.rings) if (!r.live) return r;
     if (this.rings.length >= (IS_TOUCH ? 14 : 26)) return this.rings[0];
-    const geo = RING_GEO;
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 1, side: THREE.DoubleSide,
+    const m = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({
+      map: RING_TEX, color: 0xffffff, transparent: true, opacity: 1, side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
     }));
     m.visible = false;
@@ -813,6 +949,7 @@ export class Fx {
         const tr = b.travel;
         const s = (1 - k) * tr.dist;
         b.mesh.position.copy(tr.from).addScaledVector(tr.dir, Math.max(0, s - tr.len));
+        this._faceBeam(b);
         b.mesh.material.opacity = 1;
         if (b.trail) {
           b.trail.at -= dt;
@@ -824,7 +961,8 @@ export class Fx {
         continue;
       }
       b.mesh.material.opacity = k;
-      b.mesh.scale.x = b.mesh.scale.z = b.w * (0.35 + k * 0.65);
+      b.mesh.scale.x = b.w * 2 * (0.35 + k * 0.65);
+      this._faceBeam(b);
     }
     for (const s of this.sprites) {
       if (!s.live) continue;
@@ -855,7 +993,7 @@ export class Fx {
       r.t += dt;
       const k = r.t / r.life;
       if (k >= 1) { r.live = false; r.mesh.visible = false; continue; }
-      r.mesh.scale.setScalar(lerp(r.r0, r.r1, Math.sqrt(k)));
+      r.mesh.scale.setScalar(lerp(r.r0, r.r1, Math.sqrt(k)) * 2);
       r.mesh.material.opacity = (1 - k) * (1 - k);
       // Лежащее кольцо разворачивать к камере нельзя: ударная волна
       // по грунту тут же превратится в нимб, висящий в воздухе

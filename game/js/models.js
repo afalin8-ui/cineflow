@@ -5,7 +5,7 @@
      heavy  (Гегемония)  — плиты, блоки, ничего лишнего
      scrap  (Синдикат)   — несимметричный, из подручного хлама  */
 
-import { THREE, rnd, GLOW_TEX } from './engine.js';
+import { THREE, rnd, GLOW_TEX, PLUME_TEX } from './engine.js';
 import { customModel } from './assets.js';
 import { planetTextures, nebulaTexture, waterNormalTexture } from './textures.js';
 
@@ -98,6 +98,55 @@ function glowSprite(size, color) {
   return s;
 }
 
+/* ── ФАКЕЛ ДВИГАТЕЛЯ.
+
+   Круглый спрайт у сопла читается кляксой: у пламени нет ни длины,
+   ни направления. Настоящий факел — это две скрещённые плоскости
+   с картой пламени (сверху раскалённое горло, книзу язык сходит
+   на нет) плюс маленькое яркое ядро в самом сопле. Скрещённые
+   плоскости дают объём: с какой стороны ни смотри, одна из них
+   развёрнута к зрителю.
+
+   Группа смотрит факелом вдоль +Z — туда же, куда бьёт выхлоп
+   корабля. Масштаб группы меняют снаружи (тяга, гипер), поэтому
+   внутри всё в единичных долях. */
+
+/* Плоскость факела сразу кладём вдоль +Z: так у меша остаётся одна
+   степень свободы — поворот вокруг оси выхлопа. Крутить плоскость
+   двумя углами разом (Эйлер XYZ) — верный способ получить вместо
+   креста косую загогулину. */
+const PLUME_GEO = new THREE.PlaneGeometry(1, 1, 1, 1);
+PLUME_GEO.translate(0, -0.5, 0);
+PLUME_GEO.rotateX(-Math.PI / 2);           // длина по +Z, нормаль по +Y
+
+export function enginePlume(size, color = 0xff8a34) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({
+    map: PLUME_TEX, color, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+    side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < 2; i++) {
+    const m = new THREE.Mesh(PLUME_GEO, mat);
+    /* Габарит берём от СОПЛА (его радиус size*0.42), а не от корабля:
+       факел шириной с корпус и длиной в десять корпусов выглядит
+       так же, как отсутствие факела, — вся яркость собирается
+       в точку у среза, а хвост уходит в невидимое. */
+    m.scale.set(size * 0.9, 1, size * 2.2);
+    m.rotation.z = i * Math.PI / 2;
+    g.add(m);
+  }
+  // Раскалённое горло в самом сопле — маленькое, иначе съедает факел
+  const core = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: GLOW_TEX, color: 0xfff2d8, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+  }));
+  core.scale.setScalar(size * 0.5);
+  g.add(core);
+  g.userData.plumeMat = mat;
+  return g;
+}
+
 // ─────────────────────────────────────────────────────────────
 // ВНЕШНИЕ МОДЕЛИ
 // Если для юнита положена своя .glb (см. assets.js и models/README),
@@ -143,14 +192,10 @@ function shipHardpoints(g, def) {
   const flame = Math.max(1, Math.min(ext.x, ext.y) * 0.30);
   for (let i = 0; i < en; i++) {
     const x = (i - (en - 1) / 2) * halfW * 0.5;
-    const sp = glowSprite(flame * 1.5, 0xff7a26);
-    sp.position.set(x, 0, halfL * 1.02);
-    g.add(sp);
-    engines.push(sp);
-    const core = glowSprite(flame * 0.65, 0xffe2b0);
-    core.position.set(x, 0, halfL * 0.98);
-    g.add(core);
-    engines.push(core);
+    const plume = enginePlume(flame, 0xff8a34);
+    plume.position.set(x, 0, halfL * 0.99);
+    g.add(plume);
+    engines.push(plume);
   }
   g.userData.muzzles = muzzles;
   g.userData.pdPoints = pdPoints;
@@ -200,14 +245,10 @@ export function buildShip(def, faction) {
   const addEngine = (x, y, z, size) => {
     g.add(cyl(size * 0.42, size * 0.7, dark, x, y, z).rotateX(Math.PI / 2));
     g.add(cyl(size * 0.30, size * 0.2, mat(0x30231a, { rough: 0.9 }), x, y, z + size * 0.3).rotateX(Math.PI / 2));
-    const flame = glowSprite(size * 1.7, 0xff7a26);        // рыжий факел
-    flame.position.set(x, y, z + size * 0.75);
-    g.add(flame);
-    const core = glowSprite(size * 0.75, 0xffe2b0);        // белое горло
-    core.position.set(x, y, z + size * 0.4);
-    g.add(core);
-    engines.push(flame);
-    engines.push(core);
+    const plume = enginePlume(size, 0xff8a34);
+    plume.position.set(x, y, z + size * 0.35);
+    g.add(plume);
+    engines.push(plume);
   };
 
   /* Компоновка двигателей у классов разная — это заметно в силуэте:
