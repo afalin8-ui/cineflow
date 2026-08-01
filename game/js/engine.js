@@ -1077,15 +1077,26 @@ export function starfield(count = 2600, radius = 4000) {
   const pos = new Float32Array(n * 3);
   const col = new Float32Array(n * 3);
   const c = new THREE.Color();
+  /* Треть звёзд сбиваем в полосу — «млечный путь». Равномерная
+     россыпь по сфере читается сеткой из точек и выдаёт процедуру;
+     у неоднородного неба сразу появляется глубина. Полоса наклонена,
+     чтобы не совпадать с плоскостью боя. */
+  const tilt = 0.38, ct = Math.cos(tilt), st = Math.sin(tilt);
   for (let i = 0; i < n; i++) {
-    const u = Math.random() * 2 - 1, a = Math.random() * TAU;
+    const inBand = i % 3 === 0;
+    let u = Math.random() * 2 - 1;
+    if (inBand) u = (Math.random() + Math.random() + Math.random() - 1.5) * 0.22;
+    const a = Math.random() * TAU;
     const r = radius * (0.7 + Math.random() * 0.3);
-    const s = Math.sqrt(1 - u * u);
-    pos[i * 3] = Math.cos(a) * s * r;
-    pos[i * 3 + 1] = u * r;
-    pos[i * 3 + 2] = Math.sin(a) * s * r;
+    const s = Math.sqrt(Math.max(0, 1 - u * u));
+    const x = Math.cos(a) * s * r, y = u * r, z = Math.sin(a) * s * r;
+    pos[i * 3] = x;
+    pos[i * 3 + 1] = y * ct - z * st;
+    pos[i * 3 + 2] = y * st + z * ct;
     const t = Math.random();
-    c.setHSL(t < 0.7 ? 0.58 : 0.09, 0.35, 0.55 + Math.random() * 0.45);
+    // в полосе звёзды мельче и холоднее — это пыль, а не светила
+    c.setHSL(t < 0.7 ? 0.58 : 0.09, inBand ? 0.22 : 0.35,
+             inBand ? 0.42 + Math.random() * 0.3 : 0.55 + Math.random() * 0.45);
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
   const g = new THREE.BufferGeometry();

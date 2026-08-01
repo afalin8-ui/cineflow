@@ -78,20 +78,23 @@ export function createSpaceBattle(ctx, config) {
   scene.add(starfield(4800, 4600));
 
   // Планета под ногами — бой идёт на её орбите
-  /* Планета — главный предмет в кадре, а не задник: на референсах
-     газовый гигант занимает треть экрана, и кольцо тянется поперёк
-     всего боя. Отсюда и масштаб, и глубина. */
-  const planet = buildPlanet(config.biome || 'rock', 1450, config.planetSeed || 1, config.system);
-  planet.position.set(340, -1760, -420);
+  // Планета под ногами — бой идёт на её орбите
+  const planet = buildPlanet(config.biome || 'rock', 1150, config.planetSeed || 1, config.system);
+  planet.position.set(340, -1560, -420);
   // Направление на звезду: от него зависит терминатор и венец атмосферы
   planet.userData.setSun(key.position.clone().normalize());
   scene.add(planet);
 
-  // Кольцо: наклонено и повёрнуто, чтобы пересекало кадр по диагонали
-  const rings = planetRings(1450 * 1.45, 1450 * 2.5, config.planetSeed || 1);
-  rings.position.copy(planet.position);
-  rings.rotation.set(-Math.PI / 2 + 0.30, 0, 0.16);
-  scene.add(rings);
+  /* Кольцо есть НЕ У ВСЕХ миров: в самом Homeplanet окольцована одна
+     планета на систему, и именно поэтому она запоминается. Признак
+     приходит с карты (`rings` у системы в data.js). Полоса тонкая,
+     тёмная и почти с ребра — не золотая арка во весь экран. */
+  if (config.rings) {
+    const rings = planetRings(1150 * 1.35, 1150 * 1.95, config.planetSeed || 1);
+    rings.position.copy(planet.position);
+    rings.rotation.set(-Math.PI / 2 + 0.13, 0, 0.1);
+    scene.add(rings);
+  }
 
   viewport.setBloom({ strength: 0.72, radius: 0.55, threshold: 0.85, exposure: 0.92 });
   const fx = new Fx(scene);
@@ -1010,12 +1013,15 @@ export function createSpaceBattle(ctx, config) {
        Кладём по времени, а не по кадрам: на ускорении след должен
        быть той же густоты. */
     if (!craftHidden(c)) {
+      /* Реже и мельче, чем хочется: сплошная белая нитка за каждой
+         машиной забивает кадр и съедает бюджет спрайтов, а нужен
+         намёк на манёвр. */
       c.trailAt = (c.trailAt || 0) - dt;
       if (c.trailAt <= 0) {
-        c.trailAt = 0.05;
+        c.trailAt = 0.16;
         const back = _v.copy(c.pos).addScaledVector(c.dir, -3.2);
-        const warm = c.side === state.playerSide ? 0x9fd8ff : 0xffc38a;
-        fx.puff(back, 1.5, warm, 0.55);
+        const warm = c.side === state.playerSide ? 0x8fc8ef : 0xdfae7e;
+        fx.puff(back, 0.85, warm, 0.34);
       }
     }
 

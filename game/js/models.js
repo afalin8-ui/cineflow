@@ -411,6 +411,13 @@ export function buildShip(def, faction) {
     engineBlock(def.id === 'capital' ? 'quad' : 'cluster', W, L * 0.5, R * 1.0);
   }
 
+  /* ОБШИВКА. В самом Homeplanet корпус — не гладкая коробка, а
+     набор панелей с утопленными нишами, лючками и трубопроводом:
+     именно эта мелочь отличает корабль от макета, и её видно даже
+     на маленькой картинке. Сыплем её инстансами по силуэту — сотни
+     деталей стоят ОДНОГО вызова отрисовки. */
+  hullGreebles(g, R, L, def, faction);
+
   g.userData.muzzles = muzzles.length ? muzzles : [new THREE.Vector3(0, 0, -L * 0.5)];
   g.userData.pdPoints = pdPoints.length ? pdPoints : [new THREE.Vector3(0, 0, 0)];
   g.userData.engines = engines;
@@ -1774,13 +1781,16 @@ export function planetRings(inner, outer, seed = 1) {
     a *= 1 - Math.exp(-Math.pow((t - 0.62) / 0.02, 2)) * 0.9;
     a *= Math.min(1, t / 0.05) * Math.min(1, (1 - t) / 0.08);
     a = Math.min(1, a * 0.5);
-    const warm = 0.82 + 0.18 * Math.sin(t * 9 + seed);
+    /* Цвет — серо-бурая пыль, а не золото: в Homeplanet кольцо
+       Сатурна почти графитовое и читается силуэтом на фоне звёзд.
+       Золотая арка во весь экран смотрится нарядно ровно один раз. */
+    const warm = 0.80 + 0.20 * Math.sin(t * 9 + seed);
     for (let y = 0; y < 4; y++) {
       const o = (y * S + x) * 4;
-      img.data[o] = 235 * warm;
-      img.data[o + 1] = 208 * warm;
-      img.data[o + 2] = 176 * warm;
-      img.data[o + 3] = a * 255;
+      img.data[o] = 168 * warm;
+      img.data[o + 1] = 152 * warm;
+      img.data[o + 2] = 132 * warm;
+      img.data[o + 3] = a * 0.72 * 255;
     }
   }
   c.putImageData(img, 0, 0);
@@ -1798,7 +1808,7 @@ export function planetRings(inner, outer, seed = 1) {
   }
   const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
     map: tex, transparent: true, side: THREE.DoubleSide,
-    depthWrite: false, toneMapped: true, opacity: 0.95,
+    depthWrite: false, toneMapped: true, opacity: 0.8,
   }));
   m.rotation.x = -Math.PI / 2;
   m.renderOrder = -900;
@@ -1833,6 +1843,63 @@ export function buildNebula(radius = 5200, seed = 11) {
    обшивка со случайным разворотом и размером. Именно эта мелкая
    неоднородность («гриблы» на языке макетчиков) и отличает модель
    от коробки: глазу не за что зацепиться на ровной грани.  */
+/* Панельная обшивка на процедурный корпус. Дешёвый родственник
+   «стотысячника»: тот же приём, но три-четыре сотни деталей на
+   корабль — столько планшет тянет спокойно, а силуэт перестаёт
+   быть коробкой.
+
+   Детали кладём ТОЛЬКО по бортам и палубе, не сплошняком: пятно
+   мелочи по всей поверхности читается шумом, а полосами вдоль
+   корпуса — обшивкой. */
+const GREEBLE_BOX = new THREE.BoxGeometry(1, 1, 1);
+export function hullGreebles(g, R, L, def, faction) {
+  const big = def.cls === 'capital' || def.cls === 'carrier';
+  const count = big ? 420 : def.cls === 'escort' ? 150 : 260;
+  let n = (def.id ? def.id.length : 3) * 7717 + 104729;
+  const rnd2 = () => ((n = (n * 9301 + 49297) % 233280) / 233280);
+
+  const plate = mat(faction.style === 'stealth' ? 0x5a5a6e : 0x8e97a3,
+    { rough: 0.62, metal: 0.7, skin: true });
+  const niche = mat(0x2a2e35, { rough: 0.9, metal: 0.4 });
+  const lamp = mat(faction.color, { rough: 0.4, emissive: faction.color, ei: 1.5 });
+
+  /* Мельче и плотнее, чем кажется правильным на глаз в редакторе:
+     крупная деталь на борту читается пристройкой, а мелкая — фактурой.
+     Держим их в пределах силуэта, иначе вокруг корпуса висит мусор. */
+  const kinds = [
+    { m: plate, part: 0.5, sx: [0.06, 0.16], sy: [0.015, 0.035], sz: [0.06, 0.18] },
+    { m: niche, part: 0.36, sx: [0.035, 0.09], sy: [0.02, 0.06], sz: [0.04, 0.11] },
+    { m: lamp, part: 0.14, sx: [0.02, 0.055], sy: [0.008, 0.015], sz: [0.02, 0.07] },
+  ];
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+  for (const k of kinds) {
+    const num = Math.round(count * k.part);
+    const im = new THREE.InstancedMesh(GREEBLE_BOX, k.m, num);
+    for (let i = 0; i < num; i++) {
+      const u = rnd2() * 1.44 - 0.72;                 // вдоль корпуса
+      const side = rnd2() < 0.34;                     // палуба или борт
+      const sx = rnd2() < 0.5 ? -1 : 1;
+      const taper = 1 - Math.pow(Math.abs(u), 2.0) * 0.6;
+      if (side) {
+        pos.set(sx * R * 0.86 * taper, (rnd2() - 0.4) * R * 0.42, u * L * 0.5);
+      } else {
+        pos.set((rnd2() * 2 - 1) * R * 0.68 * taper, R * (rnd2() < 0.5 ? 0.3 : -0.28), u * L * 0.5);
+      }
+      scl.set(R * (k.sx[0] + rnd2() * (k.sx[1] - k.sx[0])) * 2,
+              R * (k.sy[0] + rnd2() * (k.sy[1] - k.sy[0])) * 2,
+              L * (k.sz[0] + rnd2() * (k.sz[1] - k.sz[0])) * 0.35);
+      e.set(0, side ? Math.PI / 2 : 0, 0);
+      q.setFromEuler(e);
+      m4.compose(pos, q, scl);
+      im.setMatrixAt(i, m4);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    im.frustumCulled = false;
+    g.add(im);
+  }
+}
+
 export function buildGreebleShip(count = 100000, seed = 7) {
   const g = new THREE.Group();
   let n = seed * 9301 + 49297;

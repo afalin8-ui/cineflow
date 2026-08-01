@@ -9,7 +9,7 @@ import {
   THREE, TacticalCamera, Controls, Fx, starfield, screenOf,
   clamp, rnd, disposeScene, IS_TOUCH,
 } from './engine.js';
-import { buildPlanet, buildNebula } from './models.js';
+import { buildPlanet, buildNebula, planetRings } from './models.js';
 import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
@@ -271,6 +271,12 @@ export function createGalaxy(ctx, camp) {
   for (const def of GALAXY_MAP.systems) {
     const radius = 3.0 + def.slots * 0.45;
     const g = buildPlanet(def.biome, radius, 1, def.id);
+    // Окольцованный мир видно на карте — за ним и в бою будет кольцо
+    if (def.rings) {
+      const r = planetRings(radius * 1.4, radius * 2.0, 1);
+      r.rotation.set(-Math.PI / 2 + 0.35, 0, 0.2);
+      g.add(r);
+    }
     g.position.set(def.pos[0] * SCALE * 0.55, def.pos[1] * SCALE * 0.42, def.pos[2] * SCALE * 0.55);
     // солнце считаем уже от итоговой позиции мира, иначе венец смотрит не туда
     g.userData.setSun(star.position.clone().sub(g.position).normalize());
@@ -760,7 +766,7 @@ export function createGalaxy(ctx, camp) {
     };
     ctx.startSpaceBattle({
       attacker, defender, playerSide: 'attacker', biome: toDef.biome,
-      difficulty: camp.difficulty,
+      difficulty: camp.difficulty, rings: !!toDef.rings,
       system: toDef.id,
       groundGun: to.buildings.includes('aogun') ? to.owner : null,
       title: `Штурм с блокады · ${toDef.name}`,
@@ -859,7 +865,7 @@ export function createGalaxy(ctx, camp) {
         // Флот из своих систем в трёх прыжках: долетит не сразу
         farReserve: farReserveFor(camp, camp.playerFaction, toId),
         defender, playerSide: 'attacker', biome: toDef.biome,
-        difficulty: camp.difficulty,
+        difficulty: camp.difficulty, rings: !!toDef.rings,
         system: toDef.id,
         // Противоорбитальное орудие защитника вмешивается в бой снизу
         groundGun: to.buildings.includes('aogun') ? to.owner : null,
@@ -1128,7 +1134,7 @@ export function createGalaxy(ctx, camp) {
         },
         playerSide: 'defender',
         biome: toDef.biome,
-        difficulty: camp.difficulty,
+        difficulty: camp.difficulty, rings: !!toDef.rings,
         system: toDef.id,
         groundGun: to.buildings.includes('aogun') ? to.owner : null,
         title: `Оборона · ${toDef.name}`,
