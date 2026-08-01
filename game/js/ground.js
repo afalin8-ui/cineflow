@@ -842,7 +842,8 @@ export function createGroundBattle(ctx, config) {
     const p = new THREE.Vector3(x.pos.x + Math.cos(a) * r, 0, x.pos.z + Math.sin(a) * r);
     p.y = terrainH(p.x, p.z);
     fx.laser(p.clone().setY(p.y + 260), p, { color: 0xffb060, width: 2.6, life: 0.6 });
-    fx.explosion(p, 26, 0xffa050);
+    fx.explosion(p, 26, 0xffa050, { ground: true, chain: 5 });
+    fx.ringFlat(p, 10, 150, 0xffc890, 1.4);
     fx.shake = 1;
     scorch.drop(p.x, p.y, p.z, rnd(0, 6.28), 78, 78);
     // Пепелище: техника здесь вязнет — это тоже часть цены
@@ -876,11 +877,24 @@ export function createGroundBattle(ctx, config) {
     const sky = ground.clone().setY(ground.y + 240);
 
     if (d.id === 'strike') {
-      // Главный калибр сверху: столб света и воронка
-      fx.laser(sky, ground, { color: 0x9fe8ff, width: 1.8, life: 0.7 });
-      fx.explosion(ground, d.radius * 0.6, 0xbfe8ff);
-      fx.ring(ground, d.radius * 0.3, d.radius * 1.8, 0x9fe8ff, 0.55);
-      fx.shake = Math.min(1, fx.shake + 0.5);
+      /* Главный калибр сверху бьёт ЗАЛПОМ: четыре столба один за
+         другим по площади, а не единственная вспышка. Урон при этом
+         считается один раз — залп тут для читаемости, а не для
+         баланса. Столбы короткие и тонкие: длинный широкий цилиндр
+         в аддитивном смешивании засвечивает пол-экрана. */
+      const shots = 4;
+      for (let i = 0; i < shots; i++) {
+        fx.delay(i * 0.16, () => {
+          const a = rnd(0, Math.PI * 2), r = i === 0 ? 0 : rnd(6, d.radius * 0.55);
+          const at = new THREE.Vector3(ground.x + Math.cos(a) * r, 0, ground.z + Math.sin(a) * r);
+          at.y = terrainH(at.x, at.z);
+          fx.laser(at.clone().setY(at.y + 240), at, { color: 0x9fe8ff, width: 1.15, life: 0.5 });
+          fx.explosion(at, d.radius * 0.35, 0xbfe8ff, { ground: true });
+          fx.ringFlat(at, d.radius * 0.2, d.radius * 1.4, 0x7fc8e8, 0.5);
+          fx.shake = Math.min(1, fx.shake + 0.22);
+          scorch.drop(at.x, at.y, at.z, rnd(0, 6.28), d.radius * 0.6, d.radius * 0.6);
+        });
+      }
       splash(ground, d.radius, d.dmg, 'arty', 'me');
 
     } else if (d.id === 'drop') {
@@ -889,9 +903,11 @@ export function createGroundBattle(ctx, config) {
         const a = (i / d.count) * Math.PI * 2;
         const x = ground.x + Math.cos(a) * 11, z = ground.z + Math.sin(a) * 11;
         if (isWater(x, z)) continue;
-        fx.beam(new THREE.Vector3(x, ground.y + 400, z), new THREE.Vector3(x, ground.y, z),
+        const at = new THREE.Vector3(x, terrainH(x, z), z);
+        fx.beam(new THREE.Vector3(x, at.y + 400, z), at,
           { color: 0x8fffc8, width: 2.2, life: 0.6 });
-        fx.ring(new THREE.Vector3(x, ground.y + 0.5, z), 3, 16, 0x8fffc8, 0.6);
+        fx.ringFlat(at.clone().setY(at.y + 0.4), 3, 22, 0x8fffc8, 0.6);
+        fx.smoke(at, 5, 0x7d7466, 4);      // пыль из-под севшей капсулы
         const u = makeUnit('me', d.unit, x, z);
         u.hp = u.maxHp;
       }
@@ -956,11 +972,26 @@ export function createGroundBattle(ctx, config) {
       return;
     }
     const color = mine ? 0x9fe8ff : 0xffb070;
-    fx.tracer(from, target.pos, color, 0.1, w.type === 'cannon' ? 0.35 : 0.2);
-    fx.flash(from, w.type === 'cannon' ? 2.6 : 1.4, 0xffe0b0, 0.14);
+    /* Пушка бьёт болванкой, пулемёт — очередью. Болванка ЛЕТИТ:
+       коротким отрезком от ствола к цели. Мгновенная линия во всю
+       дистанцию читается как подсветка цели, а не как выстрел. */
+    if (w.type === 'cannon' || w.type === 'at') {
+      // ПТУР летит медленнее болванки и тянет дымный след
+      const rocket = w.type === 'at';
+      fx.shot(from, target.pos, {
+        color, width: rocket ? 0.4 : 0.45, len: rocket ? 5 : 8,
+        speed: rocket ? 150 : 340, trail: rocket,
+      });
+      fx.flash(from, 3.2, 0xffe0b0, 0.16);
+      fx.sparks(from, 3, 0xffc890, 16);
+      fx.puff(from, 1.5, 0x9a9186, 0.5);
+    } else {
+      fx.tracer(from, target.pos, color, 0.1, 0.2);
+      fx.flash(from, 1.4, 0xffe0b0, 0.14);
+    }
     const dmg = w.dmg * aiMul(e.side);
     if (w.splash) {
-      fx.explosion(target.pos, w.splash * 0.7, 0xffa050);
+      fx.explosion(target.pos, w.splash * 0.7, 0xffa050, { ground: true });
       splash(target.pos, w.splash, dmg, w.type, e.side);
     } else {
       damage(target, dmg, w.type);
@@ -990,7 +1021,8 @@ export function createGroundBattle(ctx, config) {
     fx.flash(_v, 1.3, 0xffe0a0, 0.09);
   }
   function dest_impact(p) {
-    fx.explosion(p.to, p.w.splash || 8, 0xffa050);
+    // Артиллерийский разрыв: пыль по грунту, обломки и волна
+    fx.explosion(p.to, p.w.splash || 8, 0xffa050, { ground: true });
     fx.shake = Math.min(1, fx.shake + 0.14);
     splash(p.to, p.w.splash || 8, p.w.dmg * (p.mul || 1), p.w.type, p.side);
   }
@@ -1234,6 +1266,7 @@ export function createGroundBattle(ctx, config) {
         fx.shake = Math.min(1, fx.shake + 0.12);
         fx.sparks(hit, 9, 0xffd08a, 22);
         splash(hit, def.weapon.splash, def.weapon.dmg * aiMul(u.side), def.weapon.type, u.side);
+        fx.ringFlat(hit, def.weapon.splash * 0.5, def.weapon.splash * 3, 0xd8c2a0, 0.5);
       }
       return;
     }

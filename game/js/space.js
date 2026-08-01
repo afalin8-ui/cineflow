@@ -523,8 +523,15 @@ export function createSpaceBattle(ctx, config) {
     e.fled = true;
     e.dead = true;
     if (e.hyper && e.hyper.vortex) e.hyper.vortex.follow = null;
+    /* Росчерк по курсу — то, ради чего гипер вообще смотрится:
+       корабль не исчезает, а вытягивается в нитку и уходит. Луч
+       узкий и длинный, гаснет за треть секунды. */
+    const away = _v.copy(e.pos).addScaledVector(e.dir, e.radius * 90);
+    fx.beam(e.pos, away, { color: 0xbfe0ff, width: e.radius * 0.5, life: 0.32 });
+    fx.beam(e.pos, away, { color: 0xffffff, width: e.radius * 0.16, life: 0.24 });
     fx.ring(e.pos, e.radius * 2, e.radius * 22, 0x9fd0ff, 0.7);
     fx.flash(e.pos, e.radius * 4, 0xdfefff, 0.5);
+    fx.sparks(e.pos, 10, 0xcfe6ff, e.radius * 6, false);
     scene.remove(e.obj);
     state.jumped[e.side].push(e.def.id);
     state.selection = state.selection.filter(x => x !== e);
@@ -623,6 +630,10 @@ export function createSpaceBattle(ctx, config) {
         sh.vel.set(0, 0, -sign * def.maxSpeed * 2.6);
         sh.moveTo = new THREE.Vector3(pos.x * 0.4, 0, sign * 120);
         fx.flash(pos, def.radius * 5, 0xdfefff, 0.6);
+        // Нитка позади: корабль будто вытянулся из точки выхода
+        fx.beam(pos.clone().addScaledVector(back, def.radius * 70), pos,
+          { color: 0xbfe0ff, width: def.radius * 0.4, life: 0.3 });
+        fx.ring(pos, def.radius * 1.5, def.radius * 12, 0x9fd0ff, 0.6);
       }
     }
     fx.shake = Math.min(1, fx.shake + 0.3);
@@ -642,9 +653,16 @@ export function createSpaceBattle(ctx, config) {
     if (e.dead) return;
     e.dead = true;
     const size = e.kind === 'ship' ? e.radius * 1.6 : e.kind === 'craft' ? 5 : 4;
-    fx.explosion(e.pos, size, e.kind === 'ship' ? 0xffa050 : 0xffc070);
+    /* В невесомости обломки не падают (gravity 0), а большой корабль
+       не взрывается разом: у него рвутся отсеки один за другим —
+       отсюда цепочка вторичных вспышек. */
+    fx.explosion(e.pos, size, e.kind === 'ship' ? 0xffa050 : 0xffc070, {
+      gravity: 0, chain: e.kind === 'ship' ? Math.round(e.radius / 7) : 0,
+    });
     if (e.kind === 'ship') {
       fx.shake = Math.min(1, fx.shake + e.radius / 40);
+      fx.ring(e.pos, size * 0.5, size * 4.5, 0xffb070, 0.7);
+      fx.debris(e.pos, Math.round(e.radius * 0.6), 0x7a6a56, e.radius * 3, 0);
       for (let i = 0; i < 3; i++) {
         fx.flash(_v.copy(e.pos).add(_v2.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(e.radius)),
           e.radius, 0xff8040, 0.8);
@@ -914,11 +932,25 @@ export function createSpaceBattle(ctx, config) {
         p.dir.add(_v.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(g.def.spread || 0.05)).normalize();
         p.wobble = rnd(0, 6.28);
       }
+      // Старт ракет: вспышка в трубах и клубы отработанного топлива
       fx.flash(from, e.radius * 0.8, 0xffd0a0, 0.2);
+      fx.sparks(from, 6, 0xffc890, 30, false);
+      for (let i = 0; i < 3; i++) fx.puff(from, e.radius * 0.3, 0x9a9186, 0.6);
       return;
     }
-    // Главный калибр — лазер: белое ядро в цветном ореоле и ударное кольцо
-    fx.laser(from, t.pos, { color, width: 0.9 + e.radius * 0.07, life: 0.5 });
+    /* Главный калибр — лазер: белое ядро в цветном ореоле, ударное
+       кольцо на цели, послесвечение канала и брызги обломков
+       НАВСТРЕЧУ выстрелу. Обломки, летящие обратно к стрелявшему, —
+       мелочь, по которой попадание читается как удар по броне,
+       а не как подсветка цели. */
+    const w = 0.9 + e.radius * 0.07;
+    fx.laser(from, t.pos, { color, width: w, life: 0.5 });
+    fx.delay(0.06, () => fx.beam(from, t.pos, { color, width: w * 0.7, life: 0.45 }));
+    fx.sparks(t.pos, 8, 0xfff0c0, 34, false);
+    _v.subVectors(from, t.pos).normalize();
+    for (let i = 0; i < 4; i++) {
+      fx.debris(_v2.copy(t.pos).addScaledVector(_v, 2), 1, 0x8a7a66, 26, 0);
+    }
     fx.shake = Math.min(1, fx.shake + 0.14);
     damage(t, g.def.dmg * aiMul(e.side), g.def.type);
   }
@@ -1075,6 +1107,17 @@ export function createSpaceBattle(ctx, config) {
     }
     p.pos.addScaledVector(p.dir, p.speed * dt);
     p.obj.quaternion.copy(quatFromDir(p.dir));
+    /* Дымный след. Кладём его по времени, а не каждый кадр: на
+       четырёхкратной скорости кадров мало, а на однократной их
+       много, и в обоих случаях след должен быть одинаковой
+       густоты. */
+    p.trailAt = (p.trailAt || 0) - dt;
+    if (p.trailAt <= 0) {
+      p.trailAt = 0.035;
+      const back = _v.copy(p.pos).addScaledVector(p.dir, -3);
+      fx.puff(back, p.weapon === 'torp' ? 2.2 : 1.4, 0x8d8479, 0.5);
+      fx.flash(back, p.weapon === 'torp' ? 2.6 : 1.7, 0xffb060, 0.12);
+    }
     if (p.wobble !== undefined) {
       p.wobble += dt * 9;
       p.pos.y += Math.sin(p.wobble) * 6 * dt;
@@ -1791,7 +1834,28 @@ export function createSpaceBattle(ctx, config) {
 
   // Состояние боя наружу — по нему автотесты проверяют скрытность,
   // гипер и боезапас. На игру не влияет, читать можно из консоли.
-  if (typeof window !== 'undefined') window.__sp = state;
+  /* Наружу — для автотестов: свести флоты в упор, навести камеру,
+     отправить корабль в гипер. Всё это в бою делается руками и
+     минутами, а проверять эффекты надо кадрами. */
+  if (typeof window !== 'undefined') {
+    window.__sp = state;
+    state.camTest = (x, y, z, dist) => {
+      tcam.focus(new THREE.Vector3(x, y, z), dist);
+      tcam.apply(1, true);
+    };
+    state.closeInTest = (gap = 260) => {
+      const a = state.ships.filter(s => !s.dead && s.side === 'attacker');
+      const d = state.ships.filter(s => !s.dead && s.side === 'defender');
+      a.forEach((s, i) => { s.pos.set((i % 4 - 1.5) * 60, rnd(-20, 20), gap / 2); s.moveTo = null; });
+      d.forEach((s, i) => { s.pos.set((i % 4 - 1.5) * 60, rnd(-20, 20), -gap / 2); s.moveTo = null; });
+      return { attacker: a.length, defender: d.length };
+    };
+    state.jumpTest = () => {
+      const s = state.ships.find(x => !x.dead && x.side === state.playerSide && !x.hyper);
+      if (s) beginJump(s);
+      return s ? s.def.name : null;
+    };
+  }
   return { scene, camera: tcam.cam, update, dispose, state };
 }
 

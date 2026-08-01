@@ -504,6 +504,7 @@ export function screenOf(pos, camera, w, h) {
 const BEAM_GEO = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true);
 BEAM_GEO.translate(0, 0.5, 0);
 const RING_GEO = new THREE.RingGeometry(0.82, 1, 44);
+const UP = new THREE.Vector3(0, 1, 0);
 
 function glowTexture() {
   const c = document.createElement('canvas');
@@ -535,7 +536,13 @@ export class Fx {
     this.group.frustumCulled = false;
     scene.add(this.group);
     this.shake = 0;
+    /* Отложенные эффекты крутятся на игровом времени, а не на
+       setTimeout: иначе на паузе взрыв догорит без игрока, а на
+       четырёхкратной скорости отстанет от боя. */
+    this.timers = [];
   }
+
+  delay(after, fn) { this.timers.push({ t: after, fn }); }
 
   _beam() {
     for (const b of this.beams) if (!b.live) return b;
@@ -571,7 +578,7 @@ export class Fx {
 
   beam(from, to, opts = {}) {
     const b = this._beam();
-    b.live = true; b.t = 0; b.life = opts.life ?? 0.35;
+    b.live = true; b.t = 0; b.life = opts.life ?? 0.35; b.travel = null; b.trail = null;
     b.w = opts.width ?? 1.6;
     b.mesh.visible = true;
     b.mesh.material.color.set(opts.color ?? 0xff9d5c);
@@ -586,6 +593,77 @@ export class Fx {
 
   tracer(from, to, color = 0xffe08a, life = 0.12, width = 0.28) {
     return this.beam(from, to, { color, life, width });
+  }
+
+  /* ── ЛЕТЯЩИЙ СНАРЯД.
+     Трассер рисует всю линию разом — это правильно для пулемётной
+     очереди, но танковый выстрел так превращается в мигающую нитку
+     от ствола до цели. Здесь короткий отрезок ЕДЕТ от ствола к цели
+     за отведённое время: видно, что летит болванка, а не что кто-то
+     провёл линейкой. */
+  shot(from, to, opts = {}) {
+    const b = this._beam();
+    const dir = new THREE.Vector3().subVectors(to, from);
+    const dist = dir.length() || 0.001;
+    dir.divideScalar(dist);
+    b.live = true; b.t = 0;
+    b.life = opts.life ?? Math.max(0.12, dist / (opts.speed ?? 320));
+    b.w = opts.width ?? 0.5;
+    b.travel = { from: from.clone(), dir, dist, len: Math.min(opts.len ?? 9, dist * 0.6) };
+    // Ракете нужен след: без него она неотличима от болванки
+    b.trail = opts.trail ? { every: 0.03, at: 0 } : null;
+    b.mesh.visible = true;
+    b.mesh.material.color.set(opts.color ?? 0xffe08a);
+    b.mesh.material.opacity = 1;
+    b.mesh.quaternion.setFromUnitVectors(UP, dir);
+    b.mesh.scale.set(b.w, b.travel.len, b.w);
+    b.mesh.position.copy(from);
+    return b;
+  }
+
+  /* Кольцо, ЛЕЖАЩЕЕ на земле, а не развёрнутое к зрителю. Ударная
+     волна по грунту читается только так: повёрнутое к камере кольцо
+     на земле выглядит нимбом, висящим в воздухе. */
+  ringFlat(pos, r0, r1, color = 0xffd08a, life = 0.5) {
+    const r = this.ring(pos, r0, r1, color, life);
+    r.flat = true;
+    r.mesh.rotation.set(-Math.PI / 2, 0, 0);
+    return r;
+  }
+
+  /* Обломки: тёмные быстрые крупицы с дымным следом. Отличаются от
+     искр тем, что летят дальше, гаснут медленнее и тянут за собой
+     дым — из-за них взрыв выглядит разрушением, а не вспышкой. */
+  debris(pos, count = 6, color = 0x6a5a48, speed = 30, gravity = -42) {
+    const n = clamp(Math.round(count * (IS_TOUCH ? 0.5 : 1)), 1, 16);
+    for (let i = 0; i < n; i++) {
+      const s = this._sprite();
+      s.live = true; s.t = 0; s.life = rnd(0.7, 1.5);
+      s.r0 = rnd(0.9, 2.2); s.r1 = rnd(0.4, 1.0);
+      s.mesh.visible = true;
+      s.mesh.material.color.set(color);
+      s.mesh.position.copy(pos);
+      s.vel = new THREE.Vector3(rnd(-1, 1), rnd(0.3, 1.5), rnd(-1, 1))
+        .normalize().multiplyScalar(speed * rnd(0.5, 1.4));
+      s.grav = gravity;
+      s.smokeEvery = 0.09;      // след: клуб каждые несколько сотых
+      s.smokeAt = 0;
+    }
+  }
+
+  // Клуб выхлопа: маленький, всплывающий, быстро тающий. Ракета
+  // без следа читается как летящая искра, а не как ракета.
+  puff(pos, size = 1.6, color = 0x8a8378, life = 0.55) {
+    const s = this._sprite();
+    s.live = true; s.t = 0; s.life = life;
+    s.r0 = size; s.r1 = size * 3.4;
+    s.mesh.visible = true;
+    s.mesh.material.color.set(color);
+    s.mesh.position.copy(pos);
+    s.vel = new THREE.Vector3(rnd(-1, 1), rnd(0.2, 1.4), rnd(-1, 1));
+    s.grav = 0;
+    s.fadeIn = true;
+    return s;
   }
 
   // Главный калибр — именно лазер: добела раскалённое ядро,
@@ -605,7 +683,7 @@ export class Fx {
   // Расходящееся кольцо: попадание и взрывы читаются мгновенно
   ring(pos, r0, r1, color = 0x9fe8ff, life = 0.4) {
     const s = this._ringObj();
-    s.live = true; s.t = 0; s.life = life;
+    s.live = true; s.t = 0; s.life = life; s.flat = false;
     s.r0 = r0; s.r1 = r1;
     s.mesh.visible = true;
     s.mesh.material.color.set(color);
@@ -626,7 +704,7 @@ export class Fx {
     }));
     m.visible = false;
     m.frustumCulled = false;
-    const r = { mesh: m, live: false, t: 0, life: 1, r0: 1, r1: 2 };
+    const r = { mesh: m, live: false, t: 0, life: 1, r0: 1, r1: 2, flat: false };
     this.rings.push(r);
     this.group.add(m);
     return r;
@@ -681,11 +759,36 @@ export class Fx {
     }
   }
 
-  explosion(pos, size = 10, color = 0xffa050) {
+  /* Взрыв. Кольцо ударной волны сюда НЕ зашито: его рисуют на местах
+     вызова, и два кольца в аддитивном смешивании белят пол-экрана.
+     Просят его отдельно — `opts.ground` кладёт волну по грунту.
+     `opts.chain` — серия догорающих вторичных взрывов: так гибнет
+     большой корабль, у которого рвутся погреба. */
+  explosion(pos, size = 10, color = 0xffa050, opts = {}) {
     this.flash(pos, size, 0xffffff, 0.16);
     this.flash(pos, size * 1.5, color, 0.55);
     this.sparks(pos, Math.round(size * 1.1), 0xffe0a0, size * 2.4);
     this.smoke(pos, size * 0.8, 0x3c352c, Math.round(size * 0.35));
+    if (opts.debris !== false) {
+      this.debris(pos, Math.round(size * 0.5), 0x5b4f40, size * 1.6,
+        opts.gravity === undefined ? -42 : opts.gravity);
+    }
+    if (opts.ground) {
+      // Пыль по грунту и волна, лежащая на земле
+      this.ringFlat(pos, size * 0.4, size * 3.2, 0xb9a487, 0.5);
+      this.smoke(pos, size * 1.1, 0x6b5f4c, Math.round(size * 0.4));
+    }
+    if (opts.chain) {
+      for (let i = 0; i < opts.chain; i++) {
+        this.delay(rnd(0.15, 1.1), () => {
+          const p = pos.clone().add(new THREE.Vector3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1))
+            .multiplyScalar(size * 0.55));
+          this.flash(p, size * rnd(0.35, 0.7), 0xffffff, 0.12);
+          this.flash(p, size * rnd(0.5, 1.0), color, 0.4);
+          this.sparks(p, 5, 0xffd090, size * 1.6, opts.gravity !== 0);
+        });
+      }
+    }
     const n = clamp(Math.round(size * (IS_TOUCH ? 0.6 : 0.9)), 3, 14);
     for (let i = 0; i < n; i++) {
       const s = this._sprite();
@@ -704,7 +807,22 @@ export class Fx {
       if (!b.live) continue;
       b.t += dt;
       const k = 1 - b.t / b.life;
-      if (k <= 0) { b.live = false; b.mesh.visible = false; continue; }
+      if (k <= 0) { b.live = false; b.mesh.visible = false; b.travel = null; continue; }
+      // Летящий снаряд не гаснет и не худеет — он едет
+      if (b.travel) {
+        const tr = b.travel;
+        const s = (1 - k) * tr.dist;
+        b.mesh.position.copy(tr.from).addScaledVector(tr.dir, Math.max(0, s - tr.len));
+        b.mesh.material.opacity = 1;
+        if (b.trail) {
+          b.trail.at -= dt;
+          if (b.trail.at <= 0) {
+            b.trail.at = b.trail.every;
+            this.puff(b.mesh.position, 1.1, 0x9a9186, 0.5);
+          }
+        }
+        continue;
+      }
       b.mesh.material.opacity = k;
       b.mesh.scale.x = b.mesh.scale.z = b.w * (0.35 + k * 0.65);
     }
@@ -719,6 +837,15 @@ export class Fx {
         s.mesh.position.addScaledVector(s.vel, dt);
         s.vel.multiplyScalar(1 - dt * 2.2);
         if (s.grav) s.vel.y += s.grav * dt;
+        // Обломок тянет за собой дым. Клубы берутся из того же пула,
+        // поэтому след ничего не стоит сверх уже отведённого бюджета
+        if (s.smokeEvery) {
+          s.smokeAt -= dt;
+          if (s.smokeAt <= 0) {
+            s.smokeAt = s.smokeEvery;
+            this.puff(s.mesh.position, 0.9, 0x51483c, 0.45);
+          }
+        }
       }
       // дым не выпрыгивает из ниоткуда, а наплывает
       if (s.fadeIn) s.mesh.material.opacity *= Math.min(1, k * 6);
@@ -730,7 +857,14 @@ export class Fx {
       if (k >= 1) { r.live = false; r.mesh.visible = false; continue; }
       r.mesh.scale.setScalar(lerp(r.r0, r.r1, Math.sqrt(k)));
       r.mesh.material.opacity = (1 - k) * (1 - k);
-      if (this.camera) r.mesh.quaternion.copy(this.camera.quaternion);
+      // Лежащее кольцо разворачивать к камере нельзя: ударная волна
+      // по грунту тут же превратится в нимб, висящий в воздухе
+      if (this.camera && !r.flat) r.mesh.quaternion.copy(this.camera.quaternion);
+    }
+    for (let i = this.timers.length - 1; i >= 0; i--) {
+      const tm = this.timers[i];
+      tm.t -= dt;
+      if (tm.t <= 0) { this.timers.splice(i, 1); tm.fn(); }
     }
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 2);
   }
