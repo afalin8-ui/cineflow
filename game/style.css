@@ -163,6 +163,24 @@ select {
   font-size: 12px; padding: 9px 6px; text-align: center;
   background: var(--panel); backdrop-filter: blur(8px);
 }
+/* Отряды: три кнопки в строку под столбиком. Коснулся — прыгнул
+   к отряду, придержал — записал. Цифровых клавиш на планшете нет,
+   а без отрядов войсками не поуправляешь. */
+/* Сеткой, а не строкой: три кнопки в ряд дают по 27 px на палец —
+   мимо такой попадёшь через раз. В две колонки выходит по 43 px,
+   то есть почти положенные 44. */
+.groups { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.groups button:nth-child(3) { grid-column: 1 / -1; }
+.groups button {
+  min-width: 0; padding: 12px 0; font-family: var(--mono);
+  font-size: 13px; background: var(--panel); backdrop-filter: blur(8px);
+  position: relative; color: var(--muted);
+}
+.groups button.has { color: var(--text); border-color: var(--accent); }
+.groups button.has::after {
+  content: attr(data-n); position: absolute; top: 2px; right: 4px;
+  font-size: 8.5px; color: var(--accent);
+}
 
 /* нижняя панель */
 .botpanel {

@@ -455,6 +455,9 @@ export function createGroundBattle(ctx, config) {
     time: 0, speed: 1, paused: false,
     selection: [], placing: null, rallyMode: false,
     playerSide: 'me',
+    /* Управление: липкий режим «идти с боем», три отряда под кнопками
+       и перебор скоплений по повторному касанию рода войск. */
+    amove: false, groups: {}, cycle: { q: null, at: -9, i: 0 },
     /* Орбитальная поддержка: что уцелело в космосе, то и доступно.
        aiming — выбранная, но ещё не наведённая способность; следующее
        касание по полю указывает ей точку. */
@@ -1232,7 +1235,17 @@ export function createGroundBattle(ctx, config) {
     }
 
     if (u.moveTo) {
-      if (moveGround(u, u.moveTo, dt)) u.moveTo = null;
+      /* «Идти с боем»: встретили противника в пределах выстрела —
+         встали и работаем по нему, пока не кончится. Без остановки
+         артиллерия и вовсе не стреляет (ей нужен упор), а колонна
+         проезжает мимо цели и получает в спину. */
+      if (u.amove && u.target && !u.target.dead && def.weapon
+          && u.pos.distanceTo(u.target.pos) < def.weapon.range) {
+        aimTurret(u, u.target, dt);
+        tryFire(u, u.target, dt);
+        return;
+      }
+      if (moveGround(u, u.moveTo, dt)) { u.moveTo = null; u.amove = false; }
       // на ходу стреляют все, кроме артиллерии
       if (u.target && def.weapon && !def.weapon.arc) { aimTurret(u, u.target, dt); tryFire(u, u.target, dt); }
       return;
@@ -1474,6 +1487,10 @@ export function createGroundBattle(ctx, config) {
       <button data-q="worker">${sides.me.doc.eco.worker ? 'Сбор-<br>щики' : 'Экстрак-<br>торы'}</button>
       <button data-role="buildmenu">Строить</button>
       <button data-role="boxmode">Рамка</button>
+      <button data-role="amove">С боем</button>
+      <div class="groups" data-role="groups">
+        <button data-g="1">1</button><button data-g="2">2</button><button data-g="3">3</button>
+      </div>
     </div>
     <div class="buildbar" data-role="buildbar" style="display:none"></div>
     <div class="orbitbar" data-role="orbitbar"></div>
@@ -1498,8 +1515,8 @@ export function createGroundBattle(ctx, config) {
     `<div class="wtags">${battleTags.map(t =>
       `<span class="wtag">${t.name}</span>`).join('')}</div>`;
   $('hint').innerHTML = IS_TOUCH
-    ? 'Касание по своему — выбрать · по врагу — атаковать · по земле — идти · тянуть — карта · щипок — приближение · долгое нажатие — рамка'
-    : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · WASD — карта';
+    ? 'Касание по своему — выбрать · по врагу — атаковать · по земле — идти · тянуть — карта · щипок — приближение · долгое нажатие — рамка · отряд записывается долгим нажатием на цифру'
+    : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · WASD — карта · отряд: удержать цифру справа';
 
   hud.querySelectorAll('[data-speed]').forEach(b => {
     b.onclick = () => {
@@ -1516,17 +1533,25 @@ export function createGroundBattle(ctx, config) {
       const q = b.dataset.q;
       /* У клана без сборщиков та же кнопка собирает экстракторы:
          это его добыча, и смотреть игрок будет туда же. */
-      state.selection = (q === 'worker' && !sides.me.doc.eco.worker)
+      const list = (q === 'worker' && !sides.me.doc.eco.worker)
         ? state.buildings.filter(b => !b.dead && b.side === 'me' && b.def.drain)
         : state.units.filter(u => !u.dead && u.side === 'me' && (
           q === 'army' ? u.def.id !== 'worker'
             : q === 'worker' ? u.def.id === 'worker'
             : q === 'infantry' ? u.cls === 'infantry'
             : u.cls === 'vehicle' && u.def.id !== 'worker' || u.air));
-      if (state.selection.length) {
-        const c = new THREE.Vector3();
-        for (const e of state.selection) c.add(e.pos);
-        tcam.focus(c.divideScalar(state.selection.length));
+      /* Первое касание выделяет всех и показывает середину, каждое
+         следующее перебрасывает камеру к следующему скоплению —
+         выделение при этом не трогаем, иначе кнопка перестанет
+         быть кнопкой «выбрать всю пехоту». */
+      const again = state.cycle.q === q && state.time - state.cycle.at < 4;
+      state.cycle = { q, at: state.time, i: again ? state.cycle.i + 1 : 0 };
+      if (!again) {
+        state.selection = list;
+        focusOn(list);
+      } else {
+        const packs = clustersOf(list);
+        if (packs.length) focusOn(packs[state.cycle.i % packs.length]);
       }
       refreshSel();
     };
@@ -1534,6 +1559,83 @@ export function createGroundBattle(ctx, config) {
 
   const boxBtn = $('boxmode');
   boxBtn.onclick = () => controls.setBoxMode(!controls.boxMode);
+
+  /* ── ПРИКАЗ «ИДТИ С БОЕМ» ─────────────────────────────────
+     Обычный приказ идти гонит колонну мимо противника: стреляют
+     на ходу, но не останавливаются и проезжают дальше. «С боем» —
+     это движение к точке с остановкой на каждого встречного.
+     Режим липкий, как «Рамка»: на планшете переключаться перед
+     каждым приказом — это лишнее касание в самый неподходящий
+     момент. */
+  const amoveBtn = $('amove');
+  amoveBtn.onclick = () => {
+    state.amove = !state.amove;
+    amoveBtn.classList.toggle('on', state.amove);
+    toast(state.amove
+      ? 'Идти с боем: войска будут останавливаться на каждого встречного'
+      : 'Обычный марш: войска идут не задерживаясь');
+  };
+
+  /* ── ОТРЯДЫ ───────────────────────────────────────────────
+     Цифровых клавиш на планшете нет, поэтому три кнопки:
+     коснулся — выбрал отряд и прыгнул к нему камерой, придержал —
+     записал в него то, что выделено сейчас. */
+  const groupBtns = hud.querySelectorAll('[data-g]');
+  for (const b of groupBtns) {
+    const id = b.dataset.g;
+    let held = false, timer = null;
+    const save = () => {
+      const list = state.selection.filter(s => !s.dead && s.side === 'me' && s.kind === 'unit');
+      if (!list.length) { toast('Сначала выдели войска, потом придержи кнопку отряда'); return; }
+      state.groups[id] = list.slice();
+      b.classList.add('has');
+      b.dataset.n = list.length;
+      toast(`Отряд ${id}: ${list.length} · записан`);
+    };
+    const pick = () => {
+      const list = (state.groups[id] || []).filter(s => !s.dead);
+      state.groups[id] = list;
+      if (!list.length) { toast(`Отряд ${id} пуст — выдели войска и придержи кнопку`); return; }
+      state.selection = list.slice();
+      focusOn(list);
+      refreshSel();
+    };
+    b.addEventListener('pointerdown', () => {
+      held = false;
+      timer = setTimeout(() => { held = true; save(); }, 550);
+    });
+    const up = () => {
+      clearTimeout(timer);
+      if (!held) pick();
+      held = false;
+    };
+    b.addEventListener('pointerup', up);
+    b.addEventListener('pointerleave', () => { clearTimeout(timer); held = false; });
+    b.addEventListener('contextmenu', e => e.preventDefault());
+  }
+
+  function focusOn(list) {
+    if (!list.length) return;
+    const c = new THREE.Vector3();
+    for (const e of list) c.add(e.pos);
+    tcam.focus(c.divideScalar(list.length));
+  }
+
+  /* Повторное касание по кнопке рода войск перебирает скопления.
+     Пехота обычно стоит в двух-трёх местах карты, и «показать
+     центр всех сразу» — это точка в чистом поле между ними. */
+  function clustersOf(list) {
+    const rest = list.slice(), out = [];
+    while (rest.length) {
+      const seed = rest.shift();
+      const pack = [seed];
+      for (let i = rest.length - 1; i >= 0; i--) {
+        if (rest[i].pos.distanceTo(seed.pos) < 70) pack.push(...rest.splice(i, 1));
+      }
+      out.push(pack);
+    }
+    return out.sort((a, b) => b.length - a.length);
+  }
 
   const buildbar = $('buildbar');
   $('buildmenu').onclick = () => {
@@ -1670,17 +1772,31 @@ export function createGroundBattle(ctx, config) {
       return true;
     }
     if (!world) return false;
+    /* Строй разворачиваем по направлению марша: колонна, пришедшая
+       в точку боком, первые полминуты разворачивается сама и всё это
+       время получает в борт. Пехоте даём тесный шаг, технике
+       свободный — иначе танки толкаются и лезут друг сквозь друга. */
+    const c = new THREE.Vector3();
+    for (const u of units) c.add(u.pos);
+    c.divideScalar(units.length);
+    const ang = Math.atan2(world.x - c.x, world.z - c.z);
+    const ca = Math.cos(ang), sa = Math.sin(ang);
     const n = units.length, cols = Math.ceil(Math.sqrt(n));
+    const step = units.every(u => u.cls === 'infantry') ? 6 : 10;
     units.forEach((u, i) => {
-      const col = i % cols, row = Math.floor(i / cols);
-      const d = world.clone().add(_v.set((col - (cols - 1) / 2) * 9, 0, (row - (cols - 1) / 2) * 9));
+      const col = (i % cols) - (cols - 1) / 2;
+      const row = Math.floor(i / cols) - (cols - 1) / 2;
+      const ox = col * step, oz = row * step;
+      const d = world.clone().add(_v.set(ox * ca - oz * sa, 0, ox * sa + oz * ca));
       d.y = terrainH(d.x, d.z);
       u.moveTo = d;
       u.forced = null;
       u.target = null;
+      // «С боем»: идём к точке, но останавливаемся на каждого встречного
+      u.amove = state.amove;
       if (u.def.id === 'worker') u.field = null;
     });
-    fx.flash(world, 7, 0x8fffc8, 0.5);
+    fx.flash(world, 7, state.amove ? 0xffb060 : 0x8fffc8, 0.5);
     return true;
   }
 
@@ -1956,7 +2072,7 @@ export function createGroundBattle(ctx, config) {
       const stop = document.createElement('button');
       stop.className = 'act';
       stop.innerHTML = '<b>Стоп</b><small>Отменить приказ</small>';
-      stop.onclick = () => { for (const u of units) { u.moveTo = null; u.forced = null; } };
+      stop.onclick = () => { for (const u of units) { u.moveTo = null; u.forced = null; u.amove = false; } };
       acts.appendChild(stop);
     }
   }
@@ -2082,6 +2198,8 @@ export function createGroundBattle(ctx, config) {
     state.setDocTest = d => { sides.me.doc = d; };
     state.landTest = LAND;
     state.isWaterTest = (x, z) => isWater(x, z);
+    state.orderTest = (x, z) => issueOrder(null, new THREE.Vector3(x, terrainH(x, z), z));
+    Object.defineProperty(state, 'camAtTest', { get: () => tcam.target.clone() });
     // Навести камеру на точку — чтобы снимки в автотестах смотрели туда,
     // куда нужно, а не всегда на штаб
     state.camTest = (x, z, dist) => {
