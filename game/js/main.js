@@ -12,7 +12,7 @@ import { loadModelLibrary, modelCount, loadPlanetTextures, planetCount } from '.
 import { createHangar } from './hangar.js';
 import {
   FACTIONS, FACTION_IDS, NEURO_BRIEF, SHIPS, STRIKE, STRIKE_ROLES,
-  GROUND_UNITS, GROUND_BUILDINGS, GALAXY_MAP,
+  GROUND_UNITS, GROUND_BUILDINGS, GALAXY_MAP, DIFFICULTY, DIFF_IDS, diffOf,
 } from './data.js';
 
 const SAVE_KEY = 'capella_save_v1';
@@ -206,7 +206,7 @@ function showMenu() {
         </div>
         ${has ? `<div class="menu-note">Сохранение: ход ${has.turn}, клан
           ${FACTIONS[has.playerFaction].short}, миров под контролем —
-          ${ownedCount(has, has.playerFaction)}.</div>` : ''}
+          ${ownedCount(has, has.playerFaction)} · сложность «${diffOf(has.difficulty).name}».</div>` : ''}
       </div>`;
     hudRoot.appendChild(el);
 
@@ -248,13 +248,25 @@ function showFactionPick() {
           </button>`;
         }).join('')}
       </div>
+      <div class="form-row wide"><label>Сложность</label>
+        <select data-f="diff">${DIFF_IDS.map(id =>
+          `<option value="${id}"${id === 'normal' ? ' selected' : ''}>${DIFFICULTY[id].name}</option>`).join('')}</select></div>
+      <div class="diff-note" data-role="diffnote"></div>
       <div class="picker-actions"><button class="btn ghost" data-a="back">Назад</button></div>
     </div>`;
   hudRoot.appendChild(el);
   el.querySelector('[data-a="back"]').onclick = () => el.remove();
+  /* Сложность выбирается ОДИН раз, на старте кампании: подкрутить
+     её перед тяжёлым боем нельзя, иначе она перестаёт что-либо
+     значить. Поэтому рядом с выбором сразу написано, что она меняет. */
+  const diffSel = el.querySelector('[data-f="diff"]');
+  const diffNote = el.querySelector('[data-role="diffnote"]');
+  const showDiff = () => { diffNote.textContent = DIFFICULTY[diffSel.value].desc; };
+  diffSel.onchange = showDiff;
+  showDiff();
   el.querySelectorAll('.fcard').forEach(b => {
     b.onclick = () => {
-      campaign = newCampaign(b.dataset.f);
+      campaign = newCampaign(b.dataset.f, diffSel.value);
       dropSave();
       save();
       el.remove();
@@ -285,6 +297,10 @@ function showSkirmish() {
           <option value="mid" selected>Сражение</option>
           <option value="big">Генеральное</option>
         </select></div>
+      <div class="form-row"><label>Сложность</label>
+        <select data-f="diff">${DIFF_IDS.map(id =>
+          `<option value="${id}"${id === 'normal' ? ' selected' : ''}>${DIFFICULTY[id].name}</option>`).join('')}</select></div>
+      <div class="diff-note" data-role="diffnote"></div>
       <div class="picker-actions">
         <button class="btn primary" data-a="space">Бой на орбите</button>
         <button class="btn primary" data-a="ground">Наземная операция</button>
@@ -295,6 +311,12 @@ function showSkirmish() {
   const sel = k => el.querySelector(`[data-f="${k}"]`).value;
   el.querySelector('[data-f="foe"]').value = 'plektor';
   el.querySelector('[data-a="back"]').onclick = () => el.remove();
+  {
+    const d = el.querySelector('[data-f="diff"]'), note = el.querySelector('[data-role="diffnote"]');
+    const upd = () => { note.textContent = DIFFICULTY[d.value].desc; };
+    d.onchange = upd;
+    upd();
+  }
 
   const sizes = {
     small: { corvette: 2, frigate: 2, ecm: 1, cruiser: 1, carrier: 1, capital: 0, regiments: 2 },
@@ -317,6 +339,7 @@ function showSkirmish() {
       attacker: { faction: mine, ships: scaleFor(mine, fleetOf(size)), reserve: scaleFor(mine, fleetOf('small')) },
       defender: { faction: foe, ships: scaleFor(foe, fleetOf(size)), station: size === 'big' },
       playerSide: 'attacker', biome: 'klotho', title: 'Быстрый бой · орбита',
+      difficulty: sel('diff'),
       // В быстром бою планета всегда огрызается: иначе «Давление Земли»
       // можно увидеть только в кампании, построив орудие
       groundGun: foe,
@@ -333,6 +356,7 @@ function showSkirmish() {
       // только в кампании, и то если выиграть орбиту нужными кораблями
       orbit: ['strike', 'drop', 'emp'],
       enemy: { faction: foe, regiments: sizes[size].regiments, credits: 4000, turrets: size !== 'small' },
+      difficulty: sel('diff'),
       // Биом быстрого боя можно подменить из консоли — удобно смотреть,
       // как выглядят снег и пустыня, не собирая ради этого кампанию.
       // Тем же способом подменяется мир целиком, вместе с особенностями:

@@ -23,7 +23,7 @@ import { nebulaTexture } from './textures.js';
 import {
   FACTIONS, STRIKE, STRIKE_ROLES, SPACE_DMG, SQUAD_SIZE_OF, STATION, STEALTH, HYPER,
   ECM, ECM_OF, ORBITAL_DEFENCE_OF,
-  dmgMult, shipDef,
+  dmgMult, shipDef, diffOf,
 } from './data.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -240,6 +240,11 @@ export function createSpaceBattle(ctx, config) {
       warned: false, aim: null,
     };
   }
+  /* Сложность висит только на стороне ИИ: игрок на «Кошмаре»
+     ничего не теряет, противник приобретает. */
+  const DIFF = diffOf(config.difficulty);
+  const aiMul = side => (side === state.playerSide ? 1 : DIFF.aim);
+
   const myFaction = sides[state.playerSide].faction;
 
   let uid = 1;
@@ -905,7 +910,7 @@ export function createSpaceBattle(ctx, config) {
     const color = e.side === state.playerSide ? 0x7fd8ff : 0xff8f5a;
     if (g.def.type === 'missile') {
       for (let i = 0; i < (g.def.salvo || 1); i++) {
-        const p = spawnProjectile(e, t, g.def.dmg, 'missile', 130, 26);
+        const p = spawnProjectile(e, t, g.def.dmg * aiMul(e.side), 'missile', 130, 26);
         p.dir.add(_v.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(g.def.spread || 0.05)).normalize();
         p.wobble = rnd(0, 6.28);
       }
@@ -915,7 +920,7 @@ export function createSpaceBattle(ctx, config) {
     // Главный калибр — лазер: белое ядро в цветном ореоле и ударное кольцо
     fx.laser(from, t.pos, { color, width: 0.9 + e.radius * 0.07, life: 0.5 });
     fx.shake = Math.min(1, fx.shake + 0.14);
-    damage(t, g.def.dmg, g.def.type);
+    damage(t, g.def.dmg * aiMul(e.side), g.def.type);
   }
 
   // ── АВИАЦИЯ ──────────────────────────────────────────────
@@ -1051,7 +1056,7 @@ export function createSpaceBattle(ctx, config) {
           c.revealUntil = state.time + STEALTH.revealFor;
           fx.tracer(_v.copy(c.pos).addScaledVector(c.dir, 4), t.pos,
             c.side === state.playerSide ? 0x9fe0ff : 0xffb070, 0.09, 0.2);
-          damage(t, c.def.dmg, c.def.weapon);
+          damage(t, c.def.dmg * aiMul(c.side), c.def.weapon);
           if (t.dead) fx.explosion(t.pos, t.kind === 'craft' ? 4 : 6, 0xffc070);
         }
       }
@@ -1082,11 +1087,11 @@ export function createSpaceBattle(ctx, config) {
   }
 
   // ── ИИ ───────────────────────────────────────────────────
-  const ai = { side: enemyOf(state.playerSide), next: 3 };
+  const ai = { side: enemyOf(state.playerSide), next: 3 * DIFF.tempo };
   function updateAI(dt) {
     ai.next -= dt;
     if (ai.next > 0) return;
-    ai.next = rnd(4, 7);
+    ai.next = rnd(4, 7) * DIFF.tempo;
     const mine = state.ships.filter(s => !s.dead && s.side === ai.side);
     const foes = state.ships.filter(s => !s.dead && s.side !== ai.side);
     if (!foes.length || !mine.length) return;
@@ -1795,6 +1800,7 @@ export function createSpaceBattle(ctx, config) {
 // ─────────────────────────────────────────────────────────────
 
 export function autoResolveSpace(attacker, defender) {
+  // bonus — фора ИИ по сложности, чтобы автобой не обходил её стороной
   const power = (side, station) => {
     let dps = 0, hp = 0, air = 0, pd = 0;
     for (const item of side.ships || []) {
@@ -1810,7 +1816,8 @@ export function autoResolveSpace(attacker, defender) {
       dps += STATION.guns[0].dmg / STATION.guns[0].cd;
       pd += 60;
     }
-    return { dps, hp, air, pd };
+    const b = side.bonus || 1;
+    return { dps: dps * b, hp: hp * b, air, pd };
   };
   const A = power(attacker, false), D = power(defender, defender.station);
   const aDps = A.dps + Math.max(0, A.air * 130 - D.pd * 1.6);

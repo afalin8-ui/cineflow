@@ -22,7 +22,7 @@ import { Noise, seedFrom } from './noise.js';
 import {
   FACTIONS, GROUND_BUILDINGS, GROUND_UNITS, GROUND_DMG, BIOME_COLORS, STEALTH,
   dmgMult, unitDef, MAX_TECH, ORBITAL_SUPPORT, EXTERMINATUS, doctrineOf,
-  planetMods, traitsOf,
+  planetMods, traitsOf, diffOf,
 } from './data.js';
 
 const MAP = 270;              // половина стороны карты (игровая зона)
@@ -499,6 +499,16 @@ export function createGroundBattle(ctx, config) {
      одинаково — это свойство планеты, а не клана: на мерзлоте
      стройка тянется у всех. В быстром бою мира нет, тогда всё по
      единице. */
+  /* Сложность. Игрока она не касается вовсе — все множители висят
+     на стороне ИИ, поэтому «Кошмар» не отбирает у игрока ничего,
+     а даёт противнику. */
+  const DIFF = diffOf(config.difficulty);
+  const aiMul = sideId => (sideId === state.playerSide ? 1 : DIFF.aim);
+  // Вся добыча идёт через одну дверь: здесь же ИИ получает свою фору
+  const earn = (sideId, amount) => {
+    sides[sideId].credits += amount * (sideId === state.playerSide ? 1 : DIFF.eco);
+  };
+
   const LAND = planetMods(config.world);
   const unitCost = def => Math.round(def.cost * (LAND[def.cls] || 1) / 5) * 5;
   const buildDur = (def, sideId) =>
@@ -948,11 +958,12 @@ export function createGroundBattle(ctx, config) {
     const color = mine ? 0x9fe8ff : 0xffb070;
     fx.tracer(from, target.pos, color, 0.1, w.type === 'cannon' ? 0.35 : 0.2);
     fx.flash(from, w.type === 'cannon' ? 2.6 : 1.4, 0xffe0b0, 0.14);
+    const dmg = w.dmg * aiMul(e.side);
     if (w.splash) {
       fx.explosion(target.pos, w.splash * 0.7, 0xffa050);
-      splash(target.pos, w.splash, w.dmg, w.type, e.side);
+      splash(target.pos, w.splash, dmg, w.type, e.side);
     } else {
-      damage(target, w.dmg, w.type);
+      damage(target, dmg, w.type);
     }
   }
 
@@ -961,6 +972,7 @@ export function createGroundBattle(ctx, config) {
     state.proj.push({
       kind: 'shell', side: owner.side, from: from.clone(), to: dest.clone(),
       t: -delay, dur: Math.max(0.9, from.distanceTo(dest) / 130), w, dead: false,
+      mul: aiMul(owner.side),
     });
   }
 
@@ -980,7 +992,7 @@ export function createGroundBattle(ctx, config) {
   function dest_impact(p) {
     fx.explosion(p.to, p.w.splash || 8, 0xffa050);
     fx.shake = Math.min(1, fx.shake + 0.14);
-    splash(p.to, p.w.splash || 8, p.w.dmg, p.w.type, p.side);
+    splash(p.to, p.w.splash || 8, p.w.dmg * (p.mul || 1), p.w.type, p.side);
   }
 
   // ── ЮНИТЫ ────────────────────────────────────────────────
@@ -1095,7 +1107,7 @@ export function createGroundBattle(ctx, config) {
     if (def.siphon) {
       if (flat(u.pos, u.field.pos) > 16) { move(u.field.pos); u.mining = false; return; }
       const take = Math.min(def.siphon * dt, u.field.left);
-      sides[u.side].credits += take;
+      earn(u.side, take);
       u.field.left -= take;
       u.mining = true;
       if (u.field.left <= 0) u.field.obj.visible = false;
@@ -1128,7 +1140,7 @@ export function createGroundBattle(ctx, config) {
     if (u.carry >= def.cargo) {
       u.mining = false;
       if (flat(u.pos, drop.pos) < drop.radius + 9) {
-        sides[u.side].credits += u.carry;
+        earn(u.side, u.carry);
         u.carry = 0;
         fx.flash(drop.pos.clone().setY(drop.pos.y + 10), 6, 0xffd76a, 0.45);
       } else move(drop.pos);
@@ -1221,7 +1233,7 @@ export function createGroundBattle(ctx, config) {
         fx.explosion(hit, def.weapon.splash, 0xffb060);
         fx.shake = Math.min(1, fx.shake + 0.12);
         fx.sparks(hit, 9, 0xffd08a, 22);
-        splash(hit, def.weapon.splash, def.weapon.dmg, def.weapon.type, u.side);
+        splash(hit, def.weapon.splash, def.weapon.dmg * aiMul(u.side), def.weapon.type, u.side);
       }
       return;
     }
@@ -1296,7 +1308,7 @@ export function createGroundBattle(ctx, config) {
       }
       if (b.field) {
         const take = Math.min(b.def.drain * dt, b.field.left);
-        sides[b.side].credits += take;
+        earn(b.side, take);
         b.field.left -= take;
         if (b.field.left <= 0) b.field.obj.visible = false;
         b.pumpBlink = (b.pumpBlink || 0) - dt;
@@ -1385,11 +1397,13 @@ export function createGroundBattle(ctx, config) {
   }
 
   // ── ИИ ───────────────────────────────────────────────────
-  const ai = { next: 4, wave: 0, attacking: false };
+  const ai = { next: 4 * DIFF.tempo, wave: 0, attacking: false };
   function updateAI(dt) {
     ai.next -= dt;
     if (ai.next > 0) return;
-    ai.next = 3.5;
+    // Как часто ИИ вообще думает — половина всей сложности: на
+    // «Кошмаре» он успевает отреагировать вчетверо быстрее
+    ai.next = 3.5 * DIFF.tempo;
     const side = sides.foe;
     const mine = state.units.filter(u => !u.dead && u.side === 'foe');
     const myB = state.buildings.filter(b => !b.dead && b.side === 'foe');
@@ -1452,7 +1466,9 @@ export function createGroundBattle(ctx, config) {
     if (air && air.queue.length < 1 && mine.filter(u => u.air).length < 3) enqueue(air, 'jet');
 
     // волна
-    if (!ai.attacking && army.length >= 6 + ai.wave) {
+    // Сколько копит перед выходом: на лёгком — целую орду, на
+    // тяжёлом идёт малыми волнами, зато непрерывно
+    if (!ai.attacking && army.length >= DIFF.wave + ai.wave) {
       ai.attacking = true;
       ai.wave = Math.min(6, ai.wave + 1);
       const targets = state.buildings.filter(b => !b.dead && b.side === 'me');
@@ -2230,8 +2246,10 @@ export function createGroundBattle(ctx, config) {
 
 // Быстрый расчёт наземного боя
 export function autoResolveGround(attacker, defender) {
-  const p = s => (s.regiments || 0) * (s.faction === 'reez' ? 1.15 : s.faction === 'troyden' ? 1.1 : 0.95)
-    + (s.turrets ? 1.5 : 0);
+  // bonus — фора ИИ по сложности: без неё «Решить автоматически»
+  // обходило бы уровень сложности стороной
+  const p = s => ((s.regiments || 0) * (s.faction === 'reez' ? 1.15 : s.faction === 'troyden' ? 1.1 : 0.95)
+    + (s.turrets ? 1.5 : 0)) * (s.bonus || 1);
   const a = p(attacker) * rnd(0.85, 1.2);
   const d = (p(defender) + 1) * rnd(0.85, 1.2);
   const win = a > d;

@@ -406,9 +406,16 @@ button.act.locked small { color: #8fd0ff; }
 .fc-weak { font-size: 12px; color: #ffab9d; }
 .picker-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
 .form-row { margin-bottom: 12px; }
+.form-row.wide { max-width: 320px; margin-top: 18px; }
 .form-row label {
   display: block; font-size: 11px; text-transform: uppercase;
   letter-spacing: .08em; color: var(--muted); margin-bottom: 5px;
+}
+/* Что означает выбранный уровень — прямо под списком: иначе
+   «Ветеран» и «Кошмар» отличаются только словом */
+.diff-note {
+  font-size: 12px; color: var(--muted); line-height: 1.5;
+  margin: -4px 0 4px; max-width: 420px;
 }
 
 /* нейроинтерфейс */

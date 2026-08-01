@@ -15,7 +15,7 @@ import {
   FACTIONS, FACTION_IDS, GALAXY_MAP, PLANET_BUILDINGS, REGIMENT_COST,
   SHIPS, shipDef, STATION,
   TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom, EXTERMINATUS,
-  shipHasDrive, BREAKER, HYPER, traitsOf, planetMods,
+  shipHasDrive, BREAKER, HYPER, traitsOf, planetMods, diffOf,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -24,7 +24,7 @@ const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', sh
 // СОСТОЯНИЕ КАМПАНИИ (оно же сохранение)
 // ─────────────────────────────────────────────────────────────
 
-export function newCampaign(playerFaction) {
+export function newCampaign(playerFaction, difficulty) {
   const systems = {};
   for (const s of GALAXY_MAP.systems) {
     systems[s.id] = {
@@ -61,8 +61,10 @@ export function newCampaign(playerFaction) {
   for (const f of FACTION_IDS) { credits[f] = 2200; research[f] = 0; tech[f] = 1; }
 
   return {
-    version: 2,
+    version: 3,
     playerFaction,
+    // Сложность выбирается один раз и живёт в самой кампании
+    difficulty: difficulty || 'normal',
     turn: 1,
     credits,
     research,          // накопленные очки науки, тратятся на уровень
@@ -228,6 +230,10 @@ export function ownedCount(camp, faction) {
 // ─────────────────────────────────────────────────────────────
 
 export function createGalaxy(ctx, camp) {
+  // Уровень сложности живёт в самой кампании: выбран один раз при
+  // старте и действует до конца — иначе его можно было бы подкрутить
+  // перед каждым тяжёлым боем
+  const DIFF = diffOf(camp.difficulty);
   const { viewport, hudRoot } = ctx;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x05070d);
@@ -754,6 +760,7 @@ export function createGalaxy(ctx, camp) {
     };
     ctx.startSpaceBattle({
       attacker, defender, playerSide: 'attacker', biome: toDef.biome,
+      difficulty: camp.difficulty,
       system: toDef.id,
       groundGun: to.buildings.includes('aogun') ? to.owner : null,
       title: `Штурм с блокады · ${toDef.name}`,
@@ -852,6 +859,7 @@ export function createGalaxy(ctx, camp) {
         // Флот из своих систем в трёх прыжках: долетит не сразу
         farReserve: farReserveFor(camp, camp.playerFaction, toId),
         defender, playerSide: 'attacker', biome: toDef.biome,
+        difficulty: camp.difficulty,
         system: toDef.id,
         // Противоорбитальное орудие защитника вмешивается в бой снизу
         groundGun: to.buildings.includes('aogun') ? to.owner : null,
@@ -906,7 +914,8 @@ export function createGalaxy(ctx, camp) {
       close();
       ctx.autoGround(
         { faction: camp.playerFaction, regiments: from.regiments },
-        { faction: to.owner, regiments: to.regiments, turrets: to.buildings.includes('garrison') },
+        { faction: to.owner, regiments: to.regiments, turrets: to.buildings.includes('garrison'),
+          bonus: DIFF.auto },
         apply);
     };
     m.querySelector('[data-a="fight"]').onclick = () => {
@@ -930,6 +939,7 @@ export function createGalaxy(ctx, camp) {
           tech: techOf(camp, to.owner),
         },
         biome: toDef.biome,
+        difficulty: camp.difficulty,
         /* Сам мир: его особенности меняют цены и скорость стройки
            обеим сторонам — это свойство планеты, а не клана. */
         world: toDef,
@@ -943,10 +953,13 @@ export function createGalaxy(ctx, camp) {
   function endTurn() {
     if (state.busy) return;
     const my = camp.playerFaction;
-    // доход и наука всем
+    /* Доход и наука всем. Сложность — множитель ТОЛЬКО чужой
+       экономике: на «Кошмаре» кланы ИИ разворачиваются вдвое
+       быстрее, у игрока всё как было. */
     for (const f of FACTION_IDS) {
-      camp.credits[f] += incomeOf(camp, f);
-      camp.research[f] = (camp.research[f] || 0) + researchOf(camp, f);
+      const k = f === my ? 1 : DIFF.camp;
+      camp.credits[f] += Math.round(incomeOf(camp, f) * k);
+      camp.research[f] = (camp.research[f] || 0) + Math.round(researchOf(camp, f) * k);
     }
 
     for (const f of FACTION_IDS) {
@@ -1022,7 +1035,10 @@ export function createGalaxy(ctx, camp) {
         st.moved = true;
         continue;
       }
-      if (mineVal < theirVal * 1.25) continue;
+      /* Насколько ИИ осторожен. На лёгком ему нужен двукратный
+         перевес — то есть он почти не наступает; на «Кошмаре»
+         хватает равного счёта. */
+      if (mineVal < theirVal * (2.1 - DIFF.push)) continue;
       st.moved = true;
 
       // Игрока атакуют — даём сыграть оборону
@@ -1032,8 +1048,9 @@ export function createGalaxy(ctx, camp) {
       }
       // ИИ против ИИ — считаем быстро
       ctx.autoSpace(
-        { faction: f, ships: st.fleet.map(x => ({ ...x })) },
-        { faction: t.st.owner, ships: t.st.fleet.map(x => ({ ...x })), station: t.st.buildings.includes('station') },
+        { faction: f, ships: st.fleet.map(x => ({ ...x })), bonus: DIFF.auto },
+        { faction: t.st.owner, ships: t.st.fleet.map(x => ({ ...x })), station: t.st.buildings.includes('station'),
+          bonus: DIFF.auto },
         res => {
           if (res.result === 'attacker') {
             t.st.fleet = res.attacker;
@@ -1097,7 +1114,7 @@ export function createGalaxy(ctx, camp) {
     m.querySelector('[data-a="auto"]').onclick = () => {
       m.remove();
       ctx.autoSpace(
-        { faction: aiFaction, ships: from.fleet.map(x => ({ ...x })) },
+        { faction: aiFaction, ships: from.fleet.map(x => ({ ...x })), bonus: DIFF.auto },
         { faction: to.owner, ships: to.fleet.map(x => ({ ...x })), station: to.buildings.includes('station') },
         apply);
     };
@@ -1111,6 +1128,7 @@ export function createGalaxy(ctx, camp) {
         },
         playerSide: 'defender',
         biome: toDef.biome,
+        difficulty: camp.difficulty,
         system: toDef.id,
         groundGun: to.buildings.includes('aogun') ? to.owner : null,
         title: `Оборона · ${toDef.name}`,
