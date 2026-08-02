@@ -7,6 +7,13 @@
    Формат: .glb (glTF binary) с вшитыми текстурами. Именно так отдают
    Prism / Meshy / Tripo и любой экспорт из Blender.
 
+   Сжатие геометрии понимаем оба ходовых: Draco (его кладёт Blender
+   при экспорте с галочкой «Compression») и meshopt (его кладут
+   генераторы вроде Tripo). Без этих декодеров такие файлы просто
+   не открывались — а это добрая половина всего, что скачивается
+   в интернете, и заметить причину по картинке нельзя: модель молча
+   не появляется.
+
    Игра сама приводит модель к нужному размеру и ставит на неё точки
    оружия, ПВО и двигателей, так что от модели требуется только
    корпус. Если модель повёрнута не туда — правится в манифесте,
@@ -14,6 +21,8 @@
 
 import { THREE } from './engine.js';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { DRACOLoader } from '../vendor/DRACOLoader.js';
+import { MeshoptDecoder } from '../vendor/meshopt_decoder.module.js';
 
 const BASE = new URL('../models/', import.meta.url);
 const library = new Map();     // ключ → подготовленная THREE.Group
@@ -38,6 +47,10 @@ export async function loadModelLibrary() {
   if (!entries.length) return 0;
 
   const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  const draco = new DRACOLoader();
+  draco.setDecoderPath(new URL('../vendor/draco/', import.meta.url).href);
+  loader.setDRACOLoader(draco);
   let ok = 0;
   await Promise.all(entries.map(async ([key, spec]) => {
     const cfg = typeof spec === 'string' ? { file: spec } : spec;
@@ -47,7 +60,15 @@ export async function loadModelLibrary() {
       library.set(key, prepare(gltf.scene, cfg));
       ok++;
     } catch (e) {
-      console.warn(`Модель «${key}» не загрузилась (${cfg.file}):`, e.message);
+      /* Сообщение важнее самой ошибки: чаще всего это либо не тот
+         формат, либо текстуры лежат отдельным файлом рядом, а не
+         внутри .glb. */
+      const hint = /basisu|ktx/i.test(e.message || '')
+        ? 'текстуры сжаты в KTX2 — пересохрани модель с обычными PNG/JPG'
+        : /Unexpected|JSON|magic/i.test(e.message || '')
+          ? 'файл не похож на .glb — проверь, что это именно glTF binary'
+          : 'проверь, что файл лежит в game/models/ и путь в манифесте верный';
+      console.warn(`Модель «${key}» не загрузилась (${cfg.file}): ${e.message}. ${hint}`);
     }
   }));
   return ok;
