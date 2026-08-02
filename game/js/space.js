@@ -942,7 +942,7 @@ export function createSpaceBattle(ctx, config) {
         const from = pdWorld(e, i);
         const col = e.side === state.playerSide ? 0x8fe0ff : 0xffb45a;
         fx.shot(from, t.pos, { color: col, width: 0.55, len: 46, speed: 780 });
-        fx.flash(from, 1.6, col, 0.1);
+        fx.muzzle(from, _v.subVectors(t.pos, from).normalize(), 1.4, col);
         damage(t, pd.dmg * pdMult, 'pd');
       }
     }
@@ -966,8 +966,8 @@ export function createSpaceBattle(ctx, config) {
         p.dir.add(_v.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(g.def.spread || 0.05)).normalize();
         p.wobble = rnd(0, 6.28);
       }
-      // Старт ракет: вспышка в трубах и клубы отработанного топлива
-      fx.flash(from, e.radius * 0.8, 0xffd0a0, 0.2);
+      // Старт ракет: пламя из труб и клубы отработанного топлива
+      fx.muzzle(from, _v.subVectors(t.pos, from).normalize(), e.radius * 0.7, 0xffd0a0);
       fx.sparks(from, 6, 0xffc890, 30, false);
       for (let i = 0; i < 3; i++) fx.puff(from, e.radius * 0.3, 0x9a9186, 0.6);
       return;

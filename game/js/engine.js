@@ -788,6 +788,17 @@ export class Fx {
     }
   }
 
+  /* Дульное пламя. Круглое пятно у ствола читается лампочкой:
+     у выстрела нет направления. Здесь короткий язык ВДОЛЬ ствола —
+     та же плоскость, что у луча, только совсем короткая и живущая
+     одно мгновение. */
+  muzzle(from, dir, size = 3, color = 0xffd9a0) {
+    const to = _bv.copy(dir).normalize().multiplyScalar(size * 2.2).add(from);
+    const b = this.beam(from, to, { color, width: size * 0.5, life: 0.09 });
+    this.flash(from, size * 0.55, 0xfff2d8, 0.08);
+    return b;
+  }
+
   // Клуб выхлопа: маленький, всплывающий, быстро тающий. Ракета
   // без следа читается как летящая искра, а не как ракета.
   puff(pos, size = 1.6, color = 0x8a8378, life = 0.55) {
@@ -1115,14 +1126,26 @@ export function starfield(count = 2600, radius = 4000) {
   return p;
 }
 
+/* Кольцо выделения. Раньше это была `RingGeometry` — сорок отрезков
+   с резким краем, и именно она оставалась единственным местом
+   в кадре с настоящей лесенкой: тонкая яркая линия под наклонной
+   камерой рвётся на ступеньки, а свечение их подчёркивает.
+   Теперь плоскость с той же мягкой картой обода, что у ударных волн. */
 export function ringMesh(radius, color, opacity = 0.9, thickness = 0.12) {
-  const g = new THREE.RingGeometry(radius * (1 - thickness), radius, 40);
+  /* Плоскость делаем размером 2×2, чтобы масштаб меша по-прежнему
+     означал РАДИУС кольца: места вызова задают его через
+     `scale.setScalar`, и менять их семантику ради формы нельзя. */
+  const g = RING_GEO.clone();
+  g.scale(2, 2, 1);
   g.rotateX(-Math.PI / 2);
+  g.userData.shared = false;
   const m = new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity, side: THREE.DoubleSide,
+    map: RING_TEX, color, transparent: true, opacity, side: THREE.DoubleSide,
     depthWrite: false, toneMapped: false,
   });
-  return new THREE.Mesh(g, m);
+  const mesh = new THREE.Mesh(g, m);
+  mesh.scale.setScalar(radius);
+  return mesh;
 }
 
 export function disposeScene(scene) {

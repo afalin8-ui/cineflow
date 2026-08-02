@@ -484,9 +484,11 @@ export function buildStrike(role, faction) {
 export function buildTorpedo(color = 0xffb060) {
   const g = new THREE.Group();
   g.add(cyl(0.22, 1.4, mat(0x9a9a9a, { metal: 0.6 })).rotateX(Math.PI / 2));
-  const s = glowSprite(2.4, color);
-  s.position.z = 0.8;
-  g.add(s);
+  // Хвост торпеды — короткий факел: по нему её и видно в общем плане
+  const p = enginePlume(0.5, color);
+  p.position.z = 0.75;
+  p.scale.set(1, 1, 0.9);
+  g.add(p);
   return g;
 }
 
@@ -626,8 +628,11 @@ export function buildGroundUnit(def, faction) {
       g.add(box(0.2, 1.1, 1.0, dark, 0, 0.7, 2.7));
       g.add(box(0.9, 0.7, 1.4, dark, 0, 0.35, -1.4));
       for (const s of [-1, 1]) g.add(cyl(0.42, 2.2, dark, s * 1.6, -0.3, 0.9).rotateX(Math.PI / 2));
-      const e1 = glowSprite(2.0, 0xff8a3a); e1.position.set(-1.6, -0.3, 2.1); g.add(e1);
-      const e2 = glowSprite(2.0, 0xff8a3a); e2.position.set(1.6, -0.3, 2.1); g.add(e2);
+      // Сопла штурмовика — те же факелы, что у кораблей, только короткие
+      const e1 = enginePlume(0.85, 0xff8a34); e1.position.set(-1.6, -0.3, 2.1);
+      e1.scale.set(1, 1, 0.6); g.add(e1);
+      const e2 = enginePlume(0.85, 0xff8a34); e2.position.set(1.6, -0.3, 2.1);
+      e2.scale.set(1, 1, 0.6); g.add(e2);
       g.userData.engines = [e1, e2];
       muzzles.push(new THREE.Vector3(0, -0.4, -2.0));
       break;
@@ -729,8 +734,9 @@ export function buildGroundUnit(def, faction) {
       const tail = cyl(0.05, 1.6, dark, 0.2, 0.9, 4.2);
       tail.rotation.z = Math.PI / 2;
       g.add(tail);
-      const e = glowSprite(1.3, 0xff8a3a);
+      const e = enginePlume(0.6, 0xff8a34);
       e.position.set(0, 0.4, 1.9);
+      e.scale.set(1, 1, 0.5);
       g.add(e);
       g.userData.engines = [e];
       muzzles.push(new THREE.Vector3(0, -0.35, -1.6));

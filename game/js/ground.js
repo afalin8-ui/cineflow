@@ -1027,6 +1027,7 @@ export function createGroundBattle(ctx, config) {
     /* Пушка бьёт болванкой, пулемёт — очередью. Болванка ЛЕТИТ:
        коротким отрезком от ствола к цели. Мгновенная линия во всю
        дистанцию читается как подсветка цели, а не как выстрел. */
+    _v2.subVectors(target.pos, from).normalize();
     if (w.type === 'cannon' || w.type === 'at') {
       // ПТУР летит медленнее болванки и тянет дымный след
       const rocket = w.type === 'at';
@@ -1034,12 +1035,13 @@ export function createGroundBattle(ctx, config) {
         color, width: rocket ? 0.4 : 0.45, len: rocket ? 5 : 8,
         speed: rocket ? 150 : 340, trail: rocket,
       });
-      fx.flash(from, 3.2, 0xffe0b0, 0.16);
+      // Пламя ВДОЛЬ ствола: круглое пятно у среза читается лампочкой
+      fx.muzzle(from, _v2, rocket ? 2.2 : 3.4, 0xffd9a0);
       fx.sparks(from, 3, 0xffc890, 16);
       fx.puff(from, 1.5, 0x9a9186, 0.5);
     } else {
       fx.tracer(from, target.pos, color, 0.1, 0.2);
-      fx.flash(from, 1.4, 0xffe0b0, 0.14);
+      fx.muzzle(from, _v2, 1.6, 0xffe0b0);
     }
     const dmg = w.dmg * aiMul(e.side);
     if (w.splash) {

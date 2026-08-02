@@ -70,36 +70,92 @@
 
 ## Где брать
 
+Всё перечисленное — **CC0** (общественное достояние): указывать
+авторство не обязательно, использовать можно как угодно, в том числе
+в публичном репозитории и в приложении из TestFlight. Ссылки проверены
+в августе 2026-го, все отвечают.
+
+### Poly Pizza — poly.pizza (ГЛАВНЫЙ источник, .glb прямо в браузере)
+
+Это витрина, которая собрала у себя Quaternius, Kenney и других
+и раздаёт модели **сразу в .glb** — ровно в том формате, который
+нужен игре. Регистрации нет, кнопка «Download → GLB» на странице
+модели.
+
+- танки и бронемашины: https://poly.pizza/search/tank
+- военная техника вообще: https://poly.pizza/search/military
+- вертолёты: https://poly.pizza/search/helicopter
+- деревья и кусты: https://poly.pizza/search/tree
+- камни: https://poly.pizza/search/rock
+- всё от Quaternius одним списком: https://poly.pizza/u/Quaternius
+- только CC0: https://poly.pizza/search/CC0
+
+**Смотри лицензию на карточке модели.** На сайте лежат и CC0,
+и CC-BY: CC-BY тоже можно, но тогда автора придётся указать
+в титрах игры.
+
+Есть API (ключ бесплатный): https://poly.pizza/docs/api/v1.1 —
+пригодится, если захочется таскать модели скриптом, а не руками.
+
+### Quaternius — quaternius.com (CC0, паки целиком)
+
+Низкополигональные, стилистика мультяшнее Kenney, но ровно под наш
+масштаб. На сайте паки лежат в .fbx/.obj/.blend, а .glb тех же
+моделей проще взять на Poly Pizza (ссылки выше).
+
+- **Animated Tanks Pack** — четыре танка с анимацией:
+  https://quaternius.com/packs/animatedtanks.html
+- **Cars Pack** — гражданские машины, годятся под сборщиков:
+  https://quaternius.com/packs/cars.html
+- **Ultimate Nature Pack** — деревья, кусты, камни:
+  https://quaternius.com/packs/ultimatenature.html
+- **Stylized Tree Pack** — только деревья, разнообразнее:
+  https://quaternius.com/packs/stylizedtree.html
+- **Ultimate Spaceships Pack** — корабли, если захочется заменить
+  наши: https://quaternius.com/packs/ultimatespaceships.html
+
 ### Kenney — kenney.nl/assets (CC0, без регистрации)
 
-Низкополигональные, лёгкие, ровно под наш масштаб. Скачиваются кнопкой
-на странице пака, скриптом их не взять — форма в браузере.
+Скачиваются кнопкой на странице пака, скриптом их не взять —
+форма в браузере. Все ссылки проверены, страницы живые.
 
-- **Space Kit** — корабли и авиакрылья. Проверено, страница живая:
+- **Space Kit** — корабли и авиакрылья:
   https://kenney.nl/assets/space-kit
-- **Modular Space Kit** — модульные корпуса, если захочется собрать
-  свои силуэты: https://kenney.nl/assets/modular-space-kit
+- **Modular Space Kit** — модульные корпуса под свои силуэты:
+  https://kenney.nl/assets/modular-space-kit
 - **Tower Defense Kit** — турели, зенитки, простые постройки:
   https://kenney.nl/assets/tower-defense-kit
-- **Nature Kit** — деревья и камни, чтобы заменить процедурные:
+- **Nature Kit** — деревья и камни:
   https://kenney.nl/assets/nature-kit
+- **Mini Forest** — ещё деревья, мельче и аккуратнее:
+  https://kenney.nl/assets/mini-forest
+- **Car Kit** — колёсная техника:
+  https://kenney.nl/assets/car-kit
 - **City Kit (industrial)** — заводские корпуса под базы:
   https://kenney.nl/assets/city-kit-industrial
 - **Blocky Characters** — если пехота устроит в таком стиле:
   https://kenney.nl/assets/blocky-characters
 
-Танков у Kenney нет — под них либо Quaternius, либо генерация.
-
-### Quaternius — quaternius.com (CC0)
-
-Тоже низкополигональные, стилистика мультяшнее Kenney. Есть наборы
-военной техники и космоса. Скачивание тоже через браузер.
+Танков у Kenney по-прежнему нет — под них Quaternius, Poly Pizza
+или генерация.
 
 ### Poly Haven — polyhaven.com/models (CC0)
 
 **Для наших целей почти не годится.** Это фотограмметрия: одна сосна
 весит под 900 МБ вместе с текстурами. Брать оттуда стоит только
 отдельные пропсы, и то если найдётся чем упростить сетку.
+Текстуры оттуда, наоборот, лучшие — они у нас и стоят.
+
+### Что качать в первую очередь
+
+1. **Деревья** — Kenney Nature Kit или Quaternius Ultimate Nature:
+   процедурные карточки листвы держатся только на общем плане.
+2. **Танк, БМП, ЗСУ, РСЗО** — Poly Pizza по запросу `tank`
+   (модели Quaternius там уже в .glb).
+3. **Постройки** — Kenney Tower Defense Kit (турели и зенитки)
+   плюс City Kit industrial (заводы и склады).
+4. Корабли оставить процедурными до последнего: у них панельная
+   обшивка и факелы, они держат картинку лучше всего остального.
 
 ### Генерация через Tripo (3daistudio.com)
 
