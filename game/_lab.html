@@ -7,6 +7,11 @@
 import { THREE, Viewport } from './js/engine.js';
 import { buildShip, buildSupplyField, buildGreebleShip } from './js/models.js';
 import { FACTIONS, SHIPS } from './js/data.js';
+import { loadModelLibrary } from './js/assets.js';
+
+// Внешние модели подтягиваем и в стенде: без этого стенд показывает
+// процедурную заглушку и правки в загрузчике на нём не видны
+await loadModelLibrary();
 
 const viewport = new Viewport(document.getElementById('view'));
 viewport.setBloom({ strength: 0.8, radius: 0.6, threshold: 0.7, exposure: 1.05 });
