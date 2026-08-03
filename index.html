@@ -150,6 +150,18 @@
            перетаскивании, но не должна спорить с референсами на доске */
         .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.05) 1.2px, transparent 1.2px); background-size: 26px 26px; }
 
+        /* Режим «только просмотр». Ничего не уходит в облако (см. syncDoc),
+           а здесь дополнительно гасим саму возможность что-то печатать,
+           чтобы человек не решил, будто его правки сохранятся. */
+        body.cf-readonly input,
+        body.cf-readonly textarea,
+        body.cf-readonly select { pointer-events: none !important; user-select: none; }
+        body.cf-readonly .cf-edit-only { display: none !important; }
+        .cf-ro-badge { position: fixed; top: 8px; right: 8px; z-index: 300; font-size: 11px;
+                       letter-spacing: .08em; text-transform: uppercase; padding: 4px 10px;
+                       border-radius: 999px; background: var(--panel); color: var(--muted);
+                       border: 1px solid var(--border); pointer-events: none; }
+
         /* метка поверх превью кадра */
         .cf-overlay { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text); background: rgba(26,25,24,.72); padding: 3px 6px; border-radius: 3px; }
 
@@ -234,13 +246,32 @@
           messagingSenderId: "1056447066293",
           appId: "1:1056447066293:web:c29cb639b3a3cdc3d0cefc"
         };
-        const appId = localStorage.getItem('cf_room') || 'cineflow-room-3';
-        
+        // --- Режим «только просмотр» ---
+        // Два способа поделиться, ничего не давая менять:
+        //  1) ссылка вида ...?view=gallery — живые данные из облака,
+        //     но все правки заблокированы и в облако ничего не уходит;
+        //  2) файл-снимок: копия приложения со вшитыми данными
+        //     (window.__CF_SNAPSHOT__), облако не подключается вообще.
+        // scope: 'gallery' | 'board' | 'all' — что показывать.
+        const CF_SNAPSHOT = (typeof window !== 'undefined' && window.__CF_SNAPSHOT__) || null;
+        const CF_VIEW_SCOPE = CF_SNAPSHOT
+          ? (CF_SNAPSHOT.scope || 'all')
+          : (new URLSearchParams(location.search).get('view') || '');
+        const READ_ONLY = !!CF_SNAPSHOT || !!CF_VIEW_SCOPE;
+        if (READ_ONLY) document.body.classList.add('cf-readonly');
+
+        const appId = (CF_SNAPSHOT && CF_SNAPSHOT.room)
+          || new URLSearchParams(location.search).get('room')
+          || localStorage.getItem('cf_room') || 'cineflow-room-3';
+
         let db = null;
         let auth = null;
         // Статус офлайн-копии: 'off' — кэш не включён, 'on' — работает
         window.cfPersistence = 'off';
         try {
+          // Файл-снимок живёт полностью автономно: данные вшиты внутрь,
+          // облако подключать нечего и незачем.
+          if (CF_SNAPSHOT) throw new Error('snapshot mode');
           if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
           auth = firebase.auth();
           db = firebase.firestore();
@@ -754,8 +785,11 @@
           };
           
           const safeLoad = (key, fallback, isArray = true) => {
-            try { 
-              const saved = localStorage.getItem(key); if (!saved) return fallback; 
+            // В файле-снимке данные лежат прямо внутри страницы, а не
+            // в localStorage: снимок должен открываться на чужом устройстве.
+            if (CF_SNAPSHOT && CF_SNAPSHOT.data && CF_SNAPSHOT.data[key] !== undefined) return CF_SNAPSHOT.data[key];
+            try {
+              const saved = localStorage.getItem(key); if (!saved) return fallback;
               const parsed = JSON.parse(saved); 
               if (isArray) return Array.isArray(parsed) ? parsed : fallback;
               return (parsed !== null && typeof parsed === 'object') ? parsed : fallback;
@@ -800,7 +834,9 @@
 
           const [messages, setMessages] = useState([]); 
 
-          const [currentView, setCurrentView] = useState('notion'); 
+          const [currentView, setCurrentView] = useState(
+            CF_VIEW_SCOPE === 'gallery' ? 'gallery' : (CF_VIEW_SCOPE === 'board' ? 'whiteboard' : 'notion')
+          ); 
           const [activeSceneId, setActiveSceneId] = useState('scene-1');
           const [activeDocId, setActiveDocId] = useState('doc-1');
           const [showImages, setShowImages] = useState(true); 
@@ -1234,8 +1270,11 @@
             return () => unsub();
           }, [user, activeBoardId]);
 
-          // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака)
+          // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
+          // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
+          // устройстве его собственный проект.
           useEffect(() => {
+            if (READ_ONLY) return;
             const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('localStorage переполнен:', k); } };
             save('cf_scenes', scenes); save('cf_storyboard', storyboard);
             save('cf_references', references); save('cf_stickies', stickies);
@@ -1256,7 +1295,9 @@
           const syncTimers = useRef({});
           const dataRef = () => db.collection('artifacts').doc(appId).collection('public').doc('data');
           const syncDoc = (coll, id, data) => {
-            if (!db || !user) return;
+            // В режиме просмотра наружу не уходит ничего — это главная
+            // защита ссылки-просмотра, а не спрятанные кнопки.
+            if (READ_ONLY || !db || !user) return;
             const key = coll + '/' + id;
             clearTimeout(syncTimers.current[key]);
             syncTimers.current[key] = setTimeout(() => {
@@ -1268,7 +1309,7 @@
             }, 400);
           };
           const deleteNetDoc = (coll, id) => {
-            if (!db || !user) return;
+            if (READ_ONLY || !db || !user) return;
             const key = coll + '/' + id;
             clearTimeout(syncTimers.current[key]); delete syncTimers.current[key];
             trackWrite(dataRef().collection(coll).doc(id).delete().catch(err => console.warn('deleteNetDoc', err)));
@@ -1313,6 +1354,56 @@
               const payload = { label: name };
               if (isLight) { setLightGearTypes(prev => { const up = {...prev, [key]: payload}; syncDoc('lightGearTypes', key, payload); return up; }); setNewLightGearName(''); }
               else { setGearTypes(prev => { const up = {...prev, [key]: payload}; syncDoc('gearTypes', key, payload); return up; }); setNewGearName(''); }
+          };
+
+          // --- Файл-снимок для отправки «наружу» ---
+          // Берём исходник самой страницы и вшиваем в него данные.
+          // Открывается офлайн, к облаку не подключается, править нечего.
+          const [snapshotBusy, setSnapshotBusy] = useState(false);
+          const exportSnapshot = async (scope) => {
+            setSnapshotBusy(true);
+            try {
+              showToast('Собираю файл — это займёт несколько секунд...');
+              const res = await fetch(location.pathname, { cache: 'reload' });
+              let html = await res.text();
+
+              // Кладём только то, чем делимся: лишние картинки сильно весят.
+              const data = {};
+              if (scope === 'gallery' || scope === 'all') data.cf_references = references;
+              if (scope === 'board' || scope === 'all') {
+                data.cf_references = references;
+                data.cf_stickies = stickies;
+                data.cf_boards = boards;
+              }
+              if (scope === 'all') {
+                data.cf_scenes = scenes; data.cf_storyboard = storyboard;
+                data.cf_docs = docs; data.cf_crew = crew;
+                data.cf_geartypes = gearTypes; data.cf_lightgeartypes = lightGearTypes;
+                data.cf_lightschemes = lightSchemes;
+              }
+              if (scope === 'gallery') { data.cf_scenes = []; data.cf_stickies = []; }
+
+              const payload = { scope, room: appId, madeAt: new Date().toISOString(), data };
+              // Закрывающий тег скрипта внутри данных разорвал бы разметку — экранируем.
+              const json = JSON.stringify(payload).replace(/<\//g, '<\\/');
+              const inject = '<script>window.__CF_SNAPSHOT__ = ' + json + ';<\/script>\n</head>';
+              if (!html.includes('</head>')) throw new Error('не нашёл </head>');
+              html = html.replace('</head>', inject);
+
+              const blob = new Blob([html], { type: 'text/html' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              const names = { gallery: 'референсы', board: 'доска', all: 'проект' };
+              a.download = `CineFlow_${names[scope] || scope}_${new Date().toISOString().split('T')[0]}.html`;
+              document.body.appendChild(a); a.click(); document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              showToast(`Готово · ${(blob.size / 1048576).toFixed(1)} МБ`);
+            } catch (err) {
+              console.error(err);
+              showToast('Не удалось собрать файл: ' + err.message);
+            }
+            setSnapshotBusy(false);
           };
 
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
@@ -1396,9 +1487,11 @@
               setResizingRef(null);
           };
           
-          if (showWelcome) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
+          // В режиме просмотра имя не спрашиваем — человек просто смотрит.
+          if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
           // Пункты навигации — общий список для рельса и мобильной ленты.
+          // В режиме просмотра остаётся только то, чем поделились.
           const navItems = [
             { id: 'notion',     label: 'Сцены',        icon: <Icons.Scene /> },
             { id: 'whiteboard', label: 'Доска',        icon: <Icons.Board /> },
@@ -1406,7 +1499,12 @@
             { id: 'master',     label: 'Документ',     icon: <Icons.Master /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
             { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
-          ];
+          ].filter(t => {
+            if (!READ_ONLY || CF_VIEW_SCOPE === 'all') return true;
+            if (CF_VIEW_SCOPE === 'gallery') return t.id === 'gallery';
+            if (CF_VIEW_SCOPE === 'board') return t.id === 'whiteboard';
+            return true;
+          });
           const syncing = pendingWrites > 0;
           const syncTitle = !isOnline
             ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
@@ -1430,7 +1528,7 @@
                     {t.icon}<span>{t.label}</span>
                   </button>
                 ))}
-                <div className="mt-auto flex flex-col items-center gap-1.5">
+                <div className="mt-auto flex flex-col items-center gap-1.5 cf-edit-only">
                   <button onClick={() => { setShowChat(!showChat); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }}
                           title="Чат группы"
                           className={`cf-rail-item relative transition-colors ${showChat ? 'cf-rail-on' : ''}`}>
@@ -1458,8 +1556,16 @@
                     <span className="cf-meta hidden lg:inline truncate">{scenes.length} сцен · {storyboard.length} кадров</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => setShowProjectModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Folder /> Проект</button>
-                    <button onClick={() => setShowShareModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Link /> Доступ</button>
+                    {READ_ONLY ? (
+                      <span className="cf-meta" style={{ color: 'var(--accent)' }}>
+                        Только просмотр{CF_SNAPSHOT ? ' · снимок' : ''}
+                      </span>
+                    ) : (
+                      <React.Fragment>
+                        <button onClick={() => setShowProjectModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Folder /> Проект</button>
+                        <button onClick={() => setShowShareModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Link /> Доступ</button>
+                      </React.Fragment>
+                    )}
                   </div>
                 </header>
 
@@ -1731,7 +1837,7 @@
                             </p>
                           )}
                         </div>
-                        <div className="p-3 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+                        <div className="p-3 shrink-0 cf-edit-only" style={{ borderTop: '1px solid var(--border)' }}>
                           <label className="w-full flex items-center justify-center gap-2 cursor-pointer rounded-lg transition-colors hover:bg-white/5"
                                  style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                             <Icons.Gallery /> Загрузить референсы
@@ -1754,7 +1860,7 @@
                               <span className="cf-eyebrow truncate">{[activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Все референсы'}</span>
                               <span className="cf-meta shrink-0">{visibleRefs.length} из {references.length}</span>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-2 shrink-0 cf-edit-only">
                               {visibleRefs.length > 0 && (
                                 <button onClick={() => setSelectedRefIds(allVisibleSelected ? [] : visibleRefs.map(r => r.id))}
                                         className="cf-chip shrink-0">{allVisibleSelected ? 'Снять выделение' : 'Выделить все'}</button>
@@ -1768,7 +1874,7 @@
                         </div>
 
                         {/* панель массовых действий — появляется, когда что-то выделено */}
-                        {selectedRefIds.length > 0 && (
+                        {selectedRefIds.length > 0 && !READ_ONLY && (
                           <div className="rounded-lg p-3 flex flex-col lg:flex-row lg:items-center gap-3 sticky top-0 z-30"
                                style={{ background: 'var(--panel)', border: '1px solid var(--accent-line)' }}>
                             <span className="flex items-center gap-2 shrink-0" style={{ fontSize: 12.5, color: 'var(--text)' }}>
@@ -1817,7 +1923,7 @@
                               );
                             })}
                           <button onClick={() => { const name = prompt('Название папки'); if (name && name.trim()) setActiveFolder(name.trim()); }}
-                                  className="cf-chip shrink-0" style={{ color: 'var(--muted-2)' }}>+ папка</button>
+                                  className="cf-chip shrink-0 cf-edit-only" style={{ color: 'var(--muted-2)' }}>+ папка</button>
                         </div>
 
                         {/* теги на телефоне — горизонтальной лентой */}
@@ -1844,12 +1950,12 @@
                                         <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={{backgroundImage: `url(${ref.url})`}}></div>
                                         <button onClick={(e) => { e.stopPropagation(); toggleRefSelection(ref.id); }}
                                                 title={isSel ? 'Снять выделение' : 'Выделить'}
-                                                className={`absolute bottom-2 left-2 w-7 h-7 rounded-lg z-20 flex items-center justify-center transition-all ${isSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                                className={`cf-edit-only absolute bottom-2 left-2 w-7 h-7 rounded-lg z-20 flex items-center justify-center transition-all ${isSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
                                                 style={isSel ? { background: 'var(--accent)', color: 'var(--bg)' } : { background: 'rgba(0,0,0,.8)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                                         </button>
-                                        <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
-                                        {(() => {
+                                        <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                        {!READ_ONLY && (() => {
                                           const onBoard = !!ref.boardId;
                                           const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
                                           return (
@@ -2210,17 +2316,17 @@
 
                       <div className="absolute top-2 md:top-6 left-2 md:left-6 glass-panel p-2 rounded-lg flex flex-row md:flex-col gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar">
                         <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
-                        <button onClick={() => setWbMode('draw')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
-                        <button onClick={() => setWbMode('erase')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
+                        <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
+                        <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
                         <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
                         <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
-                                className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
+                                className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
                         </button>
-                        <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1"></div>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                        <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
                       </div>
 
                       {wbMode === 'draw' && (
@@ -2552,6 +2658,46 @@
                     <div className="bg-black/50 p-2 pl-4 rounded-lg border border-white/10 flex items-center justify-between gap-3">
                       <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{window.location.href}</span>
                       <button onClick={() => { navigator.clipboard.writeText(window.location.href).then(() => showToast('Ссылка скопирована!')).catch(() => { const t = document.createElement('input'); t.value = window.location.href; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка скопирована!'); }); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                    </div>
+
+                    {/* ТОЛЬКО ПРОСМОТР */}
+                    <div className="mt-6 pt-5" style={{ borderTop: '1px solid var(--border)' }}>
+                      <h4 className="text-sm font-bold text-white mb-1.5">Показать, не давая менять</h4>
+                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+                        Ссылка показывает живые данные — вы правите, человек видит обновления.
+                        Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
+                      </p>
+                      <div className="flex flex-col gap-2 mb-5">
+                        {[['gallery', 'Только референсы'], ['board', 'Только доска'], ['all', 'Весь проект']].map(([scope, label]) => {
+                          const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
+                          return (
+                            <div key={scope} className="flex items-center gap-2">
+                              <span className="text-xs text-zinc-300 w-40 shrink-0">{label}</span>
+                              <button onClick={() => {
+                                        navigator.clipboard.writeText(link)
+                                          .then(() => showToast('Ссылка «' + label.toLowerCase() + '» скопирована'))
+                                          .catch(() => showToast(link));
+                                      }}
+                                      className="cf-chip shrink-0">Скопировать ссылку</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white mb-1.5">Файл-снимок</h4>
+                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+                        Отдельный HTML со вшитыми данными: открывается без интернета,
+                        изменить нельзя вообще. Не обновляется — при правках пришлите новый.
+                        Файл тяжёлый, в нём лежат сами картинки.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {[['gallery', 'Референсы'], ['board', 'Доска'], ['all', 'Весь проект']].map(([scope, label]) => (
+                          <button key={scope} onClick={() => exportSnapshot(scope)} disabled={snapshotBusy}
+                                  className="cf-chip shrink-0">
+                            {snapshotBusy ? 'Собираю…' : 'Скачать · ' + label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
