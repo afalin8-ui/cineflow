@@ -146,7 +146,21 @@
         .cf-strip span { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted-2); writing-mode: vertical-rl; }
 
         /* холст доски */
-        .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.13) 1.5px, transparent 1.5px); background-size: 26px 26px; }
+        /* точки намеренно еле заметны: сетка нужна как ориентир при
+           перетаскивании, но не должна спорить с референсами на доске */
+        .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.05) 1.2px, transparent 1.2px); background-size: 26px 26px; }
+
+        /* Режим «только просмотр». Ничего не уходит в облако (см. syncDoc),
+           а здесь дополнительно гасим саму возможность что-то печатать,
+           чтобы человек не решил, будто его правки сохранятся. */
+        body.cf-readonly input,
+        body.cf-readonly textarea,
+        body.cf-readonly select { pointer-events: none !important; user-select: none; }
+        body.cf-readonly .cf-edit-only { display: none !important; }
+        .cf-ro-badge { position: fixed; top: 8px; right: 8px; z-index: 300; font-size: 11px;
+                       letter-spacing: .08em; text-transform: uppercase; padding: 4px 10px;
+                       border-radius: 999px; background: var(--panel); color: var(--muted);
+                       border: 1px solid var(--border); pointer-events: none; }
 
         /* метка поверх превью кадра */
         .cf-overlay { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text); background: rgba(26,25,24,.72); padding: 3px 6px; border-radius: 3px; }
@@ -232,13 +246,32 @@
           messagingSenderId: "1056447066293",
           appId: "1:1056447066293:web:c29cb639b3a3cdc3d0cefc"
         };
-        const appId = localStorage.getItem('cf_room') || 'cineflow-room-3';
-        
+        // --- Режим «только просмотр» ---
+        // Два способа поделиться, ничего не давая менять:
+        //  1) ссылка вида ...?view=gallery — живые данные из облака,
+        //     но все правки заблокированы и в облако ничего не уходит;
+        //  2) файл-снимок: копия приложения со вшитыми данными
+        //     (window.__CF_SNAPSHOT__), облако не подключается вообще.
+        // scope: 'gallery' | 'board' | 'all' — что показывать.
+        const CF_SNAPSHOT = (typeof window !== 'undefined' && window.__CF_SNAPSHOT__) || null;
+        const CF_VIEW_SCOPE = CF_SNAPSHOT
+          ? (CF_SNAPSHOT.scope || 'all')
+          : (new URLSearchParams(location.search).get('view') || '');
+        const READ_ONLY = !!CF_SNAPSHOT || !!CF_VIEW_SCOPE;
+        if (READ_ONLY) document.body.classList.add('cf-readonly');
+
+        const appId = (CF_SNAPSHOT && CF_SNAPSHOT.room)
+          || new URLSearchParams(location.search).get('room')
+          || localStorage.getItem('cf_room') || 'cineflow-room-3';
+
         let db = null;
         let auth = null;
         // Статус офлайн-копии: 'off' — кэш не включён, 'on' — работает
         window.cfPersistence = 'off';
         try {
+          // Файл-снимок живёт полностью автономно: данные вшиты внутрь,
+          // облако подключать нечего и незачем.
+          if (CF_SNAPSHOT) throw new Error('snapshot mode');
           if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
           auth = firebase.auth();
           db = firebase.firestore();
@@ -516,10 +549,22 @@
             );
         };
 
-        const Lightbox = ({ refs, initialId, onClose }) => {
+        const Lightbox = ({ refs, initialId, onClose, scopeLabel }) => {
             const [currentId, setCurrentId] = useState(initialId);
             const currentIndex = refs.findIndex(r => r.id === currentId);
             const currentRef = refs[currentIndex];
+
+            // Стрелки листают, Esc закрывает — на компьютере так удобнее мыши.
+            useEffect(() => {
+                const onKey = (e) => {
+                    if (e.key === 'Escape') { onClose(); return; }
+                    if (e.key === 'ArrowLeft' && currentIndex > 0) setCurrentId(refs[currentIndex - 1].id);
+                    if (e.key === 'ArrowRight' && currentIndex < refs.length - 1) setCurrentId(refs[currentIndex + 1].id);
+                };
+                window.addEventListener('keydown', onKey);
+                return () => window.removeEventListener('keydown', onKey);
+            }, [currentIndex, refs, onClose]);
+
             if (!currentRef) return null;
 
             return (
@@ -530,7 +575,11 @@
                         <img src={currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
                         {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
                     </div>
-                    {currentRef.label && <div className="absolute bottom-6 px-6 py-2 glass-panel rounded-full text-sm font-medium text-white max-w-md text-center truncate">{currentRef.label}</div>}
+                    <div className="absolute bottom-6 flex items-center gap-2 max-w-[92vw]">
+                        <span className="glass-panel rounded-full px-4 py-2 text-xs font-mono font-bold text-zinc-300 shrink-0">{currentIndex + 1} / {refs.length}</span>
+                        {scopeLabel && <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 hidden sm:block" style={{ color: 'var(--accent)' }}>{scopeLabel}</span>}
+                        {currentRef.label && <span className="px-5 py-2 glass-panel rounded-full text-sm font-medium text-white text-center truncate">{currentRef.label}</span>}
+                    </div>
                 </div>
             );
         };
@@ -736,8 +785,11 @@
           };
           
           const safeLoad = (key, fallback, isArray = true) => {
-            try { 
-              const saved = localStorage.getItem(key); if (!saved) return fallback; 
+            // В файле-снимке данные лежат прямо внутри страницы, а не
+            // в localStorage: снимок должен открываться на чужом устройстве.
+            if (CF_SNAPSHOT && CF_SNAPSHOT.data && CF_SNAPSHOT.data[key] !== undefined) return CF_SNAPSHOT.data[key];
+            try {
+              const saved = localStorage.getItem(key); if (!saved) return fallback;
               const parsed = JSON.parse(saved); 
               if (isArray) return Array.isArray(parsed) ? parsed : fallback;
               return (parsed !== null && typeof parsed === 'object') ? parsed : fallback;
@@ -782,7 +834,9 @@
 
           const [messages, setMessages] = useState([]); 
 
-          const [currentView, setCurrentView] = useState('notion'); 
+          const [currentView, setCurrentView] = useState(
+            CF_VIEW_SCOPE === 'gallery' ? 'gallery' : (CF_VIEW_SCOPE === 'board' ? 'whiteboard' : 'notion')
+          ); 
           const [activeSceneId, setActiveSceneId] = useState('scene-1');
           const [activeDocId, setActiveDocId] = useState('doc-1');
           const [showImages, setShowImages] = useState(true); 
@@ -806,6 +860,10 @@
           // отдельной сущности нет: так ничего не рассинхронизируется,
           // и папка исчезает сама, когда из неё убрали последний файл.
           const [activeFolder, setActiveFolder] = useState('');
+          // Мультивыбор в галерее. Объявлено здесь, до visibleRefs:
+          // ниже по коду эти значения читаются прямо во время отрисовки.
+          const [selectedRefIds, setSelectedRefIds] = useState([]);
+          const [bulkTagInput, setBulkTagInput] = useState('');
           const folderCounts = useMemo(() => {
             const m = {};
             references.forEach(r => { const f = (r.folder || '').trim(); if (f) m[f] = (m[f] || 0) + 1; });
@@ -816,6 +874,46 @@
             const up = references.map(r => r.id === ref.id ? { ...r, folder } : r);
             setReferences(up);
             syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
+
+          // --- Массовые операции над выделенными референсами ---
+          const toggleRefSelection = (id) => {
+            setSelectedRefIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+          };
+          const bulkPatchRefs = (patchFn, message) => {
+            const up = references.map(r => selectedRefIds.includes(r.id) ? patchFn(r) : r);
+            setReferences(up);
+            selectedRefIds.forEach(id => { const f = up.find(r => r.id === id); if (f) syncDoc('references', id, f); });
+            if (message) showToast(message);
+          };
+          const bulkAddTag = () => {
+            const t = bulkTagInput.trim().toLowerCase(); if (!t) return;
+            bulkPatchRefs(r => ({ ...r, tags: (r.tags || []).includes(t) ? r.tags : [...(r.tags || []), t] }),
+                          `Тег «${t}» добавлен · ${selectedRefIds.length} шт.`);
+            setBulkTagInput('');
+          };
+          const bulkMoveToFolder = (folder) => {
+            bulkPatchRefs(r => ({ ...r, folder }), folder ? `Перемещено в «${folder}» · ${selectedRefIds.length} шт.` : `Убрано из папки · ${selectedRefIds.length} шт.`);
+          };
+          const bulkPutOnBoard = () => {
+            let i = 0;
+            bulkPatchRefs(r => ({ ...r, boardId: activeBoardId,
+                                  x: (260 - canvasOffset.x) / zoom + (i % 5) * 210,
+                                  y: (240 - canvasOffset.y) / zoom + Math.floor(i++ / 5) * 190 }),
+                          `На доску добавлено ${selectedRefIds.length} шт.`);
+          };
+          const bulkDeleteRefs = () => {
+            setConfirmAction({
+              title: `Удалить ${selectedRefIds.length} изображений?`,
+              message: 'Выделенные референсы удалятся из проекта. Действие необратимо.',
+              onConfirm: () => {
+                const ids = [...selectedRefIds];
+                setReferences(references.filter(r => !ids.includes(r.id)));
+                ids.forEach(id => deleteNetDoc('references', id));
+                setSelectedRefIds([]);
+                showToast(`Удалено ${ids.length} шт.`);
+              }
+            });
           };
           // Список тегов с количеством референсов у каждого.
           const tagCounts = useMemo(() => {
@@ -829,6 +927,7 @@
             const byFolder = activeFolder === '' ? true : (activeFolder === '__none__' ? !f : f === activeFolder);
             return byTag && byFolder;
           }), [references, tagSearch, activeFolder]);
+          const allVisibleSelected = visibleRefs.length > 0 && visibleRefs.every(r => selectedRefIds.includes(r.id));
           
           const [activeSchemeId, setActiveSchemeId] = useState(null);
           const [drawingSchemeId, setDrawingSchemeId] = useState(null);
@@ -984,6 +1083,7 @@
           const [selectedWbItems, setSelectedWbItems] = useState([]);
           const [selectionBox, setSelectionBox] = useState(null);
           const [draggingWbItems, setDraggingWbItems] = useState(null);
+          const [resizingRef, setResizingRef] = useState(null);
 
           const canvasRef = useRef(null);
           const paintCanvasRef = useRef(null);
@@ -1170,8 +1270,11 @@
             return () => unsub();
           }, [user, activeBoardId]);
 
-          // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака)
+          // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
+          // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
+          // устройстве его собственный проект.
           useEffect(() => {
+            if (READ_ONLY) return;
             const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('localStorage переполнен:', k); } };
             save('cf_scenes', scenes); save('cf_storyboard', storyboard);
             save('cf_references', references); save('cf_stickies', stickies);
@@ -1181,10 +1284,20 @@
             save('cf_boards', boards);
           }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards]);
 
+          // Выделение в галерее не должно ссылаться на удалённые изображения
+          useEffect(() => {
+            setSelectedRefIds(prev => {
+              const next = prev.filter(id => references.some(r => r.id === id));
+              return next.length === prev.length ? prev : next;
+            });
+          }, [references]);
+
           const syncTimers = useRef({});
           const dataRef = () => db.collection('artifacts').doc(appId).collection('public').doc('data');
           const syncDoc = (coll, id, data) => {
-            if (!db || !user) return;
+            // В режиме просмотра наружу не уходит ничего — это главная
+            // защита ссылки-просмотра, а не спрятанные кнопки.
+            if (READ_ONLY || !db || !user) return;
             const key = coll + '/' + id;
             clearTimeout(syncTimers.current[key]);
             syncTimers.current[key] = setTimeout(() => {
@@ -1196,7 +1309,7 @@
             }, 400);
           };
           const deleteNetDoc = (coll, id) => {
-            if (!db || !user) return;
+            if (READ_ONLY || !db || !user) return;
             const key = coll + '/' + id;
             clearTimeout(syncTimers.current[key]); delete syncTimers.current[key];
             trackWrite(dataRef().collection(coll).doc(id).delete().catch(err => console.warn('deleteNetDoc', err)));
@@ -1241,6 +1354,56 @@
               const payload = { label: name };
               if (isLight) { setLightGearTypes(prev => { const up = {...prev, [key]: payload}; syncDoc('lightGearTypes', key, payload); return up; }); setNewLightGearName(''); }
               else { setGearTypes(prev => { const up = {...prev, [key]: payload}; syncDoc('gearTypes', key, payload); return up; }); setNewGearName(''); }
+          };
+
+          // --- Файл-снимок для отправки «наружу» ---
+          // Берём исходник самой страницы и вшиваем в него данные.
+          // Открывается офлайн, к облаку не подключается, править нечего.
+          const [snapshotBusy, setSnapshotBusy] = useState(false);
+          const exportSnapshot = async (scope) => {
+            setSnapshotBusy(true);
+            try {
+              showToast('Собираю файл — это займёт несколько секунд...');
+              const res = await fetch(location.pathname, { cache: 'reload' });
+              let html = await res.text();
+
+              // Кладём только то, чем делимся: лишние картинки сильно весят.
+              const data = {};
+              if (scope === 'gallery' || scope === 'all') data.cf_references = references;
+              if (scope === 'board' || scope === 'all') {
+                data.cf_references = references;
+                data.cf_stickies = stickies;
+                data.cf_boards = boards;
+              }
+              if (scope === 'all') {
+                data.cf_scenes = scenes; data.cf_storyboard = storyboard;
+                data.cf_docs = docs; data.cf_crew = crew;
+                data.cf_geartypes = gearTypes; data.cf_lightgeartypes = lightGearTypes;
+                data.cf_lightschemes = lightSchemes;
+              }
+              if (scope === 'gallery') { data.cf_scenes = []; data.cf_stickies = []; }
+
+              const payload = { scope, room: appId, madeAt: new Date().toISOString(), data };
+              // Закрывающий тег скрипта внутри данных разорвал бы разметку — экранируем.
+              const json = JSON.stringify(payload).replace(/<\//g, '<\\/');
+              const inject = '<script>window.__CF_SNAPSHOT__ = ' + json + ';<\/script>\n</head>';
+              if (!html.includes('</head>')) throw new Error('не нашёл </head>');
+              html = html.replace('</head>', inject);
+
+              const blob = new Blob([html], { type: 'text/html' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              const names = { gallery: 'референсы', board: 'доска', all: 'проект' };
+              a.download = `CineFlow_${names[scope] || scope}_${new Date().toISOString().split('T')[0]}.html`;
+              document.body.appendChild(a); a.click(); document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              showToast(`Готово · ${(blob.size / 1048576).toFixed(1)} МБ`);
+            } catch (err) {
+              console.error(err);
+              showToast('Не удалось собрать файл: ' + err.message);
+            }
+            setSnapshotBusy(false);
           };
 
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
@@ -1302,10 +1465,33 @@
               setDraggingWbItems({ pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, items: itemsToDrag });
               e.currentTarget.setPointerCapture(e.pointerId);
           };
+
+          // --- Размер карточки референса на доске ---
+          // Ширина живёт в поле w у референса; высота считается по ней,
+          // чтобы связи и рамка выделения знали габариты карточки.
+          const REF_W = 192;
+          const refW = (r) => Math.round(r.w || REF_W);
+          const refH = (r) => Math.round((refW(r) - 20) * 9 / 16) + 58;
+
+          const handleResizeMove = (e) => {
+              if (!resizingRef || resizingRef.pointerId !== e.pointerId) return;
+              const dx = (e.clientX - resizingRef.startX) / zoom;
+              const nw = Math.max(120, Math.min(960, Math.round((resizingRef.startW + dx) / 8) * 8));
+              setReferences(prev => prev.map(r => r.id === resizingRef.id ? { ...r, w: nw } : r));
+          };
+
+          const handleResizeUp = (e) => {
+              if (!resizingRef || resizingRef.pointerId !== e.pointerId) return;
+              const f = references.find(r => r.id === resizingRef.id);
+              if (f) syncDoc('references', resizingRef.id, f);
+              setResizingRef(null);
+          };
           
-          if (showWelcome) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
+          // В режиме просмотра имя не спрашиваем — человек просто смотрит.
+          if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
           // Пункты навигации — общий список для рельса и мобильной ленты.
+          // В режиме просмотра остаётся только то, чем поделились.
           const navItems = [
             { id: 'notion',     label: 'Сцены',        icon: <Icons.Scene /> },
             { id: 'whiteboard', label: 'Доска',        icon: <Icons.Board /> },
@@ -1313,7 +1499,12 @@
             { id: 'master',     label: 'Документ',     icon: <Icons.Master /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
             { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
-          ];
+          ].filter(t => {
+            if (!READ_ONLY || CF_VIEW_SCOPE === 'all') return true;
+            if (CF_VIEW_SCOPE === 'gallery') return t.id === 'gallery';
+            if (CF_VIEW_SCOPE === 'board') return t.id === 'whiteboard';
+            return true;
+          });
           const syncing = pendingWrites > 0;
           const syncTitle = !isOnline
             ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
@@ -1337,7 +1528,7 @@
                     {t.icon}<span>{t.label}</span>
                   </button>
                 ))}
-                <div className="mt-auto flex flex-col items-center gap-1.5">
+                <div className="mt-auto flex flex-col items-center gap-1.5 cf-edit-only">
                   <button onClick={() => { setShowChat(!showChat); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }}
                           title="Чат группы"
                           className={`cf-rail-item relative transition-colors ${showChat ? 'cf-rail-on' : ''}`}>
@@ -1365,8 +1556,16 @@
                     <span className="cf-meta hidden lg:inline truncate">{scenes.length} сцен · {storyboard.length} кадров</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => setShowProjectModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Folder /> Проект</button>
-                    <button onClick={() => setShowShareModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Link /> Доступ</button>
+                    {READ_ONLY ? (
+                      <span className="cf-meta" style={{ color: 'var(--accent)' }}>
+                        Только просмотр{CF_SNAPSHOT ? ' · снимок' : ''}
+                      </span>
+                    ) : (
+                      <React.Fragment>
+                        <button onClick={() => setShowProjectModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Folder /> Проект</button>
+                        <button onClick={() => setShowShareModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Link /> Доступ</button>
+                      </React.Fragment>
+                    )}
                   </div>
                 </header>
 
@@ -1555,7 +1754,7 @@
                               </div>
                               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                 {sceneRefs.map(ref => (
-                                  <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, currentId: ref.id })}>
+                                  <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: ref.id })}>
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={{backgroundImage: `url(${ref.url})`}}></div>
                                     <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
                                     <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-10" draggable="false" />
@@ -1638,7 +1837,7 @@
                             </p>
                           )}
                         </div>
-                        <div className="p-3 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+                        <div className="p-3 shrink-0 cf-edit-only" style={{ borderTop: '1px solid var(--border)' }}>
                           <label className="w-full flex items-center justify-center gap-2 cursor-pointer rounded-lg transition-colors hover:bg-white/5"
                                  style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                             <Icons.Gallery /> Загрузить референсы
@@ -1658,14 +1857,73 @@
                      <div className="p-4 md:p-6 pb-24 space-y-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex items-baseline gap-3 min-w-0">
-                              <span className="cf-eyebrow truncate">{tagSearch ? `Тег: ${tagSearch}` : 'Все референсы'}</span>
+                              <span className="cf-eyebrow truncate">{[activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Все референсы'}</span>
                               <span className="cf-meta shrink-0">{visibleRefs.length} из {references.length}</span>
                             </div>
-                            <label className="md:hidden flex items-center gap-2 cursor-pointer rounded-lg px-4 shrink-0"
-                                   style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
-                                + Загрузить
-                                <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
-                            </label>
+                            <div className="flex items-center gap-2 shrink-0 cf-edit-only">
+                              {visibleRefs.length > 0 && (
+                                <button onClick={() => setSelectedRefIds(allVisibleSelected ? [] : visibleRefs.map(r => r.id))}
+                                        className="cf-chip shrink-0">{allVisibleSelected ? 'Снять выделение' : 'Выделить все'}</button>
+                              )}
+                              <label className="md:hidden flex items-center gap-2 cursor-pointer rounded-lg px-4 shrink-0"
+                                     style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
+                                  + Загрузить
+                                  <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                              </label>
+                            </div>
+                        </div>
+
+                        {/* панель массовых действий — появляется, когда что-то выделено */}
+                        {selectedRefIds.length > 0 && !READ_ONLY && (
+                          <div className="rounded-lg p-3 flex flex-col lg:flex-row lg:items-center gap-3 sticky top-0 z-30"
+                               style={{ background: 'var(--panel)', border: '1px solid var(--accent-line)' }}>
+                            <span className="flex items-center gap-2 shrink-0" style={{ fontSize: 12.5, color: 'var(--text)' }}>
+                              <span className="rounded-md px-2 py-0.5 font-mono font-bold" style={{ background: 'var(--accent)', color: 'var(--bg)', fontSize: 11.5 }}>{selectedRefIds.length}</span>
+                              выбрано
+                            </span>
+                            <div className="flex flex-1 flex-col sm:flex-row gap-2 flex-wrap">
+                              <div className="flex gap-2 flex-1 min-w-[200px]">
+                                <input type="text" value={bulkTagInput} onChange={e => setBulkTagInput(e.target.value)}
+                                       onKeyDown={e => { if (e.key === 'Enter') bulkAddTag(); }}
+                                       placeholder="Общий тег для всех..." className="glass-input rounded-md px-3 flex-1 min-w-0"
+                                       style={{ minHeight: 38, fontSize: 12 }} />
+                                <button onClick={bulkAddTag} className="cf-chip shrink-0">+ тег</button>
+                              </div>
+                              <select value="" onChange={(e) => {
+                                        if (e.target.value === '__new__') { const name = prompt('Новая папка'); if (name && name.trim()) bulkMoveToFolder(name.trim()); }
+                                        else if (e.target.value === '__none__') bulkMoveToFolder('');
+                                        else if (e.target.value) bulkMoveToFolder(e.target.value);
+                                      }}
+                                      className="rounded-md px-2 min-w-[170px]"
+                                      style={{ minHeight: 38, fontSize: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-2)' }}>
+                                <option value="">Переместить в папку...</option>
+                                {folderCounts.map(([f]) => <option key={f} value={f}>{f}</option>)}
+                                <option value="__new__">+ новая папка…</option>
+                                <option value="__none__">— Без папки —</option>
+                              </select>
+                              <button onClick={bulkPutOnBoard} className="cf-chip shrink-0 flex items-center gap-1.5"><Icons.Board /> На доску</button>
+                            </div>
+                            <div className="flex gap-2 shrink-0">
+                              <button onClick={bulkDeleteRefs} className="cf-chip shrink-0 flex items-center gap-1.5" style={{ color: '#f87171', borderColor: 'rgba(248,113,113,.35)' }}><Icons.Trash /> Удалить</button>
+                              <button onClick={() => setSelectedRefIds([])} className="cf-chip shrink-0">Отменить</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* папки на телефоне — горизонтальной лентой (боковая колонка скрыта на узких экранах) */}
+                        <div className="md:hidden flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+                          {[['', 'Все', references.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
+                            .map(([key, label, count]) => {
+                              const on = activeFolder === key;
+                              return (
+                                <button key={key || 'all'} onClick={() => setActiveFolder(key)}
+                                        className={`cf-chip shrink-0 flex items-center gap-1.5 ${on ? 'cf-chip-accent' : ''}`}>
+                                  <Icons.Folder /> {label} · {count}
+                                </button>
+                              );
+                            })}
+                          <button onClick={() => { const name = prompt('Название папки'); if (name && name.trim()) setActiveFolder(name.trim()); }}
+                                  className="cf-chip shrink-0 cf-edit-only" style={{ color: 'var(--muted-2)' }}>+ папка</button>
                         </div>
 
                         {/* теги на телефоне — горизонтальной лентой */}
@@ -1684,12 +1942,20 @@
                         )}
 
                         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(212px, 1fr))' }}>
-                            {visibleRefs.map(ref => (
-                                <div key={ref.id} className="glass-panel rounded-lg overflow-hidden flex flex-col group border-t border-white/10">
-                                    <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => setLightboxData({ sceneId: null, currentId: ref.id })}>
+                            {visibleRefs.map(ref => {
+                              const isSel = selectedRefIds.includes(ref.id);
+                              return (
+                                <div key={ref.id} className={`glass-panel rounded-lg overflow-hidden flex flex-col group border-t transition-all ${isSel ? 'ring-2' : 'border-white/10'}`} style={isSel ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : undefined}>
+                                    <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => { if (selectedRefIds.length > 0) { toggleRefSelection(ref.id); } else { setLightboxData({ scope: visibleRefs.map(x => x.id), scopeLabel: [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Вся галерея', currentId: ref.id }); } }}>
                                         <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={{backgroundImage: `url(${ref.url})`}}></div>
-                                        <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
-                                        {(() => {
+                                        <button onClick={(e) => { e.stopPropagation(); toggleRefSelection(ref.id); }}
+                                                title={isSel ? 'Снять выделение' : 'Выделить'}
+                                                className={`cf-edit-only absolute bottom-2 left-2 w-7 h-7 rounded-lg z-20 flex items-center justify-center transition-all ${isSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                                style={isSel ? { background: 'var(--accent)', color: 'var(--bg)' } : { background: 'rgba(0,0,0,.8)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                        {!READ_ONLY && (() => {
                                           const onBoard = !!ref.boardId;
                                           const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
                                           return (
@@ -1743,7 +2009,8 @@
                                         </div>
                                     </div>
                                 </div>
-                            ))}
+                              );
+                            })}
                         </div>
                      </div>
                     </div>
@@ -1863,6 +2130,7 @@
                             setSelectionBox({ ...selectionBox, currentX: x, currentY: y });
                         }
                         handleDragMove(e);
+                        handleResizeMove(e);
                     }}
                     onPointerUp={(e) => {
                         if (selectionBox && selectionBox.pointerId === e.pointerId) {
@@ -1882,13 +2150,14 @@
                                     if (item.x < maxX && item.x + w > minX && item.y < maxY && item.y + h > minY) newSelected.push(item.id);
                                 };
                                 scenes.forEach(s => checkInt(s, 288, 150));
-                                references.forEach(r => checkInt(r, 192, 150));
+                                references.forEach(r => checkInt(r, refW(r), refH(r)));
                                 stickies.forEach(st => checkInt(st, 224, 100));
                                 setSelectedWbItems(newSelected);
                             }
                             setSelectionBox(null);
                         }
                         handleDragUp(e);
+                        handleResizeUp(e);
                         if (linkingFromRefId) {
                             if (hoveredSceneId) { const up = references.map(r => r.id === linkingFromRefId ? { ...r, sceneId: hoveredSceneId } : r); setReferences(up); syncDoc('references', linkingFromRefId, up.find(r => r.id === linkingFromRefId)); }
                             setLinkingFromRefId(null);
@@ -1908,11 +2177,11 @@
                         <svg className="absolute inset-0 pointer-events-none w-[4000px] h-[4000px] z-0">
                           {references.map(ref => {
                             if (!ref.sceneId) return null; const t = scenes.find(s => s.id === ref.sceneId); if (!t) return null;
-                            const sx = ref.x + 192; const sy = ref.y + 60; const ex = t.x; const ey = t.y + 50;
+                            const sx = ref.x + refW(ref); const sy = ref.y + refH(ref) / 2; const ex = t.x; const ey = t.y + 50;
                             return (<path key={`link-${ref.id}`} d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "#d97757" : "rgba(217,119,87,0.6)"} strokeWidth={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "4" : "3"} strokeDasharray="6 6" />);
                           })}
                           {linkingFromRefId && references.find(r => r.id === linkingFromRefId) && (() => {
-                             const r = references.find(x => x.id === linkingFromRefId); const sx = r.x + 192; const sy = r.y + 60;
+                             const r = references.find(x => x.id === linkingFromRefId); const sx = r.x + refW(r); const sy = r.y + refH(r) / 2;
                              let ex = (mousePos.x - canvasRef.current?.getBoundingClientRect().left) / zoom; let ey = (mousePos.y - canvasRef.current?.getBoundingClientRect().top) / zoom;
                              return <path d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#d97757" strokeWidth="4" />;
                           })()}
@@ -2007,10 +2276,13 @@
                             ))}
 
                             {references.filter(r => r.boardId === activeBoardId).map(ref => (
-                            <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, position: 'absolute' }} className={`w-48 glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 transition-all ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'}`}>
+                            <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${resizingRef && resizingRef.id === ref.id ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'}`}>
                                 <div className="relative aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/10">
                                 <button onClick={() => setConfirmAction({title:'Удалить референс?', message:'Убрать с доски?', onConfirm:()=> { setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
-                                {ref.url ? <img src={ref.url} className="w-full h-full object-cover pointer-events-none" draggable="false" /> : (
+                                {ref.url ? (<React.Fragment>
+                                    <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={{backgroundImage: `url(${ref.url})`}}></div>
+                                    <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-[1]" draggable="false" />
+                                </React.Fragment>) : (
                                     <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
                                     <span className="mb-1"><Icons.Gallery/></span><span>Загрузить</span>
                                     <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
@@ -2019,6 +2291,17 @@
                                 </div>
                                 <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r => r.id === ref.id ? { ...r, label: e.target.value } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }} className="w-full bg-transparent text-[11px] text-center font-bold text-zinc-300 focus:outline-none mt-2 placeholder-zinc-600" placeholder="Подпись..." />
                                 <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFromRefId(ref.id); }} className="node-handle absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
+                                <div
+                                    onPointerDown={(e) => { e.stopPropagation(); setResizingRef({ id: ref.id, pointerId: e.pointerId, startX: e.clientX, startW: refW(ref) }); e.currentTarget.setPointerCapture(e.pointerId); }}
+                                    onDoubleClick={(e) => { e.stopPropagation(); const up = references.map(r => r.id === ref.id ? { ...r, w: REF_W } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }}
+                                    title="Потяните, чтобы изменить размер. Двойной клик — вернуть исходный"
+                                    className={`node-handle absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize z-30 flex items-center justify-center transition-colors ${(resizingRef && resizingRef.id === ref.id) || selectedWbItems.includes(ref.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                    style={{pointerEvents: 'auto', touchAction: 'none'}}>
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#f0eee6" strokeWidth="1.6" strokeLinecap="round"><path d="M9 2 2 9"/><path d="M9 6.5 6.5 9"/></svg>
+                                </div>
+                                {resizingRef && resizingRef.id === ref.id && (
+                                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-black/90 border border-white/20 text-[11px] font-mono font-bold text-white px-2 py-0.5 rounded-md z-40 pointer-events-none whitespace-nowrap">{refW(ref)} px</div>
+                                )}
                             </div>
                             ))}
 
@@ -2033,17 +2316,17 @@
 
                       <div className="absolute top-2 md:top-6 left-2 md:left-6 glass-panel p-2 rounded-lg flex flex-row md:flex-col gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar">
                         <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
-                        <button onClick={() => setWbMode('draw')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
-                        <button onClick={() => setWbMode('erase')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
+                        <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
+                        <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
                         <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
                         <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
-                                className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
+                                className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
                         </button>
-                        <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1"></div>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                        <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
                       </div>
 
                       {wbMode === 'draw' && (
@@ -2376,6 +2659,46 @@
                       <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{window.location.href}</span>
                       <button onClick={() => { navigator.clipboard.writeText(window.location.href).then(() => showToast('Ссылка скопирована!')).catch(() => { const t = document.createElement('input'); t.value = window.location.href; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка скопирована!'); }); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
                     </div>
+
+                    {/* ТОЛЬКО ПРОСМОТР */}
+                    <div className="mt-6 pt-5" style={{ borderTop: '1px solid var(--border)' }}>
+                      <h4 className="text-sm font-bold text-white mb-1.5">Показать, не давая менять</h4>
+                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+                        Ссылка показывает живые данные — вы правите, человек видит обновления.
+                        Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
+                      </p>
+                      <div className="flex flex-col gap-2 mb-5">
+                        {[['gallery', 'Только референсы'], ['board', 'Только доска'], ['all', 'Весь проект']].map(([scope, label]) => {
+                          const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
+                          return (
+                            <div key={scope} className="flex items-center gap-2">
+                              <span className="text-xs text-zinc-300 w-40 shrink-0">{label}</span>
+                              <button onClick={() => {
+                                        navigator.clipboard.writeText(link)
+                                          .then(() => showToast('Ссылка «' + label.toLowerCase() + '» скопирована'))
+                                          .catch(() => showToast(link));
+                                      }}
+                                      className="cf-chip shrink-0">Скопировать ссылку</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white mb-1.5">Файл-снимок</h4>
+                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+                        Отдельный HTML со вшитыми данными: открывается без интернета,
+                        изменить нельзя вообще. Не обновляется — при правках пришлите новый.
+                        Файл тяжёлый, в нём лежат сами картинки.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {[['gallery', 'Референсы'], ['board', 'Доска'], ['all', 'Весь проект']].map(([scope, label]) => (
+                          <button key={scope} onClick={() => exportSnapshot(scope)} disabled={snapshotBusy}
+                                  className="cf-chip shrink-0">
+                            {snapshotBusy ? 'Собираю…' : 'Скачать · ' + label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2474,9 +2797,14 @@
                   }} />
               )}
 
-              {lightboxData && (
-                  <Lightbox refs={references.filter(r => lightboxData.sceneId ? r.sceneId === lightboxData.sceneId : true)} initialId={lightboxData.currentId} onClose={() => setLightboxData(null)} />
-              )}
+              {lightboxData && (() => {
+                  // Листаем ровно тот набор, что открыт на экране (папка + тег),
+                  // а не все референсы проекта.
+                  const list = lightboxData.scope
+                      ? lightboxData.scope.map(id => references.find(r => r.id === id)).filter(Boolean)
+                      : references.filter(r => lightboxData.sceneId ? r.sceneId === lightboxData.sceneId : true);
+                  return <Lightbox refs={list} scopeLabel={lightboxData.scopeLabel} initialId={lightboxData.currentId} onClose={() => setLightboxData(null)} />;
+              })()}
 
               {/* Печатная версия. Содержимое зависит от выбранной кнопки
                   экспорта (printMode): весь план / гайд / схема / техника. */}
