@@ -512,6 +512,9 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
   .botpanel { right: calc(112px + var(--safe-r)); }
 }
 
+/* Флот уже ходил в этот ход — метка приглушена */
+.gal-marker.spent .gm-info { opacity: 0.5; }
+
 /* ─────────── сообщения боя ─────────── */
 
 .toasts {

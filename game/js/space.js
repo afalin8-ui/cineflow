@@ -824,14 +824,32 @@ export function createSpaceBattle(ctx, config) {
           desiredVel = _v.divideScalar(d).multiplyScalar(Math.min(def.maxSpeed, brake)).clone();
         }
       } else if (e.target) {
+        /* Подход к цели. Раньше корабль болтало: чуть далеко — полный
+           вперёд, чуть близко — полный назад, между ними — облёт
+           боком. На экране это читалось как рой мечущихся точек,
+           а не как флот.
+
+           Теперь у дистанции широкая мёртвая зона: попал в неё —
+           стоишь и стреляешь. Облетать по дуге позволено только
+           эскорту, у которого это его манера боя; крейсер, носитель
+           и флагман держат линию. */
         const d = e.pos.distanceTo(e.target.pos);
         const want = (e.guns[0] ? e.guns[0].def.range : 300) * 0.68;
         _v.subVectors(e.target.pos, e.pos);
         const dist = _v.length() || 1;
         _v.divideScalar(dist);
-        if (d > want) desiredVel = _v.clone().multiplyScalar(def.maxSpeed);
-        else if (d < want * 0.5) desiredVel = _v.clone().multiplyScalar(-def.maxSpeed * 0.7);
-        else desiredVel = _v3.crossVectors(_v, UP).normalize().multiplyScalar(def.maxSpeed * 0.55).clone();
+        const light = def.cls === 'escort';
+        if (d > want * 1.08) {
+          // подходим, но не влетаем: гасим ход заранее
+          const brake = Math.sqrt(Math.max(0, 2 * def.thrust * (d - want)));
+          desiredVel = _v.clone().multiplyScalar(Math.min(def.maxSpeed, brake));
+        } else if (d < want * 0.55) {
+          desiredVel = _v.clone().multiplyScalar(-def.maxSpeed * 0.5);
+        } else if (light) {
+          desiredVel = _v3.crossVectors(_v, UP).normalize().multiplyScalar(def.maxSpeed * 0.45).clone();
+        } else {
+          desiredVel = ZERO;      // дистанция та, что нужна: стоим и работаем
+        }
       } else {
         desiredVel = ZERO;    // система стабилизации гасит дрейф
       }
@@ -1460,6 +1478,39 @@ export function createSpaceBattle(ctx, config) {
       d.firstChild.textContent = nm.includes('«') ? nm.slice(nm.indexOf('«')) : nm;
       d.classList.toggle('mine', s.side === state.playerSide);
       d.classList.toggle('sel', state.selection.includes(s));
+    }
+    /* Подписи звеньям. Истребитель — точка размером с пиксель, и без
+       метки игрок просто не знает, что авиация вообще в бою. Метка
+       одна на звено, у центра масс: пять отдельных было бы месивом. */
+    for (const sq of state.squads) {
+      if (sq.dead || !sq.craft.length) continue;
+      const live = sq.craft.filter(c => !c.dead);
+      if (!live.length) continue;
+      if (sq.side !== state.playerSide && craftHidden(live[0])) continue;
+      _v.set(0, 0, 0);
+      for (const c of live) _v.add(c.pos);
+      _v.divideScalar(live.length);
+      let d = markerPool[i];
+      if (!d) {
+        d = document.createElement('div');
+        d.className = 'marker';
+        d.innerHTML = '<span class="mk-name"></span><span class="mk-bar"><i></i></span>';
+        markers.appendChild(d);
+        markerPool[i] = d;
+      }
+      i++;
+      const p = screenOf(_v, tcam.cam, w, h);
+      if (p.z > 1 || p.x < -90 || p.x > w + 90 || p.y < -50 || p.y > h + 50) { d.style.display = 'none'; continue; }
+      d.style.display = 'block';
+      d.classList.remove('cloak', 'jump');
+      d.style.transform = `translate(${(p.x - 48) | 0}px,${(p.y - 40) | 0}px)`;
+      d.firstChild.textContent = `${STRIKE_ROLES[sq.role].label} ×${live.length}`;
+      const bar = d.lastChild.firstChild;
+      const hp = live.reduce((a, c) => a + c.hp / c.maxHp, 0) / live.length;
+      bar.style.width = (clamp(hp, 0, 1) * 100) + '%';
+      bar.style.background = sq.faction.colorCss;
+      d.classList.toggle('mine', sq.side === state.playerSide);
+      d.classList.toggle('sel', state.selection.includes(sq));
     }
     for (; i < markerPool.length; i++) markerPool[i].style.display = 'none';
   }

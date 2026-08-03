@@ -336,6 +336,7 @@ export function createGalaxy(ctx, camp) {
       </div>
     </div>
     <div class="scoreline" data-role="score"></div>
+    <div class="toasts" data-role="toasts"></div>
     <div class="markers" data-role="markers"></div>
     <div class="galaxy-panel" data-role="panel"></div>
     <div class="hint">${IS_TOUCH
@@ -392,9 +393,15 @@ export function createGalaxy(ctx, camp) {
       const f = ownerOf(def.id);
       el.style.color = f.colorCss;
       const ships = fleetSize(st.fleet);
-      el.lastChild.textContent = `${f.tag}${ships ? ' · ⬢' + ships : ''}${st.regiments ? ' · ▮' + st.regiments : ''}`;
+      /* Флот, уже сходивший в этот ход, помечаем стрелкой: без метки
+         игрок жмёт по соседнему миру и не понимает, почему ничего
+         не происходит. */
+      const spent = st.owner === camp.playerFaction && st.moved && ships > 0;
+      el.lastChild.textContent = `${f.tag}${ships ? ' · ⬢' + ships : ''}`
+        + `${st.regiments ? ' · ▮' + st.regiments : ''}${spent ? ' · ⤴' : ''}`;
       el.classList.toggle('sel', state.selected === def.id);
       el.classList.toggle('mine', st.owner === camp.playerFaction);
+      el.classList.toggle('spent', spent);
     }
   }
 
@@ -648,6 +655,19 @@ export function createGalaxy(ctx, camp) {
   /* Короткое окно с объяснением. Нужно именно объяснение, а не отказ
      молчком: правило про врата неочевидно, и без подсказки игрок
      решит, что игра съела ему флот. */
+  /* Короткие сообщения по центру — те же, что в боях. На карте
+     они нужны ровно для одного: сказать, что произошло после
+     касания, иначе ход выглядит как «цифры сами поменялись». */
+  const toastBox = hud.querySelector('[data-role="toasts"]');
+  function toast(text) {
+    const d = document.createElement('div');
+    d.className = 'toast';
+    d.textContent = text;
+    toastBox.appendChild(d);
+    setTimeout(() => d.classList.add('out'), 2600);
+    setTimeout(() => d.remove(), 3400);
+  }
+
   function notify(title, text) {
     const m = document.createElement('div');
     m.className = 'modal';
@@ -681,6 +701,56 @@ export function createGalaxy(ctx, camp) {
   }
 
   // ── ПЕРЕХОД ФЛОТА ────────────────────────────────────────
+  /* ── КУДА УШЁЛ ФЛОТ.
+
+     В пошаговой игре флот телепортируется, и без подсказки игрок
+     видит только то, что где-то поменялись цифры. Поэтому переход
+     показываем явно: линия от системы к системе, бегущая по ней
+     искра и сообщение в углу. Живёт три секунды и гаснет. */
+  // «1 корабль, 2 корабля, 5 кораблей» — иначе подпись режет глаз
+  function ships(n) {
+    const t = n % 100, o = n % 10;
+    const word = (t > 10 && t < 20) || o === 0 || o > 4 ? 'кораблей'
+      : o === 1 ? 'корабль' : 'корабля';
+    return `${n} ${word}`;
+  }
+
+  const flights = [];
+  function showFlight(fromId, toId, text) {
+    const a = nodes[fromId].pos, b = nodes[toId].pos;
+    const geo = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: 0x8fffc8, transparent: true, opacity: 0.9, depthWrite: false,
+    }));
+    scene.add(line);
+    const spark = new THREE.Mesh(
+      new THREE.SphereGeometry(0.9, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xd8fff0, toneMapped: false }));
+    scene.add(spark);
+    flights.push({ line, spark, a: a.clone(), b: b.clone(), t: 0, life: 3 });
+    fx.ring(b, 2, 12, 0x8fffc8, 0.8);
+    if (text) toast(text);
+  }
+
+  function updateFlights(dt) {
+    for (let i = flights.length - 1; i >= 0; i--) {
+      const f = flights[i];
+      f.t += dt;
+      const k = f.t / f.life;
+      if (k >= 1) {
+        scene.remove(f.line); scene.remove(f.spark);
+        f.line.geometry.dispose(); f.spark.geometry.dispose();
+        flights.splice(i, 1);
+        continue;
+      }
+      // искра пробегает путь дважды за время жизни линии
+      const run = (f.t * 0.9) % 1;
+      f.spark.position.lerpVectors(f.a, f.b, run);
+      f.line.material.opacity = 0.9 * (1 - k * k);
+      f.spark.material.opacity = f.line.material.opacity;
+    }
+  }
+
   function tryMoveFleet(fromId, toId) {
     const from = camp.systems[fromId], to = camp.systems[toId];
     const my = camp.playerFaction;
@@ -706,6 +776,9 @@ export function createGalaxy(ctx, camp) {
 
     // свой или ничей мир — просто перелёт
     if (to.owner === my || to.owner === null) {
+      const nameFrom = GALAXY_MAP.systems.find(s => s.id === fromId).name;
+      const nameTo = GALAXY_MAP.systems.find(s => s.id === toId).name;
+      showFlight(fromId, toId, `Флот ушёл: ${nameFrom} → ${nameTo} · ${ships(fleetSize(goes))}`);
       to.fleet = mergeFleets(to.fleet, goes);
       const regs = from.regiments;
       from.fleet = stays;
@@ -1208,6 +1281,7 @@ export function createGalaxy(ctx, camp) {
       if (n.hl.visible) n.hl.material.opacity = 0.55 + Math.sin(t * 3) * 0.35;
     }
     updateMarkers();
+    updateFlights(dt);
   }
 
   function dispose() {
@@ -1223,6 +1297,7 @@ export function createGalaxy(ctx, camp) {
     window.__gal = {
       state, camp, refreshAll,
       selectTest: id => { state.selected = id; refreshAll(); },
+      moveTest: (a, b) => tryMoveFleet(a, b),
     };
   }
 
