@@ -515,6 +515,43 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 /* Флот уже ходил в этот ход — метка приглушена */
 .gal-marker.spent .gm-info { opacity: 0.5; }
 
+/* ─────────── РОСТЕР ФЛОТА (бой на орбите) ───────────
+   Полоска значков со всеми своими кораблями. Отвечает на вопрос,
+   на который поле боя не отвечает: что у меня есть и где оно.
+   Живёт над нижней панелью, прокручивается пальцем вбок. */
+.roster {
+  position: absolute; left: calc(10px + var(--safe-l));
+  right: calc(112px + var(--safe-r));
+  /* Над нижней панелью: если положить вровень, панель выделенного
+     закрывает ростер слева. Высоту панели заодно ограничиваем, иначе
+     длинное описание корабля выталкивает ростер за экран. */
+  bottom: calc(182px + var(--safe-b));
+  display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch; pointer-events: auto;
+  scrollbar-width: none;
+}
+.roster::-webkit-scrollbar { display: none; }
+.rcell {
+  flex: none; min-width: 74px; min-height: 46px; padding: 5px 8px 7px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  background: var(--panel); backdrop-filter: blur(8px);
+  border-radius: 9px; gap: 4px;
+}
+.rcell b { font-size: 11px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.rcell.on { border-color: var(--good); }
+.rcell.on b { color: var(--good); }
+.rcell.air b { font-family: var(--mono); font-size: 10.5px; }
+.rbar { display: block; height: 4px; background: #101a28; border-radius: 3px; overflow: hidden; }
+.rbar i { display: block; height: 100%; width: 100%; }
+
+.hud-space .sel-info { max-height: 158px; overflow: hidden; }
+
+/* строка «что делает» в панели выделенного */
+.sel-doing {
+  font-size: 11.5px; color: var(--good); margin-top: 3px;
+  font-family: var(--mono); letter-spacing: .02em;
+}
+
 /* ─────────── сообщения боя ─────────── */
 
 .toasts {

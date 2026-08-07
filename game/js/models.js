@@ -423,9 +423,13 @@ export function buildShip(def, faction) {
   g.userData.engines = engines;
   if (!g.userData.bay) g.userData.bay = new THREE.Vector3(0, -R * 0.4, 0);
 
-  // Крупнее на четверть: с тактической камеры силуэт должен читаться.
-  // Точки оружия масштабируем следом, иначе выстрелы полетят мимо корпуса.
-  const K = 1.25;
+  /* Корабли крупнее «честного» масштаба. В Empire at War и Homeworld
+     делают так же: реальные пропорции превращают бой в мерцание
+     точек, потому что расстояния в космосе на порядок больше самих
+     кораблей. Полтора корпуса — тот предел, за которым флот начинает
+     толкаться на построении.
+     Точки оружия масштабируем следом, иначе выстрелы полетят мимо. */
+  const K = 1.65;
   g.scale.multiplyScalar(K);
   for (const list of [g.userData.muzzles, g.userData.pdPoints]) {
     for (const v of list) v.multiplyScalar(K);

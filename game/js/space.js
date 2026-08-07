@@ -50,7 +50,8 @@ export function createSpaceBattle(ctx, config) {
   scene.background = new THREE.Color(0x03050a);
 
   const tcam = new TacticalCamera({
-    dist: 1250, maxDist: 3400, minDist: 60, pitch: 0.52, yaw: 0,
+    // Ближе к бою: с полутора тысяч единиц флот читался россыпью точек
+    dist: 780, maxDist: 3400, minDist: 45, pitch: 0.52, yaw: 0,
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
   });
 
@@ -1278,6 +1279,8 @@ export function createSpaceBattle(ctx, config) {
       <button data-role="boxmode">Рамка</button>
     </div>
 
+    <div class="roster" data-role="roster"></div>
+
     <div class="botpanel">
       <div class="sel-info" data-role="sel"></div>
       <div class="sel-actions" data-role="acts"></div>
@@ -1515,6 +1518,117 @@ export function createSpaceBattle(ctx, config) {
     for (; i < markerPool.length; i++) markerPool[i].style.display = 'none';
   }
 
+  /* ── ПРИКАЗЫ ГЛАЗАМИ.
+
+     Отданный приказ должен быть виден на поле, а не только в панели:
+     кольцо в точке назначения и линия от корабля к ней. По ним сразу
+     понятно, кто куда идёт и не промахнулся ли ты мимо точки. Линия
+     атаки — красная и тянется к цели. */
+  const orderMarks = [];
+  const orderLines = [];
+  function updateOrders() {
+    let m = 0, l = 0;
+    const line = (from, to, color) => {
+      if (!orderLines[l]) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+        const ln = new THREE.Line(g, new THREE.LineBasicMaterial({
+          color, transparent: true, opacity: 0.5, toneMapped: false, depthWrite: false,
+        }));
+        ln.frustumCulled = false;
+        scene.add(ln);
+        orderLines[l] = ln;
+      }
+      const ln = orderLines[l++];
+      ln.visible = true;
+      ln.material.color.set(color);
+      const a = ln.geometry.attributes.position.array;
+      a[0] = from.x; a[1] = from.y; a[2] = from.z;
+      a[3] = to.x; a[4] = to.y; a[5] = to.z;
+      ln.geometry.attributes.position.needsUpdate = true;
+    };
+    for (const e of state.selection) {
+      if (e.dead) continue;
+      const dest = e.moveTo;
+      if (dest) {
+        if (!orderMarks[m]) {
+          const r = ringMesh(1, 0x8fffc8, 0.8, 0.08);
+          r.renderOrder = 5;
+          scene.add(r);
+          orderMarks[m] = r;
+        }
+        const r = orderMarks[m++];
+        r.visible = true;
+        r.position.copy(dest);
+        r.scale.setScalar(26 + Math.sin(state.time * 3) * 4);
+        line(e.pos, dest, 0x8fffc8);
+      }
+      const t = e.forced && !e.forced.dead ? e.forced : null;
+      if (t) line(e.pos, t.pos, 0xff7a5a);
+    }
+    for (; m < orderMarks.length; m++) orderMarks[m].visible = false;
+    for (; l < orderLines.length; l++) orderLines[l].visible = false;
+  }
+
+  // «Линейный крейсер «Ховард»» → «Ховард»: в узкой ячейке помещается
+  // только собственное имя корабля
+  const short = nm => (nm.includes('«') ? nm.slice(nm.indexOf('«') + 1, -1) : nm);
+
+  /* ── РОСТЕР ФЛОТА.
+
+     Полоска значков со всеми своими кораблями и звеньями — как
+     в Empire at War. Она отвечает на вопрос, на который поле боя
+     не отвечает никогда: «что у меня вообще есть и где оно».
+     Касание выбирает корабль и переносит к нему камеру; полоска
+     прочности показывает, кому уже плохо. */
+  const rosterBox = $('roster');
+  const rosterCells = new Map();
+  function refreshRoster() {
+    const mine = [
+      ...state.ships.filter(s => !s.dead && s.side === state.playerSide && !s.station),
+      ...state.squads.filter(q => !q.dead && q.side === state.playerSide && q.craft.some(c => !c.dead)),
+    ];
+    const seen = new Set();
+    for (const e of mine) {
+      seen.add(e.uid);
+      let cell = rosterCells.get(e.uid);
+      if (!cell) {
+        cell = document.createElement('button');
+        cell.className = 'rcell';
+        cell.innerHTML = '<b></b><span class="rbar"><i></i></span>';
+        cell.onclick = () => {
+          state.selection = [e];
+          const p = e.kind === 'squad'
+            ? (e.craft.find(c => !c.dead) || {}).pos : e.pos;
+          if (p) tcam.focus(p.clone(), Math.min(tcam.dist, 420));
+          refreshSel();
+        };
+        rosterBox.appendChild(cell);
+        rosterCells.set(e.uid, cell);
+      }
+      const isSquad = e.kind === 'squad';
+      const live = isSquad ? e.craft.filter(c => !c.dead) : null;
+      const hp = isSquad
+        ? live.reduce((a, c) => a + c.hp / c.maxHp, 0) / Math.max(1, live.length)
+        : e.hp / e.maxHp;
+      cell.firstChild.textContent = isSquad
+        ? `${STRIKE_ROLES[e.role].short || STRIKE_ROLES[e.role].label} ${live.length}`
+        : short(e.def.name);
+      const bar = cell.lastChild.firstChild;
+      bar.style.width = (clamp(hp, 0, 1) * 100) + '%';
+      bar.style.background = hp > 0.55 ? '#8fffc8' : hp > 0.25 ? '#e0a94e' : '#e05555';
+      cell.classList.toggle('on', state.selection.includes(e));
+      cell.classList.toggle('air', isSquad);
+    }
+    for (const [uid, cell] of rosterCells) {
+      if (!seen.has(uid)) { cell.remove(); rosterCells.delete(uid); }
+    }
+  }
+
+  refreshRoster();   // ПОСЛЕ объявления rosterCells: const не всплывает
+
+  let selTick = 0;
+
   // ── выделение: кольца и вектор скорости ─────────────────
   const selRings = [];
   const velLines = [];
@@ -1533,7 +1647,9 @@ export function createSpaceBattle(ctx, config) {
         const r = selRings[i++];
         r.visible = true;
         r.position.copy(u.pos);
-        r.scale.setScalar(e.kind === 'squad' ? 8 : u.radius * 2.3);
+        // корпуса стали крупнее — кольцо выделения тоже, иначе оно
+        // прячется внутри силуэта
+        r.scale.setScalar(e.kind === 'squad' ? 14 : u.radius * 3.1);
       }
       // вектор скорости — чтобы инерция была видна глазами
       if (e.kind === 'ship' && e.vel.lengthSq() > 1) {
@@ -1657,6 +1773,30 @@ export function createSpaceBattle(ctx, config) {
   });
 
   // ── панель выделения ────────────────────────────────────
+  /* Чем корабль занят прямо сейчас. Без этой строки панель отвечала
+     на вопрос «кто выбран», но не на «что он делает», а в бою важнее
+     второе: игрок отдал приказ и хочет видеть, что тот принят. */
+  function doingOf(e) {
+    if (e.kind === 'squad') {
+      const live = e.craft.filter(c => !c.dead);
+      if (!live.length) return 'звено выбито';
+      if (live.some(c => c.reloading > 0)) return 'перезаряжается';
+      if (e.moveTo) return 'идёт к точке';
+      if (live.some(c => c.target)) return 'атакует';
+      return 'патрулирует';
+    }
+    if (e.hyper) return `уходит в гипер · ${Math.ceil(e.hyper.left)} с`;
+    if (e.ionized) return 'двигатели выжжены';
+    if (e.drift) return 'дрифт: тяга отключена';
+    if (e.moveTo) {
+      const d = Math.round(e.pos.distanceTo(e.moveTo));
+      return `идёт к точке · ${d}`;
+    }
+    if (e.forced && !e.forced.dead) return `атакует «${short(e.forced.def.name)}»`;
+    if (e.target && !e.target.dead) return `бьёт по «${short(e.target.def.name)}»`;
+    return 'держит позицию';
+  }
+
   function refreshSel() {
     const sel = $('sel'), acts = $('acts');
     const list = state.selection.filter(s => !s.dead);
@@ -1676,6 +1816,7 @@ export function createSpaceBattle(ctx, config) {
           ? ` · ракет ${ammo} · запасных комплектов ${rl}` : ' · пушки';
         sel.innerHTML = `<div class="sel-title">${e.def.name}</div>
           <div class="sel-sub">${role.label} · ${e.craft.length}/${size} машин${ammoTxt}</div>
+          <div class="sel-doing">${doingOf(e)}</div>
           <div class="sel-desc">${role.hint}</div>`;
       } else {
         const spd = Math.round(e.vel.length());
@@ -1683,6 +1824,7 @@ export function createSpaceBattle(ctx, config) {
         sel.innerHTML = `<div class="sel-title">${e.def.name} ${foreign}</div>
           <div class="sel-sub">${e.def.role || ''} · скорость ${spd} · прочность ${Math.max(0, Math.round(e.hp))}/${e.maxHp}</div>
           <div class="sel-hpbar"><i style="width:${clamp(e.hp / e.maxHp, 0, 1) * 100}%"></i></div>
+          <div class="sel-doing">${doingOf(e)}</div>
           <div class="sel-desc">${e.def.desc || ''}</div>`;
       }
     } else {
@@ -1692,7 +1834,8 @@ export function createSpaceBattle(ctx, config) {
         by[n] = (by[n] || 0) + 1;
       }
       sel.innerHTML = `<div class="sel-title">Выделено: ${list.length}</div>
-        <div class="sel-sub">${Object.entries(by).map(([n, c]) => `${n} ×${c}`).join(' · ')}</div>`;
+        <div class="sel-sub">${Object.entries(by).map(([n, c]) => `${n} ×${c}`).join(' · ')}</div>
+        <div class="sel-doing">${doingOf(list[0])}</div>`;
     }
 
     acts.innerHTML = '';
@@ -1885,6 +2028,12 @@ export function createSpaceBattle(ctx, config) {
     headlight.position.copy(tcam.cam.position);
     updateMarkers();
     updateSelVisuals();
+    updateOrders();
+    /* Панель выделенного пересобираем раз в треть секунды: строка
+       «что делает» должна жить, а каждый кадр перекладывать DOM
+       незачем. */
+    selTick -= rawDt;
+    if (selTick <= 0) { selTick = 0.34; if (state.selection.length) refreshSel(); refreshRoster(); }
 
     let pa = 0, pd = 0, na = 0, nd = 0;
     for (const s of state.ships) {
