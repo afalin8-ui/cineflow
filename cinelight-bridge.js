@@ -35,6 +35,14 @@ udp.on('error', () => {});
    Если в машине и Wi-Fi, и кабель, простой 255.255.255.255 уходит только
    в одну из сетей — и нода в другой ничего не получает. Поэтому шлём
    в каждую сеть её собственный broadcast. */
+function localIPs() {
+    const out = [];
+    Object.values(os.networkInterfaces()).forEach(list => (list || []).forEach(i => {
+        if (i.family === 'IPv4' && !i.internal) out.push(i.address);
+    }));
+    return out;
+}
+
 function broadcastAddrs() {
     const out = [];
     Object.values(os.networkInterfaces()).forEach(list => (list || []).forEach(i => {
@@ -48,12 +56,28 @@ function broadcastAddrs() {
 }
 
 let artTargets = process.argv[2] ? [target] : (broadcastAddrs().length ? broadcastAddrs() : [target]);
-// сети могут появиться позже (подключили Wi-Fi) — пересматриваем раз в 5 секунд
-if (!process.argv[2]) setInterval(() => {
-    const fresh = broadcastAddrs();
-    if (fresh.length && fresh.join() !== artTargets.join()) {
-        artTargets = fresh;
-        log('Сети изменились, Art-Net теперь уходит на: ' + artTargets.join(', '));
+let knownIPs = localIPs().join();
+
+/* Сеть на площадке меняется: подключились к точке доступа ноды — у компьютера
+   стал другой адрес, и старый, напечатанный при старте, уже не работает.
+   Поэтому следим и сообщаем новый. */
+setInterval(() => {
+    if (!process.argv[2]) {
+        const fresh = broadcastAddrs();
+        if (fresh.length && fresh.join() !== artTargets.join()) {
+            artTargets = fresh;
+            log('Сеть сменилась, Art-Net теперь уходит на: ' + artTargets.join(', '));
+        }
+    }
+    const ips = localIPs();
+    if (ips.join() !== knownIPs) {
+        knownIPs = ips.join();
+        seenClients.clear();
+        console.log('');
+        log('Компьютер сменил сеть. НОВЫЙ адрес для iPad:');
+        ips.forEach(ip => console.log('        http://' + ip + ':' + PORT));
+        console.log('        (старый адрес больше не работает — откройте новый)');
+        console.log('');
     }
 }, 5000);
 
@@ -173,7 +197,18 @@ function localizeHtml(html) {
     return s;
 }
 
+/* Кто к нам обращался — чтобы было видно, доходит ли iPad до моста вообще.
+   Повторы от того же устройства не сыплем в окно. */
+const seenClients = new Set();
+function noteClient(req) {
+    const ip = (req.socket.remoteAddress || '?').replace('::ffff:', '');
+    if (ip === '127.0.0.1' || ip === '::1' || seenClients.has(ip)) return;
+    seenClients.add(ip);
+    log('К мосту обратилось устройство: ' + ip);
+}
+
 const server = http.createServer((req, res) => {
+    noteClient(req);
     const url = (req.url || '').split('?')[0];
     if (url.indexOf('/vendor/') === 0) {
         const name = path.basename(url);
@@ -272,7 +307,7 @@ server.on('error', err => {
     process.exit(1);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log('');
     console.log('  CineLight — сетевой мост (Art-Net / sACN)');
     console.log('  -----------------------------------------');
@@ -306,5 +341,15 @@ server.listen(PORT, () => {
         console.log('');
     });
     console.log('  В пульте: Настройки → «Подключить мост». Окно не закрывайте.');
+    console.log('');
+    console.log('  iPad не открывает страницу? Проверьте по порядку:');
+    console.log('   1. iPad подключён к той же Wi-Fi сети, что и компьютер');
+    console.log('   2. На iPad временно выключите сотовые данные — iOS любит уходить');
+    console.log('      в интернет мимо Wi-Fi, если в сети интернета нет');
+    console.log('   3. Брандмауэр. Откройте командную строку от имени администратора и');
+    console.log('      выполните одну строку — она разрешит мост во всех сетях:');
+    console.log('      netsh advfirewall firewall add rule name="CineLight" dir=in action=allow protocol=TCP localport=' + PORT);
+    console.log('   Если iPad всё-таки достучится, в этом окне появится строка');
+    console.log('   «К мосту обратилось устройство».');
     console.log('');
 });

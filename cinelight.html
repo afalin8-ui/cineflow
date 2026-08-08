@@ -1372,6 +1372,7 @@
             const hsRef = useRef({ h: 30, s: 0 });
             const lastColorRef = useRef({ rgb: [1, 1, 1] });
             const lastTickRef = useRef(performance.now());
+            const fpsRef = useRef({ n: 0, at: performance.now(), val: 0 });
             const portRef = useRef(null);
             const writerRef = useRef(null);
             const busyRef = useRef(false);
@@ -1615,6 +1616,10 @@
                 const now = performance.now();
                 const dt = Math.min(0.2, (now - lastTickRef.current) / 1000);
                 lastTickRef.current = now;
+                // считаем реальную частоту — браузер может тормозить такт
+                const fc = fpsRef.current;
+                fc.n++;
+                if (now - fc.at >= 1000) { fc.val = Math.round(fc.n * 1000 / (now - fc.at)); fc.n = 0; fc.at = now; }
                 const runs = pbRunRef.current;
                 playbacksRef.current.forEach(pb => {
                     if (!pb) return;
@@ -1735,10 +1740,14 @@
                 }
             };
             useEffect(() => {
-                const t1 = setInterval(() => tickFnRef.current(), 33);
+                // 40 кадров/с: по Wi-Fi часть пакетов теряется, и чем чаще шлём,
+                // тем быстрее картинка догоняется. Выше ~44 смысла нет — столько
+                // физически влезает в кабель DMX512 при полном юниверсе.
+                const hz = clamp(settingsRef.current.fps || 40, 20, 50);
+                const t1 = setInterval(() => tickFnRef.current(), Math.round(1000 / hz));
                 const t2 = setInterval(() => setUiTick(t => t + 1), 100);
                 return () => { clearInterval(t1); clearInterval(t2); };
-            }, []);
+            }, [settings.fps]);
 
             /* ── Web Serial (Enttec DMX USB Pro и совместимые) ── */
             function sendSerial(uni) {
@@ -2579,7 +2588,7 @@
 
                     {/* ── модалки ── */}
                     {modal && modal.type === 'settings' && (
-                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus}
+                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus} fpsNow={fpsRef.current.val}
                                        connectSerial={connectSerial} disconnectSerial={disconnectSerial}
                                        connectBridge={connectBridge} disconnectBridge={disconnectBridge}
                                        fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles} effects={effects} groups={groups} palettes={palettes} cuelists={cuelists}
@@ -2687,7 +2696,7 @@
         }
 
         /* ═══════════ настройки ═══════════ */
-        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, groups, palettes, cuelists, onImport, onReset, onClose }) {
+        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, fpsNow, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, groups, palettes, cuelists, onImport, onReset, onClose }) {
             const fileRef = useRef(null);
             const doExport = () => {
                 const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects, groups, palettes, cuelists }, null, 2);
@@ -2787,6 +2796,26 @@
                                 встречается чаще у радиопередатчиков (CRMX и похожие), sACN — современный
                                 стандарт, его просят новые ноды и медиасерверы. Мост сам разбирается, что
                                 куда слать, и передаёт все юниверсы, где есть приборы.
+                            </p>
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Частота обновления</div>
+                            <div className="flex gap-1 mb-2">
+                                {[30, 40, 44].map(v => (
+                                    <button key={v} onClick={() => setSettings(s => ({ ...s, fps: v }))}
+                                            className={"flex-1 py-2 rounded-lg text-xs font-bold " +
+                                              ((settings.fps || 40) === v ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-2)] text-zinc-400')}>
+                                        {v} кадр/с
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                Сейчас реально уходит: <span className="font-mono text-zinc-300">{fpsNow || '—'}</span> кадров в секунду.
+                                Если анимация дёргается, поднимите частоту: по Wi-Fi часть пакетов теряется,
+                                и чем чаще пульт шлёт, тем незаметнее потери. Выше 44 смысла нет — столько
+                                физически проходит по кабелю DMX за секунду. Если показанное число сильно
+                                меньше выбранного, компьютер не успевает: закройте лишние программы или
+                                оставьте 30.
                             </p>
                         </div>
                         <div>
