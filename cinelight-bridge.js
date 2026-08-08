@@ -102,8 +102,90 @@ function relay(str, from) {
     });
 }
 
+/* ═══════ работа без интернета ═══════
+   Сам пульт подтягивает React, Babel и Tailwind из сети. На площадке
+   интернета нет (компьютер подключён к точке доступа ноды), поэтому мост
+   держит эти файлы у себя и подменяет ссылки при выдаче страницы.
+   Скачать их нужно один раз — там, где интернет есть. */
+const VENDOR_DIR = path.join(__dirname, 'cinelight-vendor');
+const VENDOR = [
+    { file: 'react.js', url: 'https://unpkg.com/react@18/umd/react.production.min.js' },
+    { file: 'react-dom.js', url: 'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js' },
+    { file: 'babel.js', url: 'https://unpkg.com/@babel/standalone/babel.min.js' },
+    { file: 'tailwind.js', url: 'https://cdn.tailwindcss.com' }
+];
+
+function vendorReady() {
+    return VENDOR.every(v => {
+        try { return fs.statSync(path.join(VENDOR_DIR, v.file)).size > 1000; } catch (e) { return false; }
+    });
+}
+
+function download(url, dest, cb, hops) {
+    const https = require('https');
+    if ((hops || 0) > 5) return cb(new Error('слишком много перенаправлений'));
+    https.get(url, { headers: { 'User-Agent': 'CineLight-Bridge' } }, r => {
+        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+            r.resume();
+            // адрес перенаправления бывает относительным — достраиваем от текущего
+            let next;
+            try { next = new URL(r.headers.location, url).toString(); }
+            catch (e) { return cb(new Error('плохой адрес перенаправления')); }
+            return download(next, dest, cb, (hops || 0) + 1);
+        }
+        if (r.statusCode !== 200) { r.resume(); return cb(new Error('код ' + r.statusCode)); }
+        const chunks = [];
+        r.on('data', c => chunks.push(c));
+        r.on('end', () => {
+            try {
+                fs.mkdirSync(VENDOR_DIR, { recursive: true });
+                fs.writeFileSync(dest, Buffer.concat(chunks));
+                cb(null);
+            } catch (e) { cb(e); }
+        });
+    }).on('error', cb);
+}
+
+function ensureVendor(done) {
+    if (vendorReady()) { done(true); return; }
+    console.log('  Первый запуск: качаю библиотеки пульта, чтобы он работал без интернета...');
+    let left = VENDOR.length, failed = false;
+    VENDOR.forEach(v => {
+        const dest = path.join(VENDOR_DIR, v.file);
+        let ok = false;
+        try { ok = fs.statSync(dest).size > 1000; } catch (e) {}
+        if (ok) { if (--left === 0) done(!failed); return; }
+        download(v.url, dest, err => {
+            if (err) { failed = true; console.log('    не вышло: ' + v.file + ' (' + err.message + ')'); }
+            else console.log('    готово: ' + v.file);
+            if (--left === 0) done(!failed);
+        });
+    });
+}
+
+/* Подменяем ссылки на библиотеки, чтобы страница брала их у моста. */
+function localizeHtml(html) {
+    let s = html.toString('utf8');
+    VENDOR.forEach(v => { s = s.split(v.url).join('/vendor/' + v.file); });
+    // шрифты из интернета: без сети браузер будет их долго ждать — убираем,
+    // в tailwind.config уже прописаны системные запасные варианты
+    s = s.replace(/<link[^>]*fonts\.(googleapis|gstatic)\.com[^>]*>/g, '');
+    return s;
+}
+
 const server = http.createServer((req, res) => {
-    if (req.url === '/' || req.url === '/index.html' || req.url === '/cinelight.html') {
+    const url = (req.url || '').split('?')[0];
+    if (url.indexOf('/vendor/') === 0) {
+        const name = path.basename(url);
+        if (!VENDOR.some(v => v.file === name)) { res.writeHead(404); res.end(); return; }
+        fs.readFile(path.join(VENDOR_DIR, name), (err, data) => {
+            if (err) { res.writeHead(404); res.end(); return; }
+            res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'max-age=86400' });
+            res.end(data);
+        });
+        return;
+    }
+    if (url === '/' || url === '/index.html' || url === '/cinelight.html') {
         fs.readFile(path.join(__dirname, 'cinelight.html'), (err, data) => {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             if (err) {
@@ -112,11 +194,11 @@ const server = http.createServer((req, res) => {
                         '<p>Чтобы пульт открывался прямо по этому адресу, положите файл cinelight.html в ту же папку, где лежит мост.</p></body>');
                 return;
             }
-            res.end(data);
+            res.end(vendorReady() ? localizeHtml(data) : data);
         });
-    } else {
-        res.writeHead(404); res.end();
+        return;
     }
+    res.writeHead(404); res.end();
 });
 
 server.on('upgrade', (req, socket) => {
@@ -210,6 +292,19 @@ server.listen(PORT, () => {
     console.log('');
     console.log('  Если Windows спросит про доступ в сеть — разрешите, иначе');
     console.log('  ни iPad, ни нода до моста не достучатся.');
+    ensureVendor(ok => {
+        console.log('');
+        if (ok) {
+            console.log('  Библиотеки пульта лежат рядом — интернет больше не нужен.');
+            console.log('  Можно смело переключаться на Wi-Fi ноды.');
+        } else {
+            console.log('  ВНИМАНИЕ: не удалось скачать библиотеки пульта.');
+            console.log('  Пока их нет, пульт открывается ТОЛЬКО с интернетом.');
+            console.log('  Подключитесь к обычному интернету и запустите мост ещё раз —');
+            console.log('  он докачает недостающее, и дальше всё будет работать офлайн.');
+        }
+        console.log('');
+    });
     console.log('  В пульте: Настройки → «Подключить мост». Окно не закрывайте.');
     console.log('');
 });
