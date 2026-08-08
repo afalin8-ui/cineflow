@@ -16,8 +16,23 @@
         // чтобы приложение открывалось без интернета. Данные офлайн
         // обеспечивает сам Firestore (enablePersistence ниже).
         if ('serviceWorker' in navigator) {
+          // Как только новый service worker берёт управление, перезагружаем
+          // страницу — иначе на телефоне (особенно у иконки с рабочего стола)
+          // можно неделями сидеть на старой версии и не видеть правок.
+          let cfReloading = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (cfReloading) return;
+            cfReloading = true;
+            window.location.reload();
+          });
           window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js').catch(err => {
+            navigator.serviceWorker.register('./sw.js').then(reg => {
+              reg.update();
+              // Проверяем обновление каждый раз, когда возвращаются во вкладку.
+              document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) reg.update();
+              });
+            }).catch(err => {
               console.warn('Service worker не зарегистрирован:', err);
             });
           });
@@ -864,6 +879,8 @@
           // ниже по коду эти значения читаются прямо во время отрисовки.
           const [selectedRefIds, setSelectedRefIds] = useState([]);
           const [bulkTagInput, setBulkTagInput] = useState('');
+          // Предупреждение о повторной загрузке картинок с теми же именами
+          const [dupPrompt, setDupPrompt] = useState(null);
           const folderCounts = useMemo(() => {
             const m = {};
             references.forEach(r => { const f = (r.folder || '').trim(); if (f) m[f] = (m[f] || 0) + 1; });
@@ -1335,9 +1352,37 @@
             setScenes(up); const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t);
           };
 
+          // Загрузка с проверкой на повтор по имени файла. Имя референса —
+          // это и есть имя файла, поэтому сравниваем с ним; регистр и
+          // пробелы не считаем, «IMG_01.jpg» и «img_01.JPG» — одно и то же.
+          const normName = (s) => String(s || '').trim().toLowerCase();
           const handleMultiFileUpload = async (files, sceneId = null) => {
               const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-              if(imageFiles.length === 0) return;
+              if (imageFiles.length === 0) return;
+
+              const existing = new Set(references.map(r => normName(r.label)));
+              const dups = imageFiles.filter(f => existing.has(normName(f.name)));
+              if (dups.length > 0) {
+                const decision = await new Promise(resolve => {
+                  setDupPrompt({
+                    names: dups.map(f => f.name),
+                    total: imageFiles.length,
+                    onResolve: resolve
+                  });
+                });
+                setDupPrompt(null);
+                if (decision === 'cancel') return;
+                if (decision === 'skip') {
+                  const dupSet = new Set(dups.map(f => normName(f.name)));
+                  const kept = imageFiles.filter(f => !dupSet.has(normName(f.name)));
+                  if (kept.length === 0) { showToast('Все выбранные картинки уже есть — ничего не загружено'); return; }
+                  return uploadFiles(kept, sceneId);
+                }
+              }
+              return uploadFiles(imageFiles, sceneId);
+          };
+
+          const uploadFiles = async (imageFiles, sceneId) => {
               showToast(`Оптимизация ${imageFiles.length} изображений...`);
               const newRefs = await Promise.all(imageFiles.map((file, idx) => new Promise(resolve => {
                   const r = new FileReader();
@@ -2637,6 +2682,41 @@
                 </div>
               </div>
               </div>
+
+              {/* ПОВТОРНАЯ ЗАГРУЗКА КАРТИНОК */}
+              {dupPrompt && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[420] p-4">
+                  <div className="glass-panel rounded-lg p-6 max-w-md w-full relative">
+                    <h3 className="text-lg font-bold text-white mb-2">Такие картинки уже есть</h3>
+                    <p className="text-sm text-zinc-400 mb-3 leading-relaxed">
+                      {dupPrompt.names.length === dupPrompt.total
+                        ? `Все ${dupPrompt.total} выбранных файлов уже загружены в проект под теми же именами.`
+                        : `${dupPrompt.names.length} из ${dupPrompt.total} файлов уже есть в проекте под теми же именами.`}
+                    </p>
+                    <div className="rounded-md p-3 mb-4 max-h-40 overflow-y-auto"
+                         style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                      {dupPrompt.names.map((n, i) => (
+                        <div key={i} className="truncate" style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" }}>{n}</div>
+                      ))}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button onClick={() => dupPrompt.onResolve('skip')}
+                              className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
+                              style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                        Пропустить повторы{dupPrompt.names.length < dupPrompt.total ? ` · загрузить ${dupPrompt.total - dupPrompt.names.length}` : ''}
+                      </button>
+                      <button onClick={() => dupPrompt.onResolve('all')}
+                              className="w-full py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors">
+                        Загрузить всё равно
+                      </button>
+                      <button onClick={() => dupPrompt.onResolve('cancel')}
+                              className="w-full py-2 text-zinc-500 hover:text-zinc-300 rounded-lg text-xs font-semibold transition-colors">
+                        Отмена
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* МОДАЛЬНЫЕ ОКНА */}
               {showShareModal && (
