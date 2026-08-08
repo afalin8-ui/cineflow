@@ -1709,7 +1709,8 @@
                 const outOn = settingsRef.current.dmxOut !== false;
                 const wantSerial = outOn && !!writerRef.current;
                 const wantNet = outOn && !!(ws && ws.readyState === 1);
-                if (wantSerial || wantNet) {
+                const wantDirect = outOn && nativeRef.current.ready;
+                if (wantSerial || wantNet || wantDirect) {
                     const mul = blackoutRef.current ? 0 : masterRef.current;
                     const unis = {};
                     fixturesRef.current.forEach(f => {
@@ -1723,18 +1724,25 @@
                         }
                     });
                     if (wantSerial) sendSerial(unis[settingsRef.current.serialUniverse || 1] || EMPTY512);
-                    if (wantNet) {
+                    if (wantNet || wantDirect) {
                         const st = settingsRef.current;
                         const proto = st.netProto || 'artnet';
+                        // куда слать напрямую: адрес ноды, если задан, иначе всем в сети
+                        const node = (st.nodeAddr || '').trim();
                         Object.entries(unis).forEach(([u, data]) => {
                             const n = parseInt(u);
-                            try {
-                                if (proto === 'sacn') {
-                                    ws.send(sacnPacket(Math.max(1, n + (st.sacnBase === undefined ? 0 : st.sacnBase)), data, st.sacnPriority));
-                                } else {
-                                    ws.send(artDmxPacket(Math.max(0, n - 1 + (st.artnetBase || 0)), data));
-                                }
-                            } catch (e) {}
+                            const sacn = proto === 'sacn';
+                            const uni = sacn
+                                ? Math.max(1, n + (st.sacnBase === undefined ? 0 : st.sacnBase))
+                                : Math.max(0, n - 1 + (st.artnetBase || 0));
+                            const packet = sacn ? sacnPacket(uni, data, st.sacnPriority) : artDmxPacket(uni, data);
+                            if (wantNet) { try { ws.send(packet); } catch (e) {} }
+                            if (wantDirect) {
+                                const addr = node || (sacn
+                                    ? '239.255.' + ((uni >> 8) & 255) + '.' + (uni & 255)
+                                    : '255.255.255.255');
+                                sendNative(packet, addr, sacn ? 5568 : 6454);
+                            }
                         });
                     }
                 }
@@ -1777,6 +1785,57 @@
                 try { if (portRef.current) await portRef.current.close(); } catch (e) {}
                 writerRef.current = null; portRef.current = null; busyRef.current = false;
                 setDmxStatus('demo');
+            }
+
+            /* ── Прямой выход в сеть без моста ──
+               Работает только внутри собранного приложения (iPad/Android):
+               там доступен настоящий сетевой сокет. В обычном браузере такого
+               нет — поэтому в вебе этот путь просто выключен, и остаётся мост. */
+            const nativeRef = useRef({ id: null, busy: false, ready: false });
+            const isNative = typeof window !== 'undefined' && window.Capacitor
+                && typeof window.Capacitor.isNativePlatform === 'function'
+                && window.Capacitor.isNativePlatform()
+                && window.Capacitor.Plugins && window.Capacitor.Plugins.UdpSocket;
+            const udpPlugin = () => (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.UdpSocket) || null;
+
+            const bytesToBase64 = bytes => {
+                let s = '';
+                for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+                return btoa(s);
+            };
+
+            async function openNative() {
+                const U = udpPlugin();
+                if (!U) { toast('Прямой выход доступен только в приложении'); return; }
+                try {
+                    const r = await U.create({ properties: { name: 'cinelight', bufferSize: 2048 } });
+                    nativeRef.current.id = r.socketId;
+                    await U.bind({ socketId: r.socketId, port: 0 });
+                    await U.setBroadcast({ socketId: r.socketId, enabled: true });
+                    try { await U.setMulticastTimeToLive({ socketId: r.socketId, ttl: 16 }); } catch (e) {}
+                    nativeRef.current.ready = true;
+                    setNetStatus('on');
+                    toast('Свет уходит прямо с устройства — мост не нужен');
+                } catch (e) {
+                    nativeRef.current.ready = false;
+                    setNetStatus('off');
+                    toast('Не вышло открыть сетевой выход: ' + (e && e.message ? e.message : e));
+                }
+            }
+            async function closeNative() {
+                const U = udpPlugin(), st = nativeRef.current;
+                st.ready = false;
+                if (U && st.id !== null) { try { await U.close({ socketId: st.id }); } catch (e) {} }
+                st.id = null; st.busy = false;
+                setNetStatus('off');
+            }
+            function sendNative(packet, addr, port) {
+                const U = udpPlugin(), st = nativeRef.current;
+                if (!U || !st.ready || st.busy) return;
+                st.busy = true;
+                U.send({ socketId: st.id, address: addr, port: port, buffer: bytesToBase64(packet) })
+                    .then(() => { st.busy = false; })
+                    .catch(() => { st.busy = false; });
             }
 
             /* ── Art-Net мост по Wi-Fi (работает и с iPad) ── */
@@ -2588,7 +2647,7 @@
 
                     {/* ── модалки ── */}
                     {modal && modal.type === 'settings' && (
-                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus} fpsNow={fpsRef.current.val}
+                        <SettingsModal settings={settings} setSettings={setSettings} dmxStatus={dmxStatus} netStatus={netStatus} fpsNow={fpsRef.current.val} isNative={!!isNative} openNative={openNative} closeNative={closeNative}
                                        connectSerial={connectSerial} disconnectSerial={disconnectSerial}
                                        connectBridge={connectBridge} disconnectBridge={disconnectBridge}
                                        fixtures={fixtures} playbacks={playbacks} customSwatches={customSwatches} customProfiles={customProfiles} effects={effects} groups={groups} palettes={palettes} cuelists={cuelists}
@@ -2696,7 +2755,7 @@
         }
 
         /* ═══════════ настройки ═══════════ */
-        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, fpsNow, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, groups, palettes, cuelists, onImport, onReset, onClose }) {
+        function SettingsModal({ settings, setSettings, dmxStatus, netStatus, fpsNow, isNative, openNative, closeNative, connectSerial, disconnectSerial, connectBridge, disconnectBridge, fixtures, playbacks, customSwatches, customProfiles, effects, groups, palettes, cuelists, onImport, onReset, onClose }) {
             const fileRef = useRef(null);
             const doExport = () => {
                 const data = JSON.stringify({ fixtures, playbacks, customSwatches, customProfiles, settings, effects, groups, palettes, cuelists }, null, 2);
@@ -2743,6 +2802,27 @@
                                 используйте мост ниже.
                             </p>
                         </div>
+                        {isNative && (
+                            <div>
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Выход DMX · прямо с этого устройства</div>
+                                <div className="flex items-center gap-2 mb-2">
+                                    {netStatus === 'on' ? (
+                                        <button onClick={closeNative} className="px-3 py-2 rounded-lg bg-[var(--panel-2)] border border-green-700 text-green-400 text-xs font-bold">Работает · Отключить</button>
+                                    ) : (
+                                        <button onClick={openNative} className="px-3 py-2 rounded-lg bg-[var(--accent)] text-white text-xs font-bold">Включить прямой выход</button>
+                                    )}
+                                    <input className="glass-input rounded-lg px-3 py-2 text-xs flex-1 font-mono" placeholder="адрес ноды (можно пусто)"
+                                           value={settings.nodeAddr || ''}
+                                           onChange={e => setSettings(s => ({ ...s, nodeAddr: e.target.value }))} />
+                                </div>
+                                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                    Свет уходит в сеть прямо отсюда — компьютер и мост не нужны. Подключите
+                                    планшет к Wi-Fi ноды и включите. Адрес ноды можно оставить пустым: тогда
+                                    сигнал идёт всем в сети. Впишите адрес, если сеть не пропускает
+                                    широковещательные пакеты.
+                                </p>
+                            </div>
+                        )}
                         <div>
                             <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-2">Выход DMX · Art-Net мост (iPad и Windows, по Wi-Fi)</div>
                             <div className="flex items-center gap-2 mb-2">
