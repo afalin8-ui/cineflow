@@ -1,5 +1,6 @@
 .claude/settings.local.json
 cinelight-vendor/
+cinelight-repo/
 app/www/
 app/node_modules/
 app/ios/
