@@ -839,13 +839,15 @@
         // memo обязателен: без него любая перерисовка приложения — набранная
         // буква в карточке, пришедшее сообщение — заставляла Excalidraw
         // перерисоваться целиком. Все входящие свойства держим неизменными.
-        const ExcalidrawBoard = React.memo(({ elements, onSave, onView, onTool, readOnly, apiRef }) => {
+        const ExcalidrawBoard = React.memo(({ elements, files, onSave, onView, onTool, readOnly, apiRef }) => {
           const [lib, setLib] = useState(window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const saveTimer = useRef(null);
           const lastSent = useRef('');
           const elsRef = useRef(null);
           const lastTool = useRef('selection');
+          const filesRef = useRef(null);
+          const lastFiles = useRef('{}');
 
           useEffect(() => {
             let alive = true;
@@ -871,13 +873,13 @@
           return (
             <Exc
               excalidrawAPI={(api) => { if (apiRef) apiRef.current = api; }}
-              initialData={{ elements: elements || [], scrollToContent: false,
+              initialData={{ elements: elements || [], files: files || {}, scrollToContent: false,
                              appState: { viewBackgroundColor: 'transparent' } }}
               theme="dark"
               langCode="ru-RU"
               viewModeEnabled={!!readOnly}
               UIOptions={{ canvasActions: { loadScene: false, changeViewBackgroundColor: false, toggleTheme: false } }}
-              onChange={(els, st) => {
+              onChange={(els, st, sceneFiles) => {
                 // Панораму и зум ведёт Excalidraw — наши карточки просто
                 // повторяют за ним, иначе разъедутся два масштаба.
                 if (onView) onView(st.scrollX, st.scrollY, st.zoom.value);
@@ -893,12 +895,23 @@
                 // в секунду прогонялся весь рисунок. Теперь тут только
                 // запоминание ссылки, а сборка строки уехала в отложенный вызов.
                 elsRef.current = els;
+                filesRef.current = sceneFiles;
                 clearTimeout(saveTimer.current);
                 saveTimer.current = setTimeout(() => {
-                  const json = JSON.stringify((elsRef.current || []).filter(e => !e.isDeleted));
-                  if (json === lastSent.current) return;
-                  lastSent.current = json;
-                  onSave(json);
+                  const live = (elsRef.current || []).filter(e => !e.isDeleted);
+                  const json = JSON.stringify(live);
+                  // Картинки Excalidraw лежат ОТДЕЛЬНО от фигур. Без них
+                  // вставленное изображение исчезало после перезагрузки:
+                  // фигура-картинка сохранялась, а сам файл — нет.
+                  // Кладём только те файлы, что реально используются, иначе
+                  // удалённые картинки продолжали бы весить.
+                  const used = {};
+                  const all = filesRef.current || {};
+                  live.forEach(e => { if (e.fileId && all[e.fileId]) used[e.fileId] = all[e.fileId]; });
+                  const filesJson = JSON.stringify(used);
+                  if (json === lastSent.current && filesJson === lastFiles.current) return;
+                  lastSent.current = json; lastFiles.current = filesJson;
+                  onSave(json, filesJson);
                 }, 900);
               }}
             />
@@ -1292,6 +1305,7 @@
           const excOn = activeBoard.engine === 'exc';
           const excApi = useRef(null);
           const [excElements, setExcElements] = useState(null);
+          const [excFiles, setExcFiles] = useState({});
           const excDocId = (boardId) => 'exc-' + boardId;
 
           const toggleExcalidraw = () => {
@@ -1304,14 +1318,24 @@
             showToast(next ? 'Доска переведена на Excalidraw · старый рисунок сохранён' : 'Вернул обычную кисть');
           };
 
-          const saveExcScene = (json) => {
+          const saveExcScene = (json, filesJson) => {
             if (READ_ONLY) return;
-            try { localStorage.setItem('cf_exc_' + activeBoardId, json); } catch (e) {}
+            try {
+              localStorage.setItem('cf_exc_' + activeBoardId, json);
+              localStorage.setItem('cf_excf_' + activeBoardId, filesJson || '{}');
+            } catch (e) {}
             if (!db || !user) return;
+            // Предел документа Firestore — 1 МБ, а картинки лежат в сцене
+            // целиком. Предупреждаем ДО отказа, иначе человек узнает
+            // о потере, только не найдя свою работу после перезагрузки.
+            const weight = json.length + (filesJson || '').length;
+            if (weight > 900 * 1024) {
+              showToast('⚠️ Доска переполнена (' + Math.round(weight / 1024) + ' КБ из 1000). Уберите часть картинок, иначе перестанет сохраняться');
+            }
             trackWrite(
               dataRef().collection('canvas').doc(excDocId(activeBoardId))
-                .set({ elements: json, lastBy: clientId })
-                .catch(err => { console.warn('saveExc', err); showToast('⚠️ Рисунок не сохранился в облако — возможно, он слишком тяжёлый'); })
+                .set({ elements: json, files: filesJson || '{}', lastBy: clientId })
+                .catch(err => { console.warn('saveExc', err); showToast('⚠️ Доска не сохранилась в облако — скорее всего, слишком тяжёлая из-за картинок'); })
             );
           };
 
@@ -1352,27 +1376,73 @@
           // отдаём ему холст, чтобы он сразу заработал.
           const onExcTool = (type) => { if (type && type !== 'selection') setWbMode(m => m === 'select' ? 'draw' : m); };
           excCb.current.tool = onExcTool;
-          const excSave = useRef((j) => excCb.current.save(j)).current;
+          // Вставить референс из галереи прямо в сцену Excalidraw — тогда его
+          // можно крутить, масштабировать и группировать его же средствами.
+          // Уменьшаем копию: в сцене картинка лежит целиком, а предел
+          // документа — 1 МБ, полноразмерных влезло бы две-три.
+          const insertRefIntoExc = (ref) => {
+            const api = excApi.current;
+            if (!api || !ref.url) { showToast('Сначала откройте доску на Excalidraw'); return; }
+            compressImage(ref.url, 900, 900, (small) => {
+              const img = new Image();
+              img.onload = () => {
+                try {
+                  const fileId = 'cf-' + ref.id;
+                  api.addFiles([{ id: fileId, dataURL: small, mimeType: 'image/jpeg', created: Date.now() }]);
+                  const w = Math.min(420, img.width);
+                  const h = Math.round(w * img.height / Math.max(1, img.width));
+                  const st = api.getAppState();
+                  const box = document.getElementById('whiteboard-canvas');
+                  const rect = box ? box.getBoundingClientRect() : { width: 800, height: 600 };
+                  const cx = (rect.width / 2) / st.zoom.value - st.scrollX;
+                  const cy = (rect.height / 2) / st.zoom.value - st.scrollY;
+                  const made = window.ExcalidrawLib.convertToExcalidrawElements([
+                    { type: 'image', x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), width: w, height: h, fileId }
+                  ]);
+                  api.updateScene({ elements: [...api.getSceneElements(), ...made] });
+                  showToast('Референс вставлен · крутится и масштабируется как фигура');
+                } catch (err) {
+                  console.warn('insertRefIntoExc', err);
+                  showToast('Не удалось вставить референс');
+                }
+              };
+              img.onerror = () => showToast('Не удалось прочитать картинку');
+              img.src = small;
+            });
+          };
+
+          const excSave = useRef((j, f) => excCb.current.save(j, f)).current;
           const excView = useRef((a, b, c) => excCb.current.view(a, b, c)).current;
           const excTool = useRef((t) => excCb.current.tool(t)).current;
 
           useEffect(() => {
-            if (!excOn) { setExcElements(null); return; }
-            let local = [];
+            if (!excOn) { setExcElements(null); setExcFiles({}); return; }
+            let local = [], localFiles = {};
             try { local = JSON.parse(localStorage.getItem('cf_exc_' + activeBoardId) || '[]'); } catch (e) {}
+            try { localFiles = JSON.parse(localStorage.getItem('cf_excf_' + activeBoardId) || '{}'); } catch (e) {}
             setExcElements(Array.isArray(local) ? local : []);
+            setExcFiles(localFiles && typeof localFiles === 'object' ? localFiles : {});
             if (!db || !user) return;
             const unsub = dataRef().collection('canvas').doc(excDocId(activeBoardId))
               .onSnapshot(doc => {
                 if (!doc.exists) return;
                 const d = doc.data() || {};
                 if (d.lastBy === clientId) return;
-                let els; try { els = JSON.parse(d.elements || '[]'); } catch (e) { return; }
+                let els, fls = {};
+                try { els = JSON.parse(d.elements || '[]'); } catch (e) { return; }
+                try { fls = JSON.parse(d.files || '{}'); } catch (e) {}
                 if (!Array.isArray(els)) return;
-                try { localStorage.setItem('cf_exc_' + activeBoardId, d.elements || '[]'); } catch (e) {}
-                // Сцена уже открыта — доливаем в неё, иначе отдадим при монтаже
-                if (excApi.current) excApi.current.updateScene({ elements: els });
-                else setExcElements(els);
+                try {
+                  localStorage.setItem('cf_exc_' + activeBoardId, d.elements || '[]');
+                  localStorage.setItem('cf_excf_' + activeBoardId, d.files || '{}');
+                } catch (e) {}
+                // Сцена уже открыта — доливаем в неё, иначе отдадим при монтаже.
+                // Картинки заливаем ПЕРВЫМИ: фигура без своего файла показалась бы пустой.
+                if (excApi.current) {
+                  const list = Object.values(fls || {});
+                  if (list.length) excApi.current.addFiles(list);
+                  excApi.current.updateScene({ elements: els });
+                } else { setExcElements(els); setExcFiles(fls || {}); }
               }, err => console.warn('sync exc', err));
             return () => unsub();
           }, [excOn, activeBoardId, user]);
@@ -2329,7 +2399,9 @@
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
               {fpsNow && (
                 <div className="fixed pointer-events-none" style={{ left: 8, bottom: 8, zIndex: 500, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, color: fpsNow.now >= 50 ? '#10b981' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
-                  {fpsNow.now} к/с <span style={{ color: 'var(--muted-2)' }}>· худшее {fpsNow.low}</span>
+                  {/* «кадры» в приложении — это раскадровка, поэтому здесь
+                      пишем «плавность» и fps: иначе читается как счётчик кадров */}
+                  плавность {fpsNow.now} fps <span style={{ color: 'var(--muted-2)' }}>· хуже всего {fpsNow.low}</span>
                 </div>
               )}
               {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
@@ -3155,7 +3227,7 @@
                       {excOn && (
                         <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}>
                           {excElements !== null && (
-                            <ExcalidrawBoard key={activeBoardId} elements={excElements} apiRef={excApi}
+                            <ExcalidrawBoard key={activeBoardId} elements={excElements} files={excFiles} apiRef={excApi}
                                              readOnly={READ_ONLY} onSave={excSave} onView={excView} onTool={excTool} />
                           )}
                         </div>
@@ -3468,24 +3540,42 @@
                             <button onClick={() => setScenePickerOpen(false)} className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 text-[11px]">✕</button>
                           </div>
                           <div className="overflow-y-auto p-1.5">
-                            {/* Документы — те же «Экспликации», просто вынесенные на доску */}
-                            {offBoardDocs.length > 0 && (
+                            {/* Три раздела, у каждого свой заголовок и своё поведение.
+                                Референсы предлагаем только на доске Excalidraw: там
+                                они вставляются КАРТИНКОЙ внутрь сцены, и их можно
+                                крутить и масштабировать его же средствами. */}
+                            {excOn && references.filter(r => r.url).length > 0 && (
                               <React.Fragment>
-                                <div className="px-2 pt-1 pb-1.5"><span className="cf-eyebrow">Документы</span></div>
-                                {offBoardDocs.map(d => (
-                                  <button key={d.id} onClick={() => { putDocOnBoard(d.id); setScenePickerOpen(false); }}
+                                <div className="px-2 pt-1 pb-1.5"><span className="cf-eyebrow">Референсы</span></div>
+                                {references.filter(r => r.url).slice(0, 40).map(r => (
+                                  <button key={r.id} onClick={() => { insertRefIntoExc(r); setScenePickerOpen(false); }}
                                           className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
                                           style={{ minHeight: 40 }}>
-                                    <span className="shrink-0" style={{ color: 'var(--muted-2)' }}><Icons.Docs /></span>
-                                    <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{d.title || 'Без названия'}</span>
-                                    {d.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                                    <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
+                                    <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
                                   </button>
                                 ))}
-                                <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Сцены</span></div>
                               </React.Fragment>
                             )}
+
+                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Документы</span></div>
+                            {offBoardDocs.length === 0 ? (
+                              <p className="px-2 pb-2" style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
+                                {docs.length ? 'Все документы уже на этой доске.' : 'Документов пока нет.'}
+                              </p>
+                            ) : offBoardDocs.map(d => (
+                              <button key={d.id} onClick={() => { putDocOnBoard(d.id); setScenePickerOpen(false); }}
+                                      className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
+                                      style={{ minHeight: 40 }}>
+                                <span className="shrink-0" style={{ color: 'var(--muted-2)' }}><Icons.Docs /></span>
+                                <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{d.title || 'Без названия'}</span>
+                                {d.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                              </button>
+                            ))}
+
+                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Сцены</span></div>
                             {offBoardScenes.length === 0 ? (
-                              <p className="px-2 py-3" style={{ fontSize: 11.5, color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                              <p className="px-2 pb-2" style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
                                 {sortedScenes.length ? 'Все сцены уже на этой доске.' : 'В проекте пока нет сцен.'}
                               </p>
                             ) : offBoardScenes.map(s => {
