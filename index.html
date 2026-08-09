@@ -2370,8 +2370,19 @@
           // вовсе. Нужен, чтобы мерить на НАСТОЯЩЕМ устройстве: на компьютере
           // разработчика цифры другие, и «медленно» без чисел не починить.
           const [fpsNow, setFpsNow] = useState(null);
+          // Включается галочкой в меню «Проект» ИЛИ адресом ?fps=1.
+          // Галочка обязательна: в установленном на iPad приложении нет
+          // адресной строки, и параметр туда просто не набрать.
+          const [fpsOn, setFpsOn] = useState(() =>
+            localStorage.getItem('cf_fps') === '1' || new URLSearchParams(location.search).has('fps'));
+          const toggleFps = () => setFpsOn(v => {
+            const n = !v;
+            try { localStorage.setItem('cf_fps', n ? '1' : '0'); } catch (e) {}
+            if (!n) setFpsNow(null);
+            return n;
+          });
           useEffect(() => {
-            if (!new URLSearchParams(location.search).has('fps')) return;
+            if (!fpsOn) return;
             let frames = 0, last = performance.now(), raf = 0, low = 999;
             const tick = (t) => {
               frames++;
@@ -2385,7 +2396,7 @@
             };
             raf = requestAnimationFrame(tick);
             return () => cancelAnimationFrame(raf);
-          }, []);
+          }, [fpsOn]);
           const syncing = pendingWrites > 0;
           const syncTitle = !isOnline
             ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
@@ -2398,7 +2409,7 @@
             <div className="flex h-screen w-screen relative overflow-hidden bg-transparent">
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
               {fpsNow && (
-                <div className="fixed pointer-events-none" style={{ left: 8, bottom: 8, zIndex: 500, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, color: fpsNow.now >= 50 ? '#10b981' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
+                <div className="fixed pointer-events-none" style={{ left: '50%', transform: 'translateX(-50%)', bottom: 8, zIndex: 500, whiteSpace: 'nowrap', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, color: fpsNow.now >= 50 ? '#10b981' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
                   {/* «кадры» в приложении — это раскадровка, поэтому здесь
                       пишем «плавность» и fps: иначе читается как счётчик кадров */}
                   плавность {fpsNow.now} fps <span style={{ color: 'var(--muted-2)' }}>· хуже всего {fpsNow.low}</span>
@@ -4042,6 +4053,21 @@
                         </div>
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
                       </div>
+                      {/* Прибор для замеров на своём устройстве. Галочкой, а не
+                          адресом: в установленном приложении адресной строки нет */}
+                      <label className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
+                             style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-zinc-200">Показывать плавность</span>
+                          <span className="block text-[11px] text-zinc-500 leading-relaxed mt-0.5">
+                            Счётчик внизу экрана: сколько раз в секунду успевает перерисоваться картинка.
+                            60 — идеал, ниже 30 — заметно дёргается. Это не про раскадровку.
+                          </span>
+                        </span>
+                        <input type="checkbox" checked={fpsOn} onChange={toggleFps}
+                               className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
+                      </label>
+
                       <button onClick={() => {
                         // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
                         // Раньше бэкап брал один старый общий ключ и уносил пустоту.
