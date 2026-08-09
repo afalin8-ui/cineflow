@@ -839,12 +839,13 @@
         // memo обязателен: без него любая перерисовка приложения — набранная
         // буква в карточке, пришедшее сообщение — заставляла Excalidraw
         // перерисоваться целиком. Все входящие свойства держим неизменными.
-        const ExcalidrawBoard = React.memo(({ elements, onSave, onView, readOnly, apiRef }) => {
+        const ExcalidrawBoard = React.memo(({ elements, onSave, onView, onTool, readOnly, apiRef }) => {
           const [lib, setLib] = useState(window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const saveTimer = useRef(null);
           const lastSent = useRef('');
           const elsRef = useRef(null);
+          const lastTool = useRef('selection');
 
           useEffect(() => {
             let alive = true;
@@ -880,6 +881,12 @@
                 // Панораму и зум ведёт Excalidraw — наши карточки просто
                 // повторяют за ним, иначе разъедутся два масштаба.
                 if (onView) onView(st.scrollX, st.scrollY, st.zoom.value);
+                // Взяли инструмент в панели Excalidraw — значит собираются
+                // работать с холстом. Сообщаем наружу: иначе инструмент
+                // загорается, а холст касаний не получает, и человек видит,
+                // что «рука не работает».
+                const tool = st.activeTool && st.activeTool.type;
+                if (tool && tool !== lastTool.current) { lastTool.current = tool; if (onTool) onTool(tool); }
                 if (readOnly) return;
                 // onChange зовётся на КАЖДОЕ движение указателя. Раньше здесь
                 // же собиралась JSON-строка всей сцены — то есть десятки раз
@@ -1293,6 +1300,7 @@
             setBoards(up);
             syncDoc('boards', activeBoardId, up.find(b => b.id === activeBoardId));
             setWbMode('select'); setSelectedWbItems([]);
+            excViewRef.current = null;
             showToast(next ? 'Доска переведена на Excalidraw · старый рисунок сохранён' : 'Вернул обычную кисть');
           };
 
@@ -1316,8 +1324,14 @@
           // кадр панорамы — со всеми сценами, галереей и печатной версией.
           // Заодно уходит отставание карточек на кадр.
           const viewSync = useRef(null);
+          // Живое положение доски. Держим в ссылке, а не только в состоянии:
+          // если во время панорамы приложение перерисуется по любой причине,
+          // оно возьмёт отсюда СВЕЖЕЕ значение, а не отставшее из состояния —
+          // иначе карточки дёргаются, а панорама выглядит сломанной.
+          const excViewRef = useRef(null);
           const onExcView = (sx, sy, z) => {
             const nx = sx * z, ny = sy * z;
+            excViewRef.current = { x: nx, y: ny, z };
             const el = canvasRef.current;
             if (el) el.style.transform = `translate(${nx}px, ${ny}px) scale(${z})`;
             // Состояние всё равно нужно — по нему считается, куда класть новую
@@ -1334,8 +1348,13 @@
           const excCb = useRef({});
           excCb.current.save = saveExcScene;
           excCb.current.view = onExcView;
+          // Выбрали в панели Excalidraw любой инструмент кроме «выделения» —
+          // отдаём ему холст, чтобы он сразу заработал.
+          const onExcTool = (type) => { if (type && type !== 'selection') setWbMode(m => m === 'select' ? 'draw' : m); };
+          excCb.current.tool = onExcTool;
           const excSave = useRef((j) => excCb.current.save(j)).current;
           const excView = useRef((a, b, c) => excCb.current.view(a, b, c)).current;
+          const excTool = useRef((t) => excCb.current.tool(t)).current;
 
           useEffect(() => {
             if (!excOn) { setExcElements(null); return; }
@@ -1383,13 +1402,18 @@
             const handleOffline = () => setIsOnline(false);
             window.addEventListener('online', handleOnline);
             window.addEventListener('offline', handleOffline);
+            // Положение указателя нужно ТОЛЬКО пока тянут связь — им рисуется
+            // линия за пальцем. Раньше оно писалось в состояние на каждое
+            // движение указателя где угодно, то есть всё приложение
+            // перерисовывалось десятки раз в секунду просто от движения мыши.
+            // На доске это ещё и ломало панораму: перерисовка возвращала
+            // карточкам старое положение поверх только что выставленного.
             const handleMouseMove = (e) => {
+                if (!linkingFrom) return;
                 setMousePos({ x: e.clientX, y: e.clientY });
-                if (linkingFrom) {
-                    const el = document.elementFromPoint(e.clientX, e.clientY);
-                    const targetScene = el?.closest('[data-scene-id]');
-                    setHoveredSceneId(targetScene ? targetScene.getAttribute('data-scene-id') : null);
-                }
+                const el = document.elementFromPoint(e.clientX, e.clientY);
+                const targetScene = el?.closest('[data-scene-id]');
+                setHoveredSceneId(targetScene ? targetScene.getAttribute('data-scene-id') : null);
             };
             window.addEventListener('pointermove', handleMouseMove);
             return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); window.removeEventListener('pointermove', handleMouseMove); };
@@ -3132,12 +3156,12 @@
                         <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}>
                           {excElements !== null && (
                             <ExcalidrawBoard key={activeBoardId} elements={excElements} apiRef={excApi}
-                                             readOnly={READ_ONLY} onSave={excSave} onView={excView} />
+                                             readOnly={READ_ONLY} onSave={excSave} onView={excView} onTool={excTool} />
                           )}
                         </div>
                       )}
 
-                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
+                      <div id="wb-container" ref={canvasRef} style={{ transform: (() => { const v = excOn && excViewRef.current ? excViewRef.current : { x: canvasOffset.x, y: canvasOffset.y, z: zoom }; return `translate(${v.x}px, ${v.y}px) scale(${v.z})`; })(), transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
                         
                         {selectionBox && (
                             <div className="absolute border border-indigo-500 bg-indigo-500/20 z-50 pointer-events-none" style={{
