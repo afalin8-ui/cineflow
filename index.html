@@ -284,9 +284,30 @@
         const READ_ONLY = !!CF_SNAPSHOT || !!CF_VIEW_SCOPE;
         if (READ_ONLY) document.body.classList.add('cf-readonly');
 
-        const appId = (CF_SNAPSHOT && CF_SNAPSHOT.room)
-          || new URLSearchParams(location.search).get('room')
-          || localStorage.getItem('cf_room') || 'cineflow-room-3';
+        // --- Комната проекта ---
+        // Комната — это и есть граница между проектами: у кого код, тот
+        // и видит данные. Раньше любой, кто открыл адрес, попадал в комнату
+        // по умолчанию — то есть в ЧУЖОЙ проект. Теперь новый человек
+        // получает свою пустую, а попасть в общую можно только по ссылке
+        // с кодом (её даёт окно «Доступ»).
+        const CF_URL_ROOM = new URLSearchParams(location.search).get('room');
+        const LEGACY_ROOM = 'cineflow-room-3';
+        const appId = (() => {
+          if (CF_SNAPSHOT) return CF_SNAPSHOT.room;
+          // Режим просмотра чужой ссылки комнату себе НЕ запоминает,
+          // иначе своё приложение уехало бы в чужой проект.
+          if (CF_VIEW_SCOPE) return CF_URL_ROOM || localStorage.getItem('cf_room') || LEGACY_ROOM;
+          let room = CF_URL_ROOM || localStorage.getItem('cf_room');
+          if (!room) {
+            // Тот, кто уже работал до появления личных комнат, остаётся
+            // в общей — иначе его проект «пропал бы».
+            const worked = localStorage.getItem('cf_scenes') || localStorage.getItem('cf_user_name');
+            room = worked ? LEGACY_ROOM
+                          : 'room-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+          }
+          try { localStorage.setItem('cf_room', room); } catch (e) {}
+          return room;
+        })();
 
         let db = null;
         let auth = null;
@@ -2173,6 +2194,28 @@
             if (CF_VIEW_SCOPE === 'board') return t.id === 'whiteboard';
             return true;
           });
+          // Приглашение в СВОЮ комнату; голый адрес даёт человеку пустой проект
+          const inviteLink = location.origin + location.pathname + '?room=' + encodeURIComponent(appId);
+          // Счётчик кадров. Включается адресом ?fps=1 и по умолчанию не работает
+          // вовсе. Нужен, чтобы мерить на НАСТОЯЩЕМ устройстве: на компьютере
+          // разработчика цифры другие, и «медленно» без чисел не починить.
+          const [fpsNow, setFpsNow] = useState(null);
+          useEffect(() => {
+            if (!new URLSearchParams(location.search).has('fps')) return;
+            let frames = 0, last = performance.now(), raf = 0, low = 999;
+            const tick = (t) => {
+              frames++;
+              if (t - last >= 500) {
+                const v = Math.round(frames * 1000 / (t - last));
+                low = Math.min(low, v);
+                setFpsNow({ now: v, low });
+                frames = 0; last = t;
+              }
+              raf = requestAnimationFrame(tick);
+            };
+            raf = requestAnimationFrame(tick);
+            return () => cancelAnimationFrame(raf);
+          }, []);
           const syncing = pendingWrites > 0;
           const syncTitle = !isOnline
             ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
@@ -2184,6 +2227,11 @@
           return (
             <div className="flex h-screen w-screen relative overflow-hidden bg-transparent">
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
+              {fpsNow && (
+                <div className="fixed pointer-events-none" style={{ left: 8, bottom: 8, zIndex: 500, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, color: fpsNow.now >= 50 ? '#10b981' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
+                  {fpsNow.now} к/с <span style={{ color: 'var(--muted-2)' }}>· худшее {fpsNow.low}</span>
+                </div>
+              )}
               {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
 
               {/* РЕЛЬС НАВИГАЦИИ (десктоп) */}
@@ -2708,8 +2756,11 @@
                           </div>
                         )}
 
+                        {/* Сетка собирается, только пока галерея открыта: держать
+                            сотню картинок в памяти круглосуточно на планшете дорого.
+                            Прокрутка при уходе теряется, фильтры и выделение — нет. */}
                         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(212px, 1fr))' }}>
-                            {visibleRefs.map(ref => {
+                            {currentView === 'gallery' && visibleRefs.map(ref => {
                               const isSel = selectedRefIds.includes(ref.id);
                               return (
                                 <div key={ref.id} className={`glass-panel rounded-lg overflow-hidden flex flex-col group border-t transition-all ${isSel ? 'ring-2' : 'border-white/10'}`} style={isSel ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : undefined}>
@@ -3612,8 +3663,9 @@
                   <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
                     <button onClick={() => setShowShareModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
-                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-4 mb-6">
-                      <p>Проект уже опубликован — просто отправьте ссылку ниже участникам группы. У всех должен быть одинаковый код комнаты, чтобы видеть общие данные.</p>
+                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
+                      <p>Проект живёт в «комнате». Кто открыл ссылку с кодом комнаты — тот работает вместе с вами; кто открыл адрес без кода — получает свой пустой проект и ваших данных не видит.</p>
+                      <p className="text-[12px] text-zinc-500">Значит, для бетатеста давайте людям адрес <span className="font-mono">без</span> кода — каждый начнёт с чистого листа. А своей группе присылайте ссылку-приглашение ниже.</p>
                     </div>
                     <div className="mb-4">
                       <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Код комнаты проекта</label>
@@ -3621,11 +3673,20 @@
                         <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
                         <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 rounded-lg transition-colors">Войти</button>
                       </div>
-                      <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">У всех участников проекта должен быть одинаковый код комнаты.</p>
+                      <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Код — это и есть замок: кто его знает, тот видит проект. Простой код вроде «cineflow-room-3» можно угадать — если делитесь приложением с посторонними, поменяйте его на что-то своё и разошлите группе новую ссылку.</p>
+                      <button onClick={() => {
+                                const v = 'room-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+                                setConfirmAction({ title: 'Начать новый проект в новой комнате?',
+                                  message: `Текущий проект в комнате «${appId}» никуда не денется — вернуться в него можно, введя этот код обратно.\n\nНовая комната: ${v}`,
+                                  onConfirm: () => { try { localStorage.setItem('cf_room', v); } catch (e) {} window.location.reload(); } });
+                              }}
+                              className="mt-2 cf-chip">+ Новая пустая комната</button>
                     </div>
                     <div className="bg-black/50 p-2 pl-4 rounded-lg border border-white/10 flex items-center justify-between gap-3">
-                      <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{window.location.href}</span>
-                      <button onClick={() => { navigator.clipboard.writeText(window.location.href).then(() => showToast('Ссылка скопирована!')).catch(() => { const t = document.createElement('input'); t.value = window.location.href; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка скопирована!'); }); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                      {/* Ссылка ОБЯЗАНА нести код комнаты: без него получатель
+                          заведёт себе пустой проект, а не присоединится к нашему */}
+                      <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{inviteLink}</span>
+                      <button onClick={() => { navigator.clipboard.writeText(inviteLink).then(() => showToast('Ссылка-приглашение скопирована')).catch(() => { const t = document.createElement('input'); t.value = inviteLink; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка-приглашение скопирована'); }); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
                     </div>
 
                     {/* ТОЛЬКО ПРОСМОТР */}
