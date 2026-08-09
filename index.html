@@ -815,11 +815,15 @@
           return excLoading;
         };
 
-        const ExcalidrawBoard = ({ elements, onSave, onView, readOnly, apiRef }) => {
+        // memo обязателен: без него любая перерисовка приложения — набранная
+        // буква в карточке, пришедшее сообщение — заставляла Excalidraw
+        // перерисоваться целиком. Все входящие свойства держим неизменными.
+        const ExcalidrawBoard = React.memo(({ elements, onSave, onView, readOnly, apiRef }) => {
           const [lib, setLib] = useState(window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const saveTimer = useRef(null);
           const lastSent = useRef('');
+          const elsRef = useRef(null);
 
           useEffect(() => {
             let alive = true;
@@ -856,16 +860,22 @@
                 // повторяют за ним, иначе разъедутся два масштаба.
                 if (onView) onView(st.scrollX, st.scrollY, st.zoom.value);
                 if (readOnly) return;
-                // onChange зовётся на каждое движение указателя, поэтому
-                // сохраняем с задержкой и только если сцена реально изменилась.
-                const json = JSON.stringify(els.filter(e => !e.isDeleted));
-                if (json === lastSent.current) return;
+                // onChange зовётся на КАЖДОЕ движение указателя. Раньше здесь
+                // же собиралась JSON-строка всей сцены — то есть десятки раз
+                // в секунду прогонялся весь рисунок. Теперь тут только
+                // запоминание ссылки, а сборка строки уехала в отложенный вызов.
+                elsRef.current = els;
                 clearTimeout(saveTimer.current);
-                saveTimer.current = setTimeout(() => { lastSent.current = json; onSave(json); }, 900);
+                saveTimer.current = setTimeout(() => {
+                  const json = JSON.stringify((elsRef.current || []).filter(e => !e.isDeleted));
+                  if (json === lastSent.current) return;
+                  lastSent.current = json;
+                  onSave(json);
+                }, 900);
               }}
             />
           );
-        };
+        });
 
         function AppCore() {
           const [user, setUser] = useState(null);
@@ -1277,11 +1287,32 @@
           // Панораму и зум ведёт Excalidraw, наши карточки повторяют за ним.
           // Точка сцены (sx,sy) у него оказывается в (sx+scrollX)*zoom,
           // а у нас — offset + x*zoom. Отсюда offset = scroll * zoom.
+          //
+          // Трансформацию пишем ПРЯМО В УЗЕЛ, минуя состояние React: гонять её
+          // через setState значило перерисовывать всё приложение на каждый
+          // кадр панорамы — со всеми сценами, галереей и печатной версией.
+          // Заодно уходит отставание карточек на кадр.
+          const viewSync = useRef(null);
           const onExcView = (sx, sy, z) => {
             const nx = sx * z, ny = sy * z;
-            setCanvasOffset(prev => (prev.x === nx && prev.y === ny) ? prev : { x: nx, y: ny });
-            setZoom(prev => prev === z ? prev : z);
+            const el = canvasRef.current;
+            if (el) el.style.transform = `translate(${nx}px, ${ny}px) scale(${z})`;
+            // Состояние всё равно нужно — по нему считается, куда класть новую
+            // карточку, — но обновляем его уже после жеста.
+            clearTimeout(viewSync.current);
+            viewSync.current = setTimeout(() => {
+              setCanvasOffset(prev => (prev.x === nx && prev.y === ny) ? prev : { x: nx, y: ny });
+              setZoom(prev => prev === z ? prev : z);
+            }, 180);
           };
+
+          // Ссылки на обработчики держим неизменными, иначе React.memo
+          // у слоя Excalidraw не сработает ни разу.
+          const excCb = useRef({});
+          excCb.current.save = saveExcScene;
+          excCb.current.view = onExcView;
+          const excSave = useRef((j) => excCb.current.save(j)).current;
+          const excView = useRef((a, b, c) => excCb.current.view(a, b, c)).current;
 
           useEffect(() => {
             if (!excOn) { setExcElements(null); return; }
@@ -2752,10 +2783,12 @@
                     </div>
                   </div>
 
-                  {/* МАСТЕР-ДОК */}
+                  {/* МАСТЕР-ДОК. Собирается только когда открыт: он показывает
+                      разом ВСЕ сцены со всеми кадрами, и держать это в памяти
+                      постоянно незачем — своего состояния у него нет. */}
                   <div className={`h-full w-full overflow-y-auto ${currentView === 'master' ? 'block' : 'hidden'}`}>
                     <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6 pb-24">
-                      {sortedScenes.map(s => {
+                      {currentView === 'master' && sortedScenes.map(s => {
                         const sceneFrames = storyboard.filter(f => f.sceneId === s.id);
                         return (
                           <div key={s.id} className="glass-panel p-6 md:p-8 rounded-lg space-y-5">
@@ -2938,11 +2971,14 @@
                       {/* Слой Excalidraw — ПОД карточками и вне их трансформации:
                           он ведёт свою панораму сам. В режиме работы с карточками
                           касания до него не доходят, и наоборот. */}
+                      {/* Слой рисования идёт ПОВЕРХ карточек: по референсу нужно
+                          уметь чертить — разметить кадр, показать движение.
+                          Холст прозрачный, поэтому карточки видно насквозь. */}
                       {excOn && (
-                        <div className="absolute inset-0 z-10" style={{ pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}>
+                        <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}>
                           {excElements !== null && (
                             <ExcalidrawBoard key={activeBoardId} elements={excElements} apiRef={excApi}
-                                             readOnly={READ_ONLY} onSave={saveExcScene} onView={onExcView} />
+                                             readOnly={READ_ONLY} onSave={excSave} onView={excView} />
                           )}
                         </div>
                       )}
@@ -3779,7 +3815,12 @@
 
               {/* Печатная версия. Содержимое зависит от выбранной кнопки
                   экспорта (printMode): весь план / гайд / схема / техника. */}
+              {/* Собирается ТОЛЬКО перед печатью. Раньше висела в разметке
+                  всегда: все сцены, вся раскадровка с картинками — десятки
+                  изображений в памяти круглосуточно ради кнопки, которую
+                  нажимают раз в неделю. На планшете это ощутимо. */}
               <div id="print-area">
+              {printRequested && (<React.Fragment>
                 {printMode === 'doc' && (() => {
                   const d = docs.find(x => x.id === activeDocId);
                   if (!d) return null;
@@ -3902,6 +3943,7 @@
                   </div>
                 )}
                 </>)}
+              </React.Fragment>)}
               </div>
 
             </div>
