@@ -1354,6 +1354,61 @@
           };
 
           const updateScene = (id, field, val) => { const up = scenes.map(s => s.id === id ? { ...s, [field]: val } : s); setScenes(up); const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t); };
+
+          // --- Номер сцены ---
+          // Номер — строка, а не счётчик: в съёмочных планах живут и «12А»,
+          // и «5-2», и КПП от второго режиссёра приходит именно такой.
+          // Пробелы срезаем: невидимый хвост ломал бы и сортировку,
+          // и проверку на повтор.
+          const updateSceneNumber = (id, raw) => {
+            const scene = scenes.find(s => s.id === id);
+            if (!scene) return;
+            const oldNum = String(scene.number || '');
+            const next = String(raw).replace(/\s/g, '');
+            const up = scenes.map(s => s.id === id ? { ...s, number: next } : s);
+            setScenes(up);
+            syncDoc('scenes', id, up.find(s => s.id === id));
+            // Кадры раскадровки нумеруются от сцены («5.1», «5.2»), поэтому
+            // переезжают вместе с ней — иначе в распечатке номера разойдутся.
+            if (!oldNum || oldNum === next) return;
+            const moved = [];
+            const upFrames = storyboard.map(f => {
+              if (f.sceneId !== id || !String(f.frameNum || '').startsWith(oldNum + '.')) return f;
+              const nf = { ...f, frameNum: next + String(f.frameNum).slice(oldNum.length) };
+              moved.push(nf); return nf;
+            });
+            if (moved.length) { setStoryboard(upFrames); moved.forEach(f => syncDoc('storyboard', f.id, f)); }
+          };
+
+          // Следующий свободный номер: берём наибольшее число среди уже
+          // существующих и прибавляем единицу. Считать по количеству сцен
+          // нельзя — после удаления или своей нумерации номер бы повторился.
+          const nextSceneNumber = () => {
+            let max = 0;
+            scenes.forEach(s => { const m = String(s.number || '').match(/\d+/); if (m && +m[0] > max) max = +m[0]; });
+            return String(max + 1);
+          };
+
+          // Открытая сцена и открытый гайд должны существовать. Изначально сюда
+          // подставлены id первого запуска ('scene-1', 'doc-1'), а в реальном
+          // проекте id другие — и правая панель встречала пустотой, пока не
+          // ткнёшь в список. То же после «нового проекта»: там id свежие.
+          useEffect(() => {
+            if (sortedScenes.length && !sortedScenes.some(s => s.id === activeSceneId)) setActiveSceneId(sortedScenes[0].id);
+          }, [sortedScenes, activeSceneId]);
+          useEffect(() => {
+            // При открытой схеме света документ намеренно не выбран — не мешаем.
+            if (activeSchemeId || !docs.length) return;
+            if (!docs.some(d => d.id === activeDocId)) setActiveDocId(docs[0].id);
+          }, [docs, activeDocId, activeSchemeId]);
+
+          // Номера, которые встречаются больше одного раза, — их подсвечиваем.
+          // Не запрещаем: посреди перенумерации совпадение неизбежно.
+          const duplicateNumbers = useMemo(() => {
+            const seen = {}, dup = {};
+            scenes.forEach(s => { const n = String(s.number || '').trim(); if (!n) return; if (seen[n]) dup[n] = true; seen[n] = true; });
+            return dup;
+          }, [scenes]);
           
           const deleteScene = (id) => {
              const up = scenes.filter(s => s.id !== id);
@@ -1784,7 +1839,7 @@
                             <span className="font-mono text-indigo-400 mr-2 text-xs">#{s.number}</span> {s.title || 'Без названия'}
                           </button>
                         ))}
-                        <button onClick={() => { const num = scenes.length + 1; const newS = { id: `sc-${Date.now()}`, number: String(num), title: `СЦЕНА ${num}. НОВАЯ`, content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
+                        <button onClick={() => { const num = nextSceneNumber(); const newS = { id: `sc-${Date.now()}`, number: num, title: `СЦЕНА ${num}. НОВАЯ`, content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); setActiveSceneId(newS.id); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
                       </div>
 
                       {activeSceneId && scenes.find(s => s.id === activeSceneId) && (() => {
@@ -1794,8 +1849,18 @@
                         return (
                           <div className="flex-1 glass-panel p-5 md:p-8 rounded-lg overflow-y-auto space-y-6 border-t border-white/10">
                             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-white/10 pb-4 gap-3">
-                              <div className="flex items-center gap-3">
-                                  <span className="text-xs font-mono font-bold text-indigo-300 bg-indigo-950/60 px-3 py-1.5 rounded-lg">СЦЕНА #{s.number}</span>
+                              <div className="flex items-center gap-3 flex-wrap">
+                                  <label className="flex items-center gap-1 bg-indigo-950/60 px-3 py-1.5 rounded-lg shrink-0" title="Номер сцены — можно поменять. Подойдёт и «12А», и «5-2»">
+                                    <span className="text-xs font-mono font-bold text-indigo-300">СЦЕНА #</span>
+                                    <input type="text" value={s.number || ''} onChange={(e) => updateSceneNumber(s.id, e.target.value)}
+                                           placeholder="—" inputMode="text" maxLength="12"
+                                           className="bg-transparent text-xs font-mono font-bold text-white text-center focus:outline-none w-16 border-b border-indigo-400/30 focus:border-indigo-400 transition-colors placeholder-indigo-300/40" />
+                                  </label>
+                                  {duplicateNumbers[String(s.number || '').trim()] && (
+                                    <span className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-lg shrink-0">
+                                      Такой номер уже есть у другой сцены
+                                    </span>
+                                  )}
                                   <input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)} className="glass-input px-3 py-1.5 rounded-lg text-sm w-full sm:w-auto font-mono text-zinc-300" />
                               </div>
                               <button onClick={() => setConfirmAction({title: 'Удалить сцену?', message: 'Это действие удалит сцену и отвяжет ее кадры.', onConfirm: () => deleteScene(s.id)})} className="text-xs text-red-400 hover:text-white hover:bg-red-500/20 px-3 py-1.5 rounded-lg transition-colors border border-transparent font-semibold flex items-center gap-1 self-end sm:self-auto"><Icons.Trash /> Удалить сцену</button>
@@ -1892,7 +1957,11 @@
                                   <button onClick={() => setShowImages(!showImages)} className="text-[11px] glass-panel hover:bg-white/10 px-3 py-1.5 rounded-lg text-zinc-300 font-semibold transition-colors">{showImages ? '📝 Только текст' : '🖼️ Показать эскизы'}</button>
                                 </div>
                                 <button onClick={() => {
-                                  const newF = { id: `sb-${Date.now()}`, sceneId: s.id, frameNum: `${s.number}.${frames.length + 1}`, description: '', image: '' };
+                                  // Номер кадра — от наибольшего уже занятого, а не от их
+                                  // количества: после удаления кадра номер бы повторился.
+                                  let maxF = 0;
+                                  frames.forEach(f => { const m = String(f.frameNum || '').match(/(\d+)$/); if (m && +m[1] > maxF) maxF = +m[1]; });
+                                  const newF = { id: `sb-${Date.now()}`, sceneId: s.id, frameNum: `${s.number}.${maxF + 1}`, description: '', image: '' };
                                   setStoryboard([...storyboard, newF]); syncDoc('storyboard', newF.id, newF);
                                 }} className="text-xs text-indigo-300 hover:text-white bg-indigo-600/30 font-bold px-3 py-1.5 rounded-lg transition-colors">+ Добавить кадр</button>
                               </div>
@@ -2622,7 +2691,13 @@
                             <tbody className="divide-y divide-white/5 text-zinc-200">
                               {sortedScenes.map(s => (
                                 <tr key={s.id} className="hover:bg-white/5 transition-colors">
-                                  <td className="p-5 font-mono text-center text-indigo-400 font-extrabold bg-black/30">#{s.number}</td>
+                                  <td className="p-5 font-mono text-center bg-black/30">
+                                    {/* Номер правится и отсюда: удобнее перенумеровать
+                                        всю смену подряд, чем ходить по карточкам */}
+                                    <input type="text" value={s.number || ''} onChange={(e) => updateSceneNumber(s.id, e.target.value)}
+                                           placeholder="—" maxLength="12" title="Номер сцены"
+                                           className={`bg-transparent w-16 text-center font-mono font-extrabold focus:outline-none border-b transition-colors placeholder-zinc-600 ${duplicateNumbers[String(s.number || '').trim()] ? 'text-amber-300 border-amber-500/50' : 'text-indigo-400 border-transparent hover:border-white/20 focus:border-indigo-400'}`} />
+                                  </td>
                                   <td className="p-5"><input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)} className="glass-input rounded-lg px-3 py-1.5 font-mono transition-colors text-xs" /></td>
                                   <td className="p-5 font-bold">{s.title}</td>
                                   <td className="p-5">
