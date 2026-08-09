@@ -888,7 +888,10 @@
           ); 
           const [activeSceneId, setActiveSceneId] = useState('scene-1');
           const [activeDocId, setActiveDocId] = useState('doc-1');
-          const [showImages, setShowImages] = useState(true); 
+          // Что открыто в карточке сцены: экспликация оператора или текст
+          // сцены из сценария. Это разные тексты и живут в разных полях.
+          const [sceneTab, setSceneTab] = useState('exp');
+          const [showImages, setShowImages] = useState(true);
           const [showProjectModal, setShowProjectModal] = useState(false);
           const [showShareModal, setShowShareModal] = useState(false);
           const [showChat, setShowChat] = useState(false); 
@@ -1261,7 +1264,7 @@
                   if (match) {
                     const parsed = JSON.parse(match[0]);
                     if (Array.isArray(parsed) && parsed.length > 0) {
-                      const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
+                      const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', boardId: '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
                       setScenes([...scenes, ...newScenes]); newScenes.forEach(ns => syncDoc('scenes', ns.id, ns)); showToast(`✅ Агент успешно импортировал ${newScenes.length} сцен!`);
                     } else { showToast("❌ Агент не обнаружил сцен."); }
                   } else { showToast("❌ Ошибка ответа ИИ."); }
@@ -1271,9 +1274,162 @@
             }; reader.readAsArrayBuffer(file);
           };
 
-          const enhanceSceneWithAI = async (sceneId, currentContent, title) => {
+          // --- Разбор сценария ---
+          // Заголовок сцены в сценарии почти всегда одного вида, поэтому
+          // основной разбор делаем сами: он быстрый, бесплатный, работает
+          // офлайн и ничего не выдумывает. ИИ зовём, только если формат
+          // непривычный и своими силами сцен не нашлось.
+          const parseSceneHead = (line) => {
+            const l = String(line).trim();
+            // Заголовок — короткая строка. Длинная почти наверняка реплика.
+            if (!l || l.length > 120) return null;
+            let m;
+            m = l.match(/^сцена\s+(\d[^\s.,:;]*)\s*[.:)-]?\s*(.*)$/i);          // СЦЕНА 5. ИНТ. КАБИНЕТ
+            if (m) return { number: m[1], title: (m[2] || '').trim() };
+            m = l.match(/^(\d[^\s.,:;]*)\s*[.)]\s*((?:инт|нат|int|ext)\b.*)$/i); // 5. ИНТ. КАБИНЕТ
+            if (m) return { number: m[1], title: m[2].trim() };
+            m = l.match(/^(\d[^\s.,:;]*)\s+((?:инт|нат|int|ext)\b.*)$/i);        // 5 ИНТ. КАБИНЕТ
+            if (m) return { number: m[1], title: m[2].trim() };
+            m = l.match(/^((?:инт|нат|int|ext)[.\s].*)$/i);                      // ИНТ. КАБИНЕТ (без номера)
+            if (m) return { number: '', title: m[1].trim() };
+            return null;
+          };
+
+          const collectScenes = (lines, isHead) => {
+            const out = []; let cur = null;
+            lines.forEach(line => {
+              const head = isHead(line);
+              if (head) { cur = { number: head.number, title: head.title, body: [] }; out.push(cur); return; }
+              if (cur) cur.body.push(line);
+            });
+            return out
+              .map(s => ({ number: s.number, title: s.title,
+                           script: s.body.join('\n').replace(/\n{3,}/g, '\n\n').trim() }))
+              .filter(s => s.title || s.script);
+          };
+
+          const splitScript = (text) => collectScenes(
+            String(text).replace(/\r\n?/g, '\n').split('\n'), parseSceneHead);
+
+          // Русские .txt часто сохранены в windows-1251 — как UTF-8 такой файл
+          // читается кракозябрами. Замечаем это по символам-заменителям.
+          const decodeText = (buf) => {
+            let t = new TextDecoder('utf-8').decode(buf);
+            if ((t.match(/�/g) || []).length > Math.max(3, t.length / 200)) {
+              try { t = new TextDecoder('windows-1251').decode(buf); } catch (e) {}
+            }
+            // .fdx и выгрузки в html — снимаем разметку, остаётся текст построчно
+            if (/^\s*<(\?xml|!doctype|html|finaldraft)/i.test(t)) {
+              t = t.replace(/<[^>]+>/g, '\n').replace(/&[a-z]+;/gi, ' ').replace(/\n{3,}/g, '\n\n');
+            }
+            return t;
+          };
+
+          // Запасной путь: просим ИИ выписать ТОЛЬКО строки-заголовки. Ответ
+          // короткий, а сам текст сцен режем у себя — так ничего не теряется
+          // и не переписывается моделью.
+          const AI_SCRIPT_LIMIT = 30000;
+          const aiSplitScript = async (text) => {
+            const res = await callGeminiAI(
+              'Ниже текст сценария. Выпиши ТОЛЬКО строки-заголовки сцен, каждую с новой строки, ДОСЛОВНО как в тексте. '
+              + 'Ничего не добавляй, не нумеруй от себя, не пиши пояснений.\n\n' + text.substring(0, AI_SCRIPT_LIMIT), false);
+            if (!res) return [];
+            const norm = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
+            const heads = new Set(res.split('\n').map(norm).filter(Boolean));
+            return collectScenes(String(text).replace(/\r\n?/g, '\n').split('\n'), (line) => {
+              if (!heads.has(norm(line))) return null;
+              const m = String(line).match(/(\d[^\s.,:;]*)/);
+              return { number: m ? m[1] : '', title: String(line).trim() };
+            });
+          };
+
+          const normNum = (v) => String(v || '').replace(/\s/g, '').toLowerCase();
+
+          // Раскладываем разобранное по сценам: совпал номер — текст ложится
+          // в существующую сцену, нет — заводим новую. Именно ради этого
+          // из сценария и берутся номера.
+          const applyScript = (parsed, source) => {
+            const byNum = {};
+            scenes.forEach(s => { const n = normNum(s.number); if (n) byNum[n] = s; });
+            const matched = [], created = [];
+            let willOverwrite = 0;
+            parsed.forEach(p => {
+              const hit = normNum(p.number) && byNum[normNum(p.number)];
+              if (hit) { matched.push({ id: hit.id, p }); if ((hit.script || '').trim()) willOverwrite++; }
+              else created.push(p);
+            });
+            setConfirmAction({
+              title: 'Загрузить текст сценария?',
+              message: `${source}\n\nНайдено сцен: ${parsed.length}\nЛягут в существующие по номеру: ${matched.length}`
+                       + (willOverwrite ? ` (перезапишут текст у ${willOverwrite})` : '')
+                       + `\nБудут созданы новые: ${created.length}`,
+              onConfirm: () => {
+                let up = scenes.map(s => {
+                  const hit = matched.find(m => m.id === s.id);
+                  return hit ? { ...s, script: hit.p.script, title: s.title || hit.p.title } : s;
+                });
+                matched.forEach(m => { const t = up.find(s => s.id === m.id); if (t) syncDoc('scenes', t.id, t); });
+                // Свободный номер считаем на месте: nextSceneNumber смотрит
+                // в состояние, и все новые сцены получили бы один и тот же.
+                let maxNum = 0;
+                up.forEach(s => { const m = String(s.number || '').match(/\d+/); if (m && +m[0] > maxNum) maxNum = +m[0]; });
+                const stamp = Date.now();
+                const fresh = created.map((p, i) => ({
+                  id: `sc-${stamp}-${i}`,
+                  number: p.number || String(++maxNum),
+                  title: p.title || 'Сцена', content: '', script: p.script,
+                  // На доску не сыплем: доска — текущая работа, а сценарий
+                  // может принести сотню сцен разом.
+                  boardId: '',
+                  x: (150 - canvasOffset.x) / zoom + (i % 6) * 40,
+                  y: (150 - canvasOffset.y) / zoom + Math.floor(i / 6) * 40,
+                  date: '', gear: {}, lightGear: {}, lightSchemeId: null
+                }));
+                up = [...up, ...fresh];
+                setScenes(up);
+                fresh.forEach(ns => syncDoc('scenes', ns.id, ns));
+                setSceneTab('script');
+                showToast(`Текст сценария загружен · сцен: ${parsed.length}`);
+              }
+            });
+          };
+
+          const handleScriptFile = async (e) => {
+            const file = e.target.files[0]; if (!file) return;
+            e.target.value = '';
+            setIsAILoading(true);
+            showToast('Читаю сценарий...');
+            try {
+              const text = decodeText(await file.arrayBuffer());
+              let parsed = splitScript(text);
+              let source = 'Разобрано по заголовкам сцен.';
+              if (parsed.length < 2) {
+                if (!geminiKey.trim()) {
+                  setIsAILoading(false);
+                  showToast('Не нашёл сцен. Нужны заголовки вида «СЦЕНА 5. ИНТ. КАБИНЕТ — ДЕНЬ», либо укажите ключ ИИ в меню «Проект»');
+                  return;
+                }
+                showToast('Формат непривычный — зову ИИ...');
+                parsed = await aiSplitScript(text);
+                source = text.length > AI_SCRIPT_LIMIT
+                  ? `Разобрано с помощью ИИ, первые ${AI_SCRIPT_LIMIT.toLocaleString('ru-RU')} знаков из ${text.length.toLocaleString('ru-RU')}.`
+                  : 'Разобрано с помощью ИИ.';
+              }
+              setIsAILoading(false);
+              if (!parsed.length) { showToast('Сцен в файле не нашлось'); return; }
+              applyScript(parsed, source);
+            } catch (err) {
+              console.error(err);
+              setIsAILoading(false);
+              showToast('Не удалось прочитать файл сценария');
+            }
+          };
+
+          const enhanceSceneWithAI = async (sceneId, currentContent, title, script) => {
             setIsAILoading(true); showToast("✨ ИИ расширяет экспликацию...");
-            const prompt = `Разверни и профессионально улучши операторское описание этой сцены. Название: ${title}. Исходный набросок: ${currentContent || 'Пусто'}`;
+            // Текст сцены, если он загружен, — лучший контекст для экспликации.
+            const prompt = `Разверни и профессионально улучши операторское описание этой сцены. Название: ${title}. Исходный набросок: ${currentContent || 'Пусто'}`
+              + ((script || '').trim() ? `\n\nТекст сцены из сценария (опирайся на него):\n${String(script).substring(0, 6000)}` : '');
             const aiText = await callGeminiAI(prompt, false);
             if (aiText) { updateScene(sceneId, 'content', aiText); showToast("✨ Экспликация обновлена!"); }
             setIsAILoading(false);
@@ -1938,11 +2094,35 @@
                             <input type="text" value={s.title} onChange={(e) => updateScene(s.id, 'title', e.target.value)} className="font-serif bg-transparent text-2xl md:text-3xl font-bold text-white focus:outline-none w-full placeholder-zinc-600" placeholder="Название объекта / сцены" />
                             
                             <div className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <span className="text-xs text-zinc-400 uppercase tracking-widest font-bold ml-1">Операторская и режиссерская экспликация</span>
-                                <button onClick={() => enhanceSceneWithAI(s.id, s.content, s.title)} disabled={isAILoading} className="text-xs text-indigo-200 bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1"><Icons.Bot /> Расширить с ИИ</button>
+                              <div className="flex justify-between items-center gap-3 flex-wrap">
+                                {/* Две вкладки: свой разбор сцены и текст из сценария */}
+                                <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                                  {[['exp', 'Экспликация'], ['script', 'Текст сцены']].map(([key, label]) => (
+                                    <button key={key} onClick={() => setSceneTab(key)}
+                                            className="px-3.5 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5"
+                                            style={sceneTab === key
+                                              ? { minHeight: 30, background: 'var(--accent)', color: 'var(--bg)' }
+                                              : { minHeight: 30, color: 'var(--muted)' }}>
+                                      {label}
+                                      {/* точка = в этой вкладке что-то есть */}
+                                      {((key === 'exp' && (s.content || '').trim()) || (key === 'script' && (s.script || '').trim())) && (
+                                        <span className="rounded-full" style={{ width: 5, height: 5, background: sceneTab === key ? 'var(--bg)' : 'var(--accent)' }} />
+                                      )}
+                                    </button>
+                                  ))}
+                                </div>
+                                {sceneTab === 'exp'
+                                  ? <button onClick={() => enhanceSceneWithAI(s.id, s.content, s.title, s.script)} disabled={isAILoading} className="cf-edit-only text-xs text-indigo-200 bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors font-semibold flex items-center gap-1"><Icons.Bot /> Расширить с ИИ</button>
+                                  : <span className="cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>}
                               </div>
-                              <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} className="w-full h-32 glass-input rounded-lg p-4 text-sm resize-none leading-relaxed" placeholder="Опишите характер движения камеры, тональность света, атмосферику..." />
+                              {sceneTab === 'exp' ? (
+                                <textarea value={s.content} onChange={(e) => updateScene(s.id, 'content', e.target.value)} className="w-full h-32 glass-input rounded-lg p-4 text-sm resize-none leading-relaxed" placeholder="Опишите характер движения камеры, тональность света, атмосферику..." />
+                              ) : (
+                                <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
+                                          className="w-full glass-input rounded-lg p-4 text-[13px] resize-y leading-relaxed font-mono"
+                                          style={{ minHeight: 260 }}
+                                          placeholder="Текст сцены из сценария. Можно вставить вручную или загрузить весь сценарий разом — «Агент КПП» на панели слева." />
+                              )}
                             </div>
 
                             {/* Световая схема и сетап */}
@@ -3311,7 +3491,7 @@
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
                   <div className="glass-panel rounded-lg p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
                     <button onClick={() => setShowAgentModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> ИИ-Агент импорта КПП</h3>
+                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> Агент импорта: КПП и сценарий</h3>
                     
                     <div className="space-y-6">
                       <div className="bg-black/40 p-4 rounded-lg border border-white/10">
@@ -3320,6 +3500,20 @@
                         <label className="w-full bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
                           {isAILoading ? '⏳ Обработка нейросетью...' : '📁 Выбрать КПП (.xlsx / .csv)'}
                           <input type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => { handleAIAgentFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
+                        </label>
+                      </div>
+
+                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
+                        <h4 className="text-sm font-bold text-amber-300 mb-2">Сценарий (.txt / .fountain / .fdx)</h4>
+                        <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
+                          Разбирается по заголовкам сцен — «СЦЕНА 5. ИНТ. КАБИНЕТ — ДЕНЬ» или «5. НАТ. ДВОР — ДЕНЬ».
+                          Номер берётся из заголовка: если сцена с таким номером уже есть, текст ляжет в неё,
+                          а не создаст вторую. Текст каждой сцены попадёт в её вкладку «Текст сцены».
+                          Перед записью покажу, что нашлось.
+                        </p>
+                        <label className="w-full bg-amber-600/30 hover:bg-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
+                          {isAILoading ? '⏳ Читаю...' : '📄 Выбрать сценарий'}
+                          <input type="file" accept=".txt,.fountain,.fdx,.md,.csv,.xml" className="hidden" onChange={(e) => { handleScriptFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
                         </label>
                       </div>
 
@@ -3334,7 +3528,7 @@
                               const match = text.match(/\[[\s\S]*\]/); if (match) text = match[0];
                               const parsed = JSON.parse(text);
                               if (Array.isArray(parsed) && parsed.length > 0) {
-                                const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
+                                const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', boardId: '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
                                 setScenes([...scenes, ...newScenes]); newScenes.forEach(ns => syncDoc('scenes', ns.id, ns)); showToast(`✅ Импортировано ${newScenes.length} сцен!`); setShowAgentModal(false); setManualJsonInput('');
                               } else { showToast("❌ Массив сцен пуст."); }
                             } catch (e) { showToast("❌ Ошибка формата JSON."); }
