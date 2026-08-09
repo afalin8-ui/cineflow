@@ -1404,7 +1404,18 @@
             if (!scene) return;
             const oldNum = String(scene.number || '');
             const next = String(raw).replace(/\s/g, '');
-            const up = scenes.map(s => s.id === id ? { ...s, number: next } : s);
+            // Раньше номер вписывался ещё и внутрь названия («СЦЕНА 2. НОВАЯ»),
+            // и после смены номера в списке стояло «#12А СЦЕНА 2. НОВАЯ» —
+            // два разных номера у одной сцены. Новые названия номер больше
+            // не несут, а у старых приводим его к текущему — в том числе если
+            // он разошёлся раньше. Правило узкое: только начало строки, только
+            // приставка «СЦЕНА <номер>», и номер обязан начинаться с цифры.
+            // Иначе «СЦЕНА У ОКНА» превратилась бы в «СЦЕНА 9 ОКНА».
+            let title = scene.title;
+            if (next && title) {
+              title = title.replace(/^(\s*СЦЕНА\s+)(\d[^\s.,:;]*)(?=[\s.,:;—–-]|$)/i, '$1' + next);
+            }
+            const up = scenes.map(s => s.id === id ? { ...s, number: next, title } : s);
             setScenes(up);
             syncDoc('scenes', id, up.find(s => s.id === id));
             // Кадры раскадровки нумеруются от сцены («5.1», «5.2»), поэтому
@@ -1895,7 +1906,9 @@
                             <span className="font-mono text-indigo-400 mr-2 text-xs">#{s.number}</span> {s.title || 'Без названия'}
                           </button>
                         ))}
-                        <button onClick={() => { const num = nextSceneNumber(); const newS = { id: `sc-${Date.now()}`, number: num, title: `СЦЕНА ${num}. НОВАЯ`, content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); setActiveSceneId(newS.id); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
+                        {/* Номер в название НЕ вписываем: он живёт в поле number
+                            и виден чипом рядом. Две копии одного номера расходились. */}
+                        <button onClick={() => { const num = nextSceneNumber(); const newS = { id: `sc-${Date.now()}`, number: num, title: 'НОВАЯ СЦЕНА', content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); setActiveSceneId(newS.id); }} className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить сцену</button>
                       </div>
 
                       {activeSceneId && scenes.find(s => s.id === activeSceneId) && (() => {
