@@ -1142,7 +1142,9 @@
             return () => window.removeEventListener('keydown', onKey);
           }, [currentView, activeBoardId, user]);
 
-          const [linkingFromRefId, setLinkingFromRefId] = useState(null);
+          // Кого сейчас тянем к сцене: {id, type: 'ref' | 'sticky'}.
+          // К сценам цепляются и референсы, и заметки — механика одна.
+          const [linkingFrom, setLinkingFrom] = useState(null);
           const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
           const [hoveredSceneId, setHoveredSceneId] = useState(null);
           
@@ -1181,7 +1183,7 @@
             window.addEventListener('offline', handleOffline);
             const handleMouseMove = (e) => {
                 setMousePos({ x: e.clientX, y: e.clientY });
-                if (linkingFromRefId) {
+                if (linkingFrom) {
                     const el = document.elementFromPoint(e.clientX, e.clientY);
                     const targetScene = el?.closest('[data-scene-id]');
                     setHoveredSceneId(targetScene ? targetScene.getAttribute('data-scene-id') : null);
@@ -1189,7 +1191,7 @@
             };
             window.addEventListener('pointermove', handleMouseMove);
             return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); window.removeEventListener('pointermove', handleMouseMove); };
-          }, [linkingFromRefId]);
+          }, [linkingFrom]);
 
           useEffect(() => {
               const savedName = localStorage.getItem('cf_user_name');
@@ -1755,6 +1757,23 @@
               setResizingSticky(null);
           };
 
+          // Откуда выходит пунктир связи: правая середина карточки.
+          const linkAnchor = (item, type) => type === 'sticky'
+            ? { x: item.x + stickyW(item), y: item.y + stickyH(item) / 2 }
+            : { x: item.x + refW(item), y: item.y + refH(item) / 2 };
+
+          // Привязать/отвязать от сцены. Одинаково для референса и заметки:
+          // сама карточка никуда не девается, меняется только поле sceneId.
+          const setItemScene = (id, type, sceneId) => {
+            if (type === 'sticky') {
+              const up = stickies.map(s => s.id === id ? { ...s, sceneId } : s);
+              setStickies(up); syncDoc('stickies', id, up.find(s => s.id === id));
+            } else {
+              const up = references.map(r => r.id === id ? { ...r, sceneId } : r);
+              setReferences(up); syncDoc('references', id, up.find(r => r.id === id));
+            }
+          };
+
           // Цвет ложится на все выделенные заметки разом — как в Excalidraw.
           const paintStickies = (id, color) => {
               const ids = selectedWbItems.includes(id) ? selectedWbItems : [id];
@@ -1883,6 +1902,7 @@
                         const s = scenes.find(sc => sc.id === activeSceneId);
                         const frames = storyboard.filter(f => f.sceneId === s.id);
                         const sceneRefs = references.filter(r => r.sceneId === s.id);
+                        const sceneNotes = stickies.filter(st => st.sceneId === s.id);
                         return (
                           <div className="flex-1 glass-panel p-5 md:p-8 rounded-lg overflow-y-auto space-y-6 border-t border-white/10">
                             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-white/10 pb-4 gap-3">
@@ -2053,7 +2073,11 @@
                                 {sceneRefs.map(ref => (
                                   <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: ref.id })}>
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={{backgroundImage: `url(${ref.url})`}}></div>
-                                    <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                    {/* Отвязываем от сцены, а НЕ удаляем из проекта:
+                                        раньше эта кнопка стирала картинку насовсем */}
+                                    <button onClick={(e) => { e.stopPropagation(); setItemScene(ref.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
+                                            title="Убрать из сцены — картинка останется в галерее"
+                                            className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-white w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center">✕</button>
                                     <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-10" draggable="false" />
                                     <div className="absolute bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md p-1.5 border-t border-white/10 z-20" onClick={e=>e.stopPropagation()}>
                                         <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-[11px] font-bold text-center text-zinc-300 truncate focus:outline-none placeholder-zinc-600" placeholder="Подпись..." />
@@ -2061,6 +2085,48 @@
                                   </div>
                                 ))}
                               </div>
+                            </div>
+
+                            {/* Заметки, привязанные к сцене */}
+                            <div className="space-y-4 pt-4 border-t border-white/10">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Заметки сцены</label>
+                                <button onClick={() => {
+                                          const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, sceneId: s.id, text: '',
+                                                       x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
+                                                       w: STICKY_W, h: STICKY_H, color: '#fef08a' };
+                                          setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+                                          showToast('Заметка добавлена · она же лежит на доске');
+                                        }}
+                                        className="cf-edit-only text-xs text-amber-200 hover:text-white font-bold bg-amber-600/30 hover:bg-amber-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                  <Icons.Sticky /> Добавить заметку
+                                </button>
+                              </div>
+                              {sceneNotes.length === 0 ? (
+                                <p className="text-[11px] text-zinc-500 ml-1 leading-relaxed">
+                                  Пока пусто. Заметку можно завести здесь или на доске — потяните за кружок сбоку заметки к карточке сцены.
+                                </p>
+                              ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                  {sceneNotes.map(st => (
+                                    <div key={st.id} className="rounded-lg p-3 relative group text-zinc-900" style={{ backgroundColor: st.color || '#fef08a' }}>
+                                      <button onClick={() => { setItemScene(st.id, 'sticky', ''); showToast('Заметка отвязана · осталась на доске'); }}
+                                              title="Убрать из сцены — заметка останется на доске"
+                                              className="cf-edit-only absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full text-black/50 hover:bg-black/10 text-[11px] opacity-0 group-hover:opacity-100 transition-all">✕</button>
+                                      <textarea value={st.text} onChange={(e) => { const up = stickies.map(x => x.id === st.id ? { ...x, text: e.target.value } : x); setStickies(up); syncDoc('stickies', st.id, up.find(x => x.id === st.id)); }}
+                                                className="w-full bg-transparent border-none text-[13px] focus:outline-none resize-none font-bold leading-tight placeholder-black/40 pr-5"
+                                                style={{ minHeight: 72 }} placeholder="Текст заметки..." />
+                                      <div className="flex gap-1 mt-1">
+                                        {STICKY_COLORS.map(c => (
+                                          <button key={c} onClick={() => paintStickies(st.id, c)} title="Цвет заметки"
+                                                  style={{ background: c, width: 14, height: 14 }}
+                                                  className={`cf-edit-only rounded-full border ${st.color === c ? 'border-black/50' : 'border-black/10 hover:border-black/30'} transition-colors`} />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
@@ -2474,9 +2540,9 @@
                         handleDragUp(e);
                         handleResizeUp(e);
                         handleStickyResizeUp(e);
-                        if (linkingFromRefId) {
-                            if (hoveredSceneId) { const up = references.map(r => r.id === linkingFromRefId ? { ...r, sceneId: hoveredSceneId } : r); setReferences(up); syncDoc('references', linkingFromRefId, up.find(r => r.id === linkingFromRefId)); }
-                            setLinkingFromRefId(null);
+                        if (linkingFrom) {
+                            if (hoveredSceneId) setItemScene(linkingFrom.id, linkingFrom.type, hoveredSceneId);
+                            setLinkingFrom(null);
                         }
                     }}>
                       <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px' }}>
@@ -2491,21 +2557,29 @@
                         )}
 
                         <svg className="absolute inset-0 pointer-events-none w-[4000px] h-[4000px] z-0">
-                          {/* Связь рисуем только для тех референсов, что лежат
-                              на этой доске. Иначе от картинки, привязанной к сцене
-                              из галереи, тянулся пунктир из пустого места. */}
-                          {references.filter(r => r.boardId === activeBoardId).map(ref => {
-                            // Оба конца связи должны быть на доске: сама связь никуда
-                            // не девается, но рисовать её к снятой карточке нельзя —
-                            // получится линия в пустоту.
-                            if (!ref.sceneId) return null; const t = boardScenes.find(s => s.id === ref.sceneId); if (!t) return null;
-                            const sx = ref.x + refW(ref); const sy = ref.y + refH(ref) / 2; const ex = t.x; const ey = t.y + 50;
-                            return (<path key={`link-${ref.id}`} d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "#d97757" : "rgba(217,119,87,0.6)"} strokeWidth={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "4" : "3"} strokeDasharray="6 6" />);
+                          {/* Связи со сценой — и у референсов, и у заметок.
+                              Рисуем, только когда ОБА конца на этой доске: сама
+                              связь при снятии карточки никуда не девается, но
+                              линия к отсутствующей карточке уходила бы в пустоту. */}
+                          {[
+                            ...references.filter(r => r.boardId === activeBoardId).map(r => ({ item: r, type: 'ref' })),
+                            ...stickies.filter(st => belongsToBoard(st, activeBoardId)).map(st => ({ item: st, type: 'sticky' }))
+                          ].map(({ item, type }) => {
+                            if (!item.sceneId) return null;
+                            const t = boardScenes.find(s => s.id === item.sceneId); if (!t) return null;
+                            const a = linkAnchor(item, type); const ex = t.x; const ey = t.y + 50;
+                            const on = selectedWbItems.includes(item.id) || selectedWbItems.includes(t.id);
+                            return (<path key={`link-${item.id}`} d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={on ? "#d97757" : "rgba(217,119,87,0.6)"} strokeWidth={on ? "4" : "3"} strokeDasharray="6 6" />);
                           })}
-                          {linkingFromRefId && references.find(r => r.id === linkingFromRefId) && (() => {
-                             const r = references.find(x => x.id === linkingFromRefId); const sx = r.x + refW(r); const sy = r.y + refH(r) / 2;
-                             let ex = (mousePos.x - canvasRef.current?.getBoundingClientRect().left) / zoom; let ey = (mousePos.y - canvasRef.current?.getBoundingClientRect().top) / zoom;
-                             return <path d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#d97757" strokeWidth="4" />;
+                          {linkingFrom && (() => {
+                             const src = linkingFrom.type === 'sticky'
+                               ? stickies.find(x => x.id === linkingFrom.id)
+                               : references.find(x => x.id === linkingFrom.id);
+                             if (!src) return null;
+                             const a = linkAnchor(src, linkingFrom.type);
+                             const ex = (mousePos.x - canvasRef.current?.getBoundingClientRect().left) / zoom;
+                             const ey = (mousePos.y - canvasRef.current?.getBoundingClientRect().top) / zoom;
+                             return <path d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#d97757" strokeWidth="4" />;
                           })()}
                         </svg>
 
@@ -2619,7 +2693,7 @@
                                 )}
                                 </div>
                                 <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r => r.id === ref.id ? { ...r, label: e.target.value } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }} className="w-full bg-transparent text-[11px] text-center font-bold text-zinc-300 focus:outline-none mt-2 placeholder-zinc-600" placeholder="Подпись..." />
-                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFromRefId(ref.id); }} className="node-handle absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
+                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: ref.id, type: 'ref' }); }} title="Потяните к карточке сцены, чтобы связать" className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
                                 <div
                                     onPointerDown={(e) => { e.stopPropagation(); setResizingRef({ id: ref.id, pointerId: e.pointerId, startX: e.clientX, startW: refW(ref) }); e.currentTarget.setPointerCapture(e.pointerId); }}
                                     onDoubleClick={(e) => { e.stopPropagation(); const up = references.map(r => r.id === ref.id ? { ...r, w: REF_W } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }}
@@ -2643,6 +2717,24 @@
                                  className={`p-4 rounded-lg cursor-move pointer-events-auto text-zinc-900 transform rotate-1 hover:rotate-0 group ${stResizing ? '' : 'transition-all'} ${stSel ? 'ring-2 ring-indigo-500' : 'border border-white/20'}`}>
                                 <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className={`cf-edit-only absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors ${stSel ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
                                 <textarea value={st.text} onChange={(e) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: e.target.value } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }} style={{ height: '100%' }} className="w-full bg-transparent border-none text-[13px] focus:outline-none resize-none font-bold text-zinc-900 leading-tight placeholder-black/50" placeholder="Текст заметки..." />
+
+                                {/* Ручка связи — та же, что у референса: тянем к сцене */}
+                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: st.id, type: 'sticky' }); }}
+                                     title="Потяните к карточке сцены, чтобы связать заметку с ней"
+                                     className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30"
+                                     style={{ pointerEvents: 'auto' }} />
+                                {/* Привязанная сцена: видно с доски и можно отцепить */}
+                                {st.sceneId && (() => {
+                                    const sc = scenes.find(x => x.id === st.sceneId); if (!sc) return null;
+                                    return (
+                                      <button onClick={(e) => { e.stopPropagation(); setItemScene(st.id, 'sticky', ''); showToast('Заметка отвязана от сцены'); }}
+                                              title={`Связана со сценой #${sc.number} — нажмите, чтобы отвязать`}
+                                              className="node-handle cf-edit-only absolute left-2 -bottom-2.5 flex items-center gap-1 px-1.5 rounded font-mono font-bold"
+                                              style={{ pointerEvents: 'auto', height: 18, fontSize: 9.5, background: 'var(--accent)', color: 'var(--bg)' }}>
+                                        #{sc.number}<span style={{ opacity: .7 }}>✕</span>
+                                      </button>
+                                    );
+                                })()}
 
                                 {/* Уголок для растягивания — как у карточки референса */}
                                 <div className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize flex items-center justify-center transition-colors ${stResizing || stSel ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
