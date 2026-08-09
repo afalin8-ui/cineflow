@@ -348,7 +348,8 @@
                     <div className="glass-panel p-6 rounded-lg max-w-sm w-full text-center border-t border-red-500/50">
                         <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
                         <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
-                        <p className="text-sm text-zinc-400 mb-6">{action.message}</p>
+                        {/* pre-line — чтобы в длинных предупреждениях работал абзац */}
+                        <p className="text-sm text-zinc-400 mb-6" style={{ whiteSpace: 'pre-line' }}>{action.message}</p>
                         <div className="flex gap-3">
                             <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors">Отмена</button>
                             <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold transition-colors">Подтвердить</button>
@@ -1498,6 +1499,63 @@
               showToast('Не удалось собрать файл: ' + err.message);
             }
             setSnapshotBusy(false);
+          };
+
+          // --- Новый чистый проект ---
+          // Раньше кнопка чистила только память устройства, а комнату в облаке
+          // не трогала — и после перезагрузки весь проект приезжал обратно.
+          // Теперь стираем комнату целиком и кладём в неё пустую заготовку.
+          const resetProject = () => {
+            // Подписка считает пустую комнату новой и заливает в неё то, что
+            // осталось в памяти. Помечаем коллекции засеянными, иначе всё
+            // удалённое немедленно вернётся обратно.
+            ['scenes', 'storyboard', 'references', 'stickies', 'docs', 'crew', 'projectFiles',
+             'lightSchemes', 'gearTypes', 'lightGearTypes', 'boards'].forEach(c => { seededRef.current[c] = true; });
+
+            const wipe = (coll, list) => list.forEach(x => deleteNetDoc(coll, x.id));
+            wipe('scenes', scenes);         wipe('storyboard', storyboard);
+            wipe('references', references); wipe('stickies', stickies);
+            wipe('docs', docs);             wipe('crew', crew);
+            wipe('projectFiles', projectFiles); wipe('lightSchemes', lightSchemes);
+            wipe('messages', messages);
+            Object.keys(gearTypes || {}).forEach(k => deleteNetDoc('gearTypes', k));
+            Object.keys(lightGearTypes || {}).forEach(k => deleteNetDoc('lightGearTypes', k));
+            // Рисунок обнуляем записью, а не удалением: пустой документ гасит
+            // холст и у тех, у кого доска сейчас открыта на другом устройстве.
+            sortedBoards.forEach(b => { saveCanvas(b.id, ''); deleteNetDoc('boards', b.id); });
+
+            // Заготовка: одна сцена, один гайд, одна доска, каталоги по умолчанию.
+            // Идентификаторы новые — чтобы свежие документы не встретились
+            // в очереди с только что удалёнными.
+            const stamp = Date.now();
+            const freshScene = { ...initialScenes[0], id: `sc-${stamp}` };
+            const freshDoc = { ...initialDocs[0], id: `doc-${stamp}` };
+            setScenes([freshScene]); syncDoc('scenes', freshScene.id, freshScene);
+            setDocs([freshDoc]);     syncDoc('docs', freshDoc.id, freshDoc);
+            setBoards([DEFAULT_BOARD]); syncDoc('boards', DEFAULT_BOARD.id, DEFAULT_BOARD);
+            setGearTypes({ ...DEFAULT_GEAR });
+            Object.entries(DEFAULT_GEAR).forEach(([k, v]) => syncDoc('gearTypes', k, v));
+            setLightGearTypes({ ...DEFAULT_LIGHT_GEAR });
+            Object.entries(DEFAULT_LIGHT_GEAR).forEach(([k, v]) => syncDoc('lightGearTypes', k, v));
+
+            setStoryboard([]); setReferences([]); setStickies([]); setCrew([]);
+            setProjectFiles([]); setLightSchemes([]); setMessages([]);
+
+            // Куда приложение смотрит после сброса
+            setActiveSceneId(freshScene.id); setActiveDocId(freshDoc.id);
+            setActiveSchemeId(null); setActiveBoardId(DEFAULT_BOARD.id);
+            setSelectedWbItems([]); setSelectedRefIds([]);
+            setTagSearch(''); setActiveFolder('');
+            const now = Date.now();
+            setLastReadChat(now);
+            try { localStorage.setItem('cf_last_read', now); } catch (err) {}
+
+            const c = paintCanvasRef.current;
+            if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+            lastSaved.current = null; undoStack.current = []; setCanUndo(false);
+
+            setShowProjectModal(false);
+            showToast('Создан чистый проект');
           };
 
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
@@ -2979,15 +3037,11 @@
                         }} className="hidden" />
                       </label>
                       
-                      <button onClick={() => setConfirmAction({title:'Сбросить все данные?', message:'Создать абсолютно новый чистый проект?', onConfirm:()=>{
-                        setScenes(initialScenes); setStoryboard([]); setReferences([]); setStickies([]); setDocs(initialDocs); setCrew([]); setGearTypes({ steadicam: { label: 'Стедикам' }, crane: { label: 'Кран' }, drone: { label: 'Коптер' } }); setLightGearTypes({ arri600: { label: 'ARRI Skypanel 600' }, astera: { label: 'Astera Titan Tube' }, aputure: { label: 'Aputure 300d' } }); setLightSchemes([]); setProjectFiles([]);
-                        // Рисунки стираем у КАЖДОЙ доски: они лежат в отдельных
-                        // ключах, и раньше «чистый проект» приезжал со старыми линиями.
-                        sortedBoards.forEach(b => saveCanvas(b.id, ''));
-                        const c = paintCanvasRef.current; if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
-                        lastSaved.current = null; undoStack.current = []; setCanUndo(false);
-                        setShowProjectModal(false); showToast("Создан чистый проект");
-                      }})} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-lg text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
+                      <button onClick={() => setConfirmAction({
+                        title: 'Начать новый проект?',
+                        message: `Из комнаты «${appId}» исчезнут все сцены, кадры, референсы, заметки, доски с рисунками, схемы света, документы, состав группы, файлы и переписка в чате.\n\nЭто увидят все, у кого открыт такой же код комнаты. Отменить нельзя — если данные ещё нужны, сначала сохраните бэкап кнопкой выше.`,
+                        onConfirm: resetProject
+                      })} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-lg text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
                     </div>
                   </div>
                 </div>
