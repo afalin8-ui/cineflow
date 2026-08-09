@@ -1058,14 +1058,32 @@
             img.src = dataUrl;
           };
 
+          // Единственная дверь для записи рисунка доски: локальная копия
+          // плюс облако. Раньше три места писали в Firestore напрямую —
+          // без проверки на режим просмотра и без обработки ошибки, поэтому
+          // слишком тяжёлый холст (предел документа — 1 МБ) не сохранялся молча.
+          const saveCanvas = (boardId, dataUrl) => {
+            if (READ_ONLY) return;
+            try {
+              if (dataUrl) localStorage.setItem('cf_canvas_draw_' + boardId, dataUrl);
+              else localStorage.removeItem('cf_canvas_draw_' + boardId);
+            } catch (err) {}
+            if (!db || !user) return;
+            trackWrite(
+              dataRef().collection('canvas').doc(canvasDocId(boardId))
+                .set({ dataUrl, lastDrawBy: user.uid })
+                .catch(err => {
+                  console.warn('saveCanvas', err);
+                  showToast('⚠️ Рисунок не сохранился в облако — возможно, он слишком тяжёлый');
+                })
+            );
+          };
+
           const persistCanvas = () => {
             const c = paintCanvasRef.current; if (!c) return;
             const dU = c.toDataURL();
             lastSaved.current = dU;
-            try { localStorage.setItem('cf_canvas_draw_' + activeBoardId, dU); } catch (err) {}
-            if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data')
-              .collection('canvas').doc(canvasDocId(activeBoardId))
-              .set({ dataUrl: dU, lastDrawBy: user.uid });
+            saveCanvas(activeBoardId, dU);
           };
 
           const undoStroke = () => {
@@ -1074,10 +1092,7 @@
             setCanUndo(undoStack.current.length > 0);
             restoreCanvas(prev);
             lastSaved.current = prev;
-            try { localStorage.setItem('cf_canvas_draw_' + activeBoardId, prev); } catch (err) {}
-            if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data')
-              .collection('canvas').doc(canvasDocId(activeBoardId))
-              .set({ dataUrl: prev, lastDrawBy: user.uid });
+            saveCanvas(activeBoardId, prev);
           };
 
           // Ctrl+Z / Cmd+Z для отмены штриха на доске
@@ -1101,6 +1116,11 @@
           const [selectionBox, setSelectionBox] = useState(null);
           const [draggingWbItems, setDraggingWbItems] = useState(null);
           const [resizingRef, setResizingRef] = useState(null);
+          const [resizingSticky, setResizingSticky] = useState(null);
+
+          // Выделение живёт в пределах одной доски: переключились — сбросили.
+          // Иначе на новой доске можно было потащить невидимые чужие элементы.
+          useEffect(() => { setSelectedWbItems([]); }, [activeBoardId]);
 
           const canvasRef = useRef(null);
           const paintCanvasRef = useRef(null);
@@ -1355,8 +1375,10 @@
           // Загрузка с проверкой на повтор по имени файла. Имя референса —
           // это и есть имя файла, поэтому сравниваем с ним; регистр и
           // пробелы не считаем, «IMG_01.jpg» и «img_01.JPG» — одно и то же.
+          // place — куда класть: {boardId, x, y}. Задаётся, когда картинку
+          // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
-          const handleMultiFileUpload = async (files, sceneId = null) => {
+          const handleMultiFileUpload = async (files, sceneId = null, place = null) => {
               const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
               if (imageFiles.length === 0) return;
 
@@ -1376,20 +1398,47 @@
                   const dupSet = new Set(dups.map(f => normName(f.name)));
                   const kept = imageFiles.filter(f => !dupSet.has(normName(f.name)));
                   if (kept.length === 0) { showToast('Все выбранные картинки уже есть — ничего не загружено'); return; }
-                  return uploadFiles(kept, sceneId);
+                  return uploadFiles(kept, sceneId, place);
                 }
               }
-              return uploadFiles(imageFiles, sceneId);
+              return uploadFiles(imageFiles, sceneId, place);
           };
 
-          const uploadFiles = async (imageFiles, sceneId) => {
+          const uploadFiles = async (imageFiles, sceneId, place = null) => {
               showToast(`Оптимизация ${imageFiles.length} изображений...`);
               const newRefs = await Promise.all(imageFiles.map((file, idx) => new Promise(resolve => {
                   const r = new FileReader();
-                  r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => resolve({ id: `ref-${Date.now()}-${idx}`, sceneId: sceneId || '', url: c, x: (250 - canvasOffset.x) / zoom + (idx*20), y: (250 - canvasOffset.y) / zoom + (idx*20), label: file.name, tags: [] }));
+                  r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => resolve({
+                    id: `ref-${Date.now()}-${idx}`,
+                    sceneId: sceneId || '',
+                    boardId: place ? place.boardId : '',
+                    url: c,
+                    // Брошенные на доску раскладываем лесенкой от точки броска,
+                    // остальные — как раньше, от левого верхнего угла экрана.
+                    x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
+                    y: place ? place.y + Math.floor(idx / 4) * 26 : (250 - canvasOffset.y) / zoom + (idx*20),
+                    label: file.name, tags: []
+                  }));
                   r.readAsDataURL(file);
               })));
               setReferences(prev => { const up = [...prev, ...newRefs]; newRefs.forEach(nr => syncDoc('references', nr.id, nr)); return up; });
+              if (place) showToast(`На доску добавлено ${newRefs.length} шт.`);
+          };
+
+          // Пустая карточка референса на доске: заполняем именно её,
+          // а не создаём рядом ещё одну картинку в галерее.
+          const fillRefImage = (refId, file) => {
+              const r = new FileReader();
+              r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => {
+                setReferences(prev => {
+                  const up = prev.map(x => x.id === refId
+                    ? { ...x, url: c, label: (x.label && x.label !== 'Референс') ? x.label : file.name }
+                    : x);
+                  syncDoc('references', refId, up.find(x => x.id === refId));
+                  return up;
+                });
+              });
+              r.readAsDataURL(file);
           };
 
           const addCustomGear = (isLight) => {
@@ -1531,6 +1580,45 @@
               if (f) syncDoc('references', resizingRef.id, f);
               setResizingRef(null);
           };
+
+          // --- Размер и цвет заметки на доске ---
+          // Заметка тянется за угол сразу в обе стороны, как в Excalidraw;
+          // старые заметки без полей w/h остаются прежнего размера.
+          const STICKY_W = 224, STICKY_H = 128;
+          const stickyW = (s) => Math.round(s.w || STICKY_W);
+          const stickyH = (s) => Math.round(s.h || STICKY_H);
+          const STICKY_COLORS = ['#fef08a', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffd8a8', '#e9ecef'];
+
+          const handleStickyResizeMove = (e) => {
+              if (!resizingSticky || resizingSticky.pointerId !== e.pointerId) return;
+              const dx = (e.clientX - resizingSticky.startX) / zoom;
+              const dy = (e.clientY - resizingSticky.startY) / zoom;
+              const nw = Math.max(120, Math.min(800, Math.round((resizingSticky.startW + dx) / 8) * 8));
+              const nh = Math.max(80,  Math.min(600, Math.round((resizingSticky.startH + dy) / 8) * 8));
+              setStickies(prev => prev.map(s => s.id === resizingSticky.id ? { ...s, w: nw, h: nh } : s));
+          };
+
+          const handleStickyResizeUp = (e) => {
+              if (!resizingSticky || resizingSticky.pointerId !== e.pointerId) return;
+              const f = stickies.find(s => s.id === resizingSticky.id);
+              if (f) syncDoc('stickies', resizingSticky.id, f);
+              setResizingSticky(null);
+          };
+
+          // Цвет ложится на все выделенные заметки разом — как в Excalidraw.
+          const paintStickies = (id, color) => {
+              const ids = selectedWbItems.includes(id) ? selectedWbItems : [id];
+              const up = stickies.map(s => ids.includes(s.id) ? { ...s, color } : s);
+              setStickies(up);
+              ids.forEach(i => { const f = up.find(s => s.id === i); if (f) syncDoc('stickies', i, f); });
+          };
+
+          // Палитра всплывает только над первой из выделенных заметок:
+          // при выделении рамкой их иначе было бы десяток разом.
+          const paletteStickyId = (() => {
+              const sel = stickies.filter(s => belongsToBoard(s, activeBoardId) && selectedWbItems.includes(s.id));
+              return sel.length ? sel[0].id : null;
+          })();
           
           // В режиме просмотра имя не спрашиваем — человек просто смотрит.
           if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
@@ -2128,6 +2216,7 @@
                                         setReferences(references.map(r => r.boardId === b.id ? { ...r, boardId: '' } : r));
                                         references.filter(r => r.boardId === b.id).forEach(r => syncDoc('references', r.id, { ...r, boardId: '' }));
                                         try { localStorage.removeItem('cf_canvas_draw_' + b.id); } catch (err) {}
+                                        deleteNetDoc('canvas', canvasDocId(b.id));
                                         setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
                                         showToast('Доска удалена · референсы остались в галерее');
                                       }});
@@ -2157,7 +2246,18 @@
                         setZoom(nz);
                     }}
                     onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => { e.preventDefault(); handleMultiFileUpload(e.dataTransfer.files, null); }}
+                    onDrop={(e) => {
+                        e.preventDefault();
+                        // Кладём туда, куда бросили, и на открытую доску. Раньше
+                        // картинка молча уезжала в галерею, а на доске ничего
+                        // не появлялось — выглядело как «перетаскивание не работает».
+                        const rect = canvasRef.current.getBoundingClientRect();
+                        handleMultiFileUpload(e.dataTransfer.files, null, {
+                            boardId: activeBoardId,
+                            x: (e.clientX - rect.left) / zoom,
+                            y: (e.clientY - rect.top) / zoom
+                        });
+                    }}
                     onPointerDown={(e) => {
                         if (wbMode === 'select' && e.target.id === 'wb-container') {
                             const rect = canvasRef.current.getBoundingClientRect();
@@ -2176,6 +2276,7 @@
                         }
                         handleDragMove(e);
                         handleResizeMove(e);
+                        handleStickyResizeMove(e);
                     }}
                     onPointerUp={(e) => {
                         if (selectionBox && selectionBox.pointerId === e.pointerId) {
@@ -2194,15 +2295,18 @@
                                 const checkInt = (item, w, h) => {
                                     if (item.x < maxX && item.x + w > minX && item.y < maxY && item.y + h > minY) newSelected.push(item.id);
                                 };
+                                // Рамка берёт только то, что видно на этой доске:
+                                // иначе в выделение попадали невидимые элементы соседних.
                                 scenes.forEach(s => checkInt(s, 288, 150));
-                                references.forEach(r => checkInt(r, refW(r), refH(r)));
-                                stickies.forEach(st => checkInt(st, 224, 100));
+                                references.filter(r => r.boardId === activeBoardId).forEach(r => checkInt(r, refW(r), refH(r)));
+                                stickies.filter(st => belongsToBoard(st, activeBoardId)).forEach(st => checkInt(st, stickyW(st), stickyH(st)));
                                 setSelectedWbItems(newSelected);
                             }
                             setSelectionBox(null);
                         }
                         handleDragUp(e);
                         handleResizeUp(e);
+                        handleStickyResizeUp(e);
                         if (linkingFromRefId) {
                             if (hoveredSceneId) { const up = references.map(r => r.id === linkingFromRefId ? { ...r, sceneId: hoveredSceneId } : r); setReferences(up); syncDoc('references', linkingFromRefId, up.find(r => r.id === linkingFromRefId)); }
                             setLinkingFromRefId(null);
@@ -2220,7 +2324,10 @@
                         )}
 
                         <svg className="absolute inset-0 pointer-events-none w-[4000px] h-[4000px] z-0">
-                          {references.map(ref => {
+                          {/* Связь рисуем только для тех референсов, что лежат
+                              на этой доске. Иначе от картинки, привязанной к сцене
+                              из галереи, тянулся пунктир из пустого места. */}
+                          {references.filter(r => r.boardId === activeBoardId).map(ref => {
                             if (!ref.sceneId) return null; const t = scenes.find(s => s.id === ref.sceneId); if (!t) return null;
                             const sx = ref.x + refW(ref); const sy = ref.y + refH(ref) / 2; const ex = t.x; const ey = t.y + 50;
                             return (<path key={`link-${ref.id}`} d={`M ${sx} ${sy} C ${(sx + ex) / 2} ${sy}, ${(sx + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "#d97757" : "rgba(217,119,87,0.6)"} strokeWidth={selectedWbItems.includes(ref.id) || selectedWbItems.includes(t.id) ? "4" : "3"} strokeDasharray="6 6" />);
@@ -2330,7 +2437,8 @@
                                 </React.Fragment>) : (
                                     <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
                                     <span className="mb-1"><Icons.Gallery/></span><span>Загрузить</span>
-                                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                                    {/* Заполняем именно эту карточку, а не создаём рядом новую */}
+                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files[0]; if (f) fillRefImage(ref.id, f); e.target.value = ''; }} />
                                     </label>
                                 )}
                                 </div>
@@ -2350,12 +2458,47 @@
                             </div>
                             ))}
 
-                            {stickies.filter(st => belongsToBoard(st, activeBoardId)).map(st => (
-                            <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')} style={{ left: `${st.x}px`, top: `${st.y}px`, position: 'absolute', backgroundColor: st.color }} className={`w-56 p-4 rounded-lg cursor-move pointer-events-auto z-20 text-zinc-900 transform rotate-1 hover:rotate-0 transition-all group ${selectedWbItems.includes(st.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : ' border border-white/20'}`}>
-                                <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors opacity-0 group-hover:opacity-100">✕</button>
-                                <textarea value={st.text} onChange={(e) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: e.target.value } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }} className="w-full bg-transparent border-none text-[13px] focus:outline-none h-20 resize-none font-bold text-zinc-900 leading-tight placeholder-black/50" placeholder="Текст заметки..." />
+                            {stickies.filter(st => belongsToBoard(st, activeBoardId)).map(st => {
+                            const stSel = selectedWbItems.includes(st.id);
+                            const stResizing = resizingSticky && resizingSticky.id === st.id;
+                            return (
+                            <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')}
+                                 style={{ left: `${st.x}px`, top: `${st.y}px`, width: `${stickyW(st)}px`, height: `${stickyH(st)}px`, position: 'absolute', backgroundColor: st.color, zIndex: stSel ? 40 : 20 }}
+                                 className={`p-4 rounded-lg cursor-move pointer-events-auto text-zinc-900 transform rotate-1 hover:rotate-0 group ${stResizing ? '' : 'transition-all'} ${stSel ? 'ring-2 ring-indigo-500' : 'border border-white/20'}`}>
+                                <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className={`cf-edit-only absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors ${stSel ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
+                                <textarea value={st.text} onChange={(e) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: e.target.value } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }} style={{ height: '100%' }} className="w-full bg-transparent border-none text-[13px] focus:outline-none resize-none font-bold text-zinc-900 leading-tight placeholder-black/50" placeholder="Текст заметки..." />
+
+                                {/* Уголок для растягивания — как у карточки референса */}
+                                <div className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize flex items-center justify-center transition-colors ${stResizing || stSel ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                     style={{ pointerEvents: 'auto', touchAction: 'none', zIndex: 30 }}
+                                     onPointerDown={(e) => { e.stopPropagation(); setResizingSticky({ id: st.id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startW: stickyW(st), startH: stickyH(st) }); e.currentTarget.setPointerCapture(e.pointerId); }}
+                                     onDoubleClick={(e) => { e.stopPropagation(); const up = stickies.map(s => s.id === st.id ? { ...s, w: STICKY_W, h: STICKY_H } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }}
+                                     title="Потяните, чтобы изменить размер. Двойной клик — вернуть исходный">
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#f0eee6" strokeWidth="1.6" strokeLinecap="round"><path d="M9 2 2 9"/><path d="M9 6.5 6.5 9"/></svg>
+                                </div>
+                                {stResizing && (
+                                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-black/90 border border-white/20 text-[11px] font-mono font-bold text-white px-2 py-0.5 rounded-md z-40 pointer-events-none whitespace-nowrap">{stickyW(st)} × {stickyH(st)}</div>
+                                )}
+
+                                {/* Палитра выделенной заметки. Она вне масштаба доски:
+                                    на мелком зуме кнопки иначе не попасть пальцем. */}
+                                {paletteStickyId === st.id && !stResizing && (
+                                    <div className="node-handle cf-edit-only absolute left-1/2 bottom-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg"
+                                         onPointerDown={(e) => e.stopPropagation()}
+                                         style={{ transform: `translateX(-50%) scale(${1 / zoom})`, transformOrigin: 'bottom center', marginBottom: 8, background: 'var(--panel)', border: '1px solid var(--border)', pointerEvents: 'auto', zIndex: 40 }}>
+                                        {STICKY_COLORS.map(c => (
+                                            <button key={c} onClick={(e) => { e.stopPropagation(); paintStickies(st.id, c); }}
+                                                    title="Цвет заметки" style={{ background: c, width: 22, height: 22 }}
+                                                    className={`rounded-full border-2 transition-transform ${st.color === c ? 'border-white scale-110' : 'border-transparent hover:scale-110'}`} />
+                                        ))}
+                                        <input type="color" value={st.color || '#fef08a'} onChange={(e) => paintStickies(st.id, e.target.value)}
+                                               title="Свой цвет" style={{ width: 22, height: 22 }}
+                                               className="wb-color-well rounded-full border-2 border-white/30 cursor-pointer bg-transparent" />
+                                    </div>
+                                )}
                             </div>
-                            ))}
+                            );
+                            })}
                         </div>
                       </div>
 
@@ -2369,9 +2512,9 @@
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
                         </button>
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
                         <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); try { localStorage.removeItem('cf_canvas_draw_' + activeBoardId); } catch (err) {} if (db && user) db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas').doc(canvasDocId(activeBoardId)).set({ dataUrl: '', lastDrawBy: user.uid }); } showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
                       </div>
 
                       {wbMode === 'draw' && (
@@ -2798,9 +2941,13 @@
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
                       </div>
                       <button onClick={() => {
-                        const d = { scenes, storyboard, references, stickies, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvasData: localStorage.getItem('cf_canvas_draw') || '' };
+                        // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
+                        // Раньше бэкап брал один старый общий ключ и уносил пустоту.
+                        const canvases = {};
+                        sortedBoards.forEach(b => { const dd = localStorage.getItem('cf_canvas_draw_' + b.id); if (dd) canvases[b.id] = dd; });
+                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases };
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                        showToast("Резервная копия проекта сохранена!");
+                        showToast(`Резервная копия сохранена · досок с рисунками: ${Object.keys(canvases).length}`);
                       }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
                       
                       <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
@@ -2808,13 +2955,38 @@
                         <input type="file" accept=".json" onChange={(e) => {
                           const f = e.target.files[0]; if (!f) return; const r = new FileReader();
                           r.onload = (ev) => {
-                            try { const d = JSON.parse(ev.target.result); if (d.scenes) setScenes(d.scenes); if (d.storyboard) setStoryboard(d.storyboard); if (d.references) setReferences(d.references); if (d.stickies) setStickies(d.stickies); if (d.docs) setDocs(d.docs); if (d.crew) setCrew(d.crew); if (d.gearTypes) setGearTypes(d.gearTypes); if(d.lightGearTypes) setLightGearTypes(d.lightGearTypes); if(d.lightSchemes) setLightSchemes(d.lightSchemes); if (d.projectFiles) setProjectFiles(d.projectFiles); if (d.canvasData) { localStorage.setItem('cf_canvas_draw', d.canvasData); const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = d.canvasData; } } setShowProjectModal(false); showToast("Проект успешно восстановлен!"); } catch (err) { showToast("Ошибка структуры файла JSON!"); }
+                            try {
+                              const d = JSON.parse(ev.target.result);
+                              if (d.scenes) setScenes(d.scenes); if (d.storyboard) setStoryboard(d.storyboard);
+                              if (d.references) setReferences(d.references); if (d.stickies) setStickies(d.stickies);
+                              if (d.boards && d.boards.length) { setBoards(d.boards); d.boards.forEach(b => syncDoc('boards', b.id, b)); }
+                              if (d.docs) setDocs(d.docs); if (d.crew) setCrew(d.crew);
+                              if (d.gearTypes) setGearTypes(d.gearTypes); if(d.lightGearTypes) setLightGearTypes(d.lightGearTypes);
+                              if(d.lightSchemes) setLightSchemes(d.lightSchemes); if (d.projectFiles) setProjectFiles(d.projectFiles);
+                              // Новый формат — рисунок по каждой доске; старые бэкапы
+                              // хранили один общий, он ложится на основную доску.
+                              const canv = d.canvases || (d.canvasData ? { [DEFAULT_BOARD.id]: d.canvasData } : null);
+                              if (canv) {
+                                Object.entries(canv).forEach(([bid, dataUrl]) => saveCanvas(bid, dataUrl));
+                                const cur = canv[activeBoardId];
+                                const c = paintCanvasRef.current;
+                                if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); if (cur) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = cur; } }
+                                lastSaved.current = cur || null; undoStack.current = []; setCanUndo(false);
+                              }
+                              setShowProjectModal(false); showToast("Проект успешно восстановлен!");
+                            } catch (err) { showToast("Ошибка структуры файла JSON!"); }
                           }; r.readAsText(f);
                         }} className="hidden" />
                       </label>
                       
                       <button onClick={() => setConfirmAction({title:'Сбросить все данные?', message:'Создать абсолютно новый чистый проект?', onConfirm:()=>{
-                        setScenes(initialScenes); setStoryboard([]); setReferences([]); setStickies([]); setDocs(initialDocs); setCrew([]); setGearTypes({ steadicam: { label: 'Стедикам' }, crane: { label: 'Кран' }, drone: { label: 'Коптер' } }); setLightGearTypes({ arri600: { label: 'ARRI Skypanel 600' }, astera: { label: 'Astera Titan Tube' }, aputure: { label: 'Aputure 300d' } }); setLightSchemes([]); setProjectFiles([]); const c = paintCanvasRef.current; if (c) { c.getContext('2d').clearRect(0, 0, c.width, c.height); localStorage.removeItem('cf_canvas_draw'); } setShowProjectModal(false); showToast("Создан чистый проект");
+                        setScenes(initialScenes); setStoryboard([]); setReferences([]); setStickies([]); setDocs(initialDocs); setCrew([]); setGearTypes({ steadicam: { label: 'Стедикам' }, crane: { label: 'Кран' }, drone: { label: 'Коптер' } }); setLightGearTypes({ arri600: { label: 'ARRI Skypanel 600' }, astera: { label: 'Astera Titan Tube' }, aputure: { label: 'Aputure 300d' } }); setLightSchemes([]); setProjectFiles([]);
+                        // Рисунки стираем у КАЖДОЙ доски: они лежат в отдельных
+                        // ключах, и раньше «чистый проект» приезжал со старыми линиями.
+                        sortedBoards.forEach(b => saveCanvas(b.id, ''));
+                        const c = paintCanvasRef.current; if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+                        lastSaved.current = null; undoStack.current = []; setCanUndo(false);
+                        setShowProjectModal(false); showToast("Создан чистый проект");
                       }})} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-lg text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
                     </div>
                   </div>
