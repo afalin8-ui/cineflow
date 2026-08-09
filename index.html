@@ -997,6 +997,8 @@
           };
 
           const [messages, setMessages] = useState([]); 
+          // Сколько раз облако присылало список сообщений (см. уведомления)
+          const msgBatch = useRef(0);
 
           const [currentView, setCurrentView] = useState(
             CF_VIEW_SCOPE === 'gallery' ? 'gallery' : (CF_VIEW_SCOPE === 'board' ? 'whiteboard' : 'notion')
@@ -1406,12 +1408,30 @@
           // Счётчик непрочитанных в заголовке вкладки
           useEffect(() => { document.title = (unreadCount > 0 ? '(' + unreadCount + ') ' : '') + 'CineFlow Prep'; }, [unreadCount]);
 
-          // Браузерные уведомления о новых сообщениях (когда вкладка в фоне или чат закрыт)
-          const prevMsgCount = useRef(null);
+          // Браузерные уведомления о новых сообщениях (когда вкладка в фоне или чат закрыт).
+          //
+          // Считать «новое» по КОЛИЧЕСТВУ сообщений было нельзя. При запуске
+          // список пуст, и когда из облака приезжали все 50 старых сообщений,
+          // это выглядело как «пришло 50 новых» — выскакивало уведомление
+          // о давно прочитанном. На iPad установленное приложение выгружается
+          // из памяти постоянно, поэтому оно повторялось раз за разом.
+          //
+          // Теперь считаем по ВРЕМЕНИ и помним рубеж между запусками. Заодно
+          // учитываем момент последнего чтения чата: о прочитанном не напоминаем.
+          const notifiedUpTo = useRef(Math.max(
+            Number(localStorage.getItem('cf_notified_upto')) || 0,
+            Number(localStorage.getItem('cf_last_read')) || 0));
+          const rememberNotified = (ts) => {
+            notifiedUpTo.current = Math.max(notifiedUpTo.current, ts);
+            try { localStorage.setItem('cf_notified_upto', String(notifiedUpTo.current)); } catch (e) {}
+          };
           useEffect(() => {
-            if (prevMsgCount.current === null) { prevMsgCount.current = messages.length; return; }
-            const fresh = messages.slice(prevMsgCount.current).filter(m => m.senderId !== clientId);
-            prevMsgCount.current = messages.length;
+            const maxTs = messages.reduce((m, x) => Math.max(m, Number(x.timestamp) || 0), 0);
+            // Первый ответ облака — загрузка чата, о нём не уведомляем.
+            if (msgBatch.current <= 1) { if (maxTs) rememberNotified(maxTs); return; }
+            if (!messages.length) return;
+            const fresh = messages.filter(m => (Number(m.timestamp) || 0) > notifiedUpTo.current && m.senderId !== clientId);
+            rememberNotified(maxTs);
             if (!fresh.length) return;
             if ((document.hidden || !showChat) && 'Notification' in window && Notification.permission === 'granted') {
               const m = fresh[fresh.length - 1];
@@ -1664,7 +1684,10 @@
               subMap('gearTypes', setGearTypes, gearTypes),
               subMap('lightGearTypes', setLightGearTypes, lightGearTypes),
               subList('boards', setBoards, [DEFAULT_BOARD]),
-              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err))
+              // msgBatch считает ОТВЕТЫ облака: первый — это загрузка чата,
+              // а не новые сообщения. Пустотой списка это мерить нельзя —
+              // в новой комнате самое первое сообщение пришло бы молча.
+              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); msgBatch.current++; setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err))
             ]; return () => unsubs.forEach(u => u());
           }, [user]);
 
