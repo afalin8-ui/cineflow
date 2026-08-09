@@ -122,6 +122,14 @@
           .nav-scroll-hint { -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 24px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 24px), transparent 100%); }
         }
         .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
+        /* Кнопки, которые «появляются при наведении», на планшете НЕ появляются
+           никогда: наведения мыши там не существует. То есть удалить кадр,
+           выделить референс или положить его на доску пальцем было нельзя.
+           Показываем их приглушённо — видно, но не кричит. */
+        @media (hover: none) {
+          .opacity-0.group-hover\:opacity-100 { opacity: .62 !important; }
+        }
         h1, h2, h3 { font-family: 'Lora', Georgia, serif; letter-spacing: -0.01em; }
         .glass-panel {
             background: var(--panel);
@@ -1376,6 +1384,16 @@
           // отдаём ему холст, чтобы он сразу заработал.
           const onExcTool = (type) => { if (type && type !== 'selection') setWbMode(m => m === 'select' ? 'draw' : m); };
           excCb.current.tool = onExcTool;
+          // Положить уже загруженный референс на обычную доску карточкой.
+          const putRefOnBoard = (ref) => {
+            const placed = { ...ref, boardId: activeBoardId,
+              x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
+              y: (240 - canvasOffset.y) / zoom + Math.random() * 60 };
+            setReferences(references.map(r => r.id === ref.id ? placed : r));
+            syncDoc('references', ref.id, placed);
+            showToast('Референс на доске');
+          };
+
           // Вставить референс из галереи прямо в сцену Excalidraw — тогда его
           // можно крутить, масштабировать и группировать его же средствами.
           // Уменьшаем копию: в сцене картинка лежит целиком, а предел
@@ -3555,19 +3573,35 @@
                                 Референсы предлагаем только на доске Excalidraw: там
                                 они вставляются КАРТИНКОЙ внутрь сцены, и их можно
                                 крутить и масштабировать его же средствами. */}
-                            {excOn && references.filter(r => r.url).length > 0 && (
-                              <React.Fragment>
-                                <div className="px-2 pt-1 pb-1.5"><span className="cf-eyebrow">Референсы</span></div>
-                                {references.filter(r => r.url).slice(0, 40).map(r => (
-                                  <button key={r.id} onClick={() => { insertRefIntoExc(r); setScenePickerOpen(false); }}
-                                          className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
-                                          style={{ minHeight: 40 }}>
-                                    <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
-                                    <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
-                                  </button>
-                                ))}
-                              </React.Fragment>
-                            )}
+                            {(() => {
+                              // На доске Excalidraw референс вставляется КАРТИНКОЙ внутрь
+                              // сцены (крутится и масштабируется его средствами), на обычной —
+                              // ложится нашей карточкой. Список нужен всегда: это
+                              // единственный путь к уже загруженным референсам с самой доски.
+                              const pool = excOn
+                                ? references.filter(r => r.url)
+                                : references.filter(r => r.url && r.boardId !== activeBoardId);
+                              return (
+                                <React.Fragment>
+                                  <div className="px-2 pt-1 pb-1.5">
+                                    <span className="cf-eyebrow">Референсы{excOn ? ' — вставить в рисунок' : ''}</span>
+                                  </div>
+                                  {pool.length === 0 ? (
+                                    <p className="px-2 pb-2" style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
+                                      {references.length ? 'Все референсы уже на этой доске.' : 'Референсов пока нет — загрузите их в «Галерее».'}
+                                    </p>
+                                  ) : pool.slice(0, 60).map(r => (
+                                    <button key={r.id} onClick={() => { excOn ? insertRefIntoExc(r) : putRefOnBoard(r); setScenePickerOpen(false); }}
+                                            className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
+                                            style={{ minHeight: 40 }}>
+                                      <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
+                                      <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
+                                      {!excOn && r.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                                    </button>
+                                  ))}
+                                </React.Fragment>
+                              );
+                            })()}
 
                             <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Документы</span></div>
                             {offBoardDocs.length === 0 ? (
