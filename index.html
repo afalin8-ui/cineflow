@@ -165,6 +165,15 @@
            перетаскивании, но не должна спорить с референсами на доске */
         .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.05) 1.2px, transparent 1.2px); background-size: 26px 26px; }
 
+        /* Доска на движке Excalidraw. Пока рисуем, наши карточки не должны
+           перехватывать касания — иначе до холста они просто не доходят.
+           Правило жёсткое (!important и *), потому что у карточек внутри
+           свои pointer-events:auto, и мягкой отменой их не выключить. */
+        .cf-exc-draw #wb-container,
+        .cf-exc-draw #wb-container * { pointer-events: none !important; }
+        /* Панель инструментов Excalidraw в наших цветах */
+        .excalidraw { --color-primary: #d97757; --color-primary-darker: #c65d3d; --color-primary-darkest: #a54a30; }
+
         /* Режим «только просмотр». Ничего не уходит в облако (см. syncDoc),
            а здесь дополнительно гасим саму возможность что-то печатать,
            чтобы человек не решил, будто его правки сохранятся. */
@@ -783,6 +792,81 @@
             );
         };
 
+        // --- Доска на движке Excalidraw (пробный режим) ---
+        // Берём версию 0.17.1: она единственная собрана так, что работает
+        // простым <script> рядом с нашим React, без сборщика. Свежая 0.18
+        // только модульная — её без сборки не подключить.
+        // Грузим ПО ТРЕБОВАНИЮ: библиотека весит около 4 МБ, и платить за неё
+        // должны только те доски, где её включили. Service worker подберёт
+        // её в кэш сам, при первом же обращении, — офлайн заработает потом.
+        const EXC_BASE = 'https://unpkg.com/@excalidraw/excalidraw@0.17.1/dist/';
+        let excLoading = null;
+        const loadExcalidraw = () => {
+          if (window.ExcalidrawLib) return Promise.resolve(window.ExcalidrawLib);
+          if (excLoading) return excLoading;
+          excLoading = new Promise((resolve, reject) => {
+            window.EXCALIDRAW_ASSET_PATH = EXC_BASE;
+            const s = document.createElement('script');
+            s.src = EXC_BASE + 'excalidraw.production.min.js';
+            s.onload = () => window.ExcalidrawLib ? resolve(window.ExcalidrawLib) : reject(new Error('пустая библиотека'));
+            s.onerror = () => { excLoading = null; reject(new Error('не удалось скачать')); };
+            document.head.appendChild(s);
+          });
+          return excLoading;
+        };
+
+        const ExcalidrawBoard = ({ elements, onSave, onView, readOnly, apiRef }) => {
+          const [lib, setLib] = useState(window.ExcalidrawLib || null);
+          const [err, setErr] = useState('');
+          const saveTimer = useRef(null);
+          const lastSent = useRef('');
+
+          useEffect(() => {
+            let alive = true;
+            loadExcalidraw().then(l => { if (alive) setLib(l); })
+                            .catch(e => { if (alive) setErr(e.message); });
+            return () => { alive = false; };
+          }, []);
+
+          if (err) return (
+            <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', maxWidth: 320, lineHeight: 1.6 }}>
+                Не удалось загрузить Excalidraw ({err}).<br />Нужен интернет — при первом включении библиотека скачивается.
+              </div>
+            </div>
+          );
+          if (!lib) return (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="cf-meta">Загружаю Excalidraw… это примерно 4 МБ, только в первый раз</span>
+            </div>
+          );
+
+          const Exc = lib.Excalidraw;
+          return (
+            <Exc
+              excalidrawAPI={(api) => { if (apiRef) apiRef.current = api; }}
+              initialData={{ elements: elements || [], scrollToContent: false,
+                             appState: { viewBackgroundColor: 'transparent' } }}
+              theme="dark"
+              langCode="ru-RU"
+              viewModeEnabled={!!readOnly}
+              UIOptions={{ canvasActions: { loadScene: false, changeViewBackgroundColor: false, toggleTheme: false } }}
+              onChange={(els, st) => {
+                // Панораму и зум ведёт Excalidraw — наши карточки просто
+                // повторяют за ним, иначе разъедутся два масштаба.
+                if (onView) onView(st.scrollX, st.scrollY, st.zoom.value);
+                if (readOnly) return;
+                // onChange зовётся на каждое движение указателя, поэтому
+                // сохраняем с задержкой и только если сцена реально изменилась.
+                const json = JSON.stringify(els.filter(e => !e.isDeleted));
+                if (json === lastSent.current) return;
+                clearTimeout(saveTimer.current);
+                saveTimer.current = setTimeout(() => { lastSent.current = json; onSave(json); }, 900);
+              }}
+            />
+          );
+        };
+
         function AppCore() {
           const [user, setUser] = useState(null);
           const [userName, setUserName] = useState('');
@@ -1159,6 +1243,66 @@
           const [resizingSticky, setResizingSticky] = useState(null);
 
           const [scenePickerOpen, setScenePickerOpen] = useState(false);
+
+          // --- Пробный движок доски ---
+          // У доски может стоять engine:'exc' — тогда вместо нашей кисти
+          // работает Excalidraw, а карточки живут слоем поверх. Флаг лежит
+          // у самой доски, чтобы у всей группы доска выглядела одинаково.
+          const activeBoard = sortedBoards.find(b => b.id === activeBoardId) || DEFAULT_BOARD;
+          const excOn = activeBoard.engine === 'exc';
+          const excApi = useRef(null);
+          const [excElements, setExcElements] = useState(null);
+          const excDocId = (boardId) => 'exc-' + boardId;
+
+          const toggleExcalidraw = () => {
+            const next = excOn ? '' : 'exc';
+            const up = boards.map(b => b.id === activeBoardId ? { ...b, engine: next } : b);
+            setBoards(up);
+            syncDoc('boards', activeBoardId, up.find(b => b.id === activeBoardId));
+            setWbMode('select'); setSelectedWbItems([]);
+            showToast(next ? 'Доска переведена на Excalidraw · старый рисунок сохранён' : 'Вернул обычную кисть');
+          };
+
+          const saveExcScene = (json) => {
+            if (READ_ONLY) return;
+            try { localStorage.setItem('cf_exc_' + activeBoardId, json); } catch (e) {}
+            if (!db || !user) return;
+            trackWrite(
+              dataRef().collection('canvas').doc(excDocId(activeBoardId))
+                .set({ elements: json, lastBy: clientId })
+                .catch(err => { console.warn('saveExc', err); showToast('⚠️ Рисунок не сохранился в облако — возможно, он слишком тяжёлый'); })
+            );
+          };
+
+          // Панораму и зум ведёт Excalidraw, наши карточки повторяют за ним.
+          // Точка сцены (sx,sy) у него оказывается в (sx+scrollX)*zoom,
+          // а у нас — offset + x*zoom. Отсюда offset = scroll * zoom.
+          const onExcView = (sx, sy, z) => {
+            const nx = sx * z, ny = sy * z;
+            setCanvasOffset(prev => (prev.x === nx && prev.y === ny) ? prev : { x: nx, y: ny });
+            setZoom(prev => prev === z ? prev : z);
+          };
+
+          useEffect(() => {
+            if (!excOn) { setExcElements(null); return; }
+            let local = [];
+            try { local = JSON.parse(localStorage.getItem('cf_exc_' + activeBoardId) || '[]'); } catch (e) {}
+            setExcElements(Array.isArray(local) ? local : []);
+            if (!db || !user) return;
+            const unsub = dataRef().collection('canvas').doc(excDocId(activeBoardId))
+              .onSnapshot(doc => {
+                if (!doc.exists) return;
+                const d = doc.data() || {};
+                if (d.lastBy === clientId) return;
+                let els; try { els = JSON.parse(d.elements || '[]'); } catch (e) { return; }
+                if (!Array.isArray(els)) return;
+                try { localStorage.setItem('cf_exc_' + activeBoardId, d.elements || '[]'); } catch (e) {}
+                // Сцена уже открыта — доливаем в неё, иначе отдадим при монтаже
+                if (excApi.current) excApi.current.updateScene({ elements: els });
+                else setExcElements(els);
+              }, err => console.warn('sync exc', err));
+            return () => unsub();
+          }, [excOn, activeBoardId, user]);
 
           // Выделение живёт в пределах одной доски: переключились — сбросили.
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
@@ -2696,10 +2840,27 @@
                               title="Новая доска"
                               className="shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
+
+                      {/* Пробный движок: включается у каждой доски отдельно.
+                          Старый рисунок остаётся на месте и вернётся, если выключить. */}
+                      <button onClick={toggleExcalidraw}
+                              title={excOn
+                                ? 'Вернуть обычную кисть. Нарисованное в Excalidraw останется и вернётся при повторном включении'
+                                : 'Пробный режим: рисование инструментами Excalidraw — фигуры, стрелки, текст. Библиотека скачается один раз, около 4 МБ'}
+                              className="cf-edit-only shrink-0 flex items-center gap-1.5 transition-colors ml-auto"
+                              style={{ padding: '0 12px', minHeight: 34, marginBottom: 3, borderRadius: 8, fontSize: 11,
+                                       border: '1px solid ' + (excOn ? 'var(--accent)' : 'var(--border)'),
+                                       background: excOn ? 'var(--accent)' : 'transparent',
+                                       color: excOn ? 'var(--bg)' : 'var(--muted-2)' }}>
+                        <Icons.Pen /> Excalidraw
+                      </button>
                     </div>
 
-                    <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
+                    <div id="whiteboard-canvas" className={`w-full flex-1 min-h-0 cf-canvas relative overflow-hidden ${excOn && wbMode !== 'select' ? 'cf-exc-draw' : ''}`}
                     onWheel={(e) => {
+                        // В режиме Excalidraw масштабом заведует он сам —
+                        // два независимых зума разъехались бы.
+                        if (excOn) return;
                         const rect = e.currentTarget.getBoundingClientRect();
                         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
                         const nz = Math.min(2.0, Math.max(0.3, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
@@ -2774,7 +2935,19 @@
                             setLinkingFrom(null);
                         }
                     }}>
-                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px' }}>
+                      {/* Слой Excalidraw — ПОД карточками и вне их трансформации:
+                          он ведёт свою панораму сам. В режиме работы с карточками
+                          касания до него не доходят, и наоборот. */}
+                      {excOn && (
+                        <div className="absolute inset-0 z-10" style={{ pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}>
+                          {excElements !== null && (
+                            <ExcalidrawBoard key={activeBoardId} elements={excElements} apiRef={excApi}
+                                             readOnly={READ_ONLY} onSave={saveExcScene} onView={onExcView} />
+                          )}
+                        </div>
+                      )}
+
+                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
                         
                         {selectionBox && (
                             <div className="absolute border border-indigo-500 bg-indigo-500/20 z-50 pointer-events-none" style={{
@@ -2812,7 +2985,7 @@
                           })()}
                         </svg>
 
-                        <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
+                        {!excOn && <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
                           if (wbMode === 'select') return;
                           if (wbMode === 'pan') { 
                               e.currentTarget.setPointerCapture(e.pointerId);
@@ -2887,7 +3060,7 @@
                           const wasPainting = isPainting;
                           setIsPainting(false); setIsPanning(false);
                           if (wasPainting) persistCanvas();
-                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
+                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />}
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
@@ -2999,27 +3172,29 @@
                         </div>
                       </div>
 
-                      <div className="absolute top-2 md:top-6 left-2 md:left-6 glass-panel p-2 rounded-lg flex flex-row md:flex-col gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar">
+                      {/* В режиме Excalidraw уходим к правому краю: слева у него
+                          своя панель свойств, и две панели наезжали друг на друга */}
+                      <div className={`absolute glass-panel p-2 rounded-lg flex gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar ${excOn ? 'flex-col right-2 md:right-6 top-1/2 -translate-y-1/2' : 'flex-row md:flex-col top-2 md:top-6 left-2 md:left-6'}`}>
                         <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
-                        <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
-                        <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
-                        <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
-                        <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
+                        <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title={excOn ? 'Рисовать (инструменты Excalidraw)' : 'Кисть'}><Icons.Pen/></button>
+                        {!excOn && <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>}
+                        {!excOn && <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>}
+                        {!excOn && <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-                        </button>
+                        </button>}
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
                         <button onClick={() => setScenePickerOpen(v => !v)} title="Положить сцену на доску"
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}><Icons.Scene/></button>
                         <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
                         <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>
+                        {!excOn && <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>}
                       </div>
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
                           работа, поэтому список, а не «все сразу». */}
                       {scenePickerOpen && (
-                        <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-white/10 flex flex-col" style={{ maxHeight: '60vh' }}>
+                        <div className={`absolute glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-white/10 flex flex-col ${excOn ? 'right-16 md:right-24 top-1/2 -translate-y-1/2' : 'top-16 md:top-6 left-2 md:left-24'}`} style={{ maxHeight: '60vh' }}>
                           <div className="flex items-center justify-between px-3 shrink-0" style={{ minHeight: 40, borderBottom: '1px solid var(--border)' }}>
                             <span className="cf-eyebrow">Положить сцену на доску</span>
                             <button onClick={() => setScenePickerOpen(false)} className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 text-[11px]">✕</button>
@@ -3045,7 +3220,7 @@
                         </div>
                       )}
 
-                      {wbMode === 'draw' && (
+                      {wbMode === 'draw' && !excOn && (
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-4 z-30 w-52 border-t border-white/10">
                           <div className="flex bg-black/50 p-1.5 rounded-lg border border-white/5">
                               <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
@@ -3066,11 +3241,11 @@
                         </div>
                       )}
 
-                      <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-lg flex items-center space-x-3 z-30 border-t border-white/10">
+                      {!excOn && <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-lg flex items-center space-x-3 z-30 border-t border-white/10">
                         <button onClick={() => setZoom(prev => Math.max(0.3, prev - 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">-</button>
                         <span className="text-xs font-bold font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
                         <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">+</button>
-                      </div>
+                      </div>}
                     </div>
                   </div>
 
