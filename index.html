@@ -2471,47 +2471,78 @@
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
 
           // --- Групповое перетаскивание на Whiteboard ---
+          // Масштаб, по которому пересчитывается перетаскивание. В режиме
+          // Excalidraw его ведёт он сам, а в наше состояние `zoom` значение
+          // приезжает с задержкой в 180 мс. Пока считали по нему, карточка
+          // на изменённом масштабе ехала не за пальцем — то самое «плохо
+          // перетаскивается в Excalidraw».
+          const liveZoom = () => (excOn && excViewRef.current) ? excViewRef.current.z : zoom;
+
+          // Дросселировать перетаскивание по кадрам ПРОБОВАЛИ и откатили:
+          // всплески оно сглаживает, но добавляет кадр задержки — замер
+          // настоящей мышью дал отставание карточки от курсора 17 точек
+          // против 12. На планшете выигрыш недоказуем, а проигрыш измерен.
+          const dragPos = useRef(null);
+          const applyDrag = () => {
+              const p = dragPos.current;
+              const d = draggingWbItems;
+              if (!p || !d) return;
+              const z = liveZoom() || 1;
+              const dx = (p.x - d.startX) / z;
+              const dy = (p.y - d.startY) / z;
+              // Карточки прилипают к сетке в 24 точки, поэтому при медленном
+              // ведении большинство движений не меняют положение вообще —
+              // такие обновления просто не запускаем.
+              const apply = (setter, type) => {
+                  const items = d.items.filter(i => i.type === type);
+                  if (!items.length) return;
+                  setter(prev => {
+                      let out = prev, changed = false;
+                      items.forEach(item => {
+                          const nx = Math.round((item.ox + dx) / 24) * 24;
+                          const ny = Math.round((item.oy + dy) / 24) * 24;
+                          const cur = out.find(o => o.id === item.id);
+                          if (!cur || (cur.x === nx && cur.y === ny)) return;
+                          out = out.map(o => o.id === item.id ? { ...o, x: nx, y: ny } : o);
+                          changed = true;
+                      });
+                      return changed ? out : prev;
+                  });
+              };
+              apply(setScenes, 'scene');
+              apply(setReferences, 'ref');
+              apply(setStickies, 'sticky');
+              apply(setDocs, 'doc');
+          };
           const handleDragMove = (e) => {
               if (!draggingWbItems || draggingWbItems.pointerId !== e.pointerId) return;
-              const dx = (e.clientX - draggingWbItems.startX) / zoom;
-              const dy = (e.clientY - draggingWbItems.startY) / zoom;
-              
-              let updatedScenes = [...scenes], changedS = false;
-              let updatedRefs = [...references], changedR = false;
-              let updatedStickies = [...stickies], changedSt = false;
-              let updatedDocs = [...docs], changedD = false;
-
-              // Карточки прилипают к сетке в 24 точки, поэтому при медленном
-              // ведении большинство движений указателя не меняют положение
-              // вообще. Раньше состояние переписывалось на каждое такое
-              // движение, и всё приложение перерисовывалось впустую.
-              const same = (arr, id, nx, ny) => { const c = arr.find(o => o.id === id); return c && c.x === nx && c.y === ny; };
-              draggingWbItems.items.forEach(item => {
-                  const nx = Math.round((item.ox + dx) / 24) * 24;
-                  const ny = Math.round((item.oy + dy) / 24) * 24;
-                  if (item.type === 'scene') { if (same(updatedScenes, item.id, nx, ny)) return; updatedScenes = updatedScenes.map(sc => sc.id === item.id ? {...sc, x: nx, y: ny} : sc); changedS = true; }
-                  else if (item.type === 'ref') { if (same(updatedRefs, item.id, nx, ny)) return; updatedRefs = updatedRefs.map(r => r.id === item.id ? {...r, x: nx, y: ny} : r); changedR = true; }
-                  else if (item.type === 'sticky') { if (same(updatedStickies, item.id, nx, ny)) return; updatedStickies = updatedStickies.map(st => st.id === item.id ? {...st, x: nx, y: ny} : st); changedSt = true; }
-                  else if (item.type === 'doc') { if (same(updatedDocs, item.id, nx, ny)) return; updatedDocs = updatedDocs.map(d => d.id === item.id ? {...d, x: nx, y: ny} : d); changedD = true; }
-              });
-
-              if (changedS) setScenes(updatedScenes);
-              if (changedR) setReferences(updatedRefs);
-              if (changedSt) setStickies(updatedStickies);
-              if (changedD) setDocs(updatedDocs);
+              dragPos.current = { x: e.clientX, y: e.clientY };
+              applyDrag();
           };
 
           const handleDragUp = (e) => {
               if (!draggingWbItems || draggingWbItems.pointerId !== e.pointerId) return;
+              applyDrag();
               if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
                   e.currentTarget.releasePointerCapture(e.pointerId);
               }
+              // В облако пишем ПОСЧИТАННОЕ положение, а не взятое из состояния:
+              // состояние применяется не сразу, и последний сдвиг ушёл бы
+              // в облако старым — карточка после перезагрузки прыгала бы назад.
+              const p = dragPos.current;
+              const zf = liveZoom() || 1;
+              const ddx = p ? (p.x - draggingWbItems.startX) / zf : 0;
+              const ddy = p ? (p.y - draggingWbItems.startY) / zf : 0;
+              const where = { scene: ['scenes', scenes], ref: ['references', references],
+                              sticky: ['stickies', stickies], doc: ['docs', docs] };
               draggingWbItems.items.forEach(item => {
-                  if (item.type === 'scene') { const f = scenes.find(x=>x.id===item.id); if(f) syncDoc('scenes', item.id, f); }
-                  else if (item.type === 'ref') { const f = references.find(x=>x.id===item.id); if(f) syncDoc('references', item.id, f); }
-                  else if (item.type === 'sticky') { const f = stickies.find(x=>x.id===item.id); if(f) syncDoc('stickies', item.id, f); }
-                  else if (item.type === 'doc') { const f = docs.find(x=>x.id===item.id); if(f) syncDoc('docs', item.id, f); }
+                  const box = where[item.type]; if (!box) return;
+                  const f = box[1].find(x => x.id === item.id); if (!f) return;
+                  const nx = Math.round((item.ox + ddx) / 24) * 24;
+                  const ny = Math.round((item.oy + ddy) / 24) * 24;
+                  syncDoc(box[0], item.id, { ...f, x: nx, y: ny });
               });
+              dragPos.current = null;
               setDraggingWbItems(null);
           };
 
