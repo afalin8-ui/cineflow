@@ -1617,6 +1617,12 @@
           // рисунок соседней доски обнулялся.
           const [excBoardOf, setExcBoardOf] = useState(null);
           const excDocId = (boardId) => 'exc-' + boardId;
+          // Ответило ли облако по этой доске. Пока не ответило, ПУСТУЮ сцену
+          // писать нельзя: на свежем запуске Excalidraw монтируется пустым
+          // (местной копии может не быть — localStorage переполнен или чист)
+          // и успевал затереть рисунок в облаке раньше, чем тот приезжал.
+          // Это та же ловушка, что и засев пустой комнаты у остальных данных.
+          const excCloudSeen = useRef({});
 
           // Обратный конец стилуса в режиме Excalidraw. У него смена
           // инструмента идёт через состояние React, то есть вступает в силу
@@ -1662,6 +1668,13 @@
             if (READ_ONLY) return;
             // Пишем в ТУ доску, на которой рисовали, а не в открытую сейчас.
             const target = ofBoard || activeBoardId;
+            // Облако по этой доске ещё не ответило — пустую сцену не пишем
+            // никуда, иначе затрём то, что там лежит.
+            if (db && user && !excCloudSeen.current[target]) {
+              let пусто = true;
+              try { пусто = JSON.parse(json || '[]').length === 0; } catch (e) {}
+              if (пусто) return;
+            }
             try {
               localStorage.setItem('cf_exc_' + target, json);
               localStorage.setItem('cf_excf_' + target, filesJson || '{}');
@@ -1780,11 +1793,24 @@
             setExcFiles(localFiles && typeof localFiles === 'object' ? localFiles : {});
             setExcBoardOf(activeBoardId);
             if (!db || !user) return;
+            excCloudSeen.current[activeBoardId] = false;
+            // Первый ответ облака — это ЗАГРУЗКА, а не эхо своей записи.
+            // Раньше он отбрасывался по lastBy, и рисунок, сделанный на этом
+            // же устройстве, не возвращался, если местная копия пропала.
+            let первыйОтвет = true;
             const unsub = dataRef().collection('canvas').doc(excDocId(activeBoardId))
               .onSnapshot(doc => {
-                if (!doc.exists) return;
+                excCloudSeen.current[activeBoardId] = true;
+                if (!doc.exists) { первыйОтвет = false; return; }
                 const d = doc.data() || {};
-                if (d.lastBy === clientId) return;
+                if (d.lastBy === clientId) {
+                  if (!первыйОтвет) return;
+                  // На экране уже есть работа — свою же копию поверх не льём.
+                  const сейчас = excApi.current
+                    ? excApi.current.getSceneElements().filter(e => !e.isDeleted).length : 0;
+                  if (сейчас > 0) { первыйОтвет = false; return; }
+                }
+                первыйОтвет = false;
                 let els, fls = {};
                 try { els = JSON.parse(d.elements || '[]'); } catch (e) { return; }
                 try { fls = JSON.parse(d.files || '{}'); } catch (e) {}
