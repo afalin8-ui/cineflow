@@ -867,11 +867,42 @@
         const TagInput = ({ ref_, hints, onAdd }) => {
           const [typed, setTyped] = useState('');
           const [open, setOpen] = useState(false);
+          const [at, setAt] = useState(null);
+          const inputRef = useRef(null);
           const list = open ? hints(typed, ref_.tags) : [];
+
+          // Список подсказок рисуем ОТДЕЛЬНЫМ слоем поверх страницы, а не
+          // внутри карточки: у карточки обрезка по краю (overflow-hidden плюс
+          // пропуск отрисовки за экраном), и список в ней просто не было
+          // видно. Отсюда position: fixed и портал в body.
+          const place = () => {
+            const el = inputRef.current; if (!el) return;
+            const r = el.getBoundingClientRect();
+            const w = Math.min(240, window.innerWidth - 16);
+            const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+            // У нижнего края экрана разворачиваем список вверх, иначе он
+            // уедет за пределы окна и снова окажется невидим.
+            const вверх = r.bottom > window.innerHeight - 160;
+            setAt({ left, width: w,
+                    top: вверх ? null : Math.round(r.bottom + 4),
+                    bottom: вверх ? Math.round(window.innerHeight - r.top + 4) : null });
+          };
+          useEffect(() => {
+            if (!open) return;
+            place();
+            // Пока список открыт, страница может уехать под ним — держим его
+            // у поля. scroll слушаем с перехватом: прокручивается не окно,
+            // а внутренняя область галереи.
+            const on = () => place();
+            window.addEventListener('scroll', on, true);
+            window.addEventListener('resize', on);
+            return () => { window.removeEventListener('scroll', on, true); window.removeEventListener('resize', on); };
+          }, [open, typed]);
+
           const put = (v) => { onAdd(ref_, v); setTyped(''); setOpen(false); };
           return (
-            <span className="relative inline-block">
-              <input type="text" placeholder="+ тег" value={typed}
+            <span className="inline-block">
+              <input ref={inputRef} type="text" placeholder="+ тег" value={typed}
                 onChange={e => { setTyped(e.target.value); setOpen(true); }}
                 onFocus={() => setOpen(true)}
                 onKeyDown={e => {
@@ -882,17 +913,18 @@
                 // подсказку — поле теряет фокус раньше, чем срабатывает выбор.
                 onBlur={() => setTimeout(() => { setOpen(false); if (typed.trim()) put(typed); }, 180)}
                 className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-24 min-w-0" />
-              {list.length > 0 && (
-                <span className="absolute left-0 z-40 flex flex-wrap gap-1 p-1.5 rounded-lg"
-                      style={{ top: '100%', marginTop: 4, minWidth: 160, maxWidth: 230,
-                               background: 'var(--panel-2)', border: '1px solid var(--border)',
-                               boxShadow: '0 8px 24px rgba(0,0,0,.45)' }}>
+              {list.length > 0 && at && ReactDOM.createPortal(
+                <div className="flex flex-wrap gap-1 p-1.5 rounded-lg cf-tag-hints"
+                     style={{ position: 'fixed', left: at.left, width: at.width,
+                              top: at.top === null ? undefined : at.top,
+                              bottom: at.bottom === null ? undefined : at.bottom,
+                              zIndex: 500, background: 'var(--panel-2)',
+                              border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,.45)' }}>
                   {list.map(t => (
                     <button key={t} type="button" onMouseDown={e => e.preventDefault()} onClick={() => put(t)}
                             className="cf-chip shrink-0" style={{ fontSize: 11 }}>{t}</button>
                   ))}
-                </span>
-              )}
+                </div>, document.body)}
             </span>
           );
         };
