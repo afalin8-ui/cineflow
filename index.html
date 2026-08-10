@@ -1954,9 +1954,15 @@
             let m;
             m = l.match(/^сцена\s+(\d[^\s.,:;]*)\s*[.:)-]?\s*(.*)$/i);          // СЦЕНА 5. ИНТ. КАБИНЕТ
             if (m) return { number: m[1], title: (m[2] || '').trim() };
-            m = l.match(/^(\d[^\s.,:;]*)\s*[.)]\s*((?:инт|нат|int|ext)\b.*)$/i); // 5. ИНТ. КАБИНЕТ
+            // ВАЖНО: тут нельзя писать \b после «инт»/«нат». В регулярках
+            // JavaScript границей слова считаются только латиница и цифры,
+            // кириллица — нет, поэтому «НАТ.» проверку не проходило и
+            // заголовки вида «12А. НАТ. ДВОР» не находились вовсе: сцена
+            // просто пропадала. Проверяем следующий знак прямо.
+            const СЛОВО = '(?=[\\s.,:;—–-]|$)';
+            m = l.match(new RegExp('^(\\d[^\\s.,:;]*)\\s*[.)]\\s*((?:инт|нат|int|ext)' + СЛОВО + '.*)$', 'i')); // 5. ИНТ. КАБИНЕТ
             if (m) return { number: m[1], title: m[2].trim() };
-            m = l.match(/^(\d[^\s.,:;]*)\s+((?:инт|нат|int|ext)\b.*)$/i);        // 5 ИНТ. КАБИНЕТ
+            m = l.match(new RegExp('^(\\d[^\\s.,:;]*)\\s+((?:инт|нат|int|ext)' + СЛОВО + '.*)$', 'i'));        // 5 ИНТ. КАБИНЕТ
             if (m) return { number: m[1], title: m[2].trim() };
             m = l.match(/^((?:инт|нат|int|ext)[.\s].*)$/i);                      // ИНТ. КАБИНЕТ (без номера)
             if (m) return { number: '', title: m[1].trim() };
@@ -1991,6 +1997,30 @@
               t = t.replace(/<[^>]+>/g, '\n').replace(/&[a-z]+;/gi, ' ').replace(/\n{3,}/g, '\n\n');
             }
             return t;
+          };
+
+          // Заголовок, найденный ИИ, разбираем ТЕМ ЖЕ разбором, что и свой.
+          // Раньше номером бралось первое число в строке — в «ИНТ. КВАРТИРА 5А»
+          // это номер квартиры, а не сцены, — а название оставалось вместе
+          // с номером внутри («#12 — ИНТ. КАБИНЕТ»), хотя по всему приложению
+          // номер в названии жить не должен.
+          const headFromLine = (line) => {
+            const own = parseSceneHead(line);
+            if (own) return own;
+            const l = String(line).trim();
+            // 1) номер в начале строки, возможно после # или №
+            let m = l.match(/^[#№]?\s*(\d[^\s.,:;)\]]*)\s*[.)\]:—–-]*\s*(.*)$/);
+            if (m) return { number: m[1], title: (m[2] || '').trim() };
+            // 2) «СЦЕНА 5», «ЭПИЗОД 12» где-то внутри строки
+            m = l.match(/(?:сцена|эпизод|scene|episode)\s*[№#]?\s*(\d[^\s.,:;)\]]*)/i);
+            if (m) return { number: m[1], title: l };
+            // 3) заголовок без номера («ИНТ. КВАРТИРА 5А — НОЧЬ») — номер
+            //    выдаст приложение. Первое попавшееся число тут брать НЕЛЬЗЯ:
+            //    это номер квартиры, а не сцены
+            if (/^(?:инт|нат|int|ext)[.\s]/i.test(l)) return { number: '', title: l };
+            // 4) во всех прочих случаях — первое число в строке
+            m = l.match(/(\d[^\s.,:;)\]]*)/);
+            return { number: m ? m[1] : '', title: l };
           };
 
           // Запасной путь: просим ИИ выписать ТОЛЬКО строки-заголовки. Ответ
@@ -2030,8 +2060,7 @@
             }
             const found = collectScenes(lines, (line) => {
               if (!heads.has(norm(line))) return null;
-              const m = String(line).match(/(\d[^\s.,:;]*)/);
-              return { number: m ? m[1] : '', title: String(line).trim() };
+              return headFromLine(line);
             });
             return { scenes: found, done: parts.length, total: parts.length, failed: false };
           };
@@ -2065,7 +2094,11 @@
                 // Свободный номер считаем на месте: nextSceneNumber смотрит
                 // в состояние, и все новые сцены получили бы один и тот же.
                 let maxNum = 0;
-                up.forEach(s => { const m = String(s.number || '').match(/\d+/); if (m && +m[0] > maxNum) maxNum = +m[0]; });
+                const учесть = (v) => { const m = String(v || '').match(/\d+/); if (m && +m[0] > maxNum) maxNum = +m[0]; };
+                up.forEach(s => учесть(s.number));
+                // И те номера, что придут В ЭТОЙ ЖЕ партии: иначе сцена без
+                // номера получала «1», хотя сцена №1 приезжала рядом с ней.
+                created.forEach(p => учесть(p.number));
                 const stamp = Date.now();
                 const fresh = created.map((p, i) => ({
                   id: `sc-${stamp}-${i}`,
