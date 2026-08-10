@@ -854,10 +854,14 @@
         // memo обязателен: без него любая перерисовка приложения — набранная
         // буква в карточке, пришедшее сообщение — заставляла Excalidraw
         // перерисоваться целиком. Все входящие свойства держим неизменными.
-        const ExcalidrawBoard = React.memo(({ elements, files, onSave, onView, onTool, readOnly, apiRef }) => {
+        const ExcalidrawBoard = React.memo(({ elements, files, onSave, onView, onTool, readOnly, apiRef, boardId }) => {
           const [lib, setLib] = useState(window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const saveTimer = useRef(null);
+          // Готовое к записи, но ещё не записанное. При уходе с доски это
+          // НАДО дописать, а не выбросить: иначе последний штрих, сделанный
+          // перед переключением, пропадал.
+          const pending = useRef(null);
           const lastSent = useRef('');
           const elsRef = useRef(null);
           const lastTool = useRef('selection');
@@ -868,7 +872,15 @@
             let alive = true;
             loadExcalidraw().then(l => { if (alive) setLib(l); })
                             .catch(e => { if (alive) setErr(e.message); });
-            return () => { alive = false; };
+            // Отложенное сохранение ОБЯЗАНО умереть вместе с доской. Пока
+            // этого не было, рисунок, уехавший в очередь на «Основной»,
+            // догонял человека уже на другой доске и записывался в неё —
+            // и выглядело это как «Excalidraw появился сразу везде».
+            return () => {
+              alive = false;
+              clearTimeout(saveTimer.current);
+              if (pending.current) pending.current();
+            };
           }, []);
 
           if (err) return (
@@ -912,7 +924,8 @@
                 elsRef.current = els;
                 filesRef.current = sceneFiles;
                 clearTimeout(saveTimer.current);
-                saveTimer.current = setTimeout(() => {
+                const flush = () => {
+                  pending.current = null;
                   const live = (elsRef.current || []).filter(e => !e.isDeleted);
                   const json = JSON.stringify(live);
                   // Картинки Excalidraw лежат ОТДЕЛЬНО от фигур. Без них
@@ -926,8 +939,12 @@
                   const filesJson = JSON.stringify(used);
                   if (json === lastSent.current && filesJson === lastFiles.current) return;
                   lastSent.current = json; lastFiles.current = filesJson;
-                  onSave(json, filesJson);
-                }, 900);
+                  // Доску называем ЯВНО, а не берём «текущую» на момент
+                  // записи: между рисованием и записью её могли переключить.
+                  onSave(json, filesJson, boardId);
+                };
+                pending.current = flush;
+                saveTimer.current = setTimeout(flush, 900);
               }}
             />
           );
@@ -1145,14 +1162,80 @@
           // схема света, 'gear' — сводный список техники.
           const [printMode, setPrintMode] = useState('full');
           const [printRequested, setPrintRequested] = useState(false);
+          // Приложение, установленное на домашний экран. Это НЕ мелочь для
+          // печати: там window.print() не делает ВООБЩЕ ничего — печать живёт
+          // в оболочке Safari, а оболочки в таком режиме нет. Кнопка нажимается,
+          // и не происходит ничего, без единой ошибки.
+          const isStandalone = () => {
+            try {
+              return window.navigator.standalone === true ||
+                     (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+            } catch (e) { return false; }
+          };
+          // Окно под печать открываем ПРЯМО в обработчике нажатия и держим
+          // здесь: всё, что открыто позже (после таймера), браузер считает
+          // всплывающим окном и блокирует.
+          const printWin = useRef(null);
+          const PRINT_PAGE_CSS = `@page { margin: 14mm; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                   color: #111; background: #fff; margin: 0; padding: 18px; }
+            img { max-width: 100%; }
+            .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
+            .cf-hint { background: #fff4e5; border: 1px solid #f0c992; color: #6b4a12;
+                       border-radius: 8px; padding: 10px 12px; margin: 0 0 16px;
+                       font-size: 13px; line-height: 1.5; }
+            @media print { .cf-hint { display: none !important; } body { padding: 0; } }`;
+
+          // Собрать из #print-area отдельную готовую страницу. Оттуда печать
+          // работает где угодно: в Safari это «Поделиться» → «Напечатать»,
+          // там же «Сохранить в Файлы» даёт PDF.
+          const openPrintPage = () => {
+            const area = document.getElementById('print-area');
+            const body = area ? area.innerHTML : '';
+            if (!body.trim()) { showToast('Нечего печатать'); return; }
+            const html = '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+              + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+              + '<title>CineFlow — план</title><style>' + PRINT_PAGE_CSS + '</style></head><body>'
+              + '<div class="cf-hint">Готовая страница для печати. Кнопка «Поделиться» → «Напечатать»; '
+              + 'чтобы получить PDF — «Поделиться» → «Сохранить в Файлы».</div>'
+              + body + '</body></html>';
+            const w = printWin.current;
+            printWin.current = null;
+            if (w && !w.closed) {
+              try {
+                w.document.open(); w.document.write(html); w.document.close();
+                showToast('Открыл готовую страницу · «Поделиться» → «Напечатать»');
+                return;
+              } catch (e) { /* ниже сохраним файлом */ }
+            }
+            // Окно не дали открыть — отдаём файлом. Открывается из «Файлов»
+            // и печатается оттуда же.
+            try {
+              const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+              const a = document.createElement('a');
+              a.href = url; a.download = 'CineFlow-план.html';
+              document.body.appendChild(a); a.click(); a.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 4000);
+              showToast('Сохранил страницу файлом — откройте её и напечатайте');
+            } catch (e) { showToast('Не удалось подготовить печать'); }
+          };
+
           // Печать запускаем только после того, как React перерисует
           // #print-area под выбранный режим, иначе уйдёт старое содержимое.
           useEffect(() => {
             if (!printRequested) return;
-            const t = setTimeout(() => { window.print(); setPrintRequested(false); }, 120);
+            const t = setTimeout(() => {
+              if (isStandalone()) openPrintPage(); else window.print();
+              setPrintRequested(false);
+            }, 120);
             return () => clearTimeout(t);
           }, [printRequested, printMode]);
-          const requestPrint = (mode) => { setPrintMode(mode); setPrintRequested(true); };
+          const requestPrint = (mode) => {
+            if (isStandalone()) {
+              try { printWin.current = window.open('', '_blank'); } catch (e) { printWin.current = null; }
+            }
+            setPrintMode(mode); setPrintRequested(true);
+          };
 
           // Сводка техники по всему проекту. Считаем максимум за одну сцену:
           // именно столько нужно взять в аренду (сумма по сценам завысила бы
@@ -1345,6 +1428,12 @@
           const excApi = useRef(null);
           const [excElements, setExcElements] = useState(null);
           const [excFiles, setExcFiles] = useState({});
+          // Какой доске принадлежит загруженная сцена. Без этого при
+          // переключении досок Excalidraw успевал смонтироваться со СТАРЫМИ
+          // элементами (состояние приезжает на кадр позже смены доски),
+          // считал их содержимым новой доски и записывал их поверх нужного —
+          // рисунок соседней доски обнулялся.
+          const [excBoardOf, setExcBoardOf] = useState(null);
           const excDocId = (boardId) => 'exc-' + boardId;
 
           // Обратный конец стилуса в режиме Excalidraw. У него смена
@@ -1380,14 +1469,20 @@
             syncDoc('boards', activeBoardId, up.find(b => b.id === activeBoardId));
             setWbMode('select'); setSelectedWbItems([]);
             excViewRef.current = null;
-            showToast(next ? 'Доска переведена на Excalidraw · старый рисунок сохранён' : 'Вернул обычную кисть');
+            // Про сохранность говорим ОБА раза: выключение прячет рисунок
+            // Excalidraw целиком, и без этих слов это читается как потеря.
+            showToast(next
+              ? 'Доска переведена на Excalidraw · рисунок кистью сохранён и виден снизу'
+              : 'Вернул обычную кисть · рисунок Excalidraw сохранён, вернётся при включении');
           };
 
-          const saveExcScene = (json, filesJson) => {
+          const saveExcScene = (json, filesJson, ofBoard) => {
             if (READ_ONLY) return;
+            // Пишем в ТУ доску, на которой рисовали, а не в открытую сейчас.
+            const target = ofBoard || activeBoardId;
             try {
-              localStorage.setItem('cf_exc_' + activeBoardId, json);
-              localStorage.setItem('cf_excf_' + activeBoardId, filesJson || '{}');
+              localStorage.setItem('cf_exc_' + target, json);
+              localStorage.setItem('cf_excf_' + target, filesJson || '{}');
             } catch (e) {}
             if (!db || !user) return;
             // Предел документа Firestore — 1 МБ, а картинки лежат в сцене
@@ -1398,7 +1493,7 @@
               showToast('⚠️ Доска переполнена (' + Math.round(weight / 1024) + ' КБ из 1000). Уберите часть картинок, иначе перестанет сохраняться');
             }
             trackWrite(
-              dataRef().collection('canvas').doc(excDocId(activeBoardId))
+              dataRef().collection('canvas').doc(excDocId(target))
                 .set({ elements: json, files: filesJson || '{}', lastBy: clientId })
                 .catch(err => { console.warn('saveExc', err); showToast('⚠️ Доска не сохранилась в облако — скорее всего, слишком тяжёлая из-за картинок'); })
             );
@@ -1467,8 +1562,12 @@
                   const w = Math.min(420, img.width);
                   const h = Math.round(w * img.height / Math.max(1, img.width));
                   const st = api.getAppState();
+                  // Вставлять можно и из «Галереи» — доска в этот момент
+                  // спрятана, и её прямоугольник нулевой. Тогда берём
+                  // разумный размер, иначе картинка уедет в угол сцены.
                   const box = document.getElementById('whiteboard-canvas');
-                  const rect = box ? box.getBoundingClientRect() : { width: 800, height: 600 };
+                  const r0 = box ? box.getBoundingClientRect() : null;
+                  const rect = (r0 && r0.width > 0 && r0.height > 0) ? r0 : { width: 800, height: 600 };
                   const cx = (rect.width / 2) / st.zoom.value - st.scrollX;
                   const cy = (rect.height / 2) / st.zoom.value - st.scrollY;
                   const made = window.ExcalidrawLib.convertToExcalidrawElements([
@@ -1486,17 +1585,18 @@
             });
           };
 
-          const excSave = useRef((j, f) => excCb.current.save(j, f)).current;
+          const excSave = useRef((j, f, b) => excCb.current.save(j, f, b)).current;
           const excView = useRef((a, b, c) => excCb.current.view(a, b, c)).current;
           const excTool = useRef((t) => excCb.current.tool(t)).current;
 
           useEffect(() => {
-            if (!excOn) { setExcElements(null); setExcFiles({}); return; }
+            if (!excOn) { setExcElements(null); setExcFiles({}); setExcBoardOf(null); return; }
             let local = [], localFiles = {};
             try { local = JSON.parse(localStorage.getItem('cf_exc_' + activeBoardId) || '[]'); } catch (e) {}
             try { localFiles = JSON.parse(localStorage.getItem('cf_excf_' + activeBoardId) || '{}'); } catch (e) {}
             setExcElements(Array.isArray(local) ? local : []);
             setExcFiles(localFiles && typeof localFiles === 'object' ? localFiles : {});
+            setExcBoardOf(activeBoardId);
             if (!db || !user) return;
             const unsub = dataRef().collection('canvas').doc(excDocId(activeBoardId))
               .onSnapshot(doc => {
@@ -1714,19 +1814,44 @@
           // Запасной путь: просим ИИ выписать ТОЛЬКО строки-заголовки. Ответ
           // короткий, а сам текст сцен режем у себя — так ничего не теряется
           // и не переписывается моделью.
-          const AI_SCRIPT_LIMIT = 30000;
-          const aiSplitScript = async (text) => {
-            const res = await callGeminiAI(
-              'Ниже текст сценария. Выпиши ТОЛЬКО строки-заголовки сцен, каждую с новой строки, ДОСЛОВНО как в тексте. '
-              + 'Ничего не добавляй, не нумеруй от себя, не пиши пояснений.\n\n' + text.substring(0, AI_SCRIPT_LIMIT), false);
-            if (!res) return [];
+          // За один запрос столько знаков модели и отдаём. Сценарий в 100 тысяч
+          // знаков режем на части и спрашиваем по очереди: раньше уходили
+          // только первые 30 000, и всё, что дальше, просто пропадало —
+          // у полного метра это три четверти сценария.
+          const AI_SCRIPT_CHUNK = 30000;
+          const AI_SCRIPT_MAX_PARTS = 30;   // ~900 000 знаков, вчетверо больше полного метра
+          // Режем ПО СТРОКАМ: заголовок — это строка целиком, и разорванный
+          // посередине он не нашёлся бы ни в одной из частей.
+          const chunkByLines = (lines, size) => {
+            const parts = []; let cur = [], len = 0;
+            lines.forEach(line => {
+              if (len && len + line.length + 1 > size) { parts.push(cur); cur = []; len = 0; }
+              cur.push(line); len += line.length + 1;
+            });
+            if (cur.length) parts.push(cur);
+            return parts;
+          };
+          const aiSplitScript = async (text, onProgress) => {
+            const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+            const parts = chunkByLines(lines, AI_SCRIPT_CHUNK).slice(0, AI_SCRIPT_MAX_PARTS);
             const norm = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
-            const heads = new Set(res.split('\n').map(norm).filter(Boolean));
-            return collectScenes(String(text).replace(/\r\n?/g, '\n').split('\n'), (line) => {
+            const heads = new Set();
+            for (let i = 0; i < parts.length; i++) {
+              if (onProgress) onProgress(i + 1, parts.length);
+              const res = await callGeminiAI(
+                'Ниже часть текста сценария. Выпиши ТОЛЬКО строки-заголовки сцен, каждую с новой строки, ДОСЛОВНО как в тексте. '
+                + 'Ничего не добавляй, не нумеруй от себя, не пиши пояснений.\n\n' + parts[i].join('\n'), false);
+              // Оборвалась связь или кончилась квота — не теряем то, что уже
+              // нашли: разберём по найденному, а сколько прочли, скажем честно.
+              if (res === null) return { scenes: [], done: i, total: parts.length, failed: true };
+              String(res).split('\n').map(norm).filter(Boolean).forEach(h => heads.add(h));
+            }
+            const found = collectScenes(lines, (line) => {
               if (!heads.has(norm(line))) return null;
               const m = String(line).match(/(\d[^\s.,:;]*)/);
               return { number: m ? m[1] : '', title: String(line).trim() };
             });
+            return { scenes: found, done: parts.length, total: parts.length, failed: false };
           };
 
           const normNum = (v) => String(v || '').replace(/\s/g, '').toLowerCase();
@@ -1796,10 +1921,19 @@
                   return;
                 }
                 showToast('Формат непривычный — зову ИИ...');
-                parsed = await aiSplitScript(text);
-                source = text.length > AI_SCRIPT_LIMIT
-                  ? `Разобрано с помощью ИИ, первые ${AI_SCRIPT_LIMIT.toLocaleString('ru-RU')} знаков из ${text.length.toLocaleString('ru-RU')}.`
-                  : 'Разобрано с помощью ИИ.';
+                const got = await aiSplitScript(text, (n, all) => {
+                  if (all > 1) showToast(`Разбираю сценарий с ИИ · часть ${n} из ${all}`);
+                });
+                parsed = got.scenes;
+                const знаков = text.length.toLocaleString('ru-RU');
+                if (got.failed) {
+                  setIsAILoading(false);
+                  showToast(`ИИ ответил не до конца — разобрано ${got.done} из ${got.total} частей. Попробуйте ещё раз`);
+                  return;
+                }
+                source = got.total > 1
+                  ? `Разобрано с помощью ИИ целиком: ${знаков} знаков, ${got.total} частей.`
+                  : `Разобрано с помощью ИИ: ${знаков} знаков.`;
               }
               setIsAILoading(false);
               if (!parsed.length) { showToast('Сцен в файле не нашлось'); return; }
@@ -1863,34 +1997,46 @@
           // Рисунок активной доски. Отдельная подписка: при переключении
           // доски нужно отцепиться от старого документа и подцепиться к
           // новому, иначе на новую доску прилетят чужие штрихи.
+          // Снимок рисунка кистью — чтобы показывать его в режиме Excalidraw
+          // КАРТИНКОЙ, а не живым холстом 4000×4000. Замер: живой холст стоит
+          // 50 мс на каждый шаг зума, снимок — 40, без него — 33 (это потолок
+          // самого Excalidraw). На iPad та же разница и дала «5 кадров».
+          const [inkShot, setInkShot] = useState(null);
           const canvasDocId = (boardId) => boardId === DEFAULT_BOARD.id ? 'globalDraw' : `draw-${boardId}`;
           useEffect(() => {
+            // Холста может не быть вовсе: в режиме Excalidraw вместо него
+            // висит снимок картинкой. Подписка на облако нужна и тогда —
+            // иначе, выключив режим, человек увидит пустую доску.
             const c = paintCanvasRef.current;
-            if (!c) return;
-            const ctx = c.getContext('2d');
-            ctx.clearRect(0, 0, c.width, c.height);
+            const ctx = c ? c.getContext('2d') : null;
+            if (ctx) ctx.clearRect(0, 0, c.width, c.height);
             // История отмены своя у каждой доски — иначе Ctrl+Z вернул бы
             // на эту доску рисунок с соседней.
             undoStack.current = []; setCanUndo(false);
             // сначала показываем локальную копию — она есть и без сети
             const local = localStorage.getItem('cf_canvas_draw_' + activeBoardId);
             lastSaved.current = local || null;
-            if (local) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = local; }
+            setInkShot(local || null);
+            if (local && ctx) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = local; }
             if (!db || !user) return;
             const unsub = db.collection('artifacts').doc(appId).collection('public').doc('data')
               .collection('canvas').doc(canvasDocId(activeBoardId))
               .onSnapshot(doc => {
-                if (!doc.exists || !paintCanvasRef.current) return;
+                if (!doc.exists) return;
                 if (doc.data().lastDrawBy === user.uid) return;
-                const cc = paintCanvasRef.current.getContext('2d');
                 lastSaved.current = doc.data().dataUrl || null;
+                setInkShot(doc.data().dataUrl || null);
+                const cc = paintCanvasRef.current ? paintCanvasRef.current.getContext('2d') : null;
+                if (!cc) return;
                 if (!doc.data().dataUrl) { cc.clearRect(0, 0, 4000, 4000); return; }
                 const img = new Image();
                 img.onload = () => { cc.clearRect(0, 0, 4000, 4000); cc.drawImage(img, 0, 0); };
                 img.src = doc.data().dataUrl;
               }, err => console.warn('sync canvas', err));
             return () => unsub();
-          }, [user, activeBoardId]);
+            // excOn в списке обязателен: возвращаясь от Excalidraw к кисти,
+            // холст создаётся заново и его надо снова наполнить.
+          }, [user, activeBoardId, excOn]);
 
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
           // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
@@ -3108,11 +3254,16 @@
                                         </button>
                                         <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
                                         {!READ_ONLY && (() => {
-                                          const onBoard = !!ref.boardId;
+                                          const onBoard = !excOn && !!ref.boardId;
                                           const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
                                           return (
                                             <button onClick={(e) => {
                                                       e.stopPropagation();
+                                                      // На доске Excalidraw наша карточка не годится: она ляжет
+                                                      // ПОД рисунок и в режиме черчения даже не нажмётся. Туда
+                                                      // картинку надо вставлять внутрь сцены — и сразу показать
+                                                      // доску, иначе человек нажал, а «ничего не произошло».
+                                                      if (excOn) { insertRefIntoExc(ref); setCurrentView('whiteboard'); return; }
                                                       const nextBoard = onBoard ? '' : activeBoardId;
                                                       const placed = { ...ref, boardId: nextBoard,
                                                         x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
@@ -3121,7 +3272,7 @@
                                                       syncDoc('references', ref.id, placed);
                                                       showToast(onBoard ? 'Убрано с доски · осталось в галерее' : 'Добавлено на доску');
                                                     }}
-                                                    title={onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску'}
+                                                    title={excOn ? 'Вставить в рисунок Excalidraw' : (onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску')}
                                                     className="absolute top-2 left-2 backdrop-blur w-7 h-7 rounded-lg transition-all text-xs z-20 flex items-center justify-center opacity-0 group-hover:opacity-100"
                                                     style={onBoard
                                                       ? { background: 'var(--accent)', color: 'var(--bg)', opacity: 1 }
@@ -3365,8 +3516,8 @@
                       {excOn && (
                         <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}
                              onPointerMoveCapture={excPenTool} onPointerDownCapture={excPenTool} onPointerUpCapture={excPenRestore}>
-                          {excElements !== null && (
-                            <ExcalidrawBoard key={activeBoardId} elements={excElements} files={excFiles} apiRef={excApi}
+                          {excElements !== null && excBoardOf === activeBoardId && (
+                            <ExcalidrawBoard key={activeBoardId} boardId={activeBoardId} elements={excElements} files={excFiles} apiRef={excApi}
                                              readOnly={READ_ONLY} onSave={excSave} onView={excView} onTool={excTool} />
                           )}
                         </div>
@@ -3411,11 +3562,19 @@
                           })()}
                         </svg>
 
-                        {/* Старый рисунок кистью виден и в режиме Excalidraw:
-                            раньше он просто прятался, и выглядело это как
-                            «включил Excalidraw — всё стёрлось». Рисовать по нему
-                            там нельзя (сверху свой холст), только смотреть. */}
-                        <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
+                        {/* Старый рисунок кистью виден и в режиме Excalidraw —
+                            иначе включение выглядело как «всё стёрлось». Но
+                            ЖИВОЙ холст 4000×4000 туда пускать нельзя: он
+                            масштабируется вместе с доской и пересчитывается на
+                            каждый шаг зума. Замер: живой холст 50 мс на шаг,
+                            снимок картинкой 40, без него 33 (потолок самого
+                            Excalidraw). Поэтому здесь показываем снимок. */}
+                        {excOn && inkShot && (
+                          <img src={inkShot} alt="" draggable={false}
+                               style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px',
+                                        pointerEvents: 'none', zIndex: 30 }} />
+                        )}
+                        {!excOn && <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
                           if (excOn) return;
                           if (wbMode === 'select') return;
                           notePen(e);
@@ -3498,7 +3657,7 @@
                           const wasPainting = isPainting;
                           setIsPainting(false); setIsPanning(false);
                           if (wasPainting) persistCanvas();
-                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${(excOn || wbMode === 'select') ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
+                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />}
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
@@ -3679,11 +3838,22 @@
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
                         </button>}
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
-                        <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску сцену или документ"
-                                className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}><Icons.Scene/></button>
+                        {/* Единственный путь к уже загруженным референсам с самой
+                            доски. На планшете подсказок по наведению НЕТ, поэтому
+                            в режиме Excalidraw кнопка подписана словом: голый
+                            значок сетки читался как «сцены», и референсы через
+                            него никто не находил. */}
+                        <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
+                                className={`cf-edit-only rounded-lg text-sm md:text-base shrink-0 transition-colors flex flex-col items-center justify-center ${excOn ? 'px-1.5 py-1.5 gap-0.5' : 'p-2.5'} ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}>
+                          {excOn ? <Icons.Gallery/> : <Icons.Scene/>}
+                          {excOn && <span style={{ fontSize: 8.5, lineHeight: 1, letterSpacing: '.02em' }}>Рефы</span>}
+                        </button>
                         <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок кистью?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
+                        {/* Пустая карточка референса на доске Excalidraw бесполезна
+                            и вдобавок сбивает: её значок принимают за «мои
+                            референсы». Новые картинки туда кладёт сам Excalidraw. */}
+                        {!excOn && <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>}
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок кистью?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; setInkShot(null); saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
                       </div>
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
