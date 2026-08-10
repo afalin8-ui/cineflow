@@ -232,6 +232,7 @@
             Pen: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>,
             Eraser: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>,
             Move: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="9 19 12 22 15 19"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>,
+            Hand: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>,
             Sticky: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></svg>,
             Trash: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>,
             User: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
@@ -524,6 +525,8 @@
             const [brushSize, setBrushSize] = useState(4);
             const [tool, setTool] = useState('brush'); 
             const lastPoint = useRef({ x: 0, y: 0, pressure: 0.5, time: 0 });
+          // Идёт ли сейчас штрих обратным концом стилуса
+          const penErase = useRef(false);
 
             useEffect(() => {
                 const canvas = canvasRef.current;
@@ -542,11 +545,14 @@
 
             const startDrawing = (e) => {
                 e.target.setPointerCapture(e.pointerId);
+                // Обратный конец стилуса = ластик на один штрих. Браузер
+                // сообщает о нём отдельной кнопкой (button 5 / бит 32).
+                penErase.current = e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) === 32);
                 setIsDrawing(true); const pos = getPos(e); lastPoint.current = { ...pos, time: Date.now() };
                 const ctx = canvasRef.current.getContext('2d'); ctx.beginPath();
                 const baseBrush = brushSize * (canvasRef.current.width / 800);
                 ctx.arc(pos.x, pos.y, (baseBrush * (0.5 + pos.pressure)) / 2, 0, Math.PI * 2);
-                ctx.fillStyle = tool === 'eraser' ? '#262624' : color; ctx.fill();
+                ctx.fillStyle = (tool === 'eraser' || penErase.current) ? '#262624' : color; ctx.fill();
             };
 
             const draw = (e) => {
@@ -559,7 +565,7 @@
                 ctx.quadraticCurveTo(lastPoint.current.x, lastPoint.current.y, (lastPoint.current.x + pos.x) / 2, (lastPoint.current.y + pos.y) / 2);
                 ctx.lineTo(pos.x, pos.y);
                 
-                ctx.strokeStyle = tool === 'eraser' ? '#262624' : color;
+                ctx.strokeStyle = (tool === 'eraser' || penErase.current) ? '#262624' : color;
                 const baseBrush = brushSize * (canvasRef.current.width / 800);
                 ctx.lineWidth = baseBrush * (0.5 + press * 1.5); ctx.stroke();
                 lastPoint.current = { ...pos, time: cT };
@@ -569,6 +575,7 @@
                 if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
                     e.target.releasePointerCapture(e.pointerId);
                 }
+                penErase.current = false;
                 setIsDrawing(false);
             };
 
@@ -1196,6 +1203,30 @@
           const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
           const lastPoint = useRef({ x: 0, y: 0, pressure: 0.5, time: 0 });
+          // Идёт ли сейчас штрих обратным концом стилуса
+          const penErase = useRef(false);
+          // Стилус на планшете. Как только человек хоть раз коснулся доски
+          // пером, палец перестаёт рисовать и начинает двигать доску —
+          // так устроены все рисовалки на iPad, и так ладонь не оставляет
+          // клякс. Пока пера не видели, ничего не меняется: палец рисует,
+          // как рисовал, иначе на устройстве без стилуса рисовать стало бы
+          // нечем. Замеченный стилус помним между запусками — на iPad
+          // приложение выгружается из памяти постоянно.
+          const [penSeen, setPenSeen] = useState(() => { try { return localStorage.getItem('cf_pen_seen') === '1'; } catch (e) { return false; } });
+          const [fingerPans, setFingerPans] = useState(() => { try { return localStorage.getItem('cf_pen_pan') !== '0'; } catch (e) { return true; } });
+          const notePen = (e) => {
+            if (e.pointerType !== 'pen' || penSeen) return;
+            setPenSeen(true);
+            try { localStorage.setItem('cf_pen_seen', '1'); } catch (err) {}
+          };
+          const toggleFingerPans = () => setFingerPans(v => {
+            const next = !v;
+            try { localStorage.setItem('cf_pen_pan', next ? '1' : '0'); } catch (e) {}
+            return next;
+          });
+          // Обратный конец стилуса: браузер сообщает о нём отдельной кнопкой
+          // (button 5 при касании, бит 32 в buttons — в том числе на весу).
+          const isPenEraser = (e) => e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) === 32);
 
           // --- ДВИЖОК КИСТИ ---
           // stroke хранит состояние текущего штриха: предыдущая точка,
@@ -1315,6 +1346,32 @@
           const [excElements, setExcElements] = useState(null);
           const [excFiles, setExcFiles] = useState({});
           const excDocId = (boardId) => 'exc-' + boardId;
+
+          // Обратный конец стилуса в режиме Excalidraw. У него смена
+          // инструмента идёт через состояние React, то есть вступает в силу
+          // на СЛЕДУЮЩЕМ событии — если ловить только момент касания, первый
+          // штрих успел бы нарисовать. Поэтому ловим ещё и на весу: перо
+          // сообщает о перевёрнутом конце, пока висит над экраном, и ластик
+          // включается до касания. Инструмент возвращаем, когда перо
+          // оторвали или повернули обратно.
+          const excPrevTool = useRef(null);
+          const excPenTool = (e) => {
+            notePen(e);
+            if (e.pointerType !== 'pen' || !excApi.current) return;
+            if (!isPenEraser(e)) { excPenRestore(); return; }
+            if (excPrevTool.current) return;
+            const st = excApi.current.getAppState && excApi.current.getAppState();
+            const cur = (st && st.activeTool && st.activeTool.type) || 'freedraw';
+            if (cur === 'eraser') return;
+            excPrevTool.current = cur;
+            excApi.current.setActiveTool({ type: 'eraser' });
+          };
+          const excPenRestore = () => {
+            if (!excPrevTool.current || !excApi.current) return;
+            const back = excPrevTool.current;
+            excPrevTool.current = null;
+            excApi.current.setActiveTool({ type: back });
+          };
 
           const toggleExcalidraw = () => {
             const next = excOn ? '' : 'exc';
@@ -3306,7 +3363,8 @@
                           уметь чертить — разметить кадр, показать движение.
                           Холст прозрачный, поэтому карточки видно насквозь. */}
                       {excOn && (
-                        <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}>
+                        <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}
+                             onPointerMoveCapture={excPenTool} onPointerDownCapture={excPenTool} onPointerUpCapture={excPenRestore}>
                           {excElements !== null && (
                             <ExcalidrawBoard key={activeBoardId} elements={excElements} files={excFiles} apiRef={excApi}
                                              readOnly={READ_ONLY} onSave={excSave} onView={excView} onTool={excTool} />
@@ -3353,29 +3411,40 @@
                           })()}
                         </svg>
 
-                        {!excOn && <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
+                        {/* Старый рисунок кистью виден и в режиме Excalidraw:
+                            раньше он просто прятался, и выглядело это как
+                            «включил Excalidraw — всё стёрлось». Рисовать по нему
+                            там нельзя (сверху свой холст), только смотреть. */}
+                        <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
+                          if (excOn) return;
                           if (wbMode === 'select') return;
-                          if (wbMode === 'pan') { 
+                          notePen(e);
+                          // Есть стилус — палец двигает доску, а не рисует.
+                          if (wbMode === 'pan' || (penSeen && fingerPans && e.pointerType === 'touch')) {
                               e.currentTarget.setPointerCapture(e.pointerId);
-                              setIsPanning(true); 
-                              setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y }); 
-                              return; 
+                              setIsPanning(true);
+                              setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
+                              return;
                           }
                           e.currentTarget.setPointerCapture(e.pointerId);
                           const rect = paintCanvasRef.current.getBoundingClientRect();
                           const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
                           const press = (e.pressure !== undefined && e.pressure > 0 && e.pointerType === 'pen') ? e.pressure : 0.5;
+                          // Обратный конец стилуса стирает — но только этим
+                          // штрихом, выбранный инструмент не меняем.
+                          penErase.current = isPenEraser(e);
                           pushUndo();
                           setIsPainting(true);
                           stroke.current = { prev: coords, prevMid: coords, press };
                           lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
                           const ctx = paintCanvasRef.current.getContext('2d');
                           ctx.save();
-                          applyBrush(ctx, wbMode, brushType, brushColor, brushSize * (0.35 + press * 1.3));
+                          applyBrush(ctx, penErase.current ? 'erase' : wbMode, brushType, brushColor, brushSize * (0.35 + press * 1.3));
                           ctx.beginPath(); ctx.arc(coords.x, coords.y, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill();
                           ctx.restore();
                         }} onPointerMove={(e) => {
-                          if (isPanning && wbMode === 'pan') { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
+                          if (excOn) return;
+                          if (isPanning) { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
                           if (!isPainting || wbMode === 'select') return;
                           const c = paintCanvasRef.current; if (!c) return;
                           const ctx = c.getContext('2d');
@@ -3399,7 +3468,7 @@
                               : Math.max(0.15, Math.min(1, 1 - dist / 45));
                             st.press = st.press * 0.7 + raw * 0.3;
                             const mid = { x: (st.prev.x + cur.x) / 2, y: (st.prev.y + cur.y) / 2 };
-                            applyBrush(ctx, wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
+                            applyBrush(ctx, penErase.current ? 'erase' : wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
                             // Квадратичная кривая через середины отрезков — даёт
                             // непрерывный гладкий путь вместо ломаной.
                             ctx.beginPath();
@@ -3420,15 +3489,16 @@
                           if (isPainting && st.prev && st.prevMid && paintCanvasRef.current) {
                             const ctx = paintCanvasRef.current.getContext('2d');
                             ctx.save();
-                            applyBrush(ctx, wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
+                            applyBrush(ctx, penErase.current ? 'erase' : wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
                             ctx.beginPath(); ctx.moveTo(st.prevMid.x, st.prevMid.y); ctx.lineTo(st.prev.x, st.prev.y); ctx.stroke();
                             ctx.restore();
                           }
                           stroke.current = { prev: null, prevMid: null, press: 0.5 };
+                          penErase.current = false;
                           const wasPainting = isPainting;
                           setIsPainting(false); setIsPanning(false);
                           if (wasPainting) persistCanvas();
-                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />}
+                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${(excOn || wbMode === 'select') ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
@@ -3600,6 +3670,10 @@
                         <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title={excOn ? 'Рисовать (инструменты Excalidraw)' : 'Кисть'}><Icons.Pen/></button>
                         {!excOn && <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>}
                         {!excOn && <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>}
+                        {/* Появляется только после первого касания стилусом:
+                            на устройстве без пера этой кнопке нечего делать. */}
+                        {!excOn && penSeen && <button onClick={toggleFingerPans} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${fingerPans ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}
+                          title={fingerPans ? 'Рисует только стилус, палец двигает доску. Нажмите, чтобы палец тоже рисовал' : 'Палец тоже рисует. Нажмите, чтобы рисовал только стилус'}><Icons.Hand/></button>}
                         {!excOn && <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
@@ -3609,7 +3683,7 @@
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}><Icons.Scene/></button>
                         <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
                         <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
-                        {!excOn && <button onClick={() => setConfirmAction({title: 'Очистить рисунки?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить скетчи"><Icons.Trash/></button>}
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок кистью?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
                       </div>
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
