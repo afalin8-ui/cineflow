@@ -3550,19 +3550,19 @@
                                           {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && <option value={activeFolder}>{activeFolder}</option>}
                                           <option value="__new__">+ новая папка…</option>
                                         </select>
-                                        {/* Теги ОДНОЙ строкой: при переносе карточка росла
-                                            от каждого тега, и в сетке это съедало экран.
-                                            Список прокручивается вбок, поле ввода стоит
-                                            отдельно и не уезжает вместе с ним. */}
-                                        <div className="flex items-center gap-1.5">
-                                            <div className="flex gap-1 overflow-x-auto hide-scrollbar flex-1 min-w-0">
-                                                {(ref.tags || []).map((tag, idx) => (
-                                                    <span key={idx} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1 shrink-0 whitespace-nowrap">
-                                                        {tag} <button onClick={() => removeTagFrom(ref, tag)} className="hover:text-white cf-edit-only">✕</button>
-                                                    </span>
-                                                ))}
-                                            </div>
-                                            <span className="shrink-0 cf-edit-only"><TagInput ref_={ref} hints={tagHints} onAdd={addTagTo} narrow /></span>
+                                        {/* Теги видны ВСЕ — в этом весь смысл общего листа:
+                                            пробегаешь глазами и сразу понимаешь, что чем
+                                            размечено. Прятать их в одну строку с прокруткой
+                                            ПРОБОВАЛИ и откатили. Экономим иначе: чипы
+                                            плотнее, поле ввода узкое и расширяется при наборе. */}
+                                        <div className="flex flex-wrap items-center gap-1">
+                                            {(ref.tags || []).map((tag, idx) => (
+                                                <span key={idx} className="bg-indigo-900/40 text-indigo-200 rounded flex items-center gap-0.5 whitespace-nowrap"
+                                                      style={{ fontSize: 10.5, padding: '1px 5px', lineHeight: 1.45 }}>
+                                                    {tag} <button onClick={() => removeTagFrom(ref, tag)} className="hover:text-white cf-edit-only" style={{ fontSize: 9, opacity: .75 }}>✕</button>
+                                                </span>
+                                            ))}
+                                            <span className="cf-edit-only"><TagInput ref_={ref} hints={tagHints} onAdd={addTagTo} narrow /></span>
                                         </div>
                                     </div>
                                 </div>
