@@ -923,7 +923,7 @@
         // Отдельным компонентом намеренно: набранные буквы живут в его
         // собственном состоянии и не заставляют перерисовываться всю
         // галерею — при сотне референсов это заметно на планшете.
-        const TagInput = ({ ref_, hints, onAdd }) => {
+        const TagInput = ({ ref_, hints, onAdd, narrow }) => {
           const [typed, setTyped] = useState('');
           const [open, setOpen] = useState(false);
           const [at, setAt] = useState(null);
@@ -971,7 +971,7 @@
                 // Закрываем с задержкой: без неё палец не успевает нажать
                 // подсказку — поле теряет фокус раньше, чем срабатывает выбор.
                 onBlur={() => setTimeout(() => { setOpen(false); if (typed.trim()) put(typed); }, 180)}
-                className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-24 min-w-0" />
+                className={`bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none min-w-0 ${narrow ? 'w-14 focus:w-24 transition-all' : 'w-24'}`} />
               {list.length > 0 && at && ReactDOM.createPortal(
                 <div className="flex flex-wrap gap-1 p-1.5 rounded-lg cf-tag-hints"
                      style={{ position: 'fixed', left: at.left, width: at.width,
@@ -1259,17 +1259,40 @@
                                   y: (240 - canvasOffset.y) / zoom + Math.floor(i++ / 5) * 190 }),
                           `На доску добавлено ${selectedRefIds.length} шт.`);
           };
+          // Удаление референсов — ТОЛЬКО через эту дверь: она же кладёт
+          // удалённое в корзину, откуда его можно вернуть. Потерять чужую
+          // подборку из-за одного промаха по крестику слишком дорого.
+          const undoTimer = useRef(null);
+          const [undoBin, setUndoBin] = useState(null);
+          const deleteRefs = (list) => {
+            const items = (list || []).filter(Boolean);
+            if (!items.length) return;
+            const ids = items.map(r => r.id);
+            setReferences(references.filter(r => !ids.includes(r.id)));
+            ids.forEach(id => deleteNetDoc('references', id));
+            setSelectedRefIds(sel => sel.filter(id => !ids.includes(id)));
+            setUndoBin({ items });
+            clearTimeout(undoTimer.current);
+            undoTimer.current = setTimeout(() => setUndoBin(null), 15000);
+          };
+          const restoreRefs = () => {
+            if (!undoBin) return;
+            const items = undoBin.items;
+            setReferences(prev => {
+              const есть = new Set(prev.map(r => r.id));
+              return [...prev, ...items.filter(r => !есть.has(r.id))];
+            });
+            items.forEach(r => syncDoc('references', r.id, r));
+            clearTimeout(undoTimer.current);
+            setUndoBin(null);
+            showToast(items.length === 1 ? 'Референс возвращён' : `Возвращено ${items.length} шт.`);
+          };
           const bulkDeleteRefs = () => {
+            const ids = [...selectedRefIds];
             setConfirmAction({
-              title: `Удалить ${selectedRefIds.length} изображений?`,
-              message: 'Выделенные референсы удалятся из проекта. Действие необратимо.',
-              onConfirm: () => {
-                const ids = [...selectedRefIds];
-                setReferences(references.filter(r => !ids.includes(r.id)));
-                ids.forEach(id => deleteNetDoc('references', id));
-                setSelectedRefIds([]);
-                showToast(`Удалено ${ids.length} шт.`);
-              }
+              title: `Удалить ${ids.length} изображений?`,
+              message: 'Выделенные референсы удалятся из проекта. Сразу после удаления их можно будет вернуть кнопкой.',
+              onConfirm: () => deleteRefs(references.filter(r => ids.includes(r.id)))
             });
           };
           // Список тегов с количеством референсов у каждого.
@@ -2879,6 +2902,24 @@
               )}
               {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
 
+              {/* Возврат только что удалённого. Держится 15 секунд — этого
+                  хватает, чтобы заметить промах, и не мешает дальше работать.
+                  Стоит ВЫШЕ обычных сообщений, чтобы они не перекрывались. */}
+              {undoBin && (
+                <div className="fixed left-1/2 -translate-x-1/2 glass-panel rounded-full z-[401] flex items-center gap-3 pl-5 pr-2 py-2 border-t border-white/10"
+                     style={{ bottom: toast ? 76 : 24, maxWidth: 'calc(100vw - 32px)' }}>
+                  <span className="text-sm text-zinc-300 truncate">
+                    {undoBin.items.length === 1
+                      ? `Удалён «${undoBin.items[0].label || 'без названия'}»`
+                      : `Удалено ${undoBin.items.length} шт.`}
+                  </span>
+                  <button onClick={restoreRefs} className="shrink-0 px-4 py-1.5 rounded-full text-xs font-bold"
+                          style={{ background: 'var(--accent)', color: 'var(--bg)' }}>Вернуть</button>
+                  <button onClick={() => { clearTimeout(undoTimer.current); setUndoBin(null); }}
+                          title="Скрыть" className="shrink-0 w-7 h-7 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 flex items-center justify-center text-xs">✕</button>
+                </div>
+              )}
+
               {/* РЕЛЬС НАВИГАЦИИ (десктоп) */}
               <nav className="cf-rail hidden md:flex flex-col items-center shrink-0 z-40">
                 <div className="flex items-center justify-center shrink-0"
@@ -3379,8 +3420,8 @@
                                     const hints = tagHints(bulkTagInput, []);
                                     if (!hints.length) return null;
                                     return (
-                                      <div className="flex flex-wrap gap-1 mt-1.5">
-                                        {hints.slice(0, 6).map(t => (
+                                      <div className="flex gap-1 mt-1.5 overflow-x-auto hide-scrollbar">
+                                        {hints.slice(0, 4).map(t => (
                                           <button key={t} onClick={() => setBulkTagInput(t)} className="cf-chip shrink-0" style={{ fontSize: 11 }}>{t}</button>
                                         ))}
                                       </div>
@@ -3457,7 +3498,12 @@
                                                 style={isSel ? { background: 'var(--accent)', color: 'var(--bg)' } : { background: 'rgba(0,0,0,.8)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                                         </button>
-                                        <button onClick={(e) => { e.stopPropagation(); setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }} className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                        <button onClick={(e) => { e.stopPropagation(); setConfirmAction({
+                                                    title: 'Удалить референс?',
+                                                    message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта. Сразу после удаления его можно будет вернуть кнопкой.',
+                                                    onConfirm: () => deleteRefs([ref]) }); }}
+                                                title="Удалить референс"
+                                                className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
                                         {!READ_ONLY && (() => {
                                           const onBoard = !excOn && !!ref.boardId;
                                           const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
@@ -3504,13 +3550,19 @@
                                           {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && <option value={activeFolder}>{activeFolder}</option>}
                                           <option value="__new__">+ новая папка…</option>
                                         </select>
-                                        <div className="flex flex-wrap gap-1">
-                                            {(ref.tags || []).map((tag, idx) => (
-                                                <span key={idx} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1">
-                                                    {tag} <button onClick={() => removeTagFrom(ref, tag)} className="hover:text-white">✕</button>
-                                                </span>
-                                            ))}
-                                            <TagInput ref_={ref} hints={tagHints} onAdd={addTagTo} />
+                                        {/* Теги ОДНОЙ строкой: при переносе карточка росла
+                                            от каждого тега, и в сетке это съедало экран.
+                                            Список прокручивается вбок, поле ввода стоит
+                                            отдельно и не уезжает вместе с ним. */}
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="flex gap-1 overflow-x-auto hide-scrollbar flex-1 min-w-0">
+                                                {(ref.tags || []).map((tag, idx) => (
+                                                    <span key={idx} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1 shrink-0 whitespace-nowrap">
+                                                        {tag} <button onClick={() => removeTagFrom(ref, tag)} className="hover:text-white cf-edit-only">✕</button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                            <span className="shrink-0 cf-edit-only"><TagInput ref_={ref} hints={tagHints} onAdd={addTagTo} narrow /></span>
                                         </div>
                                     </div>
                                 </div>
