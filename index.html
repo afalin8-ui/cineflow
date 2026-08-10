@@ -663,40 +663,41 @@
                     {/* Теги кадра — окошком в левом нижнем углу. Поднято над
                         нижней полосой со счётчиком, чтобы не налезать на неё. */}
                     {onAddTag && (tagsOpen ? (
-                        <div className="cf-lb-tags absolute glass-panel rounded-lg p-3 z-20 border-t border-white/10"
-                             style={{ left: 16, bottom: 76, width: 268, maxWidth: 'calc(100vw - 32px)' }}>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="cf-eyebrow">Теги кадра</span>
-                                <button onClick={() => toggleTags(false)} title="Спрятать теги"
-                                        className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 text-[11px]">✕</button>
-                            </div>
+                        <div className="cf-lb-tags absolute glass-panel rounded-lg z-20 border-t border-white/10"
+                             style={{ left: 16, bottom: 76, padding: 8, width: 'max-content',
+                                      minWidth: 150, maxWidth: 'min(320px, calc(100vw - 32px))' }}>
                             {/* Поле ввода СВЕРХУ, теги под ним. Окошко стоит внизу
                                 экрана, поэтому список подсказок разворачивается
                                 вверх — и, стой поле последним, он закрывал бы
-                                собой сами теги. */}
-                            <div className="cf-edit-only mb-2">
-                                <TagInput key={currentRef.id} ref_={currentRef} hints={hints} onAdd={onAddTag} />
+                                собой сами теги. Заголовка нет намеренно: в
+                                полноэкранном режиме место дороже подписи. */}
+                            <button onClick={() => toggleTags(false)} title="Спрятать теги"
+                                    className="absolute w-5 h-5 flex items-center justify-center rounded text-zinc-600 hover:text-white hover:bg-white/10"
+                                    style={{ top: 4, right: 4, fontSize: 10 }}>✕</button>
+                            <div className="cf-edit-only" style={{ paddingRight: 22 }}>
+                                <TagInput key={currentRef.id} ref_={currentRef} hints={hints} onAdd={onAddTag} narrow />
                             </div>
-                            <div className="flex flex-wrap gap-1 items-center">
+                            <div className="flex flex-wrap gap-1 items-center mt-1.5">
                                 {(currentRef.tags || []).length === 0 && (
-                                    <span className="cf-meta">Пока без тегов</span>
+                                    <span className="cf-meta">Без тегов</span>
                                 )}
                                 {(currentRef.tags || []).map(t => (
-                                    <span key={t} className="bg-indigo-900/40 text-indigo-200 text-[11px] px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <span key={t} className="bg-indigo-900/40 text-indigo-200 rounded flex items-center gap-0.5 whitespace-nowrap"
+                                          style={{ fontSize: 10.5, padding: '1px 5px', lineHeight: 1.45 }}>
                                         {t}
                                         <button onClick={() => onRemoveTag(currentRef, t)} title="Убрать тег"
-                                                className="cf-edit-only hover:text-white">✕</button>
+                                                className="cf-edit-only hover:text-white" style={{ fontSize: 9, opacity: .75 }}>✕</button>
                                     </span>
                                 ))}
                             </div>
                         </div>
                     ) : (
                         <button onClick={() => toggleTags(true)} title="Показать теги кадра"
-                                className="absolute glass-panel rounded-full px-3.5 py-2 z-20 flex items-center gap-1.5 text-zinc-300 hover:text-white transition-colors"
+                                className="absolute glass-panel rounded-full px-3 py-1.5 z-20 flex items-center gap-1.5 text-zinc-400 hover:text-white transition-colors"
                                 style={{ left: 16, bottom: 76 }}>
                             <Icons.Tag/>
-                            <span style={{ fontSize: 11.5, fontWeight: 600 }}>
-                                Теги{(currentRef.tags || []).length ? ' · ' + currentRef.tags.length : ''}
+                            <span style={{ fontSize: 11, fontWeight: 600 }}>
+                                {(currentRef.tags || []).length || ''}
                             </span>
                         </button>
                     ))}
