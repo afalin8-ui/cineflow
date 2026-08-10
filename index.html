@@ -1838,16 +1838,46 @@
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
           // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
           // устройстве его собственный проект.
+          // Раньше это делалось СРАЗУ и ЦЕЛИКОМ: на каждую набранную букву
+          // весь проект — вместе с картинками референсов и раскадровки —
+          // заново упаковывался в строку и писался на диск. На проекте
+          // в 3 МБ это давало 9 кадров в секунду при обычной печати.
+          // Теперь, во-первых, с задержкой (пока печатают — не пишем),
+          // во-вторых, только то, что реально изменилось: ссылка на массив
+          // у нетронутых коллекций та же, сравнение по ней и отсекает.
+          const savedSnap = useRef({});
+          const flushLocal = useRef(() => {});
           useEffect(() => {
             if (READ_ONLY) return;
-            const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('localStorage переполнен:', k); } };
-            save('cf_scenes', scenes); save('cf_storyboard', storyboard);
-            save('cf_references', references); save('cf_stickies', stickies);
-            save('cf_docs', docs); save('cf_crew', crew);
-            save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
-            save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
-            save('cf_boards', boards);
+            const doSave = () => {
+              const save = (k, v) => {
+                if (savedSnap.current[k] === v) return;
+                try { localStorage.setItem(k, JSON.stringify(v)); savedSnap.current[k] = v; }
+                catch (e) { console.warn('localStorage переполнен:', k); }
+              };
+              save('cf_scenes', scenes); save('cf_storyboard', storyboard);
+              save('cf_references', references); save('cf_stickies', stickies);
+              save('cf_docs', docs); save('cf_crew', crew);
+              save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
+              save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
+              save('cf_boards', boards);
+            };
+            flushLocal.current = doSave;
+            const t = setTimeout(doSave, 700);
+            return () => clearTimeout(t);
           }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards]);
+
+          // Задержка экономит силы при печати, но приложение могут свернуть
+          // раньше, чем она истечёт, — на iPad это происходит постоянно.
+          // Поэтому при уходе со страницы дописываем немедленно.
+          useEffect(() => {
+            if (READ_ONLY) return;
+            const flush = () => { try { flushLocal.current(); } catch (e) {} };
+            const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
+            document.addEventListener('visibilitychange', onVis);
+            window.addEventListener('pagehide', flush);
+            return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('pagehide', flush); };
+          }, []);
 
           // Выделение в галерее не должно ссылаться на удалённые изображения
           useEffect(() => {
@@ -2187,13 +2217,18 @@
               let updatedStickies = [...stickies], changedSt = false;
               let updatedDocs = [...docs], changedD = false;
 
+              // Карточки прилипают к сетке в 24 точки, поэтому при медленном
+              // ведении большинство движений указателя не меняют положение
+              // вообще. Раньше состояние переписывалось на каждое такое
+              // движение, и всё приложение перерисовывалось впустую.
+              const same = (arr, id, nx, ny) => { const c = arr.find(o => o.id === id); return c && c.x === nx && c.y === ny; };
               draggingWbItems.items.forEach(item => {
                   const nx = Math.round((item.ox + dx) / 24) * 24;
                   const ny = Math.round((item.oy + dy) / 24) * 24;
-                  if (item.type === 'scene') { updatedScenes = updatedScenes.map(sc => sc.id === item.id ? {...sc, x: nx, y: ny} : sc); changedS = true; }
-                  else if (item.type === 'ref') { updatedRefs = updatedRefs.map(r => r.id === item.id ? {...r, x: nx, y: ny} : r); changedR = true; }
-                  else if (item.type === 'sticky') { updatedStickies = updatedStickies.map(st => st.id === item.id ? {...st, x: nx, y: ny} : st); changedSt = true; }
-                  else if (item.type === 'doc') { updatedDocs = updatedDocs.map(d => d.id === item.id ? {...d, x: nx, y: ny} : d); changedD = true; }
+                  if (item.type === 'scene') { if (same(updatedScenes, item.id, nx, ny)) return; updatedScenes = updatedScenes.map(sc => sc.id === item.id ? {...sc, x: nx, y: ny} : sc); changedS = true; }
+                  else if (item.type === 'ref') { if (same(updatedRefs, item.id, nx, ny)) return; updatedRefs = updatedRefs.map(r => r.id === item.id ? {...r, x: nx, y: ny} : r); changedR = true; }
+                  else if (item.type === 'sticky') { if (same(updatedStickies, item.id, nx, ny)) return; updatedStickies = updatedStickies.map(st => st.id === item.id ? {...st, x: nx, y: ny} : st); changedSt = true; }
+                  else if (item.type === 'doc') { if (same(updatedDocs, item.id, nx, ny)) return; updatedDocs = updatedDocs.map(d => d.id === item.id ? {...d, x: nx, y: ny} : d); changedD = true; }
               });
 
               if (changedS) setScenes(updatedScenes);
@@ -2242,6 +2277,23 @@
           // --- Размер карточки референса на доске ---
           // Ширина живёт в поле w у референса; высота считается по ней,
           // чтобы связи и рамка выделения знали габариты карточки.
+          // Размытая подложка карточки — это `url(<картинка в 200 КБ>)`.
+          // Строка пересобиралась на КАЖДУЮ перерисовку каждой карточки,
+          // и React каждый раз сравнивал её посимвольно: восемнадцать
+          // референсов давали мегабайты сравнения на кадр. Держим готовый
+          // объект стиля по ссылке — сравнение становится мгновенным.
+          const bgCache = useRef(new Map());
+          const bgStyle = (id, url) => {
+            const c = bgCache.current.get(id);
+            if (c && c.url === url) return c.style;
+            const style = { backgroundImage: `url(${url})` };
+            // Каждая запись держит картинку целиком, поэтому не даём копиться:
+            // за долгий сеанс с заменой референсов это стало бы утечкой.
+            if (bgCache.current.size > 200) bgCache.current.clear();
+            bgCache.current.set(id, { url, style });
+            return style;
+          };
+
           const REF_W = 192;
           const refW = (r) => Math.round(r.w || REF_W);
           const refH = (r) => Math.round((refW(r) - 20) * 9 / 16) + 58;
@@ -2726,7 +2778,7 @@
                               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                 {sceneRefs.map(ref => (
                                   <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: ref.id })}>
-                                    <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={{backgroundImage: `url(${ref.url})`}}></div>
+                                    <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={bgStyle(ref.id, ref.url)}></div>
                                     {/* Отвязываем от сцены, а НЕ удаляем из проекта:
                                         раньше эта кнопка стирала картинку насовсем */}
                                     <button onClick={(e) => { e.stopPropagation(); setItemScene(ref.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
@@ -2990,7 +3042,7 @@
                               return (
                                 <div key={ref.id} className={`glass-panel rounded-lg overflow-hidden flex flex-col group border-t transition-all ${isSel ? 'ring-2' : 'border-white/10'}`} style={isSel ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : undefined}>
                                     <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => { if (selectedRefIds.length > 0) { toggleRefSelection(ref.id); } else { setLightboxData({ scope: visibleRefs.map(x => x.id), scopeLabel: [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Вся галерея', currentId: ref.id }); } }}>
-                                        <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={{backgroundImage: `url(${ref.url})`}}></div>
+                                        <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={bgStyle(ref.id, ref.url)}></div>
                                         <button onClick={(e) => { e.stopPropagation(); toggleRefSelection(ref.id); }}
                                                 title={isSel ? 'Снять выделение' : 'Выделить'}
                                                 className={`cf-edit-only absolute bottom-2 left-2 w-7 h-7 rounded-lg z-20 flex items-center justify-center transition-all ${isSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
@@ -3400,7 +3452,7 @@
                                 <div className="relative aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/10">
                                 <button onClick={() => setConfirmAction({title:'Удалить референс?', message:'Убрать с доски?', onConfirm:()=> { setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
                                 {ref.url ? (<React.Fragment>
-                                    <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={{backgroundImage: `url(${ref.url})`}}></div>
+                                    <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={bgStyle(ref.id, ref.url)}></div>
                                     <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-[1]" draggable="false" />
                                 </React.Fragment>) : (
                                     <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
