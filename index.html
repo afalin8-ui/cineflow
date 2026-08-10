@@ -156,6 +156,12 @@
         /* служебная моно-подпись: слаглайн, дата, счётчики */
         .cf-meta { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .04em; color: var(--muted-2); }
 
+        /* Карточка галереи: браузер пропускает отрисовку того, что за
+           экраном. При сотне референсов это главный рычаг для прокрутки.
+           Где не поддерживается (старые Safari) — правило просто
+           игнорируется, ничего не ломая. Высоту подсказываем заранее,
+           иначе полоса прокрутки скачет. */
+        .cf-ref-card { content-visibility: auto; contain-intrinsic-size: auto 300px; }
         /* чип параметра или тега */
         .cf-chip { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .04em; color: var(--muted); background: var(--panel); border: 1px solid var(--border); padding: 4px 7px; border-radius: 5px; }
         .cf-chip-accent { color: var(--accent); background: transparent; border-color: var(--accent-line); }
@@ -854,6 +860,43 @@
         // memo обязателен: без него любая перерисовка приложения — набранная
         // буква в карточке, пришедшее сообщение — заставляла Excalidraw
         // перерисоваться целиком. Все входящие свойства держим неизменными.
+        // Поле тега с подсказками из УЖЕ ИСПОЛЬЗОВАННЫХ в проекте.
+        // Отдельным компонентом намеренно: набранные буквы живут в его
+        // собственном состоянии и не заставляют перерисовываться всю
+        // галерею — при сотне референсов это заметно на планшете.
+        const TagInput = ({ ref_, hints, onAdd }) => {
+          const [typed, setTyped] = useState('');
+          const [open, setOpen] = useState(false);
+          const list = open ? hints(typed, ref_.tags) : [];
+          const put = (v) => { onAdd(ref_, v); setTyped(''); setOpen(false); };
+          return (
+            <span className="relative inline-block">
+              <input type="text" placeholder="+ тег" value={typed}
+                onChange={e => { setTyped(e.target.value); setOpen(true); }}
+                onFocus={() => setOpen(true)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); put(typed); }
+                  if (e.key === 'Escape') setOpen(false);
+                }}
+                // Закрываем с задержкой: без неё палец не успевает нажать
+                // подсказку — поле теряет фокус раньше, чем срабатывает выбор.
+                onBlur={() => setTimeout(() => { setOpen(false); if (typed.trim()) put(typed); }, 180)}
+                className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-24 min-w-0" />
+              {list.length > 0 && (
+                <span className="absolute left-0 z-40 flex flex-wrap gap-1 p-1.5 rounded-lg"
+                      style={{ top: '100%', marginTop: 4, minWidth: 160, maxWidth: 230,
+                               background: 'var(--panel-2)', border: '1px solid var(--border)',
+                               boxShadow: '0 8px 24px rgba(0,0,0,.45)' }}>
+                  {list.map(t => (
+                    <button key={t} type="button" onMouseDown={e => e.preventDefault()} onClick={() => put(t)}
+                            className="cf-chip shrink-0" style={{ fontSize: 11 }}>{t}</button>
+                  ))}
+                </span>
+              )}
+            </span>
+          );
+        };
+
         const ExcalidrawBoard = React.memo(({ elements, files, onSave, onView, onTool, readOnly, apiRef, boardId }) => {
           const [lib, setLib] = useState(window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
@@ -1144,6 +1187,21 @@
             references.forEach(r => (r.tags || []).forEach(t => { m[t] = (m[t] || 0) + 1; }));
             return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
           }, [references]);
+          // Теги по ЧАСТОТЕ — для подсказок нужен именно такой порядок:
+          // сверху то, чем реально размечают проект.
+          const popularTags = useMemo(
+            () => [...tagCounts].sort((a, b) => b[1] - a[1]).map(t => t[0]), [tagCounts]);
+          // Что подсказать под полем ввода тега: совпадения по началу слова
+          // впереди, уже проставленные у этого референса — прочь.
+          const tagHints = (typed, already) => {
+            const q = String(typed || '').trim().toLowerCase();
+            const have = new Set((already || []).map(t => String(t).toLowerCase()));
+            const list = popularTags.filter(t => !have.has(t));
+            if (!q) return list.slice(0, 8);
+            const starts = list.filter(t => t.startsWith(q));
+            const inside = list.filter(t => !t.startsWith(q) && t.includes(q));
+            return [...starts, ...inside].slice(0, 8);
+          };
           const visibleRefs = useMemo(() => references.filter(r => {
             const byTag = !tagSearch || (r.tags && r.tags.some(t => t.toLowerCase().includes(tagSearch.toLowerCase())));
             const f = (r.folder || '').trim();
@@ -1260,15 +1318,18 @@
           // напечатал тег, кликнул мимо — тег молча пропадал, и поэтому
           // казалось, что «теги не сохраняются и поиск не работает».
           // Теперь тег принимается и по Enter, и по запятой, и при уходе фокуса.
-          const commitTag = (ref, inputEl) => {
-            const raw = (inputEl.value || '').trim().toLowerCase().replace(/,+$/, '').trim();
-            inputEl.value = '';
+          const addTagTo = (ref, value) => {
+            const raw = String(value || '').trim().toLowerCase().replace(/,+$/, '').trim();
             if (!raw) return;
             const current = ref.tags || [];
             if (current.includes(raw)) return;
             const up = references.map(r => r.id === ref.id ? { ...r, tags: [...current, raw] } : r);
             setReferences(up);
             syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
+          const commitTag = (ref, inputEl) => {
+            const v = inputEl.value; inputEl.value = '';
+            addTagTo(ref, v);
           };
 
           const [lastReadChat, setLastReadChat] = useState(() => Number(localStorage.getItem('cf_last_read')) || Date.now());
@@ -3178,11 +3239,27 @@
                             </span>
                             <div className="flex flex-1 flex-col sm:flex-row gap-2 flex-wrap">
                               <div className="flex gap-2 flex-1 min-w-[200px]">
-                                <input type="text" value={bulkTagInput} onChange={e => setBulkTagInput(e.target.value)}
-                                       onKeyDown={e => { if (e.key === 'Enter') bulkAddTag(); }}
-                                       placeholder="Общий тег для всех..." className="glass-input rounded-md px-3 flex-1 min-w-0"
-                                       style={{ minHeight: 38, fontSize: 12 }} />
-                                <button onClick={bulkAddTag} className="cf-chip shrink-0">+ тег</button>
+                                <div className="relative flex-1 min-w-0">
+                                  <input type="text" value={bulkTagInput} onChange={e => setBulkTagInput(e.target.value)}
+                                         onKeyDown={e => { if (e.key === 'Enter') bulkAddTag(); }}
+                                         placeholder="Общий тег для всех..." className="glass-input rounded-md px-3 w-full"
+                                         style={{ minHeight: 38, fontSize: 12 }} />
+                                  {/* Подсказки из уже использованных: набирать тег
+                                      заново каждый раз незачем, а разнобой
+                                      («ночь» и «Ночь») ломает поиск по тегу. */}
+                                  {(() => {
+                                    const hints = tagHints(bulkTagInput, []);
+                                    if (!hints.length) return null;
+                                    return (
+                                      <div className="flex flex-wrap gap-1 mt-1.5">
+                                        {hints.slice(0, 6).map(t => (
+                                          <button key={t} onClick={() => setBulkTagInput(t)} className="cf-chip shrink-0" style={{ fontSize: 11 }}>{t}</button>
+                                        ))}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                                <button onClick={bulkAddTag} className="cf-chip shrink-0 self-start" style={{ minHeight: 38 }}>+ тег</button>
                               </div>
                               <select value="" onChange={(e) => {
                                         if (e.target.value === '__new__') { const name = prompt('Новая папка'); if (name && name.trim()) bulkMoveToFolder(name.trim()); }
@@ -3243,7 +3320,7 @@
                             {currentView === 'gallery' && visibleRefs.map(ref => {
                               const isSel = selectedRefIds.includes(ref.id);
                               return (
-                                <div key={ref.id} className={`glass-panel rounded-lg overflow-hidden flex flex-col group border-t transition-all ${isSel ? 'ring-2' : 'border-white/10'}`} style={isSel ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : undefined}>
+                                <div key={ref.id} className={`cf-ref-card glass-panel rounded-lg overflow-hidden flex flex-col group border-t transition-all ${isSel ? 'ring-2' : 'border-white/10'}`} style={isSel ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : undefined}>
                                     <div className="aspect-square bg-black/60 relative cursor-pointer flex items-center justify-center overflow-hidden" onClick={() => { if (selectedRefIds.length > 0) { toggleRefSelection(ref.id); } else { setLightboxData({ scope: visibleRefs.map(x => x.id), scopeLabel: [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Вся галерея', currentId: ref.id }); } }}>
                                         <div className="absolute inset-0 bg-cover bg-center blur-md opacity-30" style={bgStyle(ref.id, ref.url)}></div>
                                         <button onClick={(e) => { e.stopPropagation(); toggleRefSelection(ref.id); }}
@@ -3305,10 +3382,7 @@
                                                     {tag} <button onClick={() => { const up = references.map(r => r.id === ref.id ? {...r, tags: r.tags.filter((_, i) => i !== idx)} : r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="hover:text-white">✕</button>
                                                 </span>
                                             ))}
-                                            <input type="text" placeholder="+ тег, Enter"
-                                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitTag(ref, e.target); } }}
-                                                onBlur={e => commitTag(ref, e.target)}
-                                                className="bg-transparent text-[11px] text-zinc-400 border-b border-white/10 focus:border-indigo-500 focus:outline-none w-24 min-w-0" />
+                                            <TagInput ref_={ref} hints={tagHints} onAdd={addTagTo} />
                                         </div>
                                     </div>
                                 </div>
