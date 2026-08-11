@@ -236,6 +236,12 @@
             Gallery: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
             Pointer: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg>,
             Pen: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>,
+            Shapes: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="8.5" height="8.5" rx="1.5"/><circle cx="17.5" cy="7.2" r="4.2"/><path d="M3.5 20.5h9L8 15z"/><path d="M15 15.5h5.5V21"/></svg>,
+            ShRect: () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/></svg>,
+            ShEllipse: () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="12" rx="8.5" ry="7"/></svg>,
+            ShDiamond: () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M12 3.5 20.5 12 12 20.5 3.5 12z"/></svg>,
+            ShArrow: () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19 20 5"/><path d="M13.5 5H20v6.5"/></svg>,
+            ShLine: () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 19 20 5"/></svg>,
             Eraser: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>,
             Move: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="9 19 12 22 15 19"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>,
             Hand: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>,
@@ -1654,6 +1660,208 @@
             return { id: `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, t, c: color, w: size, p };
           };
 
+          // --- ФИГУРЫ ---
+          // Пять примитивов, всё остальное — их настройки. Это осознанный
+          // размен из ТЗ: компактный набор + богатая параметризация вместо
+          // библиотеки на триста шейпов, из которой всё равно берут пять.
+          // Фигура хранится ПЛОСКОЙ записью с короткими именами полей —
+          // весь список доски уезжает в облако одной строкой JSON, и каждый
+          // лишний символ умножается на число фигур.
+          //   k  — вид: rect | ellipse | diamond | arrow | line
+          //   x,y,w,h — рамка; у линии и стрелки w,h это СМЕЩЕНИЕ до второго
+          //             конца и может быть отрицательным, у остальных нет
+          //   sc — цвет обводки, bg — заливки ('transparent' — без неё)
+          //   sw — толщина (1|2|4), sd — solid|dashed|dotted
+          //   fs — заливка: solid | hachure | cross
+          //   rd — скруглять углы, ro — «от руки» (0 ровно, 1 рука, 2 черновик)
+          //   op — прозрачность, a1/a2 — наконечники у концов
+          //   sd8 — зерно дрожания: одна и та же фигура обязана дрожать
+          //         ОДИНАКОВО между перерисовками, иначе она кипит на экране
+          const SHAPE_KINDS = ['rect', 'ellipse', 'diamond', 'arrow', 'line'];
+          const SHAPE_COLORS = ['#d97757', '#fbbf24', '#fb7185', '#34d399', '#38bdf8', '#f0eee6'];
+          const SHAPE_FILLS = ['transparent', '#d97757', '#fbbf24', '#fb7185', '#34d399', '#38bdf8'];
+          const SHAPE_STYLE0 = { sc: '#d97757', bg: 'transparent', sw: 2, sd: 'solid', fs: 'solid', rd: 1, ro: 1, op: 1, a1: 'none', a2: 'arrow' };
+          const isLineKind = (k) => k === 'line' || k === 'arrow';
+          // Рамка всегда с положительными сторонами: у линии концы могут
+          // идти справа налево, а габарит нужен всем — и выделению, и отсечению.
+          const shapeBox = (s) => ({
+            x: Math.min(s.x, s.x + s.w), y: Math.min(s.y, s.y + s.h),
+            w: Math.abs(s.w), h: Math.abs(s.h)
+          });
+          const shapeRnd = (seed) => { let v = (seed >>> 0) || 1; return () => { v = (v * 1664525 + 1013904223) >>> 0; return v / 4294967296; }; };
+
+
+          // Опорные точки контура. Для «руки» этого достаточно: по ним кладём
+          // выгнутые рёбра. Овал режем на 16 дуг — меньше видно грани.
+          const shapeCorners = (s) => {
+            const b = shapeBox(s);
+            if (isLineKind(s.k)) return [[s.x, s.y], [s.x + s.w, s.y + s.h]];
+            if (s.k === 'diamond') return [[b.x + b.w / 2, b.y], [b.x + b.w, b.y + b.h / 2], [b.x + b.w / 2, b.y + b.h], [b.x, b.y + b.h / 2]];
+            if (s.k === 'ellipse') {
+              // Точек берём по РАЗМЕРУ: на шестнадцати у крупного овала
+              // видно грани — он читается многоугольником, а не овалом.
+              const n = Math.max(22, Math.min(56, Math.round((b.w + b.h) / 11)));
+              const out = [], cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+              for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; out.push([cx + Math.cos(a) * b.w / 2, cy + Math.sin(a) * b.h / 2]); }
+              return out;
+            }
+            return [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]];
+          };
+          const shapeSmoothPath = (s) => {
+            const p = new Path2D(), b = shapeBox(s);
+            if (isLineKind(s.k)) { p.moveTo(s.x, s.y); p.lineTo(s.x + s.w, s.y + s.h); return p; }
+            if (s.k === 'ellipse') { p.ellipse(b.x + b.w / 2, b.y + b.h / 2, Math.max(0.1, b.w / 2), Math.max(0.1, b.h / 2), 0, 0, Math.PI * 2); return p; }
+            if (s.k === 'diamond') {
+              const c = shapeCorners(s);
+              p.moveTo(c[0][0], c[0][1]); for (let i = 1; i < c.length; i++) p.lineTo(c[i][0], c[i][1]);
+              p.closePath(); return p;
+            }
+            const r = s.rd ? Math.min(26, Math.min(b.w, b.h) * 0.22) : 0;
+            if (p.roundRect && r > 0) p.roundRect(b.x, b.y, b.w, b.h, r);
+            else { p.moveTo(b.x, b.y); p.lineTo(b.x + b.w, b.y); p.lineTo(b.x + b.w, b.y + b.h); p.lineTo(b.x, b.y + b.h); p.closePath(); }
+            return p;
+          };
+          // «От руки» в три шага. Каждый важен, и порядок тоже:
+          // 1) длинные стороны ДРОБИМ — одна дуга на всю сторону читается
+          //    как ровная линия, которую слегка повело, а рука так не ведёт;
+          // 2) смещаем точки по ОДНОМУ разу и переиспользуем — если дёргать
+          //    концы у каждого куска отдельно, куски расходятся и контур
+          //    рвётся на стыках;
+          // 3) между соседними точками кладём выгнутую дугу. Именно выгиб,
+          //    а не дрожание по всей длине: от дрожания линия мохнатая.
+          const shapeRoughPath = (s, pass) => {
+            const rnd = shapeRnd((s.sd8 || 1) + pass * 7919);
+            const b = shapeBox(s);
+            const amp = (s.ro === 2 ? 4.2 : 2.0) * (1 + Math.min(1.8, Math.max(b.w, b.h) / 260));
+            const c = shapeCorners(s);
+            const closed = !isLineKind(s.k);
+            const raw = [];
+            const n = closed ? c.length : c.length - 1;
+            for (let i = 0; i < n; i++) {
+              const a = c[i], d = c[(i + 1) % c.length];
+              const len = Math.hypot(d[0] - a[0], d[1] - a[1]);
+              const parts = Math.max(1, Math.min(5, Math.round(len / 85)));
+              for (let q = 0; q < parts; q++) {
+                const t = q / parts;
+                raw.push([a[0] + (d[0] - a[0]) * t, a[1] + (d[1] - a[1]) * t]);
+              }
+            }
+            if (!closed) raw.push(c[c.length - 1]);
+            const j = raw.map(q => [q[0] + (rnd() - 0.5) * amp, q[1] + (rnd() - 0.5) * amp]);
+            const p = new Path2D();
+            if (!j.length) return p;
+            p.moveTo(j[0][0], j[0][1]);
+            const m = closed ? j.length : j.length - 1;
+            for (let i = 0; i < m; i++) {
+              const a = j[i], d = j[(i + 1) % j.length];
+              const dx = d[0] - a[0], dy = d[1] - a[1], l = Math.hypot(dx, dy) || 1;
+              const bow = (rnd() - 0.5) * amp * 1.3;
+              p.quadraticCurveTo((a[0] + d[0]) / 2 - dy / l * bow, (a[1] + d[1]) / 2 + dx / l * bow, d[0], d[1]);
+            }
+            if (closed) p.closePath();
+            return p;
+          };
+          // Фигура не зависит от масштаба, поэтому её путь считается один раз
+          // и переживает и панораму, и зум. Правка фигуры сбрасывает кэш.
+          const shapePath = (s, pass) => {
+            const key = s.ro ? '_p' + pass : '_p';
+            if (!s[key]) s[key] = s.ro ? shapeRoughPath(s, pass) : shapeSmoothPath(s);
+            return s[key];
+          };
+          const shapeDirty = (s) => { delete s._p; delete s._p0; delete s._p1; return s; };
+
+          // Штриховка: рисуем наклонные линии, обрезав их формой. Заливка
+          // сплошным на тёмном фоне читается пятном, поэтому она приглушена,
+          // а штриховка наоборот ярче — иначе её просто не видно.
+          const fillHatch = (ctx, s, path, cross) => {
+            const b = shapeBox(s);
+            const gap = Math.max(7, 5 + s.sw * 2.5);
+            ctx.save();
+            ctx.clip(path);
+            ctx.globalAlpha = ctx.globalAlpha * 0.55;
+            ctx.strokeStyle = s.bg;
+            ctx.lineWidth = Math.max(1, s.sw * 0.7);
+            ctx.setLineDash([]);
+            const run = (back) => {
+              for (let i = -b.h; i < b.w + b.h; i += gap) {
+                ctx.beginPath();
+                if (back) { ctx.moveTo(b.x + i, b.y); ctx.lineTo(b.x + i + b.h, b.y + b.h); }
+                else { ctx.moveTo(b.x + i, b.y); ctx.lineTo(b.x + i - b.h, b.y + b.h); }
+                ctx.stroke();
+              }
+            };
+            run(false); if (cross) run(true);
+            ctx.restore();
+          };
+          const arrowHead = (ctx, x, y, fromX, fromY, size) => {
+            const a = Math.atan2(y - fromY, x - fromX), w = 0.42;
+            ctx.beginPath();
+            ctx.moveTo(x - Math.cos(a - w) * size, y - Math.sin(a - w) * size);
+            ctx.lineTo(x, y);
+            ctx.lineTo(x - Math.cos(a + w) * size, y - Math.sin(a + w) * size);
+            ctx.stroke();
+          };
+          const paintShape = (ctx, s) => {
+            ctx.save();
+            ctx.globalAlpha = s.op === undefined ? 1 : s.op;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            const closed = !isLineKind(s.k);
+            if (closed && s.bg && s.bg !== 'transparent') {
+              const fp = shapePath(s, 0);
+              if (s.fs === 'hachure' || s.fs === 'cross') fillHatch(ctx, s, fp, s.fs === 'cross');
+              else { ctx.save(); ctx.globalAlpha = ctx.globalAlpha * 0.22; ctx.fillStyle = s.bg; ctx.fill(fp); ctx.restore(); }
+            }
+            ctx.strokeStyle = s.sc;
+            ctx.lineWidth = s.sw;
+            if (s.sd === 'dashed') ctx.setLineDash([s.sw * 4, s.sw * 3.2]);
+            else if (s.sd === 'dotted') ctx.setLineDash([0.1, s.sw * 2.6]);
+            else ctx.setLineDash([]);
+            ctx.stroke(shapePath(s, 0));
+            // «От руки» — это ДВА прохода: один контур с дрожанием выглядит
+            // просто кривым, два наложенных читаются как нажим карандаша.
+            if (s.ro) { ctx.save(); ctx.globalAlpha = ctx.globalAlpha * 0.75; ctx.stroke(shapePath(s, 1)); ctx.restore(); }
+            if (isLineKind(s.k)) {
+              ctx.setLineDash([]);
+              const hs = Math.max(9, s.sw * 4.5);
+              if (s.a2 === 'arrow') arrowHead(ctx, s.x + s.w, s.y + s.h, s.x, s.y, hs);
+              if (s.a1 === 'arrow') arrowHead(ctx, s.x, s.y, s.x + s.w, s.y + s.h, hs);
+            }
+            ctx.restore();
+          };
+
+          // Попадание считаем настоящей проверкой по пути, а не «внутри
+          // рамки»: у овала и ромба углы рамки пустые, и по ним ловилось
+          // то, чего под пальцем нет. Незалитую фигуру берём только за контур.
+          const hitCtx = useRef(null);
+          const shapeHit = (s, x, y, pad) => {
+            const b = shapeBox(s);
+            const m = pad + s.sw;
+            if (x < b.x - m || x > b.x + b.w + m || y < b.y - m || y > b.y + b.h + m) return false;
+            if (!hitCtx.current) hitCtx.current = document.createElement('canvas').getContext('2d');
+            const c = hitCtx.current;
+            c.lineWidth = Math.max(s.sw, 1) + pad * 2;
+            const p = shapePath(s, 0);
+            if (c.isPointInStroke(p, x, y)) return true;
+            if (!isLineKind(s.k) && s.bg && s.bg !== 'transparent' && c.isPointInPath(p, x, y)) return true;
+            return false;
+          };
+          // Ручки. У линии и стрелки их ДВЕ — по концам: тянуть такую за
+          // угол рамки бессмысленно, поворот у неё и есть перенос конца.
+          // У остальных восемь: четыре угла и четыре середины сторон.
+          const shapeHandles = (s) => {
+            if (isLineKind(s.k)) return [{ n: 'p1', x: s.x, y: s.y }, { n: 'p2', x: s.x + s.w, y: s.y + s.h }];
+            const b = shapeBox(s), mx = b.x + b.w / 2, my = b.y + b.h / 2;
+            return [
+              { n: 'nw', x: b.x, y: b.y }, { n: 'n', x: mx, y: b.y }, { n: 'ne', x: b.x + b.w, y: b.y },
+              { n: 'e', x: b.x + b.w, y: my }, { n: 'se', x: b.x + b.w, y: b.y + b.h },
+              { n: 's', x: mx, y: b.y + b.h }, { n: 'sw', x: b.x, y: b.y + b.h }, { n: 'w', x: b.x, y: my }
+            ];
+          };
+          const packShapes = (list) => JSON.stringify(list.map(s => {
+            const o = {}; for (const k in s) if (k[0] !== '_') o[k] = s[k];
+            return o;
+          }));
+
           // --- СЛОИ РИСОВАНИЯ ---
           // Холстов два, и это главный рычаг плавности: на нижнем лежат
           // готовые штрихи, на верхнем — тот, что ведут прямо сейчас, и
@@ -1670,6 +1878,21 @@
           const redoStack = useRef([]);
           const [canUndo, setCanUndo] = useState(false);
           const [canRedo, setCanRedo] = useState(false);
+          // Фигуры лежат в ref, а не в состоянии React: при ведении мышью
+          // они меняются по десять раз в секунду, и каждая такая правка
+          // перерисовывала бы всё приложение вместе со списком сцен.
+          // Наружу торчит только выделение — оно нужно панели свойств.
+          const shapesRef = useRef([]);
+          const [selShapes, setSelShapes] = useState([]);
+          const [shapeKind, setShapeKind] = useState('rect');
+          const [shapeStyle, setShapeStyle] = useState(() => {
+            try { return { ...SHAPE_STYLE0, ...(JSON.parse(localStorage.getItem('cf_shape_style')) || {}) }; }
+            catch (e) { return { ...SHAPE_STYLE0 }; }
+          });
+          const shapeDraft = useRef(null);      // фигура, которую тянут прямо сейчас
+          const shapeAct = useRef(null);        // идёт перемещение или изменение размера
+          const guides = useRef([]);            // направляющие, показанные сейчас
+          const snapPool = useRef(null);        // к чему притягиваемся в этом жесте
           // Счётчик правок: по нему пересобирается снимок для Excalidraw.
           // Панорама и зум его НЕ трогают — иначе снимок пересчитывался бы
           // на каждое движение доски.
@@ -1742,6 +1965,235 @@
             if (top && top.legacy === undefined) top.legacy = legacyCv.current.toDataURL();
           };
 
+          // --- НАПРАВЛЯЮЩИЕ И ПРИТЯЖКА ---
+          // Раньше всё жёстко липло к сетке в 24 точки: выровнять карточку
+          // по СОСЕДНЕЙ было нельзя в принципе, если та стояла не по сетке.
+          // Теперь сначала ищем совпадение с краями и серединами того, что
+          // уже лежит на доске, и только если ничего не нашли — падаем
+          // обратно на сетку. Порог берётся в ЭКРАННЫХ точках и делится
+          // на масштаб, иначе на мелком зуме притягивало бы через пол-доски.
+          const SNAP_PX = 7;
+          const GRID = 24;
+          // Ctrl (Cmd) во время жеста выключает притяжку целиком.
+          const noSnap = useRef(false);
+          // Собираем кандидатов ОДИН раз в начале жеста: то, что не движется,
+          // за время жеста не изменится, а список может быть длинным.
+          const buildSnapPool = (skipIds) => {
+            const skip = new Set(skipIds || []);
+            const out = [];
+            const add = (o, w, h) => { if (!skip.has(o.id)) out.push({ x0: o.x, y0: o.y, x1: o.x + w, y1: o.y + h }); };
+            boardScenes.forEach(s => add(s, 288, 150));
+            references.filter(r => r.boardId === activeBoardId).forEach(r => add(r, refW(r), refH(r)));
+            stickies.filter(st => belongsToBoard(st, activeBoardId)).forEach(st => add(st, stickyW(st), stickyH(st)));
+            boardDocs.forEach(d => add(d, docCardW(d), docCardH(d)));
+            shapesRef.current.forEach(s => { if (!skip.has(s.id)) { const b = shapeBox(s); out.push({ x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h }); } });
+            snapPool.current = out;
+            return out;
+          };
+          // Считаем поправку по каждой оси отдельно и запоминаем, какие линии
+          // показать. Сравниваем три значения с трёх сторон: край, середина,
+          // край — этого хватает и для выравнивания, и для «по центру».
+          const snapAdjust = (box) => {
+            guides.current = [];
+            if (noSnap.current) return { dx: 0, dy: 0 };
+            const pool = snapPool.current || [];
+            const tol = SNAP_PX / Math.max(0.05, zoom);
+            const mine = {
+              x: [box.x0, (box.x0 + box.x1) / 2, box.x1],
+              y: [box.y0, (box.y0 + box.y1) / 2, box.y1]
+            };
+            let bx = null, by = null;
+            for (const t of pool) {
+              const tx = [t.x0, (t.x0 + t.x1) / 2, t.x1];
+              const ty = [t.y0, (t.y0 + t.y1) / 2, t.y1];
+              for (const m of mine.x) for (const v of tx) {
+                const d = v - m;
+                if (Math.abs(d) <= tol && (!bx || Math.abs(d) < Math.abs(bx.d))) bx = { d, v, t };
+              }
+              for (const m of mine.y) for (const v of ty) {
+                const d = v - m;
+                if (Math.abs(d) <= tol && (!by || Math.abs(d) < Math.abs(by.d))) by = { d, v, t };
+              }
+            }
+            if (bx) guides.current.push({ vertical: true, at: bx.v, a: Math.min(box.y0 + bx.d * 0, bx.t.y0, box.y0), b: Math.max(bx.t.y1, box.y1) });
+            if (by) guides.current.push({ vertical: false, at: by.v, a: Math.min(by.t.x0, box.x0), b: Math.max(by.t.x1, box.x1) });
+            return { dx: bx ? bx.d : 0, dy: by ? by.d : 0 };
+          };
+          // Итоговое положение: сначала направляющие, по осям где их нет —
+          // сетка. Сетку не выбрасываем: она гасит дрожание при медленном
+          // ведении, и без неё каждое движение указателя двигало бы карточку.
+          const snapMove = (box) => {
+            const a = snapAdjust(box);
+            const gx = a.dx !== 0 ? a.dx : (noSnap.current ? 0 : Math.round(box.x0 / GRID) * GRID - box.x0);
+            const gy = a.dy !== 0 ? a.dy : (noSnap.current ? 0 : Math.round(box.y0 / GRID) * GRID - box.y0);
+            return { dx: gx, dy: gy };
+          };
+          const clearGuides = () => { guides.current = []; snapPool.current = null; };
+          // Притяжка ОДНОГО значения — для изменения размера: там едет один
+          // край, и двигать вместе с ним противоположный нельзя.
+          const snapEdge = (v, vertical, a, b) => {
+            if (noSnap.current) return v;
+            const pool = snapPool.current || [];
+            const tol = SNAP_PX / Math.max(0.05, zoom);
+            let best = null;
+            for (const t of pool) {
+              const cand = vertical ? [t.x0, (t.x0 + t.x1) / 2, t.x1] : [t.y0, (t.y0 + t.y1) / 2, t.y1];
+              for (const c of cand) { const d = c - v; if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, c, t }; }
+            }
+            if (!best) return Math.round(v / GRID) * GRID;
+            guides.current.push(vertical
+              ? { vertical: true, at: best.c, a: Math.min(best.t.y0, a), b: Math.max(best.t.y1, b) }
+              : { vertical: false, at: best.c, a: Math.min(best.t.x0, a), b: Math.max(best.t.x1, b) });
+            return best.c;
+          };
+
+          // --- ЖИЗНЬ ФИГУРЫ: создать, выбрать, подвинуть, растянуть ---
+          const makeShape = (k, x, y) => ({
+            id: `sh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+            k, x, y, w: 0, h: 0,
+            sc: shapeStyle.sc,
+            bg: isLineKind(k) ? 'transparent' : shapeStyle.bg,
+            sw: shapeStyle.sw, sd: shapeStyle.sd, fs: shapeStyle.fs,
+            rd: shapeStyle.rd, ro: shapeStyle.ro, op: shapeStyle.op,
+            a1: k === 'arrow' ? shapeStyle.a1 : 'none',
+            a2: k === 'arrow' ? shapeStyle.a2 : 'none',
+            sd8: (Math.random() * 2000000000) | 0
+          });
+          // Ищем сверху вниз: выше лежит то, что нарисовано позже.
+          const shapeAt = (x, y) => {
+            const pad = 8 / Math.max(0.05, zoom);
+            for (let i = shapesRef.current.length - 1; i >= 0; i--) {
+              if (shapeHit(shapesRef.current[i], x, y, pad)) return shapesRef.current[i];
+            }
+            return null;
+          };
+          // Ручку ловим с запасом под палец: 9 точек на экране — это меньше
+          // трети подушечки, и попасть в них мышью можно, а пальцем нет.
+          const handleAt = (x, y) => {
+            const tol = 13 / Math.max(0.05, zoom);
+            for (const id of selShapes) {
+              const s = shapesRef.current.find(q => q.id === id);
+              if (!s) continue;
+              for (const hd of shapeHandles(s)) {
+                if (Math.abs(hd.x - x) <= tol && Math.abs(hd.y - y) <= tol) return { s, h: hd.n };
+              }
+            }
+            return null;
+          };
+          // Пока указатель не сдвинулся хоть немного, жест НЕ считается
+          // движением. Без этого простое нажатие «чтобы выбрать» само
+          // подтягивало фигуру к сетке и вдобавок писало пустой шаг отмены:
+          // человек ткнул в фигуру, а она уехала.
+          const DRAG_START_PX = 3;
+          const shapeStartAct = (kind, ids, pt, extra) => {
+            shapeAct.current = { kind, ids: new Set(ids), sx: pt.x, sy: pt.y, moved: false,
+                                orig: shapesRef.current.filter(s => ids.includes(s.id)).map(s => ({ ...s })), ...extra };
+            buildSnapPool(ids);
+          };
+          const shapeMoveAct = (pt, shift) => {
+            const a = shapeAct.current; if (!a) return;
+            let dx = pt.x - a.sx, dy = pt.y - a.sy;
+            if (!a.moved) {
+              if (Math.hypot(dx, dy) * zoom < DRAG_START_PX) return;
+              a.moved = true;
+              pushUndo(false);
+              requestStatic();        // снимаем их с нижнего слоя — дальше ведёт верхний
+            }
+            guides.current = [];
+            if (a.kind === 'move') {
+              // Рамку считаем по ВСЕМ выбранным разом: выравнивать надо
+              // группу целиком, а не каждую фигуру по отдельности.
+              let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+              a.orig.forEach(o => { const b = shapeBox(o); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); });
+              const adj = snapMove({ x0: x0 + dx, y0: y0 + dy, x1: x1 + dx, y1: y1 + dy });
+              dx += adj.dx; dy += adj.dy;
+              a.orig.forEach(o => {
+                const s = shapesRef.current.find(q => q.id === o.id); if (!s) return;
+                s.x = o.x + dx; s.y = o.y + dy; shapeDirty(s);
+              });
+            } else {
+              const o = a.orig[0];
+              const s = shapesRef.current.find(q => q.id === o.id); if (!s) return;
+              if (isLineKind(o.k)) {
+                const bx = shapeBox(o);
+                if (a.h === 'p1') {
+                  let nx = snapEdge(o.x + dx, true, bx.y, bx.y + bx.h), ny = snapEdge(o.y + dy, false, bx.x, bx.x + bx.w);
+                  if (shift) { const r = lockAngle(o.x + o.w, o.y + o.h, nx, ny); nx = r.x; ny = r.y; }
+                  s.x = nx; s.y = ny; s.w = o.x + o.w - nx; s.h = o.y + o.h - ny;
+                } else {
+                  let nx = snapEdge(o.x + o.w + dx, true, bx.y, bx.y + bx.h), ny = snapEdge(o.y + o.h + dy, false, bx.x, bx.x + bx.w);
+                  if (shift) { const r = lockAngle(o.x, o.y, nx, ny); nx = r.x; ny = r.y; }
+                  s.w = nx - o.x; s.h = ny - o.y;
+                }
+              } else {
+                const b = shapeBox(o);
+                let L = b.x, T = b.y, R = b.x + b.w, B = b.y + b.h;
+                if (a.h.includes('w')) L = snapEdge(L + dx, true, T, B);
+                if (a.h.includes('e')) R = snapEdge(R + dx, true, T, B);
+                if (a.h.includes('n')) T = snapEdge(T + dy, false, L, R);
+                if (a.h.includes('s')) B = snapEdge(B + dy, false, L, R);
+                if (R - L < 4) R = L + 4;
+                if (B - T < 4) B = T + 4;
+                s.x = L; s.y = T; s.w = R - L; s.h = B - T;
+              }
+              shapeDirty(s);
+            }
+            requestLive();
+          };
+          const shapeEndAct = () => {
+            const a = shapeAct.current;
+            if (!a) return;
+            shapeAct.current = null;
+            clearGuides();
+            if (!a.moved) { requestLive(); return; }
+            bumpInk();
+            scheduleInkSave('shapes');
+          };
+          // Shift держит угол кратным 15°: без этого ровную горизонталь
+          // рукой не проведёшь, а именно её чаще всего и рисуют.
+          const lockAngle = (x0, y0, x, y) => {
+            const dx = x - x0, dy = y - y0;
+            const l = Math.hypot(dx, dy);
+            const step = Math.PI / 12;
+            const a = Math.round(Math.atan2(dy, dx) / step) * step;
+            return { x: x0 + Math.cos(a) * l, y: y0 + Math.sin(a) * l };
+          };
+          const deleteShapes = (ids) => {
+            const kill = new Set(ids && ids.length ? ids : selShapes);
+            if (!kill.size) return;
+            pushUndo(false);
+            shapesRef.current = shapesRef.current.filter(s => !kill.has(s.id));
+            setSelShapes([]);
+            bumpInk();
+            scheduleInkSave('shapes');
+          };
+          // Порядок слоёв — это просто порядок в списке: мы пишем весь список
+          // одной строкой, поэтому дробные индексы из ТЗ здесь решали бы
+          // задачу, которой у нас нет.
+          const orderShapes = (dir) => {
+            if (!selShapes.length) return;
+            pushUndo(false);
+            const sel = new Set(selShapes);
+            const keep = shapesRef.current.filter(s => !sel.has(s.id));
+            const move = shapesRef.current.filter(s => sel.has(s.id));
+            shapesRef.current = dir > 0 ? keep.concat(move) : move.concat(keep);
+            bumpInk();
+            scheduleInkSave('shapes');
+          };
+          const patchShapes = (patch) => {
+            setShapeStyle(st => {
+              const next = { ...st, ...patch };
+              try { localStorage.setItem('cf_shape_style', JSON.stringify(next)); } catch (e) {}
+              return next;
+            });
+            if (!selShapes.length) return;
+            pushUndo(false);
+            const sel = new Set(selShapes);
+            shapesRef.current = shapesRef.current.map(s => sel.has(s.id) ? shapeDirty({ ...s, ...patch }) : s);
+            bumpInk();
+            scheduleInkSave('shapes');
+          };
+
           const drawInkStatic = () => {
             const c = inkCanvasRef.current; if (!c) return;
             const { w, h, ctx } = fitInk(c);
@@ -1753,6 +2205,17 @@
             // Отсекаем то, чего не видно: доску перерисовываем на каждый шаг
             // зума и панорамы, и платить за штрихи за краем экрана незачем.
             const x0 = -ox / z, y0 = -oy / z, x1 = x0 + w / z, y1 = y0 + h / z;
+            // Фигуры ПОД штрихами: фигура — это разметка, штрих — пометка
+            // поверх неё. Та, которую сейчас тянут, здесь пропускается —
+            // её ведёт верхний слой, чтобы не перерисовывать доску на
+            // каждое движение указателя.
+            const busy = shapeAct.current ? shapeAct.current.ids : null;
+            for (const s of shapesRef.current) {
+              if (busy && busy.has(s.id)) continue;
+              const b = shapeBox(s), m = s.sw + 12;
+              if (b.x + b.w + m < x0 || b.x - m > x1 || b.y + b.h + m < y0 || b.y - m > y1) continue;
+              paintShape(ctx, s);
+            }
             for (const s of strokesRef.current) {
               const b = strokeBox(s);
               if (b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1) continue;
@@ -1774,6 +2237,62 @@
               ctx.globalAlpha = brushAlpha(L.t);
               ctx.fillStyle = L.c;
               ctx.fill(inkPath(inkOutline(L.pts, L.w * brushWidthK(L.t), brushThin(L.t))));
+              ctx.restore();
+            }
+            // Фигуры, которые сейчас ведут или тянут, живут здесь: нижний
+            // слой в это время не трогается вовсе.
+            if (shapeDraft.current || shapeAct.current) {
+              ctx.save();
+              ctx.translate(canvasOffset.x, canvasOffset.y); ctx.scale(z, z);
+              if (shapeDraft.current) paintShape(ctx, shapeDraft.current);
+              if (shapeAct.current) shapeAct.current.ids.forEach(id => {
+                const s = shapesRef.current.find(q => q.id === id);
+                if (s) paintShape(ctx, s);
+              });
+              ctx.restore();
+            }
+            // Выделение и ручки — в ЭКРАННЫХ координатах: рамка и уголки
+            // обязаны быть одного размера при любом масштабе, иначе на
+            // мелком зуме в них не попасть пальцем.
+            if (wbMode === 'select' && selShapes.length) {
+              const toScr = (x, y) => [x * z + canvasOffset.x, y * z + canvasOffset.y];
+              ctx.save();
+              selShapes.forEach(id => {
+                const s = shapesRef.current.find(q => q.id === id);
+                if (!s) return;
+                const b = shapeBox(s);
+                const [px, py] = toScr(b.x, b.y);
+                const pw = b.w * z, ph = b.h * z;
+                ctx.strokeStyle = 'rgba(217,119,87,0.9)'; ctx.lineWidth = 1;
+                ctx.setLineDash([4, 3]);
+                ctx.strokeRect(px - 4, py - 4, pw + 8, ph + 8);
+                ctx.setLineDash([]);
+                shapeHandles(s).forEach(hd => {
+                  const [hx, hy] = toScr(hd.x, hd.y);
+                  ctx.fillStyle = '#1a1918';
+                  ctx.strokeStyle = 'rgba(217,119,87,1)'; ctx.lineWidth = 1.5;
+                  ctx.beginPath(); ctx.rect(hx - 4.5, hy - 4.5, 9, 9); ctx.fill(); ctx.stroke();
+                });
+              });
+              ctx.restore();
+            }
+            // Направляющие: видно, ПО ЧЕМУ встало. Без них притяжка
+            // выглядит как «оно само куда-то прыгнуло».
+            if (guides.current.length) {
+              ctx.save();
+              ctx.strokeStyle = 'rgba(217,119,87,0.95)'; ctx.lineWidth = 1;
+              ctx.setLineDash([5, 4]);
+              guides.current.forEach(g => {
+                ctx.beginPath();
+                if (g.vertical) {
+                  const x = g.at * z + canvasOffset.x;
+                  ctx.moveTo(x, g.a * z + canvasOffset.y - 20); ctx.lineTo(x, g.b * z + canvasOffset.y + 20);
+                } else {
+                  const y = g.at * z + canvasOffset.y;
+                  ctx.moveTo(g.a * z + canvasOffset.x - 20, y); ctx.lineTo(g.b * z + canvasOffset.x + 20, y);
+                }
+                ctx.stroke();
+              });
               ctx.restore();
             }
             // Кольцо: сколько именно возьмёт кисть или ластик. У ластика
@@ -1859,6 +2378,16 @@
               runs.forEach(run => next.push(packStroke(s.t, s.c, s.w, run)));
             }
             if (hit) { strokesRef.current = next; requestStatic(); }
+            // Фигуру ластик убирает ЦЕЛИКОМ: половина прямоугольника — это
+            // не фигура, а мусор. Возвращается по Ctrl+Z, как и всё стёртое.
+            const gone = shapesRef.current.filter(s =>
+              shapeHit(s, x0, y0, r) || shapeHit(s, x1, y1, r) || shapeHit(s, (x0 + x1) / 2, (y0 + y1) / 2, r));
+            if (gone.length) {
+              const kill = new Set(gone.map(s => s.id));
+              shapesRef.current = shapesRef.current.filter(s => !kill.has(s.id));
+              setSelShapes(sel => sel.filter(id => !kill.has(id)));
+              requestStatic();
+            }
             // Старую растровую подложку ластик берёт по-прежнему пикселями —
             // иначе на досках, нарисованных до перехода на вектор, он бы
             // просто перестал работать.
@@ -1901,6 +2430,24 @@
           // рисунка: у каждого свой предел в 1 МБ, и доски, нарисованные до
           // перехода на вектор, открываются ровно как открывались.
           const strokesDocId = (boardId) => `ink-${boardId}`;
+          const shapesDocId = (boardId) => `shape-${boardId}`;
+          const saveShapes = (boardId, list) => {
+            if (READ_ONLY) return;
+            const json = packShapes(list);
+            try {
+              if (list.length) localStorage.setItem('cf_shapes_' + boardId, json);
+              else localStorage.removeItem('cf_shapes_' + boardId);
+            } catch (err) {}
+            if (!db || !user) return;
+            trackWrite(
+              dataRef().collection('canvas').doc(shapesDocId(boardId))
+                .set({ shapes: json, lastDrawBy: user.uid })
+                .catch(err => {
+                  console.warn('saveShapes', err);
+                  showToast('⚠️ Фигуры не сохранились в облако — возможно, их слишком много');
+                })
+            );
+          };
           const packInk = (list) => JSON.stringify(list.map(s => ({ id: s.id, t: s.t, c: s.c, w: s.w, p: s.p })));
           const saveStrokes = (boardId, list) => {
             if (READ_ONLY) return;
@@ -1924,10 +2471,17 @@
           // Excalidraw. Просто снять таймер значило бы потерять последний штрих.
           const inkTimer = useRef(null);
           const inkPending = useRef(null);
-          const scheduleInkSave = () => {
-            const bid = activeBoardId, list = strokesRef.current;
+          const scheduleInkSave = (what) => {
+            const bid = activeBoardId, list = strokesRef.current, figs = shapesRef.current;
             if (inkTimer.current) clearTimeout(inkTimer.current);
-            inkPending.current = () => saveStrokes(bid, list);
+            const prev = inkPending.current;
+            // Копим, ЧТО именно поменялось: за 400 мс можно успеть и штрих
+            // провести, и фигуру подвинуть, а лишняя запись всего списка
+            // фигур на каждый штрих — это мегабайты трафика на ровном месте.
+            const need = { ink: (prev && prev.ink) || what !== 'shapes', shapes: (prev && prev.shapes) || what === 'shapes' };
+            const run = () => { if (need.ink) saveStrokes(bid, list); if (need.shapes) saveShapes(bid, figs); };
+            run.ink = need.ink; run.shapes = need.shapes;
+            inkPending.current = run;
             inkTimer.current = setTimeout(() => {
               inkTimer.current = null;
               const f = inkPending.current; inkPending.current = null;
@@ -1972,6 +2526,7 @@
           const pushUndo = (withLegacy) => {
             undoStack.current.push({
               list: strokesRef.current,
+              figs: shapesRef.current,
               legacy: withLegacy && legacyCv.current ? legacyCv.current.toDataURL() : undefined
             });
             if (undoStack.current.length > 40) undoStack.current.shift();
@@ -1979,16 +2534,23 @@
             setCanUndo(true); setCanRedo(false);
           };
           const applyInkSnap = (snap) => {
+            const figsChanged = snap.figs !== shapesRef.current;
             strokesRef.current = snap.list;
+            shapesRef.current = snap.figs || [];
+            // Выделение чистим: вернувшаяся фигура могла быть удалённой,
+            // и панель свойств осталась бы висеть над пустотой.
+            setSelShapes(sel => sel.filter(id => shapesRef.current.some(s => s.id === id)));
             if (snap.legacy !== undefined) {
               loadLegacy(snap.legacy);
               saveCanvas(activeBoardId, snap.legacy);
             }
             bumpInk();
             saveStrokes(activeBoardId, snap.list);
+            if (figsChanged) saveShapes(activeBoardId, shapesRef.current);
           };
           const snapNow = (like) => ({
             list: strokesRef.current,
+            figs: shapesRef.current,
             legacy: like.legacy !== undefined ? (legacyCv.current ? legacyCv.current.toDataURL() : null) : undefined
           });
           const undoStroke = () => {
@@ -2006,20 +2568,25 @@
             applyInkSnap(snap);
           };
 
-          // Ctrl+Z — отменить штрих, Ctrl+Shift+Z и Ctrl+Y — вернуть
+          // Ctrl+Z — отменить, Ctrl+Shift+Z и Ctrl+Y — вернуть,
+          // Delete — удалить выбранные фигуры, Ctrl+] / Ctrl+[ — порядок слоёв
           useEffect(() => {
             const onKey = (e) => {
-              if (!(e.ctrlKey || e.metaKey) || currentView !== 'whiteboard') return;
-              const k = e.key.toLowerCase();
-              if (k !== 'z' && k !== 'y') return;
+              if (currentView !== 'whiteboard') return;
               const t = e.target.tagName;
-              if (t === 'INPUT' || t === 'TEXTAREA') return;
-              e.preventDefault();
-              if (k === 'y' || e.shiftKey) redoStroke(); else undoStroke();
+              if (t === 'INPUT' || t === 'TEXTAREA' || e.target.isContentEditable) return;
+              const k = e.key.toLowerCase();
+              if (e.ctrlKey || e.metaKey) {
+                if (k === 'z' || k === 'y') { e.preventDefault(); if (k === 'y' || e.shiftKey) redoStroke(); else undoStroke(); return; }
+                if (e.key === ']' || e.key === '[') { e.preventDefault(); orderShapes(e.key === ']' ? 1 : -1); return; }
+                return;
+              }
+              if ((e.key === 'Delete' || e.key === 'Backspace') && selShapes.length) { e.preventDefault(); deleteShapes(); return; }
+              if (e.key === 'Escape' && selShapes.length) { setSelShapes([]); return; }
             };
             window.addEventListener('keydown', onKey);
             return () => window.removeEventListener('keydown', onKey);
-          }, [currentView, activeBoardId, user]);
+          }, [currentView, activeBoardId, user, selShapes]);
 
           // Кого сейчас тянем к сцене: {id, type: 'ref' | 'sticky'}.
           // К сценам цепляются и референсы, и заметки — механика одна.
@@ -2268,7 +2835,7 @@
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
           useEffect(() => { setSelectedWbItems([]); setScenePickerOpen(false); }, [activeBoardId]);
           // Список сцен и настройки кисти встают в одно и то же место — не даём им наложиться.
-          useEffect(() => { if (wbMode === 'draw') setScenePickerOpen(false); }, [wbMode]);
+          useEffect(() => { if (wbMode === 'draw' || wbMode === 'shape') setScenePickerOpen(false); }, [wbMode]);
 
           const canvasRef = useRef(null);
 
@@ -2683,22 +3250,27 @@
             undoStack.current = []; redoStack.current = [];
             setCanUndo(false); setCanRedo(false);
             strokesRef.current = [];
+            shapesRef.current = []; setSelShapes([]);
+            shapeDraft.current = null; shapeAct.current = null; clearGuides();
             legacyCv.current = null; legacyUrl.current = null; legacyDirty.current = false;
             // Сначала местная копия — она есть и без сети.
             // В файле-снимке рисунок лежит внутри страницы, а не в
             // localStorage: иначе на чужом устройстве поверх присланной доски
             // проступил бы СВОЙ рисунок с доски с тем же именем.
-            let localLegacy = null, localInk = null;
+            let localLegacy = null, localInk = null, localFigs = null;
             if (CF_SNAPSHOT) {
               const d = CF_SNAPSHOT.data || {};
               localInk = d['cf_ink_' + activeBoardId] || null;
+              localFigs = d['cf_shapes_' + activeBoardId] || null;
             } else {
               try {
                 localLegacy = localStorage.getItem('cf_canvas_draw_' + activeBoardId);
                 localInk = localStorage.getItem('cf_ink_' + activeBoardId);
+                localFigs = localStorage.getItem('cf_shapes_' + activeBoardId);
               } catch (err) {}
             }
             if (localInk) { try { strokesRef.current = JSON.parse(localInk) || []; } catch (err) {} }
+            if (localFigs) { try { shapesRef.current = JSON.parse(localFigs) || []; } catch (err) {} }
             loadLegacy(localLegacy);
             bumpInk();
             if (!db || !user) return () => flushInk();
@@ -2716,9 +3288,16 @@
               try { strokesRef.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) { strokesRef.current = []; }
               bumpInk();
             }, err => console.warn('sync ink', err));
+            const unFig = col.doc(shapesDocId(activeBoardId)).onSnapshot(doc => {
+              if (!doc.exists) return;
+              if (doc.data().lastDrawBy === user.uid) return;
+              try { shapesRef.current = JSON.parse(doc.data().shapes || '[]') || []; } catch (err) { shapesRef.current = []; }
+              setSelShapes(sel => sel.filter(id => shapesRef.current.some(s => s.id === id)));
+              bumpInk();
+            }, err => console.warn('sync shapes', err));
             // Уходя с доски, дописываем отложенное: иначе последний штрих
             // уехал бы в облако уже под именем СЛЕДУЮЩЕЙ доски.
-            return () => { unRaster(); unInk(); flushInk(); };
+            return () => { unRaster(); unInk(); unFig(); flushInk(); };
           }, [user, activeBoardId]);
 
           // Перерисовка при панораме, зуме и смене размера окна. Штрихи
@@ -2736,18 +3315,23 @@
             // перерисовывать всю доску заново.
           }, [canvasOffset, zoom, excOn, currentView]);
 
+          // Выделение и смена инструмента живут в состоянии React, а рисует
+          // их верхний слой — значит, его надо трогать руками.
+          useEffect(() => { if (!excOn) requestLive(); }, [selShapes, wbMode, shapeKind, excOn]);
+
           // В режиме Excalidraw рисунок кистью показываем СНИМКОМ, а не живым
           // холстом: замер показал 50 мс на шаг зума с живым холстом против
           // 40 со снимком и 33 без него вовсе. Пока векторных штрихов нет,
           // снимок — это ровно старый растровый рисунок, собирать нечего.
           useEffect(() => {
             if (!excOn) { setInkShot(null); return; }
-            const list = strokesRef.current;
-            if (!list.length) { setInkShot(legacyUrl.current || null); return; }
+            const list = strokesRef.current, figs = shapesRef.current;
+            if (!list.length && !figs.length) { setInkShot(legacyUrl.current || null); return; }
             const cv = document.createElement('canvas');
             cv.width = 4000; cv.height = 4000;
             const ctx = cv.getContext('2d');
             if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
+            figs.forEach(s => paintShape(ctx, s));
             list.forEach(s => paintStroke(ctx, s));
             setInkShot(cv.toDataURL());
           }, [excOn, inkVer, activeBoardId]);
@@ -3040,6 +3624,8 @@
                 sortedBoards.forEach(b => {
                   const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
                   if (kk && kk !== '[]') data['cf_ink_' + b.id] = kk;
+                  const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
+                  if (ff && ff !== '[]') data['cf_shapes_' + b.id] = ff;
                 });
               }
               if (scope === 'all') {
@@ -3094,7 +3680,7 @@
             Object.keys(lightGearTypes || {}).forEach(k => deleteNetDoc('lightGearTypes', k));
             // Рисунок обнуляем записью, а не удалением: пустой документ гасит
             // холст и у тех, у кого доска сейчас открыта на другом устройстве.
-            sortedBoards.forEach(b => { saveCanvas(b.id, ''); saveStrokes(b.id, []); deleteNetDoc('boards', b.id); });
+            sortedBoards.forEach(b => { saveCanvas(b.id, ''); saveStrokes(b.id, []); saveShapes(b.id, []); deleteNetDoc('boards', b.id); });
 
             // Заготовка: одна сцена, один гайд, одна доска, каталоги по умолчанию.
             // Идентификаторы новые — чтобы свежие документы не встретились
@@ -3122,7 +3708,7 @@
             setLastReadChat(now);
             try { localStorage.setItem('cf_last_read', now); } catch (err) {}
 
-            strokesRef.current = [];
+            strokesRef.current = []; shapesRef.current = []; setSelShapes([]);
             legacyCv.current = null; legacyUrl.current = null; legacyMap.current = null;
             legacyDirty.current = false;
             undoStack.current = []; redoStack.current = [];
@@ -3148,24 +3734,53 @@
           // настоящей мышью дал отставание карточки от курсора 17 точек
           // против 12. На планшете выигрыш недоказуем, а проигрыш измерен.
           const dragPos = useRef(null);
-          const applyDrag = () => {
-              const p = dragPos.current;
-              const d = draggingWbItems;
-              if (!p || !d) return;
+          // Сдвиг всей группы за один расчёт: направляющие ищутся по общей
+          // рамке, и относительные расстояния внутри группы не плывут.
+          // Раньше каждая карточка независимо округлялась к сетке в 24 точки —
+          // выровнять её по СОСЕДНЕЙ было нельзя, если та стояла не по сетке.
+          const dragMoved = useRef(false);
+          const dragDelta = () => {
+              const p = dragPos.current, d = draggingWbItems;
+              if (!p || !d) return { dx: 0, dy: 0, idle: true };
               const z = liveZoom() || 1;
-              const dx = (p.x - d.startX) / z;
-              const dy = (p.y - d.startY) / z;
-              // Карточки прилипают к сетке в 24 точки, поэтому при медленном
-              // ведении большинство движений не меняют положение вообще —
-              // такие обновления просто не запускаем.
+              if (!dragMoved.current) {
+                  if (Math.hypot(p.x - d.startX, p.y - d.startY) < DRAG_START_PX) return { dx: 0, dy: 0, idle: true };
+                  dragMoved.current = true;
+                  // Шаг отмены пишем в момент первого настоящего движения,
+                  // а не при нажатии: иначе каждый выбор фигуры съедал шаг.
+                  if (d.items.some(i => i.type === 'shape')) {
+                      pushUndo(false);
+                      shapeAct.current = { kind: 'drag', ids: new Set(d.items.filter(i => i.type === 'shape').map(i => i.id)), pointerId: -1, moved: true };
+                      requestStatic();
+                  }
+              }
+              let dx = (p.x - d.startX) / z, dy = (p.y - d.startY) / z;
+              guides.current = [];
+              if (d.items.length) {
+                  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+                  d.items.forEach(i => {
+                      x0 = Math.min(x0, i.bx); y0 = Math.min(y0, i.by);
+                      x1 = Math.max(x1, i.bx + i.w); y1 = Math.max(y1, i.by + i.h);
+                  });
+                  const adj = snapMove({ x0: x0 + dx, y0: y0 + dy, x1: x1 + dx, y1: y1 + dy });
+                  dx += adj.dx; dy += adj.dy;
+              }
+              return { dx, dy };
+          };
+          const applyDrag = () => {
+              const d = draggingWbItems;
+              if (!dragPos.current || !d) return;
+              const { dx, dy, idle } = dragDelta();
+              if (idle) return;
+              // При медленном ведении притяжка чаще всего не меняет положение
+              // вообще — такие обновления просто не запускаем.
               const apply = (setter, type) => {
                   const items = d.items.filter(i => i.type === type);
                   if (!items.length) return;
                   setter(prev => {
                       let out = prev, changed = false;
                       items.forEach(item => {
-                          const nx = Math.round((item.ox + dx) / 24) * 24;
-                          const ny = Math.round((item.oy + dy) / 24) * 24;
+                          const nx = item.ox + dx, ny = item.oy + dy;
                           const cur = out.find(o => o.id === item.id);
                           if (!cur || (cur.x === nx && cur.y === ny)) return;
                           out = out.map(o => o.id === item.id ? { ...o, x: nx, y: ny } : o);
@@ -3178,6 +3793,36 @@
               apply(setReferences, 'ref');
               apply(setStickies, 'sticky');
               apply(setDocs, 'doc');
+              d.items.filter(i => i.type === 'shape').forEach(item => {
+                  const s = shapesRef.current.find(q => q.id === item.id);
+                  if (s) { s.x = item.ox + dx; s.y = item.oy + dy; shapeDirty(s); }
+              });
+              requestLive();     // направляющие и едущие фигуры рисует верхний слой
+          };
+
+          // Одна дверь для начала перетаскивания — и для карточек, и для
+          // фигур. Иначе после выделения рамкой «половина уезжает, половина
+          // стоит»: карточки живут в разметке, фигуры на холсте, но для
+          // человека это одно выделение и тянуться должно вместе.
+          const beginBoardDrag = (e, cardIds, shapeIds) => {
+              const items = [];
+              cardIds.forEach(sId => {
+                  const sc = scenes.find(x => x.id === sId); if (sc) return items.push({ id: sId, type: 'scene', ox: sc.x, oy: sc.y, bx: sc.x, by: sc.y, w: 288, h: 150 });
+                  const r = references.find(x => x.id === sId); if (r) return items.push({ id: sId, type: 'ref', ox: r.x, oy: r.y, bx: r.x, by: r.y, w: refW(r), h: refH(r) });
+                  const st = stickies.find(x => x.id === sId); if (st) return items.push({ id: sId, type: 'sticky', ox: st.x, oy: st.y, bx: st.x, by: st.y, w: stickyW(st), h: stickyH(st) });
+                  const dc = docs.find(x => x.id === sId); if (dc) return items.push({ id: sId, type: 'doc', ox: dc.x, oy: dc.y, bx: dc.x, by: dc.y, w: docCardW(dc), h: docCardH(dc) });
+              });
+              (shapeIds || []).forEach(id => {
+                  const s = shapesRef.current.find(q => q.id === id); if (!s) return;
+                  const b = shapeBox(s);
+                  items.push({ id, type: 'shape', ox: s.x, oy: s.y, bx: b.x, by: b.y, w: b.w, h: b.h });
+              });
+              if (!items.length) return;
+              buildSnapPool(items.map(i => i.id));
+              dragMoved.current = false;
+              dragPos.current = { x: e.clientX, y: e.clientY };
+              setDraggingWbItems({ pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, items });
+              e.currentTarget.setPointerCapture(e.pointerId);
           };
           const handleDragMove = (e) => {
               if (!draggingWbItems || draggingWbItems.pointerId !== e.pointerId) return;
@@ -3194,21 +3839,25 @@
               // В облако пишем ПОСЧИТАННОЕ положение, а не взятое из состояния:
               // состояние применяется не сразу, и последний сдвиг ушёл бы
               // в облако старым — карточка после перезагрузки прыгала бы назад.
-              const p = dragPos.current;
-              const zf = liveZoom() || 1;
-              const ddx = p ? (p.x - draggingWbItems.startX) / zf : 0;
-              const ddy = p ? (p.y - draggingWbItems.startY) / zf : 0;
-              const where = { scene: ['scenes', scenes], ref: ['references', references],
-                              sticky: ['stickies', stickies], doc: ['docs', docs] };
-              draggingWbItems.items.forEach(item => {
-                  const box = where[item.type]; if (!box) return;
-                  const f = box[1].find(x => x.id === item.id); if (!f) return;
-                  const nx = Math.round((item.ox + ddx) / 24) * 24;
-                  const ny = Math.round((item.oy + ddy) / 24) * 24;
-                  syncDoc(box[0], item.id, { ...f, x: nx, y: ny });
-              });
+              const { dx: ddx, dy: ddy, idle } = dragDelta();
+              if (!idle) {
+                  const where = { scene: ['scenes', scenes], ref: ['references', references],
+                                  sticky: ['stickies', stickies], doc: ['docs', docs] };
+                  let hadShapes = false;
+                  draggingWbItems.items.forEach(item => {
+                      if (item.type === 'shape') { hadShapes = true; return; }
+                      const box = where[item.type]; if (!box) return;
+                      const f = box[1].find(x => x.id === item.id); if (!f) return;
+                      syncDoc(box[0], item.id, { ...f, x: item.ox + ddx, y: item.oy + ddy });
+                  });
+                  if (hadShapes) { shapeAct.current = null; bumpInk(); scheduleInkSave('shapes'); }
+              }
+              shapeAct.current = null;
+              clearGuides();
+              dragMoved.current = false;
               dragPos.current = null;
               setDraggingWbItems(null);
+              requestLive();
           };
 
           const handleElementPointerDown = (e, id, type) => {
@@ -3222,16 +3871,8 @@
                   setSelectedWbItems(currentSelected);
               }
               
-              const itemsToDrag = [];
-              currentSelected.forEach(sId => {
-                  const sc = scenes.find(x => x.id === sId); if (sc) itemsToDrag.push({id: sId, type: 'scene', ox: sc.x, oy: sc.y});
-                  const r = references.find(x => x.id === sId); if (r) itemsToDrag.push({id: sId, type: 'ref', ox: r.x, oy: r.y});
-                  const st = stickies.find(x => x.id === sId); if (st) itemsToDrag.push({id: sId, type: 'sticky', ox: st.x, oy: st.y});
-                  const dc = docs.find(x => x.id === sId); if (dc) itemsToDrag.push({id: sId, type: 'doc', ox: dc.x, oy: dc.y});
-              });
-
-              setDraggingWbItems({ pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, items: itemsToDrag });
-              e.currentTarget.setPointerCapture(e.pointerId);
+              noSnap.current = e.ctrlKey || e.metaKey;
+              beginBoardDrag(e, currentSelected, selShapes);
           };
 
           // --- Размер карточки референса на доске ---
@@ -4209,9 +4850,10 @@
                                         // Сцены с удалённой доски просто снимаем — сами сцены остаются в проекте
                                         setScenes(scenes.map(s => s.boardId === b.id ? { ...s, boardId: '' } : s));
                                         scenes.filter(s => s.boardId === b.id).forEach(s => syncDoc('scenes', s.id, { ...s, boardId: '' }));
-                                        try { localStorage.removeItem('cf_canvas_draw_' + b.id); localStorage.removeItem('cf_ink_' + b.id); } catch (err) {}
+                                        try { localStorage.removeItem('cf_canvas_draw_' + b.id); localStorage.removeItem('cf_ink_' + b.id); localStorage.removeItem('cf_shapes_' + b.id); } catch (err) {}
                                         deleteNetDoc('canvas', canvasDocId(b.id));
                                         deleteNetDoc('canvas', strokesDocId(b.id));
+                                        deleteNetDoc('canvas', shapesDocId(b.id));
                                         setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
                                         showToast('Доска удалена · референсы остались в галерее');
                                       }});
@@ -4275,11 +4917,42 @@
                             const rect = canvasRef.current.getBoundingClientRect();
                             const x = (e.clientX - rect.left) / zoom;
                             const y = (e.clientY - rect.top) / zoom;
+                            noSnap.current = e.ctrlKey || e.metaKey;
+                            // Фигуры живут на холсте, а не карточками в разметке,
+                            // поэтому их попадание проверяем ЗДЕСЬ — там, куда
+                            // событие доходит, миновав карточки. Порядок важен:
+                            // сначала ручка, потом сама фигура, и только если
+                            // не попали ни во что — рамка выделения.
+                            const hh = handleAt(x, y);
+                            if (hh) {
+                                e.currentTarget.setPointerCapture(e.pointerId);
+                                shapeStartAct('size', [hh.s.id], { x, y }, { h: hh.h, pointerId: e.pointerId });
+                                return;
+                            }
+                            const hit = shapeAt(x, y);
+                            if (hit) {
+                                e.currentTarget.setPointerCapture(e.pointerId);
+                                let sel = selShapes, cards = selectedWbItems;
+                                if (!sel.includes(hit.id)) {
+                                    sel = e.shiftKey ? sel.concat([hit.id]) : [hit.id];
+                                    setSelShapes(sel);
+                                    if (!e.shiftKey) { cards = []; setSelectedWbItems([]); }
+                                }
+                                beginBoardDrag(e, cards, sel);
+                                return;
+                            }
+                            setSelShapes([]);
                             setSelectionBox({ startX: x, startY: y, currentX: x, currentY: y, pointerId: e.pointerId });
                             e.currentTarget.setPointerCapture(e.pointerId);
                         }
                     }}
                     onPointerMove={(e) => {
+                        if (shapeAct.current && shapeAct.current.pointerId === e.pointerId) {
+                            const rect = canvasRef.current.getBoundingClientRect();
+                            noSnap.current = e.ctrlKey || e.metaKey;
+                            shapeMoveAct({ x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom }, e.shiftKey);
+                            return;
+                        }
                         if (selectionBox && selectionBox.pointerId === e.pointerId) {
                             const rect = canvasRef.current.getBoundingClientRect();
                             const x = (e.clientX - rect.left) / zoom;
@@ -4292,12 +4965,19 @@
                         handleDocResizeMove(e);
                     }}
                     onPointerUp={(e) => {
+                        if (shapeAct.current && shapeAct.current.pointerId === e.pointerId) {
+                            if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                e.currentTarget.releasePointerCapture(e.pointerId);
+                            }
+                            shapeEndAct();
+                            return;
+                        }
                         if (selectionBox && selectionBox.pointerId === e.pointerId) {
                             if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
                                 e.currentTarget.releasePointerCapture(e.pointerId);
                             }
                             if (Math.abs(selectionBox.startX - selectionBox.currentX) < 5 && Math.abs(selectionBox.startY - selectionBox.currentY) < 5) {
-                                setSelectedWbItems([]);
+                                setSelectedWbItems([]); setSelShapes([]);
                             } else {
                                 const minX = Math.min(selectionBox.startX, selectionBox.currentX);
                                 const maxX = Math.max(selectionBox.startX, selectionBox.currentX);
@@ -4315,6 +4995,10 @@
                                 stickies.filter(st => belongsToBoard(st, activeBoardId)).forEach(st => checkInt(st, stickyW(st), stickyH(st)));
                                 boardDocs.forEach(d => checkInt(d, docCardW(d), docCardH(d)));
                                 setSelectedWbItems(newSelected);
+                                setSelShapes(shapesRef.current.filter(s => {
+                                    const b = shapeBox(s);
+                                    return b.x < maxX && b.x + b.w > minX && b.y < maxY && b.y + b.h > minY;
+                                }).map(s => s.id));
                             }
                             setSelectionBox(null);
                         }
@@ -4358,7 +5042,7 @@
                           <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 26 }} />
                           <canvas ref={liveCanvasRef}
                             className={`absolute inset-0 w-full h-full ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'}`}
-                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'select' ? 'default' : 'none') }}
+                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'shape' ? 'crosshair' : (wbMode === 'select' ? 'default' : 'none')) }}
                             onPointerEnter={(e) => { hoverPt.current = inkPt(e.clientX, e.clientY); requestLive(); }}
                             onPointerLeave={() => { hoverPt.current = null; requestLive(); }}
                             onPointerDown={(e) => {
@@ -4372,6 +5056,17 @@
                                   setIsPanning(true);
                                   setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
                                   return;
+                              }
+                              if (wbMode === 'shape') {
+                                e.currentTarget.setPointerCapture(e.pointerId);
+                                noSnap.current = e.ctrlKey || e.metaKey;
+                                buildSnapPool([]);
+                                guides.current = [];
+                                shapeDraft.current = makeShape(shapeKind,
+                                  snapEdge(pt.x, true, pt.y, pt.y), snapEdge(pt.y, false, pt.x, pt.x));
+                                setIsPainting(true);
+                                requestLive();
+                                return;
                               }
                               e.currentTarget.setPointerCapture(e.pointerId);
                               // Обратный конец стилуса стирает — но только этим
@@ -4394,6 +5089,25 @@
                             onPointerMove={(e) => {
                               hoverPt.current = inkPt(e.clientX, e.clientY);
                               if (isPanning) { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
+                              if (wbMode === 'shape') {
+                                const d = shapeDraft.current;
+                                if (!d) { requestLive(); return; }
+                                noSnap.current = e.ctrlKey || e.metaKey;
+                                guides.current = [];
+                                const pt2 = hoverPt.current;
+                                let nx = snapEdge(pt2.x, true, d.y, d.y), ny = snapEdge(pt2.y, false, d.x, d.x);
+                                if (e.shiftKey) {
+                                  if (isLineKind(d.k)) { const r = lockAngle(d.x, d.y, nx, ny); nx = r.x; ny = r.y; }
+                                  else {
+                                    const q = Math.max(Math.abs(nx - d.x), Math.abs(ny - d.y));
+                                    nx = d.x + (nx < d.x ? -q : q); ny = d.y + (ny < d.y ? -q : q);
+                                  }
+                                }
+                                d.w = nx - d.x; d.h = ny - d.y;
+                                shapeDirty(d);
+                                requestLive();
+                                return;
+                              }
                               if (!isPainting) { requestLive(); return; }
                               // Браузер копит промежуточные точки между кадрами.
                               // Без getCoalescedEvents они теряются, и быстрый
@@ -4434,6 +5148,27 @@
                               if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
                                 e.currentTarget.releasePointerCapture(e.pointerId);
                               }
+                              if (wbMode === 'shape') {
+                                const d = shapeDraft.current;
+                                shapeDraft.current = null;
+                                clearGuides();
+                                // Случайный тычок фигурой не считаем: иначе на
+                                // доске копились бы точки в один пиксель.
+                                const b = d ? shapeBox(d) : null;
+                                if (d && (b.w >= 3 || b.h >= 3)) {
+                                  // Замкнутую нормализуем: габарит всегда
+                                  // с положительными сторонами, и всё, что
+                                  // считает рамку, может на это полагаться.
+                                  if (!isLineKind(d.k)) { d.x = b.x; d.y = b.y; d.w = b.w; d.h = b.h; shapeDirty(d); }
+                                  pushUndo(false);
+                                  shapesRef.current = shapesRef.current.concat([d]);
+                                  bumpInk();
+                                  scheduleInkSave('shapes');
+                                }
+                                setIsPainting(false);
+                                requestLive();
+                                return;
+                              }
                               const wipe = penErase.current || wbMode === 'erase';
                               const L = live.current;
                               if (isPainting && !wipe && L && L.pts.length) {
@@ -4451,6 +5186,7 @@
                                 if (legacyDirty.current) saveLegacy();
                                 setInkVer(v => v + 1);
                                 scheduleInkSave();
+                                scheduleInkSave('shapes');
                               }
                               live.current = null; erasePt.current = null; penErase.current = false;
                               setIsPainting(false); setIsPanning(false);
@@ -4458,6 +5194,7 @@
                             }}
                             onPointerCancel={() => {
                               live.current = null; erasePt.current = null; penErase.current = false;
+                              shapeDraft.current = null; clearGuides();
                               setIsPainting(false); setIsPanning(false); requestLive();
                             }} />
                         </React.Fragment>
@@ -4682,8 +5419,9 @@
                       {/* В режиме Excalidraw уходим к правому краю: слева у него
                           своя панель свойств, и две панели наезжали друг на друга */}
                       <div className={`absolute glass-panel p-2 rounded-lg flex gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar ${excOn ? 'flex-col right-2 md:right-6 top-1/2 -translate-y-1/2' : 'flex-row md:flex-col top-2 md:top-6 left-2 md:left-6'}`}>
-                        <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов"><Icons.Pointer/></button>
+                        <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов · тяните за уголки, Ctrl во время движения выключает притяжку"><Icons.Pointer/></button>
                         <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title={excOn ? 'Рисовать (инструменты Excalidraw)' : 'Кисть'}><Icons.Pen/></button>
+                        {!excOn && <button onClick={() => setWbMode('shape')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'shape' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Фигуры: прямоугольник, овал, ромб, стрелка, линия"><Icons.Shapes/></button>}
                         {!excOn && <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>}
                         {!excOn && <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>}
                         {/* Появляется только после первого касания стилусом:
@@ -4716,7 +5454,7 @@
                             и вдобавок сбивает: её значок принимают за «мои
                             референсы». Новые картинки туда кладёт сам Excalidraw. */}
                         {!excOn && <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>}
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок кистью?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); setInkShot(null); bumpInk(); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); setInkShot(null); bumpInk(); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
                       </div>
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
@@ -4798,6 +5536,147 @@
                         </div>
                       )}
 
+                      {/* ПАНЕЛЬ СВОЙСТВ. Контекстная: в режиме фигур задаёт,
+                          чем рисовать дальше, а если что-то выделено — правит
+                          выделенное. Показываем только то, что применимо:
+                          у линии нет заливки, у овала нет наконечников.
+                          Палитра НАМЕРЕННО короткая — из шести цветов доска
+                          всегда выглядит прилично, из шестнадцати миллионов
+                          нет. Свой цвет спрятан за отдельной кнопкой. */}
+                      {!excOn && (wbMode === 'shape' || (wbMode === 'select' && selShapes.length > 0)) && (() => {
+                        const selNow = wbMode === 'select' ? selShapes.map(id => shapesRef.current.find(s => s.id === id)).filter(Boolean) : [];
+                        // Чем правим: выделенным или заготовкой на будущее
+                        const cur = selNow.length ? selNow[0] : shapeStyle;
+                        const kinds = selNow.length ? selNow.map(s => s.k) : [shapeKind];
+                        const anyClosed = kinds.some(k => !isLineKind(k));
+                        const anyLine = kinds.some(k => isLineKind(k));
+                        const anyArrow = kinds.some(k => k === 'arrow');
+                        const anyRect = kinds.some(k => k === 'rect');
+                        const row = "flex bg-black/50 p-1 rounded-lg border border-white/5 gap-1";
+                        const cell = (on) => `flex-1 py-1 rounded-md text-[11px] font-bold transition-all ${on ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`;
+                        const cap = "text-[10.5px] text-zinc-500 font-bold uppercase tracking-wider block";
+                        return (
+                        <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-3 rounded-lg flex flex-col space-y-2 z-30 w-52 border-t border-white/10 max-h-[calc(100%-3rem)] overflow-y-auto hide-scrollbar">
+                          {wbMode === 'shape' && (
+                            <div className={row}>
+                              {[['rect', Icons.ShRect, 'Прямоугольник'], ['ellipse', Icons.ShEllipse, 'Овал'], ['diamond', Icons.ShDiamond, 'Ромб'], ['arrow', Icons.ShArrow, 'Стрелка'], ['line', Icons.ShLine, 'Линия']].map(([k, Ic, t]) => (
+                                <button key={k} title={t} onClick={() => setShapeKind(k)}
+                                        className={`flex-1 py-1.5 rounded-md flex items-center justify-center transition-all ${shapeKind === k ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}><Ic/></button>
+                              ))}
+                            </div>
+                          )}
+                          {selNow.length > 0 && (
+                            <div className="flex items-center justify-between">
+                              <span className={cap}>Выбрано: {selNow.length}</span>
+                              <button onClick={() => deleteShapes()} title="Удалить (Delete)"
+                                      className="px-2 py-1 rounded-md text-[11px] font-bold text-red-400 hover:bg-white/10">Удалить</button>
+                            </div>
+                          )}
+
+                          <div className="space-y-1">
+                            <span className={cap}>Линия</span>
+                            <div className="grid grid-cols-7 gap-1.5 items-center">
+                              {SHAPE_COLORS.map(c => (
+                                <button key={c} onClick={() => patchShapes({ sc: c })} style={{ backgroundColor: c }}
+                                        className={`w-5 h-5 rounded-full border-2 ${cur.sc === c ? 'border-white scale-110' : 'border-transparent'} transition-transform`} />
+                              ))}
+                              <input type="color" value={cur.sc} onChange={(e) => patchShapes({ sc: e.target.value })} title="Свой цвет"
+                                     className="wb-color-well w-5 h-5 rounded-full border-2 border-white/30 cursor-pointer bg-transparent" />
+                            </div>
+                          </div>
+
+                          {anyClosed && (
+                            <div className="space-y-1">
+                              <span className={cap}>Заливка</span>
+                              <div className="grid grid-cols-7 gap-1.5 items-center">
+                                {SHAPE_FILLS.map(c => (
+                                  <button key={c} onClick={() => patchShapes({ bg: c })} title={c === 'transparent' ? 'Без заливки' : ''}
+                                          style={c === 'transparent' ? {} : { backgroundColor: c, opacity: 0.55 }}
+                                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${cur.bg === c ? 'border-white scale-110' : 'border-transparent'} transition-transform ${c === 'transparent' ? 'bg-black/40' : ''}`}>
+                                    {c === 'transparent' && <span className="block w-3.5 h-[1.5px] bg-zinc-500 rotate-45" />}
+                                  </button>
+                                ))}
+                              </div>
+                              {cur.bg !== 'transparent' && (
+                                <div className={row}>
+                                  {[['solid', 'Сплошь'], ['hachure', 'Штрих'], ['cross', 'Сетка']].map(([v, t]) => (
+                                    <button key={v} onClick={() => patchShapes({ fs: v })} className={cell(cur.fs === v)}>{t}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="space-y-1">
+                            <span className={cap}>Толщина</span>
+                            <div className={row}>
+                              {[[1, 'Тонко'], [2, 'Средне'], [4, 'Жирно']].map(([v, t]) => (
+                                <button key={v} onClick={() => patchShapes({ sw: v })} className={cell(cur.sw === v)}>{t}</button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className={cap}>Штрих</span>
+                            <div className={row}>
+                              {[['solid', 'Сплошь'], ['dashed', 'Пунктир'], ['dotted', 'Точки']].map(([v, t]) => (
+                                <button key={v} onClick={() => patchShapes({ sd: v })} className={cell(cur.sd === v)}>{t}</button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className={cap}>Начертание</span>
+                            <div className={row}>
+                              {[[0, 'Ровно'], [1, 'От руки'], [2, 'Эскиз']].map(([v, t]) => (
+                                <button key={v} onClick={() => patchShapes({ ro: v })} className={cell(cur.ro === v)}>{t}</button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {anyRect && (
+                            <div className={row}>
+                              {[[1, 'Скруглить'], [0, 'Острые углы']].map(([v, t]) => (
+                                <button key={v} onClick={() => patchShapes({ rd: v })} className={cell(cur.rd === v)}>{t}</button>
+                              ))}
+                            </div>
+                          )}
+
+                          {anyArrow && anyLine && (
+                            <div className="space-y-1">
+                              <span className={cap}>Наконечники</span>
+                              <div className={row}>
+                                <button onClick={() => patchShapes({ a1: cur.a1 === 'arrow' ? 'none' : 'arrow' })} className={cell(cur.a1 === 'arrow')}>В начале</button>
+                                <button onClick={() => patchShapes({ a2: cur.a2 === 'arrow' ? 'none' : 'arrow' })} className={cell(cur.a2 === 'arrow')}>В конце</button>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between"><span className={cap}>Прозрачность</span><span className="text-[11px] text-zinc-400 font-mono">{Math.round((cur.op === undefined ? 1 : cur.op) * 100)}%</span></div>
+                            <input type="range" min="10" max="100" step="5" value={Math.round((cur.op === undefined ? 1 : cur.op) * 100)}
+                                   onChange={(e) => patchShapes({ op: Number(e.target.value) / 100 })}
+                                   className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
+                          </div>
+
+                          {selNow.length > 0 && (
+                            <div className="space-y-1">
+                              <span className={cap}>Порядок</span>
+                              <div className={row}>
+                                <button onClick={() => orderShapes(1)} className={cell(false)}>Вперёд</button>
+                                <button onClick={() => orderShapes(-1)} className={cell(false)}>Назад</button>
+                              </div>
+                            </div>
+                          )}
+                          {wbMode === 'shape' && (
+                            <p style={{ fontSize: 10.5, lineHeight: 1.4, color: 'var(--muted-2)' }}>
+                              Ведите по доске. Shift — ровный квадрат и угол кратно 15°, Ctrl — без притяжки.
+                            </p>
+                          )}
+                        </div>
+                        );
+                      })()}
+
                       {/* У ластика своя панель. Раньше его размер был спрятан
                           в коде («кисть × 2,5»), увидеть и задать его было
                           нечем — человек стирал вслепую. */}
@@ -4805,8 +5684,8 @@
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-3 z-30 w-52 border-t border-white/10">
                           <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Ластик</span><span>{eraserSize}px</span></div>
                           <input type="range" min="8" max="200" step="4" value={eraserSize} onChange={(e) => changeEraser(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
-                          <p style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--muted-2)' }}>
-                            Круг под курсором показывает, что именно заденет. Ластик режет линии — стёртое возвращается по Ctrl+Z.
+                          <p style={{ fontSize: 10.5, lineHeight: 1.4, color: 'var(--muted-2)' }}>
+                            Круг показывает, что заденет. Линии режет, фигуры убирает целиком — стёртое вернёт Ctrl+Z.
                           </p>
                         </div>
                       )}
@@ -5277,17 +6156,20 @@
                       <button onClick={() => {
                         // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
                         // Раньше бэкап брал один старый общий ключ и уносил пустоту.
-                        const canvases = {}, inks = {};
+                        const canvases = {}, inks = {}, figs = {};
                         sortedBoards.forEach(b => {
                           const dd = localStorage.getItem('cf_canvas_draw_' + b.id); if (dd) canvases[b.id] = dd;
-                          // Штрихи с ОТКРЫТОЙ доски берём из памяти: в localStorage
-                          // они попадают с задержкой, и последний мог не успеть.
+                          // Штрихи и фигуры с ОТКРЫТОЙ доски берём из памяти:
+                          // в localStorage они попадают с задержкой, и последнее
+                          // изменение могло не успеть.
                           const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
                           if (kk && kk !== '[]') inks[b.id] = kk;
+                          const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
+                          if (ff && ff !== '[]') figs[b.id] = ff;
                         });
-                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks };
+                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs };
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                        showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks))).size}`);
+                        showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks), Object.keys(figs))).size}`);
                       }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
                       
                       <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
@@ -5311,9 +6193,14 @@
                                 let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
                                 saveStrokes(bid, list);
                               });
-                              if (canv || d.inks) {
-                                strokesRef.current = [];
+                              if (d.shapes) Object.entries(d.shapes).forEach(([bid, json]) => {
+                                let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
+                                saveShapes(bid, list);
+                              });
+                              if (canv || d.inks || d.shapes) {
+                                strokesRef.current = []; shapesRef.current = []; setSelShapes([]);
                                 if (d.inks && d.inks[activeBoardId]) { try { strokesRef.current = JSON.parse(d.inks[activeBoardId]) || []; } catch (err) {} }
+                                if (d.shapes && d.shapes[activeBoardId]) { try { shapesRef.current = JSON.parse(d.shapes[activeBoardId]) || []; } catch (err) {} }
                                 loadLegacy((canv && canv[activeBoardId]) || null);
                                 undoStack.current = []; redoStack.current = [];
                                 setCanUndo(false); setCanRedo(false);
