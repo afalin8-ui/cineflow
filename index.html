@@ -1520,6 +1520,51 @@
             ctx.lineCap = 'round'; ctx.lineJoin = 'round';
           };
 
+          // Штрих рисуется НЕ отрезками с разной толщиной, а СПЛОШНОЙ ЛЕНТОЙ:
+          // между соседними точками заливается фигура, натянутая на две
+          // окружности разного радиуса. Толщина меняется непрерывно, стыков
+          // не видно. Раньше каждый отрезок обводился отдельно со своей
+          // толщиной — отсюда ступеньки на линии.
+          const capsule = (ctx, x1, y1, r1, x2, y2, r2) => {
+            const dx = x2 - x1, dy = y2 - y1;
+            const d = Math.hypot(dx, dy);
+            const R = Math.max(r1, r2);
+            ctx.beginPath();
+            // Точки совпали или одна окружность внутри другой — просто круг.
+            if (d < 0.01 || d <= Math.abs(r1 - r2)) {
+              const inner = r1 > r2;
+              ctx.arc(inner ? x1 : x2, inner ? y1 : y2, R, 0, Math.PI * 2);
+              ctx.fill(); return;
+            }
+            const a = Math.atan2(dy, dx);
+            const t = Math.asin((r1 - r2) / d);
+            ctx.arc(x1, y1, r1, a + Math.PI / 2 + t, a - Math.PI / 2 - t);
+            ctx.arc(x2, y2, r2, a - Math.PI / 2 - t, a + Math.PI / 2 + t);
+            ctx.closePath(); ctx.fill();
+          };
+          // Ширина штриха в этой точке. Сужение на первых и последних шагах
+          // (`taper`) — именно оно делает линию живой, а не сарделькой.
+          const strokeR = (mode, type, press, taper) => {
+            const w = brushSize * (0.35 + press * 1.3);
+            const k = mode === 'erase' ? 2.5 : brushWidthK(type);
+            return Math.max(0.4, w * k * (taper === undefined ? 1 : taper)) / 2;
+          };
+          // Кладём ленту вдоль квадратичной кривой, разбивая её на мелкие шаги:
+          // и путь получается гладким, и толщина меняется без скачков.
+          const ribbon = (ctx, st, ctrl, to, rTo) => {
+            const from = { x: st.lx, y: st.ly };
+            const len = Math.hypot(to.x - from.x, to.y - from.y) + Math.hypot(ctrl.x - from.x, ctrl.y - from.y);
+            const steps = Math.max(1, Math.min(20, Math.ceil(len / 4)));
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps, u = 1 - t;
+              const x = u * u * from.x + 2 * u * t * ctrl.x + t * t * to.x;
+              const y = u * u * from.y + 2 * u * t * ctrl.y + t * t * to.y;
+              const r = st.lr + (rTo - st.lr) * t;
+              capsule(ctx, st.lx, st.ly, st.lr, x, y, r);
+              st.lx = x; st.ly = y; st.lr = r;
+            }
+          };
+
           const pushUndo = () => {
             if (!lastSaved.current) return;
             undoStack.current.push(lastSaved.current);
@@ -3921,12 +3966,15 @@
                           penErase.current = isPenEraser(e);
                           pushUndo();
                           setIsPainting(true);
-                          stroke.current = { prev: coords, prevMid: coords, press };
+                          const mode0 = penErase.current ? 'erase' : wbMode;
+                          const r0 = strokeR(mode0, brushType, press, 0.45);
+                          stroke.current = { prev: coords, prevMid: coords, press, n: 0,
+                                             lx: coords.x, ly: coords.y, lr: r0 };
                           lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
                           const ctx = paintCanvasRef.current.getContext('2d');
                           ctx.save();
-                          applyBrush(ctx, penErase.current ? 'erase' : wbMode, brushType, brushColor, brushSize * (0.35 + press * 1.3));
-                          ctx.beginPath(); ctx.arc(coords.x, coords.y, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill();
+                          applyBrush(ctx, mode0, brushType, brushColor, brushSize * (0.35 + press * 1.3));
+                          ctx.beginPath(); ctx.arc(coords.x, coords.y, r0, 0, Math.PI * 2); ctx.fill();
                           ctx.restore();
                         }} onPointerMove={(e) => {
                           if (excOn) return;
@@ -3953,14 +4001,15 @@
                               ? p.pressure
                               : Math.max(0.15, Math.min(1, 1 - dist / 45));
                             st.press = st.press * 0.7 + raw * 0.3;
+                            st.n = (st.n || 0) + 1;
                             const mid = { x: (st.prev.x + cur.x) / 2, y: (st.prev.y + cur.y) / 2 };
-                            applyBrush(ctx, penErase.current ? 'erase' : wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
-                            // Квадратичная кривая через середины отрезков — даёт
-                            // непрерывный гладкий путь вместо ломаной.
-                            ctx.beginPath();
-                            ctx.moveTo(st.prevMid.x, st.prevMid.y);
-                            ctx.quadraticCurveTo(st.prev.x, st.prev.y, mid.x, mid.y);
-                            ctx.stroke();
+                            const mode2 = penErase.current ? 'erase' : wbMode;
+                            applyBrush(ctx, mode2, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
+                            // Лента вдоль квадратичной кривой через середины отрезков:
+                            // путь гладкий, толщина меняется непрерывно.
+                            // Сужение у начала — первые шаги тоньше.
+                            const taper = Math.min(1, 0.45 + st.n * 0.18);
+                            ribbon(ctx, st, st.prev, mid, strokeR(mode2, brushType, st.press, taper));
                             st.prev = cur; st.prevMid = mid;
                           }
                           ctx.restore();
@@ -3972,19 +4021,33 @@
                           // Дотягиваем хвост от последней середины до последней точки,
                           // иначе кончик штриха обрезается.
                           const st = stroke.current;
-                          if (isPainting && st.prev && st.prevMid && paintCanvasRef.current) {
+                          if (isPainting && st.prev && st.prevMid && st.lx !== undefined && paintCanvasRef.current) {
                             const ctx = paintCanvasRef.current.getContext('2d');
                             ctx.save();
-                            applyBrush(ctx, penErase.current ? 'erase' : wbMode, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
-                            ctx.beginPath(); ctx.moveTo(st.prevMid.x, st.prevMid.y); ctx.lineTo(st.prev.x, st.prev.y); ctx.stroke();
+                            const mode1 = penErase.current ? 'erase' : wbMode;
+                            applyBrush(ctx, mode1, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
+                            // Хвост дотягиваем И сужаем: конец штриха должен сходить
+                            // на нет, а не обрываться тупым срезом. Сужение
+                            // растягиваем на длину в пару ширин кисти — на
+                            // последних пяти точках его просто не видно.
+                            const rEnd = strokeR(mode1, brushType, st.press);
+                            ribbon(ctx, st, st.prevMid, st.prev, rEnd * 0.8);
+                            const vx = st.prev.x - st.prevMid.x, vy = st.prev.y - st.prevMid.y;
+                            const vl = Math.hypot(vx, vy);
+                            if (vl > 0.01) {
+                              const хвост = Math.min(26, Math.max(6, rEnd * 4));
+                              const кон = { x: st.prev.x + vx / vl * хвост, y: st.prev.y + vy / vl * хвост };
+                              const сер = { x: (st.prev.x + кон.x) / 2, y: (st.prev.y + кон.y) / 2 };
+                              ribbon(ctx, st, сер, кон, Math.max(0.35, rEnd * 0.12));
+                            }
                             ctx.restore();
                           }
-                          stroke.current = { prev: null, prevMid: null, press: 0.5 };
+                          stroke.current = { prev: null, prevMid: null, press: 0.5, n: 0, lx: undefined, ly: undefined, lr: 0 };
                           penErase.current = false;
                           const wasPainting = isPainting;
                           setIsPainting(false); setIsPanning(false);
                           if (wasPainting) persistCanvas();
-                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />}
+                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5, n: 0, lx: undefined, ly: undefined, lr: 0 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />}
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
