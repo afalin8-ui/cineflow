@@ -1381,7 +1381,10 @@
           // любом увеличении, как в Excalidraw. Побочно вектор даёт даром
           // три вещи: отсечение невидимого, дешёвую отмену и ластик, который
           // режет линии, а не выедает дырки в картинке.
-          const INK_MAX = 1200;               // точек в штрихе — предохранитель
+          // Точек в одном штрихе. Это не предел длины линии: набрав их,
+          // штрих ЗАКРЫВАЕТСЯ и тут же продолжается новым от той же точки —
+          // для человека линия остаётся одной.
+          const INK_MAX = 1200;
           const INK_LEAD = 0.575;             // «поводок» за указателем, см. ниже
           const brushAlpha = (type) => type === 'marker' ? 0.32 : (type === 'soft' ? 0.5 : 1.0);
           const brushWidthK = (type) => type === 'soft' ? 1.7 : 1;
@@ -1402,7 +1405,10 @@
           // точки свой радиус. Только так получаются и живой нажим, и гладкие
           // изломы, и сход на нет у концов: линия с lineWidth так не умеет
           // в принципе — у неё одна толщина на весь отрезок.
-          const inkOutline = (pts, size, thin) => {
+          // jn — стыки: бит 1 «не сужать начало», бит 2 «не сужать конец».
+          // Нужны там, где длинная линия разрезана на куски: без этого на
+          // каждом стыке линия схлопывалась бы в ноль и снова расширялась.
+          const inkOutline = (pts, size, thin, jn) => {
             const n = pts.length;
             if (!n) return [];
             const R = size / 2;
@@ -1423,8 +1429,8 @@
             // Начало набирает ширину, конец её теряет. Именно сход на нет
             // отличает живую линию от сардельки. Хвост длиннее носа —
             // так ведёт себя перо, когда его отрывают от бумаги.
-            const tS = Math.min(size * 1.2, total * 0.35);
-            const tE = Math.min(size * 2.2, total * 0.45);
+            const tS = ((jn || 0) & 1) ? 0 : Math.min(size * 1.2, total * 0.35);
+            const tE = ((jn || 0) & 2) ? 0 : Math.min(size * 2.2, total * 0.45);
             const rad = [];
             for (let i = 0; i < n; i++) {
               const r = R * 2 * (0.5 - thin * (0.5 - pts[i][2]));
@@ -1527,7 +1533,7 @@
             return s._pts;
           };
           const strokeCmds = (s) => {
-            if (!s._cmds) s._cmds = inkCmds(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t)));
+            if (!s._cmds) s._cmds = inkCmds(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t), s.jn));
             return s._cmds;
           };
           const strokePath = (s) => {
@@ -1555,10 +1561,12 @@
           };
           // Координаты округляем: на доске 4000×4000 десятой доли точки
           // хватает с запасом, а документ в Firestore ограничен мегабайтом.
-          const packStroke = (t, color, size, pts) => {
+          const packStroke = (t, color, size, pts, jn) => {
             const p = [];
             for (const q of pts) p.push(Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10, Math.round(q[2] * 100) / 100);
-            return { id: `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, t, c: color, w: size, p };
+            const s = { id: `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, t, c: color, w: size, p };
+            if (jn) s.jn = jn;
+            return s;
           };
 
           // --- ФИГУРЫ ---
@@ -2690,7 +2698,7 @@
               if (L.t === 'marker') ctx.globalCompositeOperation = 'screen';
               ctx.globalAlpha = brushAlpha(L.t);
               ctx.fillStyle = L.c;
-              ctx.fill(cmdsPath(inkCmds(inkOutline(L.pts, L.w * brushWidthK(L.t), brushThin(L.t)))));
+              ctx.fill(cmdsPath(inkCmds(inkOutline(L.pts, L.w * brushWidthK(L.t), brushThin(L.t), L.jn))));
               ctx.restore();
             }
             // Фигуры, которые сейчас ведут или тянут, живут здесь: нижний
@@ -2770,10 +2778,15 @@
             if (hp && !isPanning && (wbMode === 'draw' || wbMode === 'erase')) {
               const r = Math.max(2.5, (er ? eraserSize : brushSize * brushWidthK(brushType)) / 2 * z);
               ctx.save();
+              // Кольцо рисуется БЕЗ преобразования доски, значит и точку
+              // надо брать ЭКРАННУЮ (sx/sy), а не координату на доске.
+              // Пока доску не двигали, они совпадают — и ошибка не видна;
+              // стоит панорамировать или изменить масштаб, и кольцо уезжает
+              // от пера ровно на величину сдвига, хотя стирает по перу.
               // Тёмная подложка — чтобы кольцо читалось и поверх светлого референса
-              ctx.beginPath(); ctx.arc(hp.x, hp.y, r + 1, 0, Math.PI * 2);
+              ctx.beginPath(); ctx.arc(hp.sx, hp.sy, r + 1, 0, Math.PI * 2);
               ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2.5; ctx.stroke();
-              ctx.beginPath(); ctx.arc(hp.x, hp.y, r, 0, Math.PI * 2);
+              ctx.beginPath(); ctx.arc(hp.sx, hp.sy, r, 0, Math.PI * 2);
               if (er) { ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fill(); }
               ctx.strokeStyle = er ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.6)';
               ctx.lineWidth = 1.25; ctx.stroke();
@@ -2920,7 +2933,15 @@
                 })
             );
           };
-          const packInk = (list) => JSON.stringify(list.map(s => ({ id: s.id, t: s.t, c: s.c, w: s.w, p: s.p })));
+          // Поля перечислены ЯВНО, чтобы в облако не уезжали кэши пути.
+          // Добавляя штриху новое поле, впиши его и сюда: `jn` (стыки
+          // разрезанной линии) один раз уже терялся при записи, и после
+          // перезагрузки длинная линия схлопывалась на каждом стыке.
+          const packInk = (list) => JSON.stringify(list.map(s => {
+            const o = { id: s.id, t: s.t, c: s.c, w: s.w, p: s.p };
+            if (s.jn) o.jn = s.jn;
+            return o;
+          }));
           const saveStrokes = (boardId, list) => {
             if (READ_ONLY) return;
             const json = packInk(list);
@@ -5404,8 +5425,22 @@
                                 const ny = last[1] + (b.y - last[1]) * INK_LEAD;
                                 const dev = (e.pointerType === 'pen' && p.pressure > 0) ? p.pressure : null;
                                 L.press = inkPress(L.press, d, L.w, dev);
-                                if (L.pts.length >= INK_MAX) L.pts[L.pts.length - 1] = [nx, ny, L.press];
-                                else L.pts.push([nx, ny, L.press]);
+                                L.pts.push([nx, ny, L.press]);
+                                if (L.pts.length >= INK_MAX) {
+                                  // Набрали предел — ЗАКРЫВАЕМ кусок и тут же
+                                  // продолжаем новым от той же точки. Раньше
+                                  // точки просто переставали добавляться, и
+                                  // конец линии начинал ездить за пером:
+                                  // выглядело так, будто линия кончилась и её
+                                  // утаскивает. Стыки не сужаем, поэтому шва
+                                  // не видно.
+                                  const cut = packStroke(L.t, L.c, L.w, L.pts, (L.jn || 0) | 2);
+                                  strokesRef.current = strokesRef.current.concat([cut]);
+                                  paintOnStatic(cut);
+                                  scheduleInkSave();
+                                  L.pts = [L.pts[L.pts.length - 1]];
+                                  L.jn = 1;
+                                }
                               }
                               requestLive();
                             }}
@@ -5455,7 +5490,7 @@
                               const wipe = penErase.current || wbMode === 'erase';
                               const L = live.current;
                               if (isPainting && !wipe && L && L.pts.length) {
-                                const s = packStroke(L.t, L.c, L.w, L.pts);
+                                const s = packStroke(L.t, L.c, L.w, L.pts, L.jn);
                                 strokesRef.current = strokesRef.current.concat([s]);
                                 // Готовый штрих ДОПИСЫВАЕМ в нижний слой, а не
                                 // перерисовываем доску целиком: обычный случай —
