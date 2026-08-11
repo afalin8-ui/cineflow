@@ -179,15 +179,6 @@
            перетаскивании, но не должна спорить с референсами на доске */
         .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.05) 1.2px, transparent 1.2px); background-size: 26px 26px; }
 
-        /* Доска на движке Excalidraw. Пока рисуем, наши карточки не должны
-           перехватывать касания — иначе до холста они просто не доходят.
-           Правило жёсткое (!important и *), потому что у карточек внутри
-           свои pointer-events:auto, и мягкой отменой их не выключить. */
-        .cf-exc-draw #wb-container,
-        .cf-exc-draw #wb-container * { pointer-events: none !important; }
-        /* Панель инструментов Excalidraw в наших цветах */
-        .excalidraw { --color-primary: #d97757; --color-primary-darker: #c65d3d; --color-primary-darkest: #a54a30; }
-
         /* Режим «только просмотр». Ничего не уходит в облако (см. syncDoc),
            а здесь дополнительно гасим саму возможность что-то печатать,
            чтобы человек не решил, будто его правки сохранятся. */
@@ -900,32 +891,6 @@
             );
         };
 
-        // --- Доска на движке Excalidraw (пробный режим) ---
-        // Берём версию 0.17.1: она единственная собрана так, что работает
-        // простым <script> рядом с нашим React, без сборщика. Свежая 0.18
-        // только модульная — её без сборки не подключить.
-        // Грузим ПО ТРЕБОВАНИЮ: библиотека весит около 4 МБ, и платить за неё
-        // должны только те доски, где её включили. Service worker подберёт
-        // её в кэш сам, при первом же обращении, — офлайн заработает потом.
-        const EXC_BASE = 'https://unpkg.com/@excalidraw/excalidraw@0.17.1/dist/';
-        let excLoading = null;
-        const loadExcalidraw = () => {
-          if (window.ExcalidrawLib) return Promise.resolve(window.ExcalidrawLib);
-          if (excLoading) return excLoading;
-          excLoading = new Promise((resolve, reject) => {
-            window.EXCALIDRAW_ASSET_PATH = EXC_BASE;
-            const s = document.createElement('script');
-            s.src = EXC_BASE + 'excalidraw.production.min.js';
-            s.onload = () => window.ExcalidrawLib ? resolve(window.ExcalidrawLib) : reject(new Error('пустая библиотека'));
-            s.onerror = () => { excLoading = null; reject(new Error('не удалось скачать')); };
-            document.head.appendChild(s);
-          });
-          return excLoading;
-        };
-
-        // memo обязателен: без него любая перерисовка приложения — набранная
-        // буква в карточке, пришедшее сообщение — заставляла Excalidraw
-        // перерисоваться целиком. Все входящие свойства держим неизменными.
         // Поле тега с подсказками из УЖЕ ИСПОЛЬЗОВАННЫХ в проекте.
         // Отдельным компонентом намеренно: набранные буквы живут в его
         // собственном состоянии и не заставляют перерисовываться всю
@@ -994,102 +959,6 @@
             </span>
           );
         };
-
-        const ExcalidrawBoard = React.memo(({ elements, files, onSave, onView, onTool, readOnly, apiRef, boardId }) => {
-          const [lib, setLib] = useState(window.ExcalidrawLib || null);
-          const [err, setErr] = useState('');
-          const saveTimer = useRef(null);
-          // Готовое к записи, но ещё не записанное. При уходе с доски это
-          // НАДО дописать, а не выбросить: иначе последний штрих, сделанный
-          // перед переключением, пропадал.
-          const pending = useRef(null);
-          const lastSent = useRef('');
-          const elsRef = useRef(null);
-          const lastTool = useRef('selection');
-          const filesRef = useRef(null);
-          const lastFiles = useRef('{}');
-
-          useEffect(() => {
-            let alive = true;
-            loadExcalidraw().then(l => { if (alive) setLib(l); })
-                            .catch(e => { if (alive) setErr(e.message); });
-            // Отложенное сохранение ОБЯЗАНО умереть вместе с доской. Пока
-            // этого не было, рисунок, уехавший в очередь на «Основной»,
-            // догонял человека уже на другой доске и записывался в неё —
-            // и выглядело это как «Excalidraw появился сразу везде».
-            return () => {
-              alive = false;
-              clearTimeout(saveTimer.current);
-              if (pending.current) pending.current();
-            };
-          }, []);
-
-          if (err) return (
-            <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
-              <div style={{ fontSize: 12.5, color: 'var(--muted)', maxWidth: 320, lineHeight: 1.6 }}>
-                Не удалось загрузить Excalidraw ({err}).<br />Нужен интернет — при первом включении библиотека скачивается.
-              </div>
-            </div>
-          );
-          if (!lib) return (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="cf-meta">Загружаю Excalidraw… это примерно 4 МБ, только в первый раз</span>
-            </div>
-          );
-
-          const Exc = lib.Excalidraw;
-          return (
-            <Exc
-              excalidrawAPI={(api) => { if (apiRef) apiRef.current = api; }}
-              initialData={{ elements: elements || [], files: files || {}, scrollToContent: false,
-                             appState: { viewBackgroundColor: 'transparent' } }}
-              theme="dark"
-              langCode="ru-RU"
-              viewModeEnabled={!!readOnly}
-              UIOptions={{ canvasActions: { loadScene: false, changeViewBackgroundColor: false, toggleTheme: false } }}
-              onChange={(els, st, sceneFiles) => {
-                // Панораму и зум ведёт Excalidraw — наши карточки просто
-                // повторяют за ним, иначе разъедутся два масштаба.
-                if (onView) onView(st.scrollX, st.scrollY, st.zoom.value);
-                // Взяли инструмент в панели Excalidraw — значит собираются
-                // работать с холстом. Сообщаем наружу: иначе инструмент
-                // загорается, а холст касаний не получает, и человек видит,
-                // что «рука не работает».
-                const tool = st.activeTool && st.activeTool.type;
-                if (tool && tool !== lastTool.current) { lastTool.current = tool; if (onTool) onTool(tool); }
-                if (readOnly) return;
-                // onChange зовётся на КАЖДОЕ движение указателя. Раньше здесь
-                // же собиралась JSON-строка всей сцены — то есть десятки раз
-                // в секунду прогонялся весь рисунок. Теперь тут только
-                // запоминание ссылки, а сборка строки уехала в отложенный вызов.
-                elsRef.current = els;
-                filesRef.current = sceneFiles;
-                clearTimeout(saveTimer.current);
-                const flush = () => {
-                  pending.current = null;
-                  const live = (elsRef.current || []).filter(e => !e.isDeleted);
-                  const json = JSON.stringify(live);
-                  // Картинки Excalidraw лежат ОТДЕЛЬНО от фигур. Без них
-                  // вставленное изображение исчезало после перезагрузки:
-                  // фигура-картинка сохранялась, а сам файл — нет.
-                  // Кладём только те файлы, что реально используются, иначе
-                  // удалённые картинки продолжали бы весить.
-                  const used = {};
-                  const all = filesRef.current || {};
-                  live.forEach(e => { if (e.fileId && all[e.fileId]) used[e.fileId] = all[e.fileId]; });
-                  const filesJson = JSON.stringify(used);
-                  if (json === lastSent.current && filesJson === lastFiles.current) return;
-                  lastSent.current = json; lastFiles.current = filesJson;
-                  // Доску называем ЯВНО, а не берём «текущую» на момент
-                  // записи: между рисованием и записью её могли переключить.
-                  onSave(json, filesJson, boardId);
-                };
-                pending.current = flush;
-                saveTimer.current = setTimeout(flush, 900);
-              }}
-            />
-          );
-        });
 
         function AppCore() {
           const [user, setUser] = useState(null);
@@ -1617,8 +1486,7 @@
           };
 
           // Точки лежат ПЛОСКИМ списком чисел: Firestore не умеет вложенные
-          // массивы (та же причина, по которой сцена Excalidraw хранится
-          // строкой). Разворачиваем один раз и держим при штрихе — вместе
+          // массивы. Разворачиваем один раз и держим при штрихе — вместе
           // с готовой фигурой и габаритом. Фигура не зависит от масштаба,
           // поэтому переживает и панораму, и зум.
           const strokePts = (s) => {
@@ -1893,10 +1761,6 @@
           const shapeAct = useRef(null);        // идёт перемещение или изменение размера
           const guides = useRef([]);            // направляющие, показанные сейчас
           const snapPool = useRef(null);        // к чему притягиваемся в этом жесте
-          // Счётчик правок: по нему пересобирается снимок для Excalidraw.
-          // Панорама и зум его НЕ трогают — иначе снимок пересчитывался бы
-          // на каждое движение доски.
-          const [inkVer, setInkVer] = useState(0);
           // Ластик живёт своим размером, а не «кисть × 2,5», как раньше:
           // размер был спрятан в коде, увидеть и задать его было нечем.
           const [eraserSize, setEraserSize] = useState(() => { try { return Number(localStorage.getItem('cf_eraser')) || 40; } catch (e) { return 40; } });
@@ -2337,7 +2201,7 @@
           };
           const requestStatic = () => requestInk(true);
           const requestLive = () => requestInk(false);
-          const bumpInk = () => { setInkVer(v => v + 1); requestStatic(); };
+          const bumpInk = () => requestStatic();
 
           // Готовый штрих дописываем в нижний слой поверх нарисованного,
           // без полной перерисовки: обычный случай — «провёл линию».
@@ -2467,8 +2331,11 @@
             );
           };
 
-          // Запись откладываем и, уходя с доски, ДОПИСЫВАЕМ — как у сцены
-          // Excalidraw. Просто снять таймер значило бы потерять последний штрих.
+          // Запись откладываем и, уходя с доски, ДОПИСЫВАЕМ — иначе последний
+          // штрих уехал бы в облако уже под именем следующей доски.
+          // Дописываем, а не выбрасываем таймер, ради последнего штриха
+          // сцены на холсте. Просто снять таймер значило бы потерять
+          // последний штрих.
           const inkTimer = useRef(null);
           const inkPending = useRef(null);
           const scheduleInkSave = (what) => {
@@ -2602,136 +2469,6 @@
 
           const [scenePickerOpen, setScenePickerOpen] = useState(false);
 
-          // --- Пробный движок доски ---
-          // У доски может стоять engine:'exc' — тогда вместо нашей кисти
-          // работает Excalidraw, а карточки живут слоем поверх. Флаг лежит
-          // у самой доски, чтобы у всей группы доска выглядела одинаково.
-          const activeBoard = sortedBoards.find(b => b.id === activeBoardId) || DEFAULT_BOARD;
-          const excOn = activeBoard.engine === 'exc';
-          const excApi = useRef(null);
-          const [excElements, setExcElements] = useState(null);
-          const [excFiles, setExcFiles] = useState({});
-          // Какой доске принадлежит загруженная сцена. Без этого при
-          // переключении досок Excalidraw успевал смонтироваться со СТАРЫМИ
-          // элементами (состояние приезжает на кадр позже смены доски),
-          // считал их содержимым новой доски и записывал их поверх нужного —
-          // рисунок соседней доски обнулялся.
-          const [excBoardOf, setExcBoardOf] = useState(null);
-          const excDocId = (boardId) => 'exc-' + boardId;
-          // Ответило ли облако по этой доске. Пока не ответило, ПУСТУЮ сцену
-          // писать нельзя: на свежем запуске Excalidraw монтируется пустым
-          // (местной копии может не быть — localStorage переполнен или чист)
-          // и успевал затереть рисунок в облаке раньше, чем тот приезжал.
-          // Это та же ловушка, что и засев пустой комнаты у остальных данных.
-          const excCloudSeen = useRef({});
-
-          // Обратный конец стилуса в режиме Excalidraw. У него смена
-          // инструмента идёт через состояние React, то есть вступает в силу
-          // на СЛЕДУЮЩЕМ событии — если ловить только момент касания, первый
-          // штрих успел бы нарисовать. Поэтому ловим ещё и на весу: перо
-          // сообщает о перевёрнутом конце, пока висит над экраном, и ластик
-          // включается до касания. Инструмент возвращаем, когда перо
-          // оторвали или повернули обратно.
-          const excPrevTool = useRef(null);
-          const excPenTool = (e) => {
-            notePen(e);
-            if (e.pointerType !== 'pen' || !excApi.current) return;
-            if (!isPenEraser(e)) { excPenRestore(); return; }
-            if (excPrevTool.current) return;
-            const st = excApi.current.getAppState && excApi.current.getAppState();
-            const cur = (st && st.activeTool && st.activeTool.type) || 'freedraw';
-            if (cur === 'eraser') return;
-            excPrevTool.current = cur;
-            excApi.current.setActiveTool({ type: 'eraser' });
-          };
-          const excPenRestore = () => {
-            if (!excPrevTool.current || !excApi.current) return;
-            const back = excPrevTool.current;
-            excPrevTool.current = null;
-            excApi.current.setActiveTool({ type: back });
-          };
-
-          const toggleExcalidraw = () => {
-            const next = excOn ? '' : 'exc';
-            const up = boards.map(b => b.id === activeBoardId ? { ...b, engine: next } : b);
-            setBoards(up);
-            syncDoc('boards', activeBoardId, up.find(b => b.id === activeBoardId));
-            setWbMode('select'); setSelectedWbItems([]);
-            excViewRef.current = null;
-            // Про сохранность говорим ОБА раза: выключение прячет рисунок
-            // Excalidraw целиком, и без этих слов это читается как потеря.
-            showToast(next
-              ? 'Доска переведена на Excalidraw · рисунок кистью сохранён и виден снизу'
-              : 'Вернул обычную кисть · рисунок Excalidraw сохранён, вернётся при включении');
-          };
-
-          const saveExcScene = (json, filesJson, ofBoard) => {
-            if (READ_ONLY) return;
-            // Пишем в ТУ доску, на которой рисовали, а не в открытую сейчас.
-            const target = ofBoard || activeBoardId;
-            // Облако по этой доске ещё не ответило — пустую сцену не пишем
-            // никуда, иначе затрём то, что там лежит.
-            if (db && user && !excCloudSeen.current[target]) {
-              let пусто = true;
-              try { пусто = JSON.parse(json || '[]').length === 0; } catch (e) {}
-              if (пусто) return;
-            }
-            try {
-              localStorage.setItem('cf_exc_' + target, json);
-              localStorage.setItem('cf_excf_' + target, filesJson || '{}');
-            } catch (e) {}
-            if (!db || !user) return;
-            // Предел документа Firestore — 1 МБ, а картинки лежат в сцене
-            // целиком. Предупреждаем ДО отказа, иначе человек узнает
-            // о потере, только не найдя свою работу после перезагрузки.
-            const weight = json.length + (filesJson || '').length;
-            if (weight > 900 * 1024) {
-              showToast('⚠️ Доска переполнена (' + Math.round(weight / 1024) + ' КБ из 1000). Уберите часть картинок, иначе перестанет сохраняться');
-            }
-            trackWrite(
-              dataRef().collection('canvas').doc(excDocId(target))
-                .set({ elements: json, files: filesJson || '{}', lastBy: clientId })
-                .catch(err => { console.warn('saveExc', err); showToast('⚠️ Доска не сохранилась в облако — скорее всего, слишком тяжёлая из-за картинок'); })
-            );
-          };
-
-          // Панораму и зум ведёт Excalidraw, наши карточки повторяют за ним.
-          // Точка сцены (sx,sy) у него оказывается в (sx+scrollX)*zoom,
-          // а у нас — offset + x*zoom. Отсюда offset = scroll * zoom.
-          //
-          // Трансформацию пишем ПРЯМО В УЗЕЛ, минуя состояние React: гонять её
-          // через setState значило перерисовывать всё приложение на каждый
-          // кадр панорамы — со всеми сценами, галереей и печатной версией.
-          // Заодно уходит отставание карточек на кадр.
-          const viewSync = useRef(null);
-          // Живое положение доски. Держим в ссылке, а не только в состоянии:
-          // если во время панорамы приложение перерисуется по любой причине,
-          // оно возьмёт отсюда СВЕЖЕЕ значение, а не отставшее из состояния —
-          // иначе карточки дёргаются, а панорама выглядит сломанной.
-          const excViewRef = useRef(null);
-          const onExcView = (sx, sy, z) => {
-            const nx = sx * z, ny = sy * z;
-            excViewRef.current = { x: nx, y: ny, z };
-            const el = canvasRef.current;
-            if (el) el.style.transform = `translate(${nx}px, ${ny}px) scale(${z})`;
-            // Состояние всё равно нужно — по нему считается, куда класть новую
-            // карточку, — но обновляем его уже после жеста.
-            clearTimeout(viewSync.current);
-            viewSync.current = setTimeout(() => {
-              setCanvasOffset(prev => (prev.x === nx && prev.y === ny) ? prev : { x: nx, y: ny });
-              setZoom(prev => prev === z ? prev : z);
-            }, 180);
-          };
-
-          // Ссылки на обработчики держим неизменными, иначе React.memo
-          // у слоя Excalidraw не сработает ни разу.
-          const excCb = useRef({});
-          excCb.current.save = saveExcScene;
-          excCb.current.view = onExcView;
-          // Выбрали в панели Excalidraw любой инструмент кроме «выделения» —
-          // отдаём ему холст, чтобы он сразу заработал.
-          const onExcTool = (type) => { if (type && type !== 'selection') setWbMode(m => m === 'select' ? 'draw' : m); };
-          excCb.current.tool = onExcTool;
           // Положить уже загруженный референс на обычную доску карточкой.
           const putRefOnBoard = (ref) => {
             const placed = { ...ref, boardId: activeBoardId,
@@ -2742,94 +2479,6 @@
             showToast('Референс на доске');
           };
 
-          // Вставить референс из галереи прямо в сцену Excalidraw — тогда его
-          // можно крутить, масштабировать и группировать его же средствами.
-          // Уменьшаем копию: в сцене картинка лежит целиком, а предел
-          // документа — 1 МБ, полноразмерных влезло бы две-три.
-          const insertRefIntoExc = (ref) => {
-            const api = excApi.current;
-            if (!api || !ref.url) { showToast('Сначала откройте доску на Excalidraw'); return; }
-            compressImage(ref.url, 900, 900, (small) => {
-              const img = new Image();
-              img.onload = () => {
-                try {
-                  const fileId = 'cf-' + ref.id;
-                  api.addFiles([{ id: fileId, dataURL: small, mimeType: 'image/jpeg', created: Date.now() }]);
-                  const w = Math.min(420, img.width);
-                  const h = Math.round(w * img.height / Math.max(1, img.width));
-                  const st = api.getAppState();
-                  // Вставлять можно и из «Галереи» — доска в этот момент
-                  // спрятана, и её прямоугольник нулевой. Тогда берём
-                  // разумный размер, иначе картинка уедет в угол сцены.
-                  const box = document.getElementById('whiteboard-canvas');
-                  const r0 = box ? box.getBoundingClientRect() : null;
-                  const rect = (r0 && r0.width > 0 && r0.height > 0) ? r0 : { width: 800, height: 600 };
-                  const cx = (rect.width / 2) / st.zoom.value - st.scrollX;
-                  const cy = (rect.height / 2) / st.zoom.value - st.scrollY;
-                  const made = window.ExcalidrawLib.convertToExcalidrawElements([
-                    { type: 'image', x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), width: w, height: h, fileId }
-                  ]);
-                  api.updateScene({ elements: [...api.getSceneElements(), ...made] });
-                  showToast('Референс вставлен · крутится и масштабируется как фигура');
-                } catch (err) {
-                  console.warn('insertRefIntoExc', err);
-                  showToast('Не удалось вставить референс');
-                }
-              };
-              img.onerror = () => showToast('Не удалось прочитать картинку');
-              img.src = small;
-            });
-          };
-
-          const excSave = useRef((j, f, b) => excCb.current.save(j, f, b)).current;
-          const excView = useRef((a, b, c) => excCb.current.view(a, b, c)).current;
-          const excTool = useRef((t) => excCb.current.tool(t)).current;
-
-          useEffect(() => {
-            if (!excOn) { setExcElements(null); setExcFiles({}); setExcBoardOf(null); return; }
-            let local = [], localFiles = {};
-            try { local = JSON.parse(localStorage.getItem('cf_exc_' + activeBoardId) || '[]'); } catch (e) {}
-            try { localFiles = JSON.parse(localStorage.getItem('cf_excf_' + activeBoardId) || '{}'); } catch (e) {}
-            setExcElements(Array.isArray(local) ? local : []);
-            setExcFiles(localFiles && typeof localFiles === 'object' ? localFiles : {});
-            setExcBoardOf(activeBoardId);
-            if (!db || !user) return;
-            excCloudSeen.current[activeBoardId] = false;
-            // Первый ответ облака — это ЗАГРУЗКА, а не эхо своей записи.
-            // Раньше он отбрасывался по lastBy, и рисунок, сделанный на этом
-            // же устройстве, не возвращался, если местная копия пропала.
-            let первыйОтвет = true;
-            const unsub = dataRef().collection('canvas').doc(excDocId(activeBoardId))
-              .onSnapshot(doc => {
-                excCloudSeen.current[activeBoardId] = true;
-                if (!doc.exists) { первыйОтвет = false; return; }
-                const d = doc.data() || {};
-                if (d.lastBy === clientId) {
-                  if (!первыйОтвет) return;
-                  // На экране уже есть работа — свою же копию поверх не льём.
-                  const сейчас = excApi.current
-                    ? excApi.current.getSceneElements().filter(e => !e.isDeleted).length : 0;
-                  if (сейчас > 0) { первыйОтвет = false; return; }
-                }
-                первыйОтвет = false;
-                let els, fls = {};
-                try { els = JSON.parse(d.elements || '[]'); } catch (e) { return; }
-                try { fls = JSON.parse(d.files || '{}'); } catch (e) {}
-                if (!Array.isArray(els)) return;
-                try {
-                  localStorage.setItem('cf_exc_' + activeBoardId, d.elements || '[]');
-                  localStorage.setItem('cf_excf_' + activeBoardId, d.files || '{}');
-                } catch (e) {}
-                // Сцена уже открыта — доливаем в неё, иначе отдадим при монтаже.
-                // Картинки заливаем ПЕРВЫМИ: фигура без своего файла показалась бы пустой.
-                if (excApi.current) {
-                  const list = Object.values(fls || {});
-                  if (list.length) excApi.current.addFiles(list);
-                  excApi.current.updateScene({ elements: els });
-                } else { setExcElements(els); setExcFiles(fls || {}); }
-              }, err => console.warn('sync exc', err));
-            return () => unsub();
-          }, [excOn, activeBoardId, user]);
 
           // Выделение живёт в пределах одной доски: переключились — сбросили.
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
@@ -3238,11 +2887,6 @@
           // Рисунок активной доски. Отдельная подписка: при переключении
           // доски нужно отцепиться от старого документа и подцепиться к
           // новому, иначе на новую доску прилетят чужие штрихи.
-          // Снимок рисунка кистью — чтобы показывать его в режиме Excalidraw
-          // КАРТИНКОЙ, а не живым холстом 4000×4000. Замер: живой холст стоит
-          // 50 мс на каждый шаг зума, снимок — 40, без него — 33 (это потолок
-          // самого Excalidraw). На iPad та же разница и дала «5 кадров».
-          const [inkShot, setInkShot] = useState(null);
           const canvasDocId = (boardId) => boardId === DEFAULT_BOARD.id ? 'globalDraw' : `draw-${boardId}`;
           useEffect(() => {
             // История отмены своя у каждой доски — иначе Ctrl+Z вернул бы
@@ -3304,37 +2948,20 @@
           // векторные, поэтому каждый раз они пересчитываются заново — этим
           // и держится резкость при любом увеличении.
           useEffect(() => {
-            if (excOn) return;
             requestStatic();
             const onResize = () => requestStatic();
             window.addEventListener('resize', onResize);
             return () => window.removeEventListener('resize', onResize);
-            // inkVer в зависимостях НЕ нужен: тот, кто менял штрихи, сам
-            // зовёт requestStatic (или дописывает штрих в слой без полной
-            // перерисовки). Добавишь — и каждая проведённая линия будет
-            // перерисовывать всю доску заново.
-          }, [canvasOffset, zoom, excOn, currentView]);
+            // Список штрихов и фигур в зависимостях НЕ нужен: тот, кто их
+            // менял, сам зовёт requestStatic (или дописывает штрих в слой
+            // без полной перерисовки). Свяжешь с состоянием — и каждая
+            // проведённая линия будет перерисовывать всю доску заново.
+          }, [canvasOffset, zoom, currentView]);
 
           // Выделение и смена инструмента живут в состоянии React, а рисует
           // их верхний слой — значит, его надо трогать руками.
-          useEffect(() => { if (!excOn) requestLive(); }, [selShapes, wbMode, shapeKind, excOn]);
+          useEffect(() => { requestLive(); }, [selShapes, wbMode, shapeKind]);
 
-          // В режиме Excalidraw рисунок кистью показываем СНИМКОМ, а не живым
-          // холстом: замер показал 50 мс на шаг зума с живым холстом против
-          // 40 со снимком и 33 без него вовсе. Пока векторных штрихов нет,
-          // снимок — это ровно старый растровый рисунок, собирать нечего.
-          useEffect(() => {
-            if (!excOn) { setInkShot(null); return; }
-            const list = strokesRef.current, figs = shapesRef.current;
-            if (!list.length && !figs.length) { setInkShot(legacyUrl.current || null); return; }
-            const cv = document.createElement('canvas');
-            cv.width = 4000; cv.height = 4000;
-            const ctx = cv.getContext('2d');
-            if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
-            figs.forEach(s => paintShape(ctx, s));
-            list.forEach(s => paintStroke(ctx, s));
-            setInkShot(cv.toDataURL());
-          }, [excOn, inkVer, activeBoardId]);
 
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
           // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
@@ -3712,7 +3339,7 @@
             legacyCv.current = null; legacyUrl.current = null; legacyMap.current = null;
             legacyDirty.current = false;
             undoStack.current = []; redoStack.current = [];
-            setCanUndo(false); setCanRedo(false); setInkShot(null);
+            setCanUndo(false); setCanRedo(false);
             bumpInk();
 
             setShowProjectModal(false);
@@ -3722,12 +3349,7 @@
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
 
           // --- Групповое перетаскивание на Whiteboard ---
-          // Масштаб, по которому пересчитывается перетаскивание. В режиме
-          // Excalidraw его ведёт он сам, а в наше состояние `zoom` значение
-          // приезжает с задержкой в 180 мс. Пока считали по нему, карточка
-          // на изменённом масштабе ехала не за пальцем — то самое «плохо
-          // перетаскивается в Excalidraw».
-          const liveZoom = () => (excOn && excViewRef.current) ? excViewRef.current.z : zoom;
+
 
           // Дросселировать перетаскивание по кадрам ПРОБОВАЛИ и откатили:
           // всплески оно сглаживает, но добавляет кадр задержки — замер
@@ -3742,7 +3364,7 @@
           const dragDelta = () => {
               const p = dragPos.current, d = draggingWbItems;
               if (!p || !d) return { dx: 0, dy: 0, idle: true };
-              const z = liveZoom() || 1;
+              const z = zoom || 1;
               if (!dragMoved.current) {
                   if (Math.hypot(p.x - d.startX, p.y - d.startY) < DRAG_START_PX) return { dx: 0, dy: 0, idle: true };
                   dragMoved.current = true;
@@ -4711,16 +4333,11 @@
                                                 title="Удалить референс"
                                                 className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
                                         {!READ_ONLY && (() => {
-                                          const onBoard = !excOn && !!ref.boardId;
+                                          const onBoard = !!ref.boardId;
                                           const boardName = onBoard ? ((sortedBoards.find(b => b.id === ref.boardId) || {}).title || 'доске') : '';
                                           return (
                                             <button onClick={(e) => {
                                                       e.stopPropagation();
-                                                      // На доске Excalidraw наша карточка не годится: она ляжет
-                                                      // ПОД рисунок и в режиме черчения даже не нажмётся. Туда
-                                                      // картинку надо вставлять внутрь сцены — и сразу показать
-                                                      // доску, иначе человек нажал, а «ничего не произошло».
-                                                      if (excOn) { insertRefIntoExc(ref); setCurrentView('whiteboard'); return; }
                                                       const nextBoard = onBoard ? '' : activeBoardId;
                                                       const placed = { ...ref, boardId: nextBoard,
                                                         x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
@@ -4729,7 +4346,7 @@
                                                       syncDoc('references', ref.id, placed);
                                                       showToast(onBoard ? 'Убрано с доски · осталось в галерее' : 'Добавлено на доску');
                                                     }}
-                                                    title={excOn ? 'Вставить в рисунок Excalidraw' : (onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску')}
+                                                    title={onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску'}
                                                     className="absolute top-2 left-2 backdrop-blur w-7 h-7 rounded-lg transition-all text-xs z-20 flex items-center justify-center opacity-0 group-hover:opacity-100"
                                                     style={onBoard
                                                       ? { background: 'var(--accent)', color: 'var(--bg)', opacity: 1 }
@@ -4871,27 +4488,10 @@
                               title="Новая доска"
                               className="shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
-
-                      {/* Пробный движок: включается у каждой доски отдельно.
-                          Старый рисунок остаётся на месте и вернётся, если выключить. */}
-                      <button onClick={toggleExcalidraw}
-                              title={excOn
-                                ? 'Вернуть обычную кисть. Нарисованное в Excalidraw останется и вернётся при повторном включении'
-                                : 'Пробный режим: рисование инструментами Excalidraw — фигуры, стрелки, текст. Библиотека скачается один раз, около 4 МБ'}
-                              className="cf-edit-only shrink-0 flex items-center gap-1.5 transition-colors ml-auto"
-                              style={{ padding: '0 12px', minHeight: 34, marginBottom: 3, borderRadius: 8, fontSize: 11,
-                                       border: '1px solid ' + (excOn ? 'var(--accent)' : 'var(--border)'),
-                                       background: excOn ? 'var(--accent)' : 'transparent',
-                                       color: excOn ? 'var(--bg)' : 'var(--muted-2)' }}>
-                        <Icons.Pen /> Excalidraw
-                      </button>
                     </div>
 
-                    <div id="whiteboard-canvas" className={`w-full flex-1 min-h-0 cf-canvas relative overflow-hidden ${excOn && wbMode !== 'select' ? 'cf-exc-draw' : ''}`}
+                    <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
                     onWheel={(e) => {
-                        // В режиме Excalidraw масштабом заведует он сам —
-                        // два независимых зума разъехались бы.
-                        if (excOn) return;
                         const rect = e.currentTarget.getBoundingClientRect();
                         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
                         const nz = Math.min(2.0, Math.max(0.3, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
@@ -5011,22 +4611,6 @@
                             setLinkingFrom(null);
                         }
                     }}>
-                      {/* Слой Excalidraw — ПОД карточками и вне их трансформации:
-                          он ведёт свою панораму сам. В режиме работы с карточками
-                          касания до него не доходят, и наоборот. */}
-                      {/* Слой рисования идёт ПОВЕРХ карточек: по референсу нужно
-                          уметь чертить — разметить кадр, показать движение.
-                          Холст прозрачный, поэтому карточки видно насквозь. */}
-                      {excOn && (
-                        <div className="absolute inset-0" style={{ zIndex: 25, pointerEvents: wbMode === 'select' ? 'none' : 'auto' }}
-                             onPointerMoveCapture={excPenTool} onPointerDownCapture={excPenTool} onPointerUpCapture={excPenRestore}>
-                          {excElements !== null && excBoardOf === activeBoardId && (
-                            <ExcalidrawBoard key={activeBoardId} boardId={activeBoardId} elements={excElements} files={excFiles} apiRef={excApi}
-                                             readOnly={READ_ONLY} onSave={excSave} onView={excView} onTool={excTool} />
-                          )}
-                        </div>
-                      )}
-
                       {/* РИСУНОК КИСТЬЮ. Холста два, и оба размером с ОКНО,
                           а не с доску: на нижнем лежат готовые штрихи, на
                           верхнем — тот, что ведут прямо сейчас, и кольцо,
@@ -5037,8 +4621,7 @@
                           штрих пересчитывается под текущее увеличение и
                           остаётся резким. Слой всё так же ПОВЕРХ карточек —
                           по референсу нужно уметь чертить. */}
-                      {!excOn && (
-                        <React.Fragment>
+                      <React.Fragment>
                           <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 26 }} />
                           <canvas ref={liveCanvasRef}
                             className={`absolute inset-0 w-full h-full ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'}`}
@@ -5179,12 +4762,10 @@
                                 // «провёл линию», и платить за него полной
                                 // перерисовкой незачем.
                                 paintOnStatic(s);
-                                setInkVer(v => v + 1);
                                 scheduleInkSave();
                               }
                               if (isPainting && wipe) {
                                 if (legacyDirty.current) saveLegacy();
-                                setInkVer(v => v + 1);
                                 scheduleInkSave();
                                 scheduleInkSave('shapes');
                               }
@@ -5197,10 +4778,9 @@
                               shapeDraft.current = null; clearGuides();
                               setIsPainting(false); setIsPanning(false); requestLive();
                             }} />
-                        </React.Fragment>
-                      )}
+                      </React.Fragment>
 
-                      <div id="wb-container" ref={canvasRef} style={{ transform: (() => { const v = excOn && excViewRef.current ? excViewRef.current : { x: canvasOffset.x, y: canvasOffset.y, z: zoom }; return `translate(${v.x}px, ${v.y}px) scale(${v.z})`; })(), transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
+                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
                         
                         {selectionBox && (
                             <div className="absolute border border-indigo-500 bg-indigo-500/20 z-50 pointer-events-none" style={{
@@ -5239,18 +4819,6 @@
                           })()}
                         </svg>
 
-                        {/* Старый рисунок кистью виден и в режиме Excalidraw —
-                            иначе включение выглядело как «всё стёрлось». Но
-                            ЖИВОЙ холст 4000×4000 туда пускать нельзя: он
-                            масштабируется вместе с доской и пересчитывается на
-                            каждый шаг зума. Замер: живой холст 50 мс на шаг,
-                            снимок картинкой 40, без него 33 (потолок самого
-                            Excalidraw). Поэтому здесь показываем снимок. */}
-                        {excOn && inkShot && (
-                          <img src={inkShot} alt="" draggable={false}
-                               style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px',
-                                        pointerEvents: 'none', zIndex: 30 }} />
-                        )}
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
@@ -5416,84 +4984,68 @@
                         </div>
                       </div>
 
-                      {/* В режиме Excalidraw уходим к правому краю: слева у него
-                          своя панель свойств, и две панели наезжали друг на друга */}
-                      <div className={`absolute glass-panel p-2 rounded-lg flex gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar ${excOn ? 'flex-col right-2 md:right-6 top-1/2 -translate-y-1/2' : 'flex-row md:flex-col top-2 md:top-6 left-2 md:left-6'}`}>
+                      <div className="absolute glass-panel p-2 rounded-lg flex gap-2 z-30 max-w-[calc(100vw-1rem)] overflow-x-auto hide-scrollbar flex-row md:flex-col top-2 md:top-6 left-2 md:left-6">
                         <button onClick={() => setWbMode('select')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'select' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Выбор элементов · тяните за уголки, Ctrl во время движения выключает притяжку"><Icons.Pointer/></button>
-                        <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title={excOn ? 'Рисовать (инструменты Excalidraw)' : 'Кисть'}><Icons.Pen/></button>
-                        {!excOn && <button onClick={() => setWbMode('shape')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'shape' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Фигуры: прямоугольник, овал, ромб, стрелка, линия"><Icons.Shapes/></button>}
-                        {!excOn && <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>}
-                        {!excOn && <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>}
+                        <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
+                        <button onClick={() => setWbMode('shape')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'shape' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Фигуры: прямоугольник, овал, ромб, стрелка, линия"><Icons.Shapes/></button>
+                        <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
+                        <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
                         {/* Появляется только после первого касания стилусом:
                             на устройстве без пера этой кнопке нечего делать. */}
-                        {!excOn && penSeen && <button onClick={toggleFingerPans} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${fingerPans ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}
+                        {penSeen && <button onClick={toggleFingerPans} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${fingerPans ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}
                           title={fingerPans ? 'Рисует только стилус, палец двигает доску. Нажмите, чтобы палец тоже рисовал' : 'Палец тоже рисует. Нажмите, чтобы рисовал только стилус'}><Icons.Hand/></button>}
-                        {!excOn && <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
+                        <button onClick={undoStroke} disabled={!canUndo} title="Отменить штрих (Ctrl+Z)"
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-                        </button>}
+                        </button>
                         {/* Штрихи векторные, поэтому шаг назад стоит копейки —
                             и шаг вперёд можно наконец дать тоже. */}
-                        {!excOn && <button onClick={redoStroke} disabled={!canRedo} title="Вернуть штрих (Ctrl+Shift+Z)"
+                        <button onClick={redoStroke} disabled={!canRedo} title="Вернуть штрих (Ctrl+Shift+Z)"
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canRedo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
-                        </button>}
+                        </button>
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
                         {/* Единственный путь к уже загруженным референсам с самой
-                            доски. На планшете подсказок по наведению НЕТ, поэтому
-                            в режиме Excalidraw кнопка подписана словом: голый
-                            значок сетки читался как «сцены», и референсы через
-                            него никто не находил. */}
+                            доски. */}
                         <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
-                                className={`cf-edit-only rounded-lg text-sm md:text-base shrink-0 transition-colors flex flex-col items-center justify-center ${excOn ? 'px-1.5 py-1.5 gap-0.5' : 'p-2.5'} ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}>
-                          {excOn ? <Icons.Gallery/> : <Icons.Scene/>}
-                          {excOn && <span style={{ fontSize: 8.5, lineHeight: 1, letterSpacing: '.02em' }}>Рефы</span>}
+                                className={`cf-edit-only rounded-lg text-sm md:text-base shrink-0 transition-colors flex items-center justify-center p-2.5 ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}>
+                          <Icons.Scene/>
                         </button>
                         <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        {/* Пустая карточка референса на доске Excalidraw бесполезна
-                            и вдобавок сбивает: её значок принимают за «мои
-                            референсы». Новые картинки туда кладёт сам Excalidraw. */}
-                        {!excOn && <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>}
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); setInkShot(null); bumpInk(); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить рисунок: линии и фигуры"><Icons.Trash/></button>
                       </div>
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
                           работа, поэтому список, а не «все сразу». */}
                       {scenePickerOpen && (
-                        <div className={`absolute glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-white/10 flex flex-col ${excOn ? 'right-16 md:right-24 top-1/2 -translate-y-1/2' : 'top-16 md:top-6 left-2 md:left-24'}`} style={{ maxHeight: '60vh' }}>
+                        <div className="absolute glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-white/10 flex flex-col top-16 md:top-6 left-2 md:left-24" style={{ maxHeight: '60vh' }}>
                           <div className="flex items-center justify-between px-3 shrink-0" style={{ minHeight: 40, borderBottom: '1px solid var(--border)' }}>
                             <span className="cf-eyebrow">Положить на доску</span>
                             <button onClick={() => setScenePickerOpen(false)} className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 text-[11px]">✕</button>
                           </div>
                           <div className="overflow-y-auto p-1.5">
                             {/* Три раздела, у каждого свой заголовок и своё поведение.
-                                Референсы предлагаем только на доске Excalidraw: там
-                                они вставляются КАРТИНКОЙ внутрь сцены, и их можно
-                                крутить и масштабировать его же средствами. */}
+                                Референсы тут есть всегда: это единственный путь
+                                к уже загруженным картинкам с самой доски. */}
                             {(() => {
-                              // На доске Excalidraw референс вставляется КАРТИНКОЙ внутрь
-                              // сцены (крутится и масштабируется его средствами), на обычной —
-                              // ложится нашей карточкой. Список нужен всегда: это
-                              // единственный путь к уже загруженным референсам с самой доски.
-                              const pool = excOn
-                                ? references.filter(r => r.url)
-                                : references.filter(r => r.url && r.boardId !== activeBoardId);
+                              const pool = references.filter(r => r.url && r.boardId !== activeBoardId);
                               return (
                                 <React.Fragment>
                                   <div className="px-2 pt-1 pb-1.5">
-                                    <span className="cf-eyebrow">Референсы{excOn ? ' — вставить в рисунок' : ''}</span>
+                                    <span className="cf-eyebrow">Референсы</span>
                                   </div>
                                   {pool.length === 0 ? (
                                     <p className="px-2 pb-2" style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
                                       {references.length ? 'Все референсы уже на этой доске.' : 'Референсов пока нет — загрузите их в «Галерее».'}
                                     </p>
                                   ) : pool.slice(0, 60).map(r => (
-                                    <button key={r.id} onClick={() => { excOn ? insertRefIntoExc(r) : putRefOnBoard(r); setScenePickerOpen(false); }}
+                                    <button key={r.id} onClick={() => { putRefOnBoard(r); setScenePickerOpen(false); }}
                                             className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
                                             style={{ minHeight: 40 }}>
                                       <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
                                       <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
-                                      {!excOn && r.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                                      {r.boardId && <span className="cf-meta shrink-0">на другой</span>}
                                     </button>
                                   ))}
                                 </React.Fragment>
@@ -5543,7 +5095,7 @@
                           Палитра НАМЕРЕННО короткая — из шести цветов доска
                           всегда выглядит прилично, из шестнадцати миллионов
                           нет. Свой цвет спрятан за отдельной кнопкой. */}
-                      {!excOn && (wbMode === 'shape' || (wbMode === 'select' && selShapes.length > 0)) && (() => {
+                      {(wbMode === 'shape' || (wbMode === 'select' && selShapes.length > 0)) && (() => {
                         const selNow = wbMode === 'select' ? selShapes.map(id => shapesRef.current.find(s => s.id === id)).filter(Boolean) : [];
                         // Чем правим: выделенным или заготовкой на будущее
                         const cur = selNow.length ? selNow[0] : shapeStyle;
@@ -5680,7 +5232,7 @@
                       {/* У ластика своя панель. Раньше его размер был спрятан
                           в коде («кисть × 2,5»), увидеть и задать его было
                           нечем — человек стирал вслепую. */}
-                      {wbMode === 'erase' && !excOn && (
+                      {wbMode === 'erase' && (
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-3 z-30 w-52 border-t border-white/10">
                           <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Ластик</span><span>{eraserSize}px</span></div>
                           <input type="range" min="8" max="200" step="4" value={eraserSize} onChange={(e) => changeEraser(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
@@ -5690,7 +5242,7 @@
                         </div>
                       )}
 
-                      {wbMode === 'draw' && !excOn && (
+                      {wbMode === 'draw' && (
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-4 z-30 w-52 border-t border-white/10">
                           <div className="flex bg-black/50 p-1.5 rounded-lg border border-white/5">
                               <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
@@ -5711,11 +5263,11 @@
                         </div>
                       )}
 
-                      {!excOn && <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-lg flex items-center space-x-3 z-30 border-t border-white/10">
+                      <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-lg flex items-center space-x-3 z-30 border-t border-white/10">
                         <button onClick={() => setZoom(prev => Math.max(0.3, prev - 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">-</button>
                         <span className="text-xs font-bold font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
                         <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">+</button>
-                      </div>}
+                      </div>
                     </div>
                   </div>
 
