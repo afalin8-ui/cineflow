@@ -2343,6 +2343,36 @@
             bumpInk();
             scheduleInkSave('shapes');
           };
+          // --- ГРУППЫ ---
+          // Группа — это просто общая метка `g` у нескольких фигур, без
+          // вложенных структур: так её переживают и копирование, и запись
+          // одной строкой, и отмена. Нажали по одной — берём всю метку.
+          const expandGroups = (ids) => {
+            const set = new Set(ids);
+            const marks = new Set();
+            ids.forEach(id => { const s = findShape(id); if (s && s.g) marks.add(s.g); });
+            if (marks.size) shapesRef.current.forEach(s => { if (s.g && marks.has(s.g)) set.add(s.id); });
+            return Array.from(set);
+          };
+          const groupShapes = () => {
+            const ids = expandGroups(selShapes).filter(id => { const s = findShape(id); return s && !s.ct; });
+            if (ids.length < 2) return;
+            pushUndo(false);
+            const mark = `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+            const set = new Set(ids);
+            shapesRef.current = shapesRef.current.map(s => set.has(s.id) ? { ...s, g: mark } : s);
+            setSelShapes(ids);
+            bumpInk(); scheduleInkSave('shapes');
+          };
+          const ungroupShapes = () => {
+            const ids = expandGroups(selShapes);
+            if (!ids.some(id => { const s = findShape(id); return s && s.g; })) return;
+            pushUndo(false);
+            const set = new Set(ids);
+            shapesRef.current = shapesRef.current.map(s => set.has(s.id) && s.g ? { ...s, g: undefined } : s);
+            bumpInk(); scheduleInkSave('shapes');
+          };
+
           const patchShapes = (patch) => {
             setShapeStyle(st => {
               const next = { ...st, ...patch };
@@ -2765,6 +2795,7 @@
               if (e.ctrlKey || e.metaKey) {
                 if (k === 'z' || k === 'y') { e.preventDefault(); if (k === 'y' || e.shiftKey) redoStroke(); else undoStroke(); return; }
                 if (e.key === ']' || e.key === '[') { e.preventDefault(); orderShapes(e.key === ']' ? 1 : -1); return; }
+                if (k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupShapes(); else groupShapes(); return; }
                 return;
               }
               if ((e.key === 'Delete' || e.key === 'Backspace') && selShapes.length) { e.preventDefault(); deleteShapes(); return; }
@@ -4878,7 +4909,7 @@
                                 e.currentTarget.setPointerCapture(e.pointerId);
                                 let sel = selShapes, cards = selectedWbItems;
                                 if (!sel.includes(hit.id)) {
-                                    sel = e.shiftKey ? sel.concat([hit.id]) : [hit.id];
+                                    sel = expandGroups(e.shiftKey ? sel.concat([hit.id]) : [hit.id]);
                                     setSelShapes(sel);
                                     if (!e.shiftKey) { cards = []; setSelectedWbItems([]); }
                                 }
@@ -4939,10 +4970,11 @@
                                 stickies.filter(st => belongsToBoard(st, activeBoardId)).forEach(st => checkInt(st, stickyW(st), stickyH(st)));
                                 boardDocs.forEach(d => checkInt(d, docCardW(d), docCardH(d)));
                                 setSelectedWbItems(newSelected);
-                                setSelShapes(shapesRef.current.filter(s => {
+                                setSelShapes(expandGroups(shapesRef.current.filter(s => {
+                                    if (s.ct) return false;
                                     const b = shapeBox(s);
                                     return b.x < maxX && b.x + b.w > minX && b.y < maxY && b.y + b.h > minY;
-                                }).map(s => s.id));
+                                }).map(s => s.id)));
                             }
                             setSelectionBox(null);
                         }
@@ -5654,6 +5686,16 @@
                                    onChange={(e) => patchShapes({ op: Number(e.target.value) / 100 })}
                                    className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
                           </div>
+
+                          {selNow.length > 1 && (
+                            <div className={row}>
+                              <button onClick={groupShapes} className={cell(false)}>Сгруппировать</button>
+                              {selNow.some(s => s.g) && <button onClick={ungroupShapes} className={cell(false)}>Разбить</button>}
+                            </div>
+                          )}
+                          {selNow.length === 1 && selNow[0].g && (
+                            <div className={row}><button onClick={ungroupShapes} className={cell(false)}>Разбить группу</button></div>
+                          )}
 
                           {selNow.length > 0 && (
                             <div className="space-y-1">
