@@ -1472,19 +1472,46 @@
               .concat(cap(pts[0], rad[0], first, true));
           };
 
+          // Геометрию описываем СПИСКОМ КОМАНД, а не сразу Path2D: тот же
+          // список уходит и в холст, и в SVG при выгрузке. Держать две копии
+          // всей геометрии нельзя — они разъедутся при первой же правке.
+          const cmdsPath = (cmds) => {
+            const p = new Path2D();
+            for (const c of cmds) {
+              if (c[0] === 'M') p.moveTo(c[1], c[2]);
+              else if (c[0] === 'L') p.lineTo(c[1], c[2]);
+              else if (c[0] === 'Q') p.quadraticCurveTo(c[1], c[2], c[3], c[4]);
+              else if (c[0] === 'A') p.arcTo(c[1], c[2], c[3], c[4], c[5]);
+              else if (c[0] === 'E') p.ellipse(c[1], c[2], c[3], c[4], 0, 0, Math.PI * 2);
+              else if (c[0] === 'Z') p.closePath();
+            }
+            return p;
+          };
+          const rn = (v) => Math.round(v * 10) / 10;
+          const cmdsD = (cmds) => cmds.map(c => {
+            if (c[0] === 'M') return `M${rn(c[1])} ${rn(c[2])}`;
+            if (c[0] === 'L') return `L${rn(c[1])} ${rn(c[2])}`;
+            if (c[0] === 'Q') return `Q${rn(c[1])} ${rn(c[2])} ${rn(c[3])} ${rn(c[4])}`;
+            // Скругление угла в SVG выражаем дугой того же радиуса
+            if (c[0] === 'A') return `L${rn(c[1])} ${rn(c[2])}`;
+            if (c[0] === 'E') return `M${rn(c[1] - c[3])} ${rn(c[2])}a${rn(c[3])} ${rn(c[4])} 0 1 0 ${rn(c[3] * 2)} 0a${rn(c[3])} ${rn(c[4])} 0 1 0 ${rn(-c[3] * 2)} 0`;
+            return 'Z';
+          }).join('');
+
           // Полигон обводим квадратичными кривыми через середины сторон:
           // углы полигона исчезают, остаётся гладкий контур.
-          const inkPath = (pl) => {
-            const p = new Path2D(), m = pl.length;
-            if (m < 3) return p;
+          const inkCmds = (pl) => {
+            const m = pl.length;
+            if (m < 3) return [];
+            const out = [];
             let a = pl[m - 1], b = pl[0];
-            p.moveTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+            out.push(['M', (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
             for (let i = 0; i < m; i++) {
               a = pl[i]; b = pl[(i + 1) % m];
-              p.quadraticCurveTo(a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+              out.push(['Q', a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
             }
-            p.closePath();
-            return p;
+            out.push(['Z']);
+            return out;
           };
 
           // Точки лежат ПЛОСКИМ списком чисел: Firestore не умеет вложенные
@@ -1499,8 +1526,12 @@
             }
             return s._pts;
           };
+          const strokeCmds = (s) => {
+            if (!s._cmds) s._cmds = inkCmds(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t)));
+            return s._cmds;
+          };
           const strokePath = (s) => {
-            if (!s._path) s._path = inkPath(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t)));
+            if (!s._path) s._path = cmdsPath(strokeCmds(s));
             return s._path;
           };
           const strokeBox = (s) => {
@@ -1691,30 +1722,40 @@
             }
             return [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]];
           };
-          const shapeSmoothPath = (s) => {
-            const p = new Path2D(), b = shapeBox(s);
+          const shapeSmoothCmds = (s) => {
+            const b = shapeBox(s), out = [];
             if (isLineKind(s.k)) {
               const r = arrowRoute(s), q = r.pts;
-              p.moveTo(q[0][0], q[0][1]);
-              if (r.curved) p.quadraticCurveTo(q[1][0], q[1][1], q[2][0], q[2][1]);
+              out.push(['M', q[0][0], q[0][1]]);
+              if (r.curved) out.push(['Q', q[1][0], q[1][1], q[2][0], q[2][1]]);
               else if (q.length > 2) {
                 // Колени ортогонального маршрута скругляем: прямой угол
                 // в тонкой линии читается как излом, а не как поворот.
-                for (let i = 1; i < q.length - 1; i++) p.arcTo(q[i][0], q[i][1], q[i + 1][0], q[i + 1][1], 8);
-                p.lineTo(q[q.length - 1][0], q[q.length - 1][1]);
-              } else p.lineTo(q[1][0], q[1][1]);
-              return p;
+                for (let i = 1; i < q.length - 1; i++) out.push(['A', q[i][0], q[i][1], q[i + 1][0], q[i + 1][1], 8]);
+                out.push(['L', q[q.length - 1][0], q[q.length - 1][1]]);
+              } else out.push(['L', q[1][0], q[1][1]]);
+              return out;
             }
-            if (s.k === 'ellipse') { p.ellipse(b.x + b.w / 2, b.y + b.h / 2, Math.max(0.1, b.w / 2), Math.max(0.1, b.h / 2), 0, 0, Math.PI * 2); return p; }
+            if (s.k === 'ellipse') return [['E', b.x + b.w / 2, b.y + b.h / 2, Math.max(0.1, b.w / 2), Math.max(0.1, b.h / 2)]];
             if (s.k === 'diamond') {
               const c = shapeCorners(s);
-              p.moveTo(c[0][0], c[0][1]); for (let i = 1; i < c.length; i++) p.lineTo(c[i][0], c[i][1]);
-              p.closePath(); return p;
+              out.push(['M', c[0][0], c[0][1]]);
+              for (let i = 1; i < c.length; i++) out.push(['L', c[i][0], c[i][1]]);
+              out.push(['Z']);
+              return out;
             }
             const r = s.rd ? Math.min(26, Math.min(b.w, b.h) * 0.22) : 0;
-            if (p.roundRect && r > 0) p.roundRect(b.x, b.y, b.w, b.h, r);
-            else { p.moveTo(b.x, b.y); p.lineTo(b.x + b.w, b.y); p.lineTo(b.x + b.w, b.y + b.h); p.lineTo(b.x, b.y + b.h); p.closePath(); }
-            return p;
+            if (r > 0) {
+              const x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+              out.push(['M', x0 + r, y0]);
+              out.push(['L', x1 - r, y0], ['Q', x1, y0, x1, y0 + r]);
+              out.push(['L', x1, y1 - r], ['Q', x1, y1, x1 - r, y1]);
+              out.push(['L', x0 + r, y1], ['Q', x0, y1, x0, y1 - r]);
+              out.push(['L', x0, y0 + r], ['Q', x0, y0, x0 + r, y0], ['Z']);
+              return out;
+            }
+            out.push(['M', b.x, b.y], ['L', b.x + b.w, b.y], ['L', b.x + b.w, b.y + b.h], ['L', b.x, b.y + b.h], ['Z']);
+            return out;
           };
           // «От руки» в три шага. Каждый важен, и порядок тоже:
           // 1) длинные стороны ДРОБИМ — одна дуга на всю сторону читается
@@ -1724,7 +1765,7 @@
           //    рвётся на стыках;
           // 3) между соседними точками кладём выгнутую дугу. Именно выгиб,
           //    а не дрожание по всей длине: от дрожания линия мохнатая.
-          const shapeRoughPath = (s, pass) => {
+          const shapeRoughCmds = (s, pass) => {
             const rnd = shapeRnd((s.sd8 || 1) + pass * 7919);
             const b = shapeBox(s);
             const amp = (s.ro === 2 ? 4.2 : 2.0) * (1 + Math.min(1.8, Math.max(b.w, b.h) / 260));
@@ -1743,30 +1784,42 @@
             }
             if (!closed) raw.push(c[c.length - 1]);
             const j = raw.map(q => [q[0] + (rnd() - 0.5) * amp, q[1] + (rnd() - 0.5) * amp]);
-            const p = new Path2D();
-            if (!j.length) return p;
-            p.moveTo(j[0][0], j[0][1]);
+            const out = [];
+            if (!j.length) return out;
+            out.push(['M', j[0][0], j[0][1]]);
             const m = closed ? j.length : j.length - 1;
             for (let i = 0; i < m; i++) {
               const a = j[i], d = j[(i + 1) % j.length];
               const dx = d[0] - a[0], dy = d[1] - a[1], l = Math.hypot(dx, dy) || 1;
               const bow = (rnd() - 0.5) * amp * 1.3;
-              p.quadraticCurveTo((a[0] + d[0]) / 2 - dy / l * bow, (a[1] + d[1]) / 2 + dx / l * bow, d[0], d[1]);
+              out.push(['Q', (a[0] + d[0]) / 2 - dy / l * bow, (a[1] + d[1]) / 2 + dx / l * bow, d[0], d[1]]);
             }
-            if (closed) p.closePath();
-            return p;
+            if (closed) out.push(['Z']);
+            return out;
           };
           // Фигура не зависит от масштаба, поэтому её путь считается один раз
           // и переживает и панораму, и зум. Правка фигуры сбрасывает кэш.
-          const shapePath = (s, pass) => {
+          const shapeCmds = (s, pass) => {
             // Привязанная стрелка зависит от того, где сейчас стоят её
             // фигуры, — кэшировать нечего: подвинули блок, и путь другой.
-            if (isLineKind(s.k) && (s.b1 || s.b2)) return s.ro ? shapeRoughPath(s, pass) : shapeSmoothPath(s);
-            const key = s.ro ? '_p' + pass : '_p';
-            if (!s[key]) s[key] = s.ro ? shapeRoughPath(s, pass) : shapeSmoothPath(s);
+            const live = isLineKind(s.k) && (s.b1 || s.b2);
+            const key = s.ro ? '_c' + pass : '_c';
+            if (live) return s.ro ? shapeRoughCmds(s, pass) : shapeSmoothCmds(s);
+            if (!s[key]) s[key] = s.ro ? shapeRoughCmds(s, pass) : shapeSmoothCmds(s);
             return s[key];
           };
-          const shapeDirty = (s) => { delete s._p; delete s._p0; delete s._p1; return s; };
+          const shapePath = (s, pass) => {
+            const live = isLineKind(s.k) && (s.b1 || s.b2);
+            if (live) return cmdsPath(shapeCmds(s, pass));
+            const key = s.ro ? '_p' + pass : '_p';
+            if (!s[key]) s[key] = cmdsPath(shapeCmds(s, pass));
+            return s[key];
+          };
+          const shapeDirty = (s) => {
+            delete s._p; delete s._p0; delete s._p1;
+            delete s._c; delete s._c0; delete s._c1;
+            return s;
+          };
 
           // Штриховка: рисуем наклонные линии, обрезав их формой. Заливка
           // сплошным на тёмном фоне читается пятном, поэтому она приглушена,
@@ -2344,6 +2397,211 @@
             bumpInk();
             scheduleInkSave('shapes');
           };
+          // --- ВЫГРУЗКА ДОСКИ ---
+          // PNG и SVG рисуются из ОДНОГО описания: тот же список карточек,
+          // те же команды пути у фигур и штрихов. Иначе выгрузка со временем
+          // расходится с тем, что человек видит на экране, — и заметно это
+          // становится ровно в тот момент, когда доску уже отправили группе.
+          const [exportBusy, setExportBusy] = useState(false);
+          const esc = (t) => String(t == null ? '' : t)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          // Что вообще лежит на доске: карточки в том же порядке, в каком
+          // они нарисованы на экране, а под ними — размеры.
+          const boardCards = () => {
+            const out = [];
+            boardScenes.forEach(s => out.push({ t: 'scene', o: s, x: s.x, y: s.y, w: 288, h: 150 }));
+            references.filter(r => r.boardId === activeBoardId).forEach(r => out.push({ t: 'ref', o: r, x: r.x, y: r.y, w: refW(r), h: refH(r) }));
+            boardDocs.forEach(d => out.push({ t: 'doc', o: d, x: d.x, y: d.y, w: docCardW(d), h: docCardH(d) }));
+            stickies.filter(s => belongsToBoard(s, activeBoardId)).forEach(s => out.push({ t: 'sticky', o: s, x: s.x, y: s.y, w: stickyW(s), h: stickyH(s) }));
+            return out;
+          };
+          const boardBounds = () => {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            const eat = (x, y, w, h) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); };
+            boardCards().forEach(c => eat(c.x, c.y, c.w, c.h));
+            shapesRef.current.forEach(s => { if (s.ct) return; const b = shapeBox(s); eat(b.x - s.sw, b.y - s.sw, b.w + s.sw * 2, b.h + s.sw * 2); });
+            strokesRef.current.forEach(s => { const b = strokeBox(s); eat(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); });
+            // Старую растровую подложку меряем по грубой карте, а не по всему
+            // холсту 4000×4000 — иначе выгрузка всегда была бы во всю доску.
+            const m = legacyMap.current;
+            if (m) for (let j = 0; j < 100; j++) for (let i = 0; i < 100; i++) if (m[j * 100 + i]) eat(i * 40, j * 40, 40, 40);
+            if (!isFinite(x0)) return null;
+            const pad = 48;
+            return { x: x0 - pad, y: y0 - pad, w: (x1 - x0) + pad * 2, h: (y1 - y0) + pad * 2 };
+          };
+          const cssVar = (n, dflt) => {
+            try { const v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); return v || dflt; }
+            catch (e) { return dflt; }
+          };
+          // Картинки референсов надо дождаться: рисовать их на холст можно
+          // только загруженными, иначе в выгрузке будут дыры.
+          const loadImages = (urls) => Promise.all(urls.map(u => new Promise(res => {
+            if (!u) return res(null);
+            const im = new Image();
+            im.onload = () => res(im); im.onerror = () => res(null);
+            im.src = u;
+          })));
+
+          const paintCardOn = (ctx, c, imgs) => {
+            const bg = cssVar('--panel', '#242322'), line = 'rgba(255,255,255,0.10)';
+            const round = (x, y, w, h, r) => { ctx.beginPath();
+              if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); };
+            if (c.t === 'sticky') {
+              ctx.fillStyle = c.o.color || '#fef08a';
+              round(c.x, c.y, c.w, c.h, 8); ctx.fill();
+              ctx.fillStyle = '#1a1918'; ctx.font = `13px ${FONT_UI}`; ctx.textBaseline = 'top';
+              wrapText(ctx, c.o.text, c.w - 20).slice(0, 12).forEach((ln, i) => ctx.fillText(ln, c.x + 10, c.y + 10 + i * 17));
+              return;
+            }
+            ctx.fillStyle = bg; round(c.x, c.y, c.w, c.h, 10); ctx.fill();
+            ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.stroke();
+            ctx.textBaseline = 'top';
+            if (c.t === 'scene') {
+              ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(c.x, c.y, c.w, 34);
+              ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(c.x, c.y + 34); ctx.lineTo(c.x + c.w, c.y + 34); ctx.stroke();
+              ctx.fillStyle = cssVar('--muted', '#8b8681'); ctx.font = `bold 11px ${FONT_UI}`;
+              ctx.fillText('СЦЕНА #' + (c.o.number || '—'), c.x + 12, c.y + 11);
+              ctx.fillStyle = '#ffffff'; ctx.font = `bold 14px ${FONT_UI}`;
+              wrapText(ctx, c.o.title, c.w - 24).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 46 + i * 19));
+              ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `12px ${FONT_UI}`;
+              wrapText(ctx, c.o.content, c.w - 24).slice(0, 3).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 92 + i * 16));
+              return;
+            }
+            if (c.t === 'doc') {
+              ctx.fillStyle = '#ffffff'; ctx.font = `bold 13px ${FONT_UI}`;
+              ctx.fillText(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 12);
+              ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `12px ${FONT_UI}`;
+              wrapText(ctx, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 36 + i * 16));
+              return;
+            }
+            const im = imgs[c.o.id];
+            const ih = c.h - 24;
+            if (im) {
+              // Вписываем как на доске: по ширине, с сохранением пропорций.
+              const k = Math.min(c.w - 12 / 1, im.width) / im.width;
+              const dw = c.w - 12, dh = Math.min(ih - 4, im.height * (dw / im.width));
+              ctx.save(); round(c.x + 6, c.y + 6, dw, dh, 6); ctx.clip();
+              ctx.drawImage(im, c.x + 6, c.y + 6, dw, dh); ctx.restore();
+            }
+            ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `11px ${FONT_UI}`;
+            ctx.fillText(String(c.o.label || '').slice(0, 46), c.x + 8, c.y + c.h - 16);
+          };
+
+          const exportBoard = async (fmt) => {
+            const box = boardBounds();
+            if (!box) { showToast('На доске пока нечего выгружать'); return; }
+            setExportBusy(true);
+            try {
+              const cards = boardCards();
+              const list = await loadImages(cards.filter(c => c.t === 'ref').map(c => c.o.url));
+              const imgs = {};
+              cards.filter(c => c.t === 'ref').forEach((c, i) => { if (list[i]) imgs[c.o.id] = list[i]; });
+              const bgCol = cssVar('--canvas', '#1a1918');
+              const name = `CineFlow_доска_${new Date().toISOString().split('T')[0]}`;
+              const save = (blob, ext) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `${name}.${ext}`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              };
+              if (fmt === 'png') {
+                // Множитель ограничиваем по числу точек: доска бывает
+                // огромной, и холст на 100 мегапикселей браузер просто
+                // не создаст — вернёт пустую картинку без единой ошибки.
+                const maxPix = 26e6;
+                const k = Math.min(2, Math.sqrt(maxPix / Math.max(1, box.w * box.h)));
+                const cv = document.createElement('canvas');
+                cv.width = Math.max(1, Math.round(box.w * k));
+                cv.height = Math.max(1, Math.round(box.h * k));
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = bgCol; ctx.fillRect(0, 0, cv.width, cv.height);
+                ctx.setTransform(k, 0, 0, k, -box.x * k, -box.y * k);
+                if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
+                cards.forEach(c => paintCardOn(ctx, c, imgs));
+                shapesRef.current.forEach(s => paintShape(ctx, s));
+                strokesRef.current.forEach(s => paintStroke(ctx, s));
+                await new Promise(res => cv.toBlob(b => { if (b) save(b, 'png'); res(); }, 'image/png'));
+                showToast(`Доска выгружена · ${cv.width}×${cv.height}`);
+              } else {
+                const parts = [];
+                parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${rn(box.w)}" height="${rn(box.h)}" viewBox="${rn(box.x)} ${rn(box.y)} ${rn(box.w)} ${rn(box.h)}">`);
+                parts.push(`<rect x="${rn(box.x)}" y="${rn(box.y)}" width="${rn(box.w)}" height="${rn(box.h)}" fill="${bgCol}"/>`);
+                if (legacyUrl.current) parts.push(`<image x="0" y="0" width="4000" height="4000" href="${esc(legacyUrl.current)}"/>`);
+                const txt = (s, x, y, size, color, weight, anchor) =>
+                  `<text x="${rn(x)}" y="${rn(y)}" font-family="Inter, sans-serif" font-size="${size}" fill="${color}"${weight ? ' font-weight="' + weight + '"' : ''}${anchor ? ' text-anchor="' + anchor + '"' : ''}>${esc(s)}</text>`;
+                const mc = hitCtx.current || (hitCtx.current = document.createElement('canvas').getContext('2d'));
+                cards.forEach(c => {
+                  if (c.t === 'sticky') {
+                    parts.push(`<rect x="${rn(c.x)}" y="${rn(c.y)}" width="${rn(c.w)}" height="${rn(c.h)}" rx="8" fill="${c.o.color || '#fef08a'}"/>`);
+                    mc.font = `13px ${FONT_UI}`;
+                    wrapText(mc, c.o.text, c.w - 20).slice(0, 12).forEach((ln, i) => parts.push(txt(ln, c.x + 10, c.y + 22 + i * 17, 13, '#1a1918')));
+                    return;
+                  }
+                  parts.push(`<rect x="${rn(c.x)}" y="${rn(c.y)}" width="${rn(c.w)}" height="${rn(c.h)}" rx="10" fill="${cssVar('--panel', '#242322')}" stroke="rgba(255,255,255,.10)"/>`);
+                  if (c.t === 'scene') {
+                    parts.push(txt('СЦЕНА #' + (c.o.number || '—'), c.x + 12, c.y + 22, 11, cssVar('--muted', '#8b8681'), 'bold'));
+                    mc.font = `bold 14px ${FONT_UI}`;
+                    wrapText(mc, c.o.title, c.w - 24).slice(0, 2).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 58 + i * 19, 14, '#ffffff', 'bold')));
+                    mc.font = `12px ${FONT_UI}`;
+                    wrapText(mc, c.o.content, c.w - 24).slice(0, 3).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 103 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
+                  } else if (c.t === 'doc') {
+                    parts.push(txt(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 24, 13, '#ffffff', 'bold'));
+                    mc.font = `12px ${FONT_UI}`;
+                    wrapText(mc, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
+                  } else if (c.o.url) {
+                    parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - 28)}" preserveAspectRatio="xMidYMid slice" href="${esc(c.o.url)}"/>`);
+                    parts.push(txt(String(c.o.label || '').slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
+                  }
+                });
+                shapesRef.current.forEach(s => {
+                  if (isText(s)) {
+                    const host = s.ct ? findShape(s.ct) : null;
+                    const b = host ? shapeBox(host) : shapeBox(s);
+                    const pad = host ? 10 : 0;
+                    mc.font = textFont(s);
+                    const lines = wrapText(mc, s.tx, Math.max(10, b.w - pad * 2));
+                    const lh = textLH(s), ta = s.ta || (host ? 'center' : 'left');
+                    const anchor = ta === 'center' ? 'middle' : (ta === 'right' ? 'end' : 'start');
+                    const x = ta === 'center' ? b.x + b.w / 2 : (ta === 'right' ? b.x + b.w - pad : b.x + pad);
+                    let y = (host ? b.y + (b.h - lines.length * lh) / 2 : b.y) + (s.fz || 20) * 0.95;
+                    lines.forEach(ln => { parts.push(txt(ln, x, y, s.fz || 20, s.sc, null, anchor)); y += lh; });
+                    return;
+                  }
+                  const closed = !isLineKind(s.k);
+                  const d0 = cmdsD(shapeCmds(s, 0));
+                  const dash = s.sd === 'dashed' ? ` stroke-dasharray="${s.sw * 4} ${s.sw * 3.2}"`
+                            : s.sd === 'dotted' ? ` stroke-dasharray="0.1 ${s.sw * 2.6}"` : '';
+                  const op = s.op === undefined ? 1 : s.op;
+                  if (closed && s.bg && s.bg !== 'transparent') {
+                    parts.push(`<path d="${d0}" fill="${s.bg}" fill-opacity="${rn(op * (s.fs === 'solid' ? 0.22 : 0.14))}" stroke="none"/>`);
+                  }
+                  parts.push(`<path d="${d0}" fill="none" stroke="${s.sc}" stroke-width="${s.sw}" stroke-opacity="${rn(op)}" stroke-linecap="round" stroke-linejoin="round"${dash}/>`);
+                  if (s.ro) parts.push(`<path d="${cmdsD(shapeCmds(s, 1))}" fill="none" stroke="${s.sc}" stroke-width="${s.sw}" stroke-opacity="${rn(op * 0.75)}" stroke-linecap="round" stroke-linejoin="round"${dash}/>`);
+                  if (isLineKind(s.k)) {
+                    const q = arrowRoute(s).pts, n = q.length, hs = Math.max(9, s.sw * 4.5);
+                    const head = (x, y, fx, fy) => {
+                      const a = Math.atan2(y - fy, x - fx), w = 0.42;
+                      return `<path d="M${rn(x - Math.cos(a - w) * hs)} ${rn(y - Math.sin(a - w) * hs)}L${rn(x)} ${rn(y)}L${rn(x - Math.cos(a + w) * hs)} ${rn(y - Math.sin(a + w) * hs)}" fill="none" stroke="${s.sc}" stroke-width="${s.sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+                    };
+                    if (s.a2 === 'arrow') parts.push(head(q[n - 1][0], q[n - 1][1], q[n - 2][0], q[n - 2][1]));
+                    if (s.a1 === 'arrow') parts.push(head(q[0][0], q[0][1], q[1][0], q[1][1]));
+                  }
+                });
+                strokesRef.current.forEach(s => {
+                  parts.push(`<path d="${cmdsD(strokeCmds(s))}" fill="${s.c}" fill-opacity="${rn(brushAlpha(s.t))}" fill-rule="nonzero"/>`);
+                });
+                parts.push('</svg>');
+                save(new Blob([parts.join('\n')], { type: 'image/svg+xml' }), 'svg');
+                showToast('Доска выгружена в SVG');
+              }
+            } catch (err) {
+              console.warn('exportBoard', err);
+              showToast('Не удалось собрать файл: ' + err.message);
+            }
+            setExportBusy(false);
+          };
+
           // --- ГРУППЫ ---
           // Группа — это просто общая метка `g` у нескольких фигур, без
           // вложенных структур: так её переживают и копирование, и запись
@@ -2432,7 +2690,7 @@
               if (L.t === 'marker') ctx.globalCompositeOperation = 'screen';
               ctx.globalAlpha = brushAlpha(L.t);
               ctx.fillStyle = L.c;
-              ctx.fill(inkPath(inkOutline(L.pts, L.w * brushWidthK(L.t), brushThin(L.t))));
+              ctx.fill(cmdsPath(inkCmds(inkOutline(L.pts, L.w * brushWidthK(L.t), brushThin(L.t)))));
               ctx.restore();
             }
             // Фигуры, которые сейчас ведут или тянут, живут здесь: нижний
@@ -5498,6 +5756,17 @@
                         </button>
                         <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
                         <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        {/* Выгрузка доски картинкой: то, что отправляют группе.
+                            PNG для мессенджера, SVG для печати и правки в
+                            векторном редакторе. */}
+                        <button onClick={() => exportBoard('png')} disabled={exportBusy}
+                                className="p-2.5 text-xs text-zinc-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1"
+                                title="Выгрузить доску картинкой (PNG)">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                        </button>
+                        <button onClick={() => exportBoard('svg')} disabled={exportBusy}
+                                className="p-2.5 text-[10px] text-zinc-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center"
+                                title="Выгрузить доску в SVG — вектор для печати и правки">SVG</button>
                         <button onClick={() => setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Очистить рисунок: линии и фигуры"><Icons.Trash/></button>
                       </div>
 
