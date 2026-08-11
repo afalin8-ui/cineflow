@@ -2771,7 +2771,20 @@
 
           const REF_W = 192;
           const refW = (r) => Math.round(r.w || REF_W);
-          const refH = (r) => Math.round((refW(r) - 20) * 9 / 16) + 58;
+          // Пропорции у каждой картинки СВОИ. Раньше окно было жёстко 16:9,
+          // и вертикальный кадр ложился в него с чёрными полями в пол-карточки.
+          const refAR = (r) => (r.ar && r.ar > 0.05 && r.ar < 20) ? r.ar : 16 / 9;
+          const refH = (r) => Math.round((refW(r) - 20) / refAR(r)) + 58;
+          // Замеряем при первой же отрисовке: так подхватываются и старые
+          // референсы, без всякого перевода данных.
+          const noteRefRatio = (ref, img) => {
+            if (!img || !img.naturalWidth || !img.naturalHeight) return;
+            const ar = Math.round((img.naturalWidth / img.naturalHeight) * 1000) / 1000;
+            if (!ar || (ref.ar && Math.abs(ref.ar - ar) < 0.01)) return;
+            const up = references.map(r => r.id === ref.id ? { ...r, ar } : r);
+            setReferences(up);
+            syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+          };
 
           const handleResizeMove = (e) => {
               if (!resizingRef || resizingRef.pointerId !== e.pointerId) return;
@@ -3992,11 +4005,12 @@
 
                             {references.filter(r => r.boardId === activeBoardId).map(ref => (
                             <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${resizingRef && resizingRef.id === ref.id ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'}`}>
-                                <div className="relative aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/10">
-                                <button onClick={() => setConfirmAction({title:'Удалить референс?', message:'Убрать с доски?', onConfirm:()=> { setReferences(references.filter(r => r.id !== ref.id)); deleteNetDoc('references', ref.id); }})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
+                                <div className="relative bg-black/60 rounded-lg overflow-hidden border border-white/10" style={{ aspectRatio: String(refAR(ref)) }}>
+                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
                                 {ref.url ? (<React.Fragment>
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={bgStyle(ref.id, ref.url)}></div>
-                                    <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-[1]" draggable="false" />
+                                    <img src={ref.url} onLoad={(e) => noteRefRatio(ref, e.target)}
+                                         className="w-full h-full object-contain pointer-events-none relative z-[1]" draggable="false" />
                                 </React.Fragment>) : (
                                     <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
                                     <span className="mb-1"><Icons.Gallery/></span><span>Загрузить</span>
