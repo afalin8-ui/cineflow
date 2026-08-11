@@ -1467,7 +1467,6 @@
           const [isPanning, setIsPanning] = useState(false);
           const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
-          const lastPoint = useRef({ x: 0, y: 0, pressure: 0.5, time: 0 });
           // Идёт ли сейчас штрих обратным концом стилуса
           const penErase = useRef(false);
           // Стилус на планшете. Как только человек хоть раз коснулся доски
@@ -1494,92 +1493,387 @@
           const isPenEraser = (e) => e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) === 32);
 
           // --- ДВИЖОК КИСТИ ---
-          // stroke хранит состояние текущего штриха: предыдущая точка,
-          // предыдущая середина отрезка и сглаженный нажим.
-          const stroke = useRef({ prev: null, prevMid: null, press: 0.5 });
-          // Последний сохранённый снимок холста. Он же — состояние «до»
-          // для отмены, поэтому отмена не требует лишней перекодировки.
-          const lastSaved = useRef(null);
+          // Штрихи хранятся ВЕКТОРОМ — списком точек, а не картинкой.
+          // Раньше линия писалась прямо в холст 4000×4000, растянутый на всю
+          // доску: на планшете, где в одной точке CSS сидят две-три настоящие,
+          // и тем более при увеличении браузеру нечего было показать, кроме
+          // растянутого пикселя. Отсюда и мыло, и рваный край — сколько ни
+          // улучшай форму штриха, растр остаётся растром. Теперь холст
+          // размером с ОКНО, рисуем в него по-настоящему мелко
+          // (devicePixelRatio) и заново на каждый шаг зума: линия резкая при
+          // любом увеличении, как в Excalidraw. Побочно вектор даёт даром
+          // три вещи: отсечение невидимого, дешёвую отмену и ластик, который
+          // режет линии, а не выедает дырки в картинке.
+          const INK_MAX = 1200;               // точек в штрихе — предохранитель
+          const INK_LEAD = 0.575;             // «поводок» за указателем, см. ниже
+          const brushAlpha = (type) => type === 'marker' ? 0.32 : (type === 'soft' ? 0.5 : 1.0);
+          const brushWidthK = (type) => type === 'soft' ? 1.7 : 1;
+          // Насколько нажим меняет толщину. У маркера почти не меняет —
+          // у настоящего маркера ширина задана пером, а не рукой.
+          const brushThin = (type) => type === 'marker' ? 0.12 : (type === 'soft' ? 0.34 : 0.62);
+
+          // Нажим в точке. У пера настоящий, у мыши и пальца считаем по
+          // скорости: ведут быстро — след тоньше. Сглаживание обязательно,
+          // иначе толщина скачет от события к событию.
+          const inkPress = (prev, dist, size, dev) => dev != null
+            ? prev + (dev - prev) * 0.5
+            : prev + (Math.min(1, 1 - Math.min(1, dist / Math.max(1, size))) - prev) * 0.275;
+
+          // КОНТУР штриха. Главная мысль (она же у perfect-freehand, на
+          // котором рисует Excalidraw): рисуем не «линию с толщиной», а
+          // замкнутую ФИГУРУ, обведённую по обе стороны от пути, где у каждой
+          // точки свой радиус. Только так получаются и живой нажим, и гладкие
+          // изломы, и сход на нет у концов: линия с lineWidth так не умеет
+          // в принципе — у неё одна толщина на весь отрезок.
+          const inkOutline = (pts, size, thin) => {
+            const n = pts.length;
+            if (!n) return [];
+            const R = size / 2;
+            const circle = (cx, cy, r) => {
+              const out = [];
+              for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2; out.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+              return out;
+            };
+            if (n === 1) return circle(pts[0][0], pts[0][1], Math.max(0.6, R * 0.7));
+
+            // Шаги и пройденный путь — нужны для сужения у концов.
+            const step = [0], run = [0];
+            for (let i = 1; i < n; i++) {
+              step[i] = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+              run[i] = run[i - 1] + step[i];
+            }
+            const total = run[n - 1] || 0;
+            // Начало набирает ширину, конец её теряет. Именно сход на нет
+            // отличает живую линию от сардельки. Хвост длиннее носа —
+            // так ведёт себя перо, когда его отрывают от бумаги.
+            const tS = Math.min(size * 1.2, total * 0.35);
+            const tE = Math.min(size * 2.2, total * 0.45);
+            const rad = [];
+            for (let i = 0; i < n; i++) {
+              const r = R * 2 * (0.5 - thin * (0.5 - pts[i][2]));
+              const a = tS > 0 ? Math.min(1, run[i] / tS) : 1;
+              const b = tE > 0 ? Math.min(1, (total - run[i]) / tE) : 1;
+              const k = Math.min(a * (2 - a), 1 - Math.pow(1 - b, 3));
+              rad[i] = Math.max(0.35, r * Math.max(0.06, k));
+            }
+
+            const L = [], Rt = [];
+            const add = (p, dx, dy, r) => { L.push([p[0] - dy * r, p[1] + dx * r]); Rt.push([p[0] + dy * r, p[1] - dx * r]); };
+            const dir = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy); return l < 1e-6 ? null : [dx / l, dy / l]; };
+            let last = null, first = null;
+            for (let i = 0; i < n; i++) {
+              const din = i > 0 ? (dir(pts[i - 1], pts[i]) || last) : null;
+              const dout = i < n - 1 ? dir(pts[i], pts[i + 1]) : null;
+              const a = din || dout, b = dout || din;
+              if (!a || !b) continue;
+              if (!first) first = a;
+              last = b;
+              // Вынос кладём трижды: по входу, по биссектрисе и по выходу.
+              // На изломе это скругляет угол снаружи, а самопересечение
+              // внутри съедает заливка по правилу nonzero — поэтому шов
+              // не расходится даже на резком развороте.
+              add(pts[i], a[0], a[1], rad[i]);
+              if (a !== b) {
+                const bx = a[0] + b[0], by = a[1] + b[1], bl = Math.hypot(bx, by);
+                if (bl > 1e-6) add(pts[i], bx / bl, by / bl, rad[i]);
+                add(pts[i], b[0], b[1], rad[i]);
+              }
+            }
+            if (!L.length || !first || !last) return circle(pts[0][0], pts[0][1], Math.max(0.6, rad[0]));
+
+            // Круглые концы: полукруг от левого выноса к правому через
+            // направление движения (в начале — через обратное).
+            const cap = (c, r, d, back) => {
+              const base = Math.atan2(d[0], -d[1]) - (back ? Math.PI : 0);
+              const out = [];
+              for (let k = 1; k < 9; k++) out.push([c[0] + Math.cos(base - Math.PI * k / 9) * r, c[1] + Math.sin(base - Math.PI * k / 9) * r]);
+              return out;
+            };
+            return L
+              .concat(cap(pts[n - 1], rad[n - 1], last, false))
+              .concat(Rt.slice().reverse())
+              .concat(cap(pts[0], rad[0], first, true));
+          };
+
+          // Полигон обводим квадратичными кривыми через середины сторон:
+          // углы полигона исчезают, остаётся гладкий контур.
+          const inkPath = (pl) => {
+            const p = new Path2D(), m = pl.length;
+            if (m < 3) return p;
+            let a = pl[m - 1], b = pl[0];
+            p.moveTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+            for (let i = 0; i < m; i++) {
+              a = pl[i]; b = pl[(i + 1) % m];
+              p.quadraticCurveTo(a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+            }
+            p.closePath();
+            return p;
+          };
+
+          // Точки лежат ПЛОСКИМ списком чисел: Firestore не умеет вложенные
+          // массивы (та же причина, по которой сцена Excalidraw хранится
+          // строкой). Разворачиваем один раз и держим при штрихе — вместе
+          // с готовой фигурой и габаритом. Фигура не зависит от масштаба,
+          // поэтому переживает и панораму, и зум.
+          const strokePts = (s) => {
+            if (!s._pts) {
+              const a = [];
+              for (let i = 0; i + 2 < s.p.length; i += 3) a.push([s.p[i], s.p[i + 1], s.p[i + 2]]);
+              s._pts = a;
+            }
+            return s._pts;
+          };
+          const strokePath = (s) => {
+            if (!s._path) s._path = inkPath(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t)));
+            return s._path;
+          };
+          const strokeBox = (s) => {
+            if (s._box) return s._box;
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const p of strokePts(s)) {
+              if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+              if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+            }
+            const m = s.w * brushWidthK(s.t) + 4;
+            s._box = { x0: x0 - m, y0: y0 - m, x1: x1 + m, y1: y1 + m };
+            return s._box;
+          };
+          const paintStroke = (ctx, s) => {
+            ctx.save();
+            if (s.t === 'marker') ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = brushAlpha(s.t);
+            ctx.fillStyle = s.c;
+            ctx.fill(strokePath(s));
+            ctx.restore();
+          };
+          // Координаты округляем: на доске 4000×4000 десятой доли точки
+          // хватает с запасом, а документ в Firestore ограничен мегабайтом.
+          const packStroke = (t, color, size, pts) => {
+            const p = [];
+            for (const q of pts) p.push(Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10, Math.round(q[2] * 100) / 100);
+            return { id: `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, t, c: color, w: size, p };
+          };
+
+          // --- СЛОИ РИСОВАНИЯ ---
+          // Холстов два, и это главный рычаг плавности: на нижнем лежат
+          // готовые штрихи, на верхнем — тот, что ведут прямо сейчас, и
+          // кольцо-подсказка. Пока идёт штрих, нижний не трогаем вовсе.
+          const inkCanvasRef = useRef(null);   // готовые штрихи + старый растр
+          const liveCanvasRef = useRef(null);  // текущий штрих и кольцо кисти
+          const strokesRef = useRef([]);       // векторные штрихи открытой доски
+          const legacyCv = useRef(null);       // старый растровый рисунок, если он есть
+          const legacyUrl = useRef(null);
+          const legacyDirty = useRef(false);
+          const live = useRef(null);           // штрих, который ведут сейчас
+          const hoverPt = useRef(null);        // указатель в ЭКРАННЫХ координатах
           const undoStack = useRef([]);
+          const redoStack = useRef([]);
           const [canUndo, setCanUndo] = useState(false);
+          const [canRedo, setCanRedo] = useState(false);
+          // Счётчик правок: по нему пересобирается снимок для Excalidraw.
+          // Панорама и зум его НЕ трогают — иначе снимок пересчитывался бы
+          // на каждое движение доски.
+          const [inkVer, setInkVer] = useState(0);
+          // Ластик живёт своим размером, а не «кисть × 2,5», как раньше:
+          // размер был спрятан в коде, увидеть и задать его было нечем.
+          const [eraserSize, setEraserSize] = useState(() => { try { return Number(localStorage.getItem('cf_eraser')) || 40; } catch (e) { return 40; } });
+          const changeEraser = (v) => { setEraserSize(v); try { localStorage.setItem('cf_eraser', v); } catch (e) {} };
 
-          const brushAlpha = (type) => type === 'marker' ? 0.3 : (type === 'soft' ? 0.45 : 1.0);
-          const brushWidthK = (type) => type === 'soft' ? 1.6 : 1;
-
-          const applyBrush = (ctx, mode, type, color, width) => {
-            if (mode === 'erase') {
-              ctx.globalCompositeOperation = 'destination-out';
-              ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.fillStyle = 'rgba(0,0,0,1)';
-              ctx.lineWidth = width * 2.5;
-            } else {
-              ctx.globalCompositeOperation = type === 'marker' ? 'screen' : 'source-over';
-              ctx.strokeStyle = color; ctx.fillStyle = color;
-              ctx.globalAlpha = brushAlpha(type);
-              ctx.lineWidth = width * brushWidthK(type);
-            }
-            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-          };
-
-          // Штрих рисуется НЕ отрезками с разной толщиной, а СПЛОШНОЙ ЛЕНТОЙ:
-          // между соседними точками заливается фигура, натянутая на две
-          // окружности разного радиуса. Толщина меняется непрерывно, стыков
-          // не видно. Раньше каждый отрезок обводился отдельно со своей
-          // толщиной — отсюда ступеньки на линии.
-          const capsule = (ctx, x1, y1, r1, x2, y2, r2) => {
-            const dx = x2 - x1, dy = y2 - y1;
-            const d = Math.hypot(dx, dy);
-            const R = Math.max(r1, r2);
-            ctx.beginPath();
-            // Точки совпали или одна окружность внутри другой — просто круг.
-            if (d < 0.01 || d <= Math.abs(r1 - r2)) {
-              const inner = r1 > r2;
-              ctx.arc(inner ? x1 : x2, inner ? y1 : y2, R, 0, Math.PI * 2);
-              ctx.fill(); return;
-            }
-            const a = Math.atan2(dy, dx);
-            const t = Math.asin((r1 - r2) / d);
-            ctx.arc(x1, y1, r1, a + Math.PI / 2 + t, a - Math.PI / 2 - t);
-            ctx.arc(x2, y2, r2, a - Math.PI / 2 - t, a + Math.PI / 2 + t);
-            ctx.closePath(); ctx.fill();
-          };
-          // Ширина штриха в этой точке. Сужение на первых и последних шагах
-          // (`taper`) — именно оно делает линию живой, а не сарделькой.
-          const strokeR = (mode, type, press, taper) => {
-            const w = brushSize * (0.35 + press * 1.3);
-            const k = mode === 'erase' ? 2.5 : brushWidthK(type);
-            return Math.max(0.4, w * k * (taper === undefined ? 1 : taper)) / 2;
-          };
-          // Кладём ленту вдоль квадратичной кривой, разбивая её на мелкие шаги:
-          // и путь получается гладким, и толщина меняется без скачков.
-          const ribbon = (ctx, st, ctrl, to, rTo) => {
-            const from = { x: st.lx, y: st.ly };
-            const len = Math.hypot(to.x - from.x, to.y - from.y) + Math.hypot(ctrl.x - from.x, ctrl.y - from.y);
-            const steps = Math.max(1, Math.min(20, Math.ceil(len / 4)));
-            for (let i = 1; i <= steps; i++) {
-              const t = i / steps, u = 1 - t;
-              const x = u * u * from.x + 2 * u * t * ctrl.x + t * t * to.x;
-              const y = u * u * from.y + 2 * u * t * ctrl.y + t * t * to.y;
-              const r = st.lr + (rTo - st.lr) * t;
-              capsule(ctx, st.lx, st.ly, st.lr, x, y, r);
-              st.lx = x; st.ly = y; st.lr = r;
-            }
-          };
-
-          const pushUndo = () => {
-            if (!lastSaved.current) return;
-            undoStack.current.push(lastSaved.current);
-            if (undoStack.current.length > 12) undoStack.current.shift();
-            setCanUndo(true);
-          };
-
-          const restoreCanvas = (dataUrl) => {
-            const c = paintCanvasRef.current; if (!c) return;
+          // Холст размером с окно и в НАСТОЯЩЕМ разрешении экрана. Множитель
+          // ограничен двойкой: на телефонах он бывает 3, и втрое больший холст
+          // стоит втрое дороже при разнице, которой не видно.
+          const fitInk = (c) => {
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            const w = c.clientWidth || 1, h = c.clientHeight || 1;
+            const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+            if (c.width !== bw || c.height !== bh) { c.width = bw; c.height = bh; }
             const ctx = c.getContext('2d');
-            ctx.clearRect(0, 0, c.width, c.height);
-            if (!dataUrl) return;
-            const img = new Image();
-            img.onload = () => { ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0); };
-            img.src = dataUrl;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            return { w, h, ctx };
+          };
+
+          // Экран → доска. Холсты лежат ровно по размеру области доски,
+          // поэтому её левый верхний угол и есть начало отсчёта.
+          const inkPt = (cx, cy) => {
+            const c = liveCanvasRef.current;
+            const r = c ? c.getBoundingClientRect() : { left: 0, top: 0 };
+            const sx = cx - r.left, sy = cy - r.top;
+            return { sx, sy, x: (sx - canvasOffset.x) / zoom, y: (sy - canvasOffset.y) / zoom };
+          };
+          const erasePt = useRef(null);
+
+          // Грубая карта старой растровой подложки: 100×100 клеток, в каждой
+          // просто «есть тут что-нибудь или пусто». Считается ОДИН раз при
+          // загрузке уменьшением картинки (это быстро, делает видеокарта).
+          // Нужна ради одного: снимок подложки для отмены весит десятки
+          // мегабайт и кодируется сотни миллисекунд, поэтому снимать его
+          // надо, только если ластик реально что-то у неё забрал.
+          const legacyMap = useRef(null);
+          const legacyShot = useRef(false);
+          const buildLegacyMap = (img) => {
+            try {
+              const s = document.createElement('canvas');
+              s.width = 100; s.height = 100;
+              const sc = s.getContext('2d');
+              sc.drawImage(img, 0, 0, 100, 100);
+              const d = sc.getImageData(0, 0, 100, 100).data;
+              const m = new Uint8Array(100 * 100);
+              for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3] ? 1 : 0;
+              legacyMap.current = m;
+            } catch (err) { legacyMap.current = null; }
+          };
+          const legacyHit = (x0, y0, x1, y1, r) => {
+            if (!legacyCv.current) return false;
+            const m = legacyMap.current;
+            if (!m) return true;
+            const cell = 40;
+            const a = Math.max(0, Math.floor((Math.min(x0, x1) - r) / cell));
+            const b = Math.min(99, Math.floor((Math.max(x0, x1) + r) / cell));
+            const c = Math.max(0, Math.floor((Math.min(y0, y1) - r) / cell));
+            const d = Math.min(99, Math.floor((Math.max(y0, y1) + r) / cell));
+            for (let j = c; j <= d; j++) for (let i = a; i <= b; i++) if (m[j * 100 + i]) return true;
+            return false;
+          };
+          // Подложку для отмены снимаем один раз за штрих и только по факту.
+          const holdLegacy = () => {
+            if (legacyShot.current || !legacyCv.current) return;
+            legacyShot.current = true;
+            const top = undoStack.current[undoStack.current.length - 1];
+            if (top && top.legacy === undefined) top.legacy = legacyCv.current.toDataURL();
+          };
+
+          const drawInkStatic = () => {
+            const c = inkCanvasRef.current; if (!c) return;
+            const { w, h, ctx } = fitInk(c);
+            ctx.clearRect(0, 0, w, h);
+            const ox = canvasOffset.x, oy = canvasOffset.y, z = zoom;
+            ctx.save();
+            ctx.translate(ox, oy); ctx.scale(z, z);
+            if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
+            // Отсекаем то, чего не видно: доску перерисовываем на каждый шаг
+            // зума и панорамы, и платить за штрихи за краем экрана незачем.
+            const x0 = -ox / z, y0 = -oy / z, x1 = x0 + w / z, y1 = y0 + h / z;
+            for (const s of strokesRef.current) {
+              const b = strokeBox(s);
+              if (b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1) continue;
+              paintStroke(ctx, s);
+            }
+            ctx.restore();
+          };
+
+          const drawInkLive = () => {
+            const c = liveCanvasRef.current; if (!c) return;
+            const { w, h, ctx } = fitInk(c);
+            ctx.clearRect(0, 0, w, h);
+            const z = zoom;
+            const L = live.current;
+            if (L && L.pts.length) {
+              ctx.save();
+              ctx.translate(canvasOffset.x, canvasOffset.y); ctx.scale(z, z);
+              if (L.t === 'marker') ctx.globalCompositeOperation = 'screen';
+              ctx.globalAlpha = brushAlpha(L.t);
+              ctx.fillStyle = L.c;
+              ctx.fill(inkPath(inkOutline(L.pts, L.w * brushWidthK(L.t), brushThin(L.t))));
+              ctx.restore();
+            }
+            // Кольцо: сколько именно возьмёт кисть или ластик. У ластика
+            // площадь не показывалась вовсе — человек стирал вслепую и не
+            // понимал, почему задело соседнюю линию. Радиус растёт вместе
+            // с масштабом доски, иначе кольцо врёт.
+            const hp = hoverPt.current;
+            const er = wbMode === 'erase' || penErase.current;
+            if (hp && !isPanning && (wbMode === 'draw' || wbMode === 'erase')) {
+              const r = Math.max(2.5, (er ? eraserSize : brushSize * brushWidthK(brushType)) / 2 * z);
+              ctx.save();
+              // Тёмная подложка — чтобы кольцо читалось и поверх светлого референса
+              ctx.beginPath(); ctx.arc(hp.x, hp.y, r + 1, 0, Math.PI * 2);
+              ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2.5; ctx.stroke();
+              ctx.beginPath(); ctx.arc(hp.x, hp.y, r, 0, Math.PI * 2);
+              if (er) { ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fill(); }
+              ctx.strokeStyle = er ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.6)';
+              ctx.lineWidth = 1.25; ctx.stroke();
+              ctx.restore();
+            }
+          };
+
+          // Перерисовку копим до кадра: за один сдвиг пальца прилетает
+          // десяток событий, а нарисовать надо один раз.
+          const inkRaf = useRef(0);
+          const inkNeed = useRef(0);            // 1 — живой слой, 2 — оба
+          // Рисовать обязана САМАЯ СВЕЖАЯ пара функций: между заявкой и
+          // кадром приложение успевает перерисоваться, и отложенный вызов
+          // взял бы устаревшие панораму и масштаб — доска замирала бы
+          // на кадр позади пальца.
+          const inkDraw = useRef({});
+          inkDraw.current = { s: drawInkStatic, l: drawInkLive };
+          const requestInk = (both) => {
+            inkNeed.current = Math.max(inkNeed.current, both ? 2 : 1);
+            if (inkRaf.current) return;
+            inkRaf.current = requestAnimationFrame(() => {
+              inkRaf.current = 0;
+              const need = inkNeed.current; inkNeed.current = 0;
+              if (need >= 2) inkDraw.current.s();
+              inkDraw.current.l();
+            });
+          };
+          const requestStatic = () => requestInk(true);
+          const requestLive = () => requestInk(false);
+          const bumpInk = () => { setInkVer(v => v + 1); requestStatic(); };
+
+          // Готовый штрих дописываем в нижний слой поверх нарисованного,
+          // без полной перерисовки: обычный случай — «провёл линию».
+          const paintOnStatic = (s) => {
+            const c = inkCanvasRef.current; if (!c) { requestStatic(); return; }
+            const ctx = c.getContext('2d');
+            ctx.save();
+            ctx.translate(canvasOffset.x, canvasOffset.y); ctx.scale(zoom, zoom);
+            paintStroke(ctx, s);
+            ctx.restore();
+          };
+
+          // Ластик режет ЛИНИИ, а не пиксели: точки, попавшие под него,
+          // выбрасываются, а штрих распадается на куски. Поэтому стёртое
+          // возвращается отменой и не оставляет дыр в подложке.
+          const eraseSeg = (x0, y0, x1, y1, r) => {
+            const dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
+            const near = (px, py) => {
+              let t = l2 > 0 ? ((px - x0) * dx + (py - y0) * dy) / l2 : 0;
+              t = Math.max(0, Math.min(1, t));
+              return Math.hypot(px - (x0 + dx * t), py - (y0 + dy * t));
+            };
+            const bx0 = Math.min(x0, x1) - r, bx1 = Math.max(x0, x1) + r;
+            const by0 = Math.min(y0, y1) - r, by1 = Math.max(y0, y1) + r;
+            const next = []; let hit = false;
+            for (const s of strokesRef.current) {
+              const b = strokeBox(s);
+              if (b.x1 < bx0 || b.x0 > bx1 || b.y1 < by0 || b.y0 > by1) { next.push(s); continue; }
+              const pts = strokePts(s);
+              const runs = []; let cur = [];
+              for (const p of pts) {
+                if (near(p[0], p[1]) <= r) { if (cur.length > 1) runs.push(cur); cur = []; }
+                else cur.push(p);
+              }
+              if (cur.length > 1) runs.push(cur);
+              if (runs.length === 1 && runs[0].length === pts.length) { next.push(s); continue; }
+              hit = true;
+              runs.forEach(run => next.push(packStroke(s.t, s.c, s.w, run)));
+            }
+            if (hit) { strokesRef.current = next; requestStatic(); }
+            // Старую растровую подложку ластик берёт по-прежнему пикселями —
+            // иначе на досках, нарисованных до перехода на вектор, он бы
+            // просто перестал работать.
+            if (legacyHit(x0, y0, x1, y1, r)) {
+              holdLegacy();
+              const lc = legacyCv.current.getContext('2d');
+              lc.save();
+              lc.globalCompositeOperation = 'destination-out';
+              lc.lineCap = 'round'; lc.lineJoin = 'round';
+              lc.lineWidth = r * 2; lc.strokeStyle = 'rgba(0,0,0,1)';
+              lc.beginPath(); lc.moveTo(x0, y0); lc.lineTo(x1, y1); lc.stroke();
+              lc.restore();
+              legacyDirty.current = true;
+              requestStatic();
+            }
           };
 
           // Единственная дверь для записи рисунка доски: локальная копия
@@ -1603,30 +1897,125 @@
             );
           };
 
-          const persistCanvas = () => {
-            const c = paintCanvasRef.current; if (!c) return;
-            const dU = c.toDataURL();
-            lastSaved.current = dU;
+          // Векторные штрихи лежат ОТДЕЛЬНЫМ документом от старого растрового
+          // рисунка: у каждого свой предел в 1 МБ, и доски, нарисованные до
+          // перехода на вектор, открываются ровно как открывались.
+          const strokesDocId = (boardId) => `ink-${boardId}`;
+          const packInk = (list) => JSON.stringify(list.map(s => ({ id: s.id, t: s.t, c: s.c, w: s.w, p: s.p })));
+          const saveStrokes = (boardId, list) => {
+            if (READ_ONLY) return;
+            const json = packInk(list);
+            try {
+              if (list.length) localStorage.setItem('cf_ink_' + boardId, json);
+              else localStorage.removeItem('cf_ink_' + boardId);
+            } catch (err) {}
+            if (!db || !user) return;
+            trackWrite(
+              dataRef().collection('canvas').doc(strokesDocId(boardId))
+                .set({ strokes: json, lastDrawBy: user.uid })
+                .catch(err => {
+                  console.warn('saveStrokes', err);
+                  showToast('⚠️ Рисунок не сохранился в облако — слишком много линий');
+                })
+            );
+          };
+
+          // Запись откладываем и, уходя с доски, ДОПИСЫВАЕМ — как у сцены
+          // Excalidraw. Просто снять таймер значило бы потерять последний штрих.
+          const inkTimer = useRef(null);
+          const inkPending = useRef(null);
+          const scheduleInkSave = () => {
+            const bid = activeBoardId, list = strokesRef.current;
+            if (inkTimer.current) clearTimeout(inkTimer.current);
+            inkPending.current = () => saveStrokes(bid, list);
+            inkTimer.current = setTimeout(() => {
+              inkTimer.current = null;
+              const f = inkPending.current; inkPending.current = null;
+              if (f) f();
+            }, 400);
+          };
+          const flushInk = () => {
+            if (inkTimer.current) { clearTimeout(inkTimer.current); inkTimer.current = null; }
+            const f = inkPending.current; inkPending.current = null;
+            if (f) f();
+          };
+
+          // Старый растровый рисунок держим отдельным холстом ПОД штрихами.
+          // Он создаётся, только если у доски он вообще есть: новые доски
+          // за него не платят ничем.
+          const loadLegacy = (dataUrl) => {
+            legacyUrl.current = dataUrl || null;
+            if (!dataUrl) { legacyCv.current = null; legacyMap.current = null; requestStatic(); return; }
+            const img = new Image();
+            img.onload = () => {
+              const cv = document.createElement('canvas');
+              cv.width = 4000; cv.height = 4000;
+              cv.getContext('2d').drawImage(img, 0, 0);
+              legacyCv.current = cv;
+              buildLegacyMap(img);
+              requestStatic();
+            };
+            img.src = dataUrl;
+          };
+          const saveLegacy = () => {
+            if (!legacyCv.current) return;
+            legacyDirty.current = false;
+            const dU = legacyCv.current.toDataURL();
+            legacyUrl.current = dU;
             saveCanvas(activeBoardId, dU);
           };
 
+          // Отмена теперь хранит СПИСОК ШТРИХОВ, а не снимок холста
+          // 4000×4000: и памяти в сотни раз меньше, и шагов можно держать
+          // больше. Растровую подложку снимаем только когда ластик её задел —
+          // иначе за каждый штрих платили бы перекодировкой картинки.
+          const pushUndo = (withLegacy) => {
+            undoStack.current.push({
+              list: strokesRef.current,
+              legacy: withLegacy && legacyCv.current ? legacyCv.current.toDataURL() : undefined
+            });
+            if (undoStack.current.length > 40) undoStack.current.shift();
+            redoStack.current = [];
+            setCanUndo(true); setCanRedo(false);
+          };
+          const applyInkSnap = (snap) => {
+            strokesRef.current = snap.list;
+            if (snap.legacy !== undefined) {
+              loadLegacy(snap.legacy);
+              saveCanvas(activeBoardId, snap.legacy);
+            }
+            bumpInk();
+            saveStrokes(activeBoardId, snap.list);
+          };
+          const snapNow = (like) => ({
+            list: strokesRef.current,
+            legacy: like.legacy !== undefined ? (legacyCv.current ? legacyCv.current.toDataURL() : null) : undefined
+          });
           const undoStroke = () => {
             if (!undoStack.current.length) return;
-            const prev = undoStack.current.pop();
-            setCanUndo(undoStack.current.length > 0);
-            restoreCanvas(prev);
-            lastSaved.current = prev;
-            saveCanvas(activeBoardId, prev);
+            const snap = undoStack.current.pop();
+            redoStack.current.push(snapNow(snap));
+            setCanUndo(undoStack.current.length > 0); setCanRedo(true);
+            applyInkSnap(snap);
+          };
+          const redoStroke = () => {
+            if (!redoStack.current.length) return;
+            const snap = redoStack.current.pop();
+            undoStack.current.push(snapNow(snap));
+            setCanRedo(redoStack.current.length > 0); setCanUndo(true);
+            applyInkSnap(snap);
           };
 
-          // Ctrl+Z / Cmd+Z для отмены штриха на доске
+          // Ctrl+Z — отменить штрих, Ctrl+Shift+Z и Ctrl+Y — вернуть
           useEffect(() => {
             const onKey = (e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && currentView === 'whiteboard') {
-                const t = e.target.tagName;
-                if (t === 'INPUT' || t === 'TEXTAREA') return;
-                e.preventDefault(); undoStroke();
-              }
+              if (!(e.ctrlKey || e.metaKey) || currentView !== 'whiteboard') return;
+              const k = e.key.toLowerCase();
+              if (k !== 'z' && k !== 'y') return;
+              const t = e.target.tagName;
+              if (t === 'INPUT' || t === 'TEXTAREA') return;
+              e.preventDefault();
+              if (k === 'y' || e.shiftKey) redoStroke(); else undoStroke();
             };
             window.addEventListener('keydown', onKey);
             return () => window.removeEventListener('keydown', onKey);
@@ -1882,7 +2271,6 @@
           useEffect(() => { if (wbMode === 'draw') setScenePickerOpen(false); }, [wbMode]);
 
           const canvasRef = useRef(null);
-          const paintCanvasRef = useRef(null);
 
           const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
 
@@ -2290,39 +2678,79 @@
           const [inkShot, setInkShot] = useState(null);
           const canvasDocId = (boardId) => boardId === DEFAULT_BOARD.id ? 'globalDraw' : `draw-${boardId}`;
           useEffect(() => {
-            // Холста может не быть вовсе: в режиме Excalidraw вместо него
-            // висит снимок картинкой. Подписка на облако нужна и тогда —
-            // иначе, выключив режим, человек увидит пустую доску.
-            const c = paintCanvasRef.current;
-            const ctx = c ? c.getContext('2d') : null;
-            if (ctx) ctx.clearRect(0, 0, c.width, c.height);
             // История отмены своя у каждой доски — иначе Ctrl+Z вернул бы
             // на эту доску рисунок с соседней.
-            undoStack.current = []; setCanUndo(false);
-            // сначала показываем локальную копию — она есть и без сети
-            const local = localStorage.getItem('cf_canvas_draw_' + activeBoardId);
-            lastSaved.current = local || null;
-            setInkShot(local || null);
-            if (local && ctx) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = local; }
-            if (!db || !user) return;
-            const unsub = db.collection('artifacts').doc(appId).collection('public').doc('data')
-              .collection('canvas').doc(canvasDocId(activeBoardId))
-              .onSnapshot(doc => {
-                if (!doc.exists) return;
-                if (doc.data().lastDrawBy === user.uid) return;
-                lastSaved.current = doc.data().dataUrl || null;
-                setInkShot(doc.data().dataUrl || null);
-                const cc = paintCanvasRef.current ? paintCanvasRef.current.getContext('2d') : null;
-                if (!cc) return;
-                if (!doc.data().dataUrl) { cc.clearRect(0, 0, 4000, 4000); return; }
-                const img = new Image();
-                img.onload = () => { cc.clearRect(0, 0, 4000, 4000); cc.drawImage(img, 0, 0); };
-                img.src = doc.data().dataUrl;
-              }, err => console.warn('sync canvas', err));
-            return () => unsub();
-            // excOn в списке обязателен: возвращаясь от Excalidraw к кисти,
-            // холст создаётся заново и его надо снова наполнить.
-          }, [user, activeBoardId, excOn]);
+            undoStack.current = []; redoStack.current = [];
+            setCanUndo(false); setCanRedo(false);
+            strokesRef.current = [];
+            legacyCv.current = null; legacyUrl.current = null; legacyDirty.current = false;
+            // Сначала местная копия — она есть и без сети.
+            // В файле-снимке рисунок лежит внутри страницы, а не в
+            // localStorage: иначе на чужом устройстве поверх присланной доски
+            // проступил бы СВОЙ рисунок с доски с тем же именем.
+            let localLegacy = null, localInk = null;
+            if (CF_SNAPSHOT) {
+              const d = CF_SNAPSHOT.data || {};
+              localInk = d['cf_ink_' + activeBoardId] || null;
+            } else {
+              try {
+                localLegacy = localStorage.getItem('cf_canvas_draw_' + activeBoardId);
+                localInk = localStorage.getItem('cf_ink_' + activeBoardId);
+              } catch (err) {}
+            }
+            if (localInk) { try { strokesRef.current = JSON.parse(localInk) || []; } catch (err) {} }
+            loadLegacy(localLegacy);
+            bumpInk();
+            if (!db || !user) return () => flushInk();
+            const col = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas');
+            // Два документа: старый растровый рисунок и векторные штрихи.
+            const unRaster = col.doc(canvasDocId(activeBoardId)).onSnapshot(doc => {
+              if (!doc.exists) return;
+              if (doc.data().lastDrawBy === user.uid) return;
+              loadLegacy(doc.data().dataUrl || null);
+              bumpInk();
+            }, err => console.warn('sync canvas', err));
+            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(doc => {
+              if (!doc.exists) return;
+              if (doc.data().lastDrawBy === user.uid) return;
+              try { strokesRef.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) { strokesRef.current = []; }
+              bumpInk();
+            }, err => console.warn('sync ink', err));
+            // Уходя с доски, дописываем отложенное: иначе последний штрих
+            // уехал бы в облако уже под именем СЛЕДУЮЩЕЙ доски.
+            return () => { unRaster(); unInk(); flushInk(); };
+          }, [user, activeBoardId]);
+
+          // Перерисовка при панораме, зуме и смене размера окна. Штрихи
+          // векторные, поэтому каждый раз они пересчитываются заново — этим
+          // и держится резкость при любом увеличении.
+          useEffect(() => {
+            if (excOn) return;
+            requestStatic();
+            const onResize = () => requestStatic();
+            window.addEventListener('resize', onResize);
+            return () => window.removeEventListener('resize', onResize);
+            // inkVer в зависимостях НЕ нужен: тот, кто менял штрихи, сам
+            // зовёт requestStatic (или дописывает штрих в слой без полной
+            // перерисовки). Добавишь — и каждая проведённая линия будет
+            // перерисовывать всю доску заново.
+          }, [canvasOffset, zoom, excOn, currentView]);
+
+          // В режиме Excalidraw рисунок кистью показываем СНИМКОМ, а не живым
+          // холстом: замер показал 50 мс на шаг зума с живым холстом против
+          // 40 со снимком и 33 без него вовсе. Пока векторных штрихов нет,
+          // снимок — это ровно старый растровый рисунок, собирать нечего.
+          useEffect(() => {
+            if (!excOn) { setInkShot(null); return; }
+            const list = strokesRef.current;
+            if (!list.length) { setInkShot(legacyUrl.current || null); return; }
+            const cv = document.createElement('canvas');
+            cv.width = 4000; cv.height = 4000;
+            const ctx = cv.getContext('2d');
+            if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
+            list.forEach(s => paintStroke(ctx, s));
+            setInkShot(cv.toDataURL());
+          }, [excOn, inkVer, activeBoardId]);
 
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
           // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
@@ -2604,6 +3032,15 @@
                 data.cf_references = references;
                 data.cf_stickies = stickies;
                 data.cf_boards = boards;
+                // Рисунок кистью раньше в снимок не попадал вовсе: доска
+                // уезжала заказчику без единой линии. Векторные штрихи весят
+                // килобайты, поэтому теперь кладём их по всем доскам.
+                // Старую растровую подложку НЕ берём — она весит сотни
+                // килобайт на доску и раздула бы файл до неотправляемого.
+                sortedBoards.forEach(b => {
+                  const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
+                  if (kk && kk !== '[]') data['cf_ink_' + b.id] = kk;
+                });
               }
               if (scope === 'all') {
                 data.cf_scenes = scenes; data.cf_storyboard = storyboard;
@@ -2657,7 +3094,7 @@
             Object.keys(lightGearTypes || {}).forEach(k => deleteNetDoc('lightGearTypes', k));
             // Рисунок обнуляем записью, а не удалением: пустой документ гасит
             // холст и у тех, у кого доска сейчас открыта на другом устройстве.
-            sortedBoards.forEach(b => { saveCanvas(b.id, ''); deleteNetDoc('boards', b.id); });
+            sortedBoards.forEach(b => { saveCanvas(b.id, ''); saveStrokes(b.id, []); deleteNetDoc('boards', b.id); });
 
             // Заготовка: одна сцена, один гайд, одна доска, каталоги по умолчанию.
             // Идентификаторы новые — чтобы свежие документы не встретились
@@ -2685,9 +3122,12 @@
             setLastReadChat(now);
             try { localStorage.setItem('cf_last_read', now); } catch (err) {}
 
-            const c = paintCanvasRef.current;
-            if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
-            lastSaved.current = null; undoStack.current = []; setCanUndo(false);
+            strokesRef.current = [];
+            legacyCv.current = null; legacyUrl.current = null; legacyMap.current = null;
+            legacyDirty.current = false;
+            undoStack.current = []; redoStack.current = [];
+            setCanUndo(false); setCanRedo(false); setInkShot(null);
+            bumpInk();
 
             setShowProjectModal(false);
             showToast('Создан чистый проект');
@@ -2949,8 +3389,6 @@
               return sel.length ? sel[0].id : null;
           })();
           
-          // В режиме просмотра имя не спрашиваем — человек просто смотрит.
-          if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
           // Пункты навигации — общий список для рельса и мобильной ленты.
           // В режиме просмотра остаётся только то, чем поделились.
@@ -3007,6 +3445,15 @@
           const syncDot = !isOnline ? '#f59e0b' : (syncing ? '#fbbf24' : '#10b981');
           const ghostBtn = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors";
           const ghostStyle = { fontSize: '11.5px', color: 'var(--muted)', border: '1px solid var(--border)', minHeight: '28px' };
+
+          // В режиме просмотра имя не спрашиваем — человек просто смотрит.
+          // Выход стоит ПОСЛЕ всех хуков и обязан там стоять: React считает
+          // хуки по порядку, и ранний выход посреди списка означал, что при
+          // появлении окна их становилось на три меньше. Первый же запуск
+          // у нового человека валился в аварийный экран и перезапускал
+          // приложение с нуля. Любую новую проверку «вместо всего» ставь
+          // сюда же, ниже последнего useState/useEffect.
+          if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
           return (
             <div className="flex h-screen w-screen relative overflow-hidden bg-transparent">
@@ -3762,8 +4209,9 @@
                                         // Сцены с удалённой доски просто снимаем — сами сцены остаются в проекте
                                         setScenes(scenes.map(s => s.boardId === b.id ? { ...s, boardId: '' } : s));
                                         scenes.filter(s => s.boardId === b.id).forEach(s => syncDoc('scenes', s.id, { ...s, boardId: '' }));
-                                        try { localStorage.removeItem('cf_canvas_draw_' + b.id); } catch (err) {}
+                                        try { localStorage.removeItem('cf_canvas_draw_' + b.id); localStorage.removeItem('cf_ink_' + b.id); } catch (err) {}
                                         deleteNetDoc('canvas', canvasDocId(b.id));
+                                        deleteNetDoc('canvas', strokesDocId(b.id));
                                         setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
                                         showToast('Доска удалена · референсы остались в галерее');
                                       }});
@@ -3895,6 +4343,126 @@
                         </div>
                       )}
 
+                      {/* РИСУНОК КИСТЬЮ. Холста два, и оба размером с ОКНО,
+                          а не с доску: на нижнем лежат готовые штрихи, на
+                          верхнем — тот, что ведут прямо сейчас, и кольцо,
+                          показывающее площадь кисти или ластика. Пока идёт
+                          штрих, нижний слой не трогается вовсе — в этом вся
+                          плавность. Оба лежат ВНЕ трансформации карточек и
+                          применяют панораму с масштабом сами: только так
+                          штрих пересчитывается под текущее увеличение и
+                          остаётся резким. Слой всё так же ПОВЕРХ карточек —
+                          по референсу нужно уметь чертить. */}
+                      {!excOn && (
+                        <React.Fragment>
+                          <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 26 }} />
+                          <canvas ref={liveCanvasRef}
+                            className={`absolute inset-0 w-full h-full ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'}`}
+                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'select' ? 'default' : 'none') }}
+                            onPointerEnter={(e) => { hoverPt.current = inkPt(e.clientX, e.clientY); requestLive(); }}
+                            onPointerLeave={() => { hoverPt.current = null; requestLive(); }}
+                            onPointerDown={(e) => {
+                              if (wbMode === 'select') return;
+                              notePen(e);
+                              const pt = inkPt(e.clientX, e.clientY);
+                              hoverPt.current = pt;
+                              // Есть стилус — палец двигает доску, а не рисует.
+                              if (wbMode === 'pan' || (penSeen && fingerPans && e.pointerType === 'touch')) {
+                                  e.currentTarget.setPointerCapture(e.pointerId);
+                                  setIsPanning(true);
+                                  setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
+                                  return;
+                              }
+                              e.currentTarget.setPointerCapture(e.pointerId);
+                              // Обратный конец стилуса стирает — но только этим
+                              // штрихом, выбранный инструмент не меняем.
+                              penErase.current = isPenEraser(e);
+                              const wipe = penErase.current || wbMode === 'erase';
+                              legacyShot.current = false;
+                              pushUndo(false);
+                              setIsPainting(true);
+                              if (wipe) {
+                                erasePt.current = pt;
+                                eraseSeg(pt.x, pt.y, pt.x, pt.y, eraserSize / 2);
+                                requestLive();
+                                return;
+                              }
+                              const press = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0.5;
+                              live.current = { pts: [[pt.x, pt.y, press]], press, t: brushType, c: brushColor, w: brushSize };
+                              requestLive();
+                            }}
+                            onPointerMove={(e) => {
+                              hoverPt.current = inkPt(e.clientX, e.clientY);
+                              if (isPanning) { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
+                              if (!isPainting) { requestLive(); return; }
+                              // Браузер копит промежуточные точки между кадрами.
+                              // Без getCoalescedEvents они теряются, и быстрый
+                              // штрих выходит углами.
+                              const ne = e.nativeEvent;
+                              const raw = (ne.getCoalescedEvents && ne.getCoalescedEvents().length) ? ne.getCoalescedEvents() : [ne];
+                              if (penErase.current || wbMode === 'erase') {
+                                for (const p of raw) {
+                                  const b = inkPt(p.clientX, p.clientY);
+                                  const a = erasePt.current || b;
+                                  eraseSeg(a.x, a.y, b.x, b.y, eraserSize / 2);
+                                  erasePt.current = b;
+                                }
+                                requestLive();
+                                return;
+                              }
+                              const L = live.current;
+                              if (!L) { requestLive(); return; }
+                              for (const p of raw) {
+                                const b = inkPt(p.clientX, p.clientY);
+                                const last = L.pts[L.pts.length - 1];
+                                const d = Math.hypot(b.x - last[0], b.y - last[1]);
+                                if (d < 0.7) continue;          // отбрасываем дрожание
+                                // «Поводок»: точка идёт не прямо в указатель, а
+                                // тянется за ним. Это гасит и дрожь руки, и
+                                // ступеньки от редких событий — без него линия
+                                // остаётся гранёной, сколько её потом ни сглаживай.
+                                const nx = last[0] + (b.x - last[0]) * INK_LEAD;
+                                const ny = last[1] + (b.y - last[1]) * INK_LEAD;
+                                const dev = (e.pointerType === 'pen' && p.pressure > 0) ? p.pressure : null;
+                                L.press = inkPress(L.press, d, L.w, dev);
+                                if (L.pts.length >= INK_MAX) L.pts[L.pts.length - 1] = [nx, ny, L.press];
+                                else L.pts.push([nx, ny, L.press]);
+                              }
+                              requestLive();
+                            }}
+                            onPointerUp={(e) => {
+                              if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                e.currentTarget.releasePointerCapture(e.pointerId);
+                              }
+                              const wipe = penErase.current || wbMode === 'erase';
+                              const L = live.current;
+                              if (isPainting && !wipe && L && L.pts.length) {
+                                const s = packStroke(L.t, L.c, L.w, L.pts);
+                                strokesRef.current = strokesRef.current.concat([s]);
+                                // Готовый штрих ДОПИСЫВАЕМ в нижний слой, а не
+                                // перерисовываем доску целиком: обычный случай —
+                                // «провёл линию», и платить за него полной
+                                // перерисовкой незачем.
+                                paintOnStatic(s);
+                                setInkVer(v => v + 1);
+                                scheduleInkSave();
+                              }
+                              if (isPainting && wipe) {
+                                if (legacyDirty.current) saveLegacy();
+                                setInkVer(v => v + 1);
+                                scheduleInkSave();
+                              }
+                              live.current = null; erasePt.current = null; penErase.current = false;
+                              setIsPainting(false); setIsPanning(false);
+                              requestLive();
+                            }}
+                            onPointerCancel={() => {
+                              live.current = null; erasePt.current = null; penErase.current = false;
+                              setIsPainting(false); setIsPanning(false); requestLive();
+                            }} />
+                        </React.Fragment>
+                      )}
+
                       <div id="wb-container" ref={canvasRef} style={{ transform: (() => { const v = excOn && excViewRef.current ? excViewRef.current : { x: canvasOffset.x, y: canvasOffset.y, z: zoom }; return `translate(${v.x}px, ${v.y}px) scale(${v.z})`; })(), transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
                         
                         {selectionBox && (
@@ -3946,108 +4514,6 @@
                                style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px',
                                         pointerEvents: 'none', zIndex: 30 }} />
                         )}
-                        {!excOn && <canvas ref={paintCanvasRef} width={4000} height={4000} onPointerDown={(e) => {
-                          if (excOn) return;
-                          if (wbMode === 'select') return;
-                          notePen(e);
-                          // Есть стилус — палец двигает доску, а не рисует.
-                          if (wbMode === 'pan' || (penSeen && fingerPans && e.pointerType === 'touch')) {
-                              e.currentTarget.setPointerCapture(e.pointerId);
-                              setIsPanning(true);
-                              setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
-                              return;
-                          }
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                          const rect = paintCanvasRef.current.getBoundingClientRect();
-                          const coords = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
-                          const press = (e.pressure !== undefined && e.pressure > 0 && e.pointerType === 'pen') ? e.pressure : 0.5;
-                          // Обратный конец стилуса стирает — но только этим
-                          // штрихом, выбранный инструмент не меняем.
-                          penErase.current = isPenEraser(e);
-                          pushUndo();
-                          setIsPainting(true);
-                          const mode0 = penErase.current ? 'erase' : wbMode;
-                          const r0 = strokeR(mode0, brushType, press, 0.45);
-                          stroke.current = { prev: coords, prevMid: coords, press, n: 0,
-                                             lx: coords.x, ly: coords.y, lr: r0 };
-                          lastPoint.current = { x: coords.x, y: coords.y, pressure: press, time: Date.now() };
-                          const ctx = paintCanvasRef.current.getContext('2d');
-                          ctx.save();
-                          applyBrush(ctx, mode0, brushType, brushColor, brushSize * (0.35 + press * 1.3));
-                          ctx.beginPath(); ctx.arc(coords.x, coords.y, r0, 0, Math.PI * 2); ctx.fill();
-                          ctx.restore();
-                        }} onPointerMove={(e) => {
-                          if (excOn) return;
-                          if (isPanning) { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
-                          if (!isPainting || wbMode === 'select') return;
-                          const c = paintCanvasRef.current; if (!c) return;
-                          const ctx = c.getContext('2d');
-                          const rect = c.getBoundingClientRect();
-                          const ne = e.nativeEvent;
-                          // Браузер копит промежуточные точки между кадрами. Без
-                          // getCoalescedEvents они теряются, и быстрый штрих
-                          // выходит углами — это и была главная причина «плохой» кисти.
-                          const pts = (ne.getCoalescedEvents && ne.getCoalescedEvents().length) ? ne.getCoalescedEvents() : [ne];
-                          ctx.save();
-                          for (const p of pts) {
-                            const cur = { x: (p.clientX - rect.left) / zoom, y: (p.clientY - rect.top) / zoom };
-                            const st = stroke.current;
-                            if (!st.prev) { st.prev = cur; st.prevMid = cur; continue; }
-                            const dist = Math.hypot(cur.x - st.prev.x, cur.y - st.prev.y);
-                            if (dist < 0.6) continue; // отбрасываем дрожание
-                            // Нажим: у пера — настоящий, у мыши/пальца считаем по
-                            // скорости. Сглаживаем, иначе толщина скачет.
-                            const raw = (p.pressure !== undefined && p.pressure > 0 && e.pointerType === 'pen')
-                              ? p.pressure
-                              : Math.max(0.15, Math.min(1, 1 - dist / 45));
-                            st.press = st.press * 0.7 + raw * 0.3;
-                            st.n = (st.n || 0) + 1;
-                            const mid = { x: (st.prev.x + cur.x) / 2, y: (st.prev.y + cur.y) / 2 };
-                            const mode2 = penErase.current ? 'erase' : wbMode;
-                            applyBrush(ctx, mode2, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
-                            // Лента вдоль квадратичной кривой через середины отрезков:
-                            // путь гладкий, толщина меняется непрерывно.
-                            // Сужение у начала — первые шаги тоньше.
-                            const taper = Math.min(1, 0.45 + st.n * 0.18);
-                            ribbon(ctx, st, st.prev, mid, strokeR(mode2, brushType, st.press, taper));
-                            st.prev = cur; st.prevMid = mid;
-                          }
-                          ctx.restore();
-                          lastPoint.current = { x: stroke.current.prev.x, y: stroke.current.prev.y, pressure: stroke.current.press, time: Date.now() };
-                        }} onPointerUp={(e) => {
-                          if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
-                            e.target.releasePointerCapture(e.pointerId);
-                          }
-                          // Дотягиваем хвост от последней середины до последней точки,
-                          // иначе кончик штриха обрезается.
-                          const st = stroke.current;
-                          if (isPainting && st.prev && st.prevMid && st.lx !== undefined && paintCanvasRef.current) {
-                            const ctx = paintCanvasRef.current.getContext('2d');
-                            ctx.save();
-                            const mode1 = penErase.current ? 'erase' : wbMode;
-                            applyBrush(ctx, mode1, brushType, brushColor, brushSize * (0.35 + st.press * 1.3));
-                            // Хвост дотягиваем И сужаем: конец штриха должен сходить
-                            // на нет, а не обрываться тупым срезом. Сужение
-                            // растягиваем на длину в пару ширин кисти — на
-                            // последних пяти точках его просто не видно.
-                            const rEnd = strokeR(mode1, brushType, st.press);
-                            ribbon(ctx, st, st.prevMid, st.prev, rEnd * 0.8);
-                            const vx = st.prev.x - st.prevMid.x, vy = st.prev.y - st.prevMid.y;
-                            const vl = Math.hypot(vx, vy);
-                            if (vl > 0.01) {
-                              const хвост = Math.min(26, Math.max(6, rEnd * 4));
-                              const кон = { x: st.prev.x + vx / vl * хвост, y: st.prev.y + vy / vl * хвост };
-                              const сер = { x: (st.prev.x + кон.x) / 2, y: (st.prev.y + кон.y) / 2 };
-                              ribbon(ctx, st, сер, кон, Math.max(0.35, rEnd * 0.12));
-                            }
-                            ctx.restore();
-                          }
-                          stroke.current = { prev: null, prevMid: null, press: 0.5, n: 0, lx: undefined, ly: undefined, lr: 0 };
-                          penErase.current = false;
-                          const wasPainting = isPainting;
-                          setIsPainting(false); setIsPanning(false);
-                          if (wasPainting) persistCanvas();
-                        }} onPointerCancel={() => { stroke.current = { prev: null, prevMid: null, press: 0.5, n: 0, lx: undefined, ly: undefined, lr: 0 }; setIsPainting(false); setIsPanning(false); }} style={{ position: 'absolute', left: 0, top: 0, width: '4000px', height: '4000px' }} className={`z-30 ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'} filter`} />}
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
@@ -4228,6 +4694,12 @@
                                 className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canUndo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
                         </button>}
+                        {/* Штрихи векторные, поэтому шаг назад стоит копейки —
+                            и шаг вперёд можно наконец дать тоже. */}
+                        {!excOn && <button onClick={redoStroke} disabled={!canRedo} title="Вернуть штрих (Ctrl+Shift+Z)"
+                                className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${canRedo ? 'text-zinc-400 hover:bg-white/10' : 'text-zinc-700 cursor-not-allowed'}`}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+                        </button>}
                         <div className="w-[1px] h-full md:w-full md:h-[1px] bg-white/10 my-0 md:my-1 cf-edit-only"></div>
                         {/* Единственный путь к уже загруженным референсам с самой
                             доски. На планшете подсказок по наведению НЕТ, поэтому
@@ -4244,7 +4716,7 @@
                             и вдобавок сбивает: её значок принимают за «мои
                             референсы». Новые картинки туда кладёт сам Excalidraw. */}
                         {!excOn && <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>}
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок кистью?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ const c = paintCanvasRef.current; if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); } undoStack.current = []; setCanUndo(false); lastSaved.current = null; setInkShot(null); saveCanvas(activeBoardId, ''); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
+                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок кистью?', message: 'Все линии на этой доске будут стёрты. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); setInkShot(null); bumpInk(); showToast("Холст очищен"); }})} className="cf-edit-only p-2.5 text-xs text-red-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title={excOn ? 'Стереть старый рисунок кистью (сцену Excalidraw не тронет)' : 'Очистить скетчи'}><Icons.Trash/></button>
                       </div>
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
@@ -4323,6 +4795,19 @@
                               );
                             })}
                           </div>
+                        </div>
+                      )}
+
+                      {/* У ластика своя панель. Раньше его размер был спрятан
+                          в коде («кисть × 2,5»), увидеть и задать его было
+                          нечем — человек стирал вслепую. */}
+                      {wbMode === 'erase' && !excOn && (
+                        <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-3 z-30 w-52 border-t border-white/10">
+                          <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Ластик</span><span>{eraserSize}px</span></div>
+                          <input type="range" min="8" max="200" step="4" value={eraserSize} onChange={(e) => changeEraser(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
+                          <p style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--muted-2)' }}>
+                            Круг под курсором показывает, что именно заденет. Ластик режет линии — стёртое возвращается по Ctrl+Z.
+                          </p>
                         </div>
                       )}
 
@@ -4792,11 +5277,17 @@
                       <button onClick={() => {
                         // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
                         // Раньше бэкап брал один старый общий ключ и уносил пустоту.
-                        const canvases = {};
-                        sortedBoards.forEach(b => { const dd = localStorage.getItem('cf_canvas_draw_' + b.id); if (dd) canvases[b.id] = dd; });
-                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases };
+                        const canvases = {}, inks = {};
+                        sortedBoards.forEach(b => {
+                          const dd = localStorage.getItem('cf_canvas_draw_' + b.id); if (dd) canvases[b.id] = dd;
+                          // Штрихи с ОТКРЫТОЙ доски берём из памяти: в localStorage
+                          // они попадают с задержкой, и последний мог не успеть.
+                          const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
+                          if (kk && kk !== '[]') inks[b.id] = kk;
+                        });
+                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks };
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                        showToast(`Резервная копия сохранена · досок с рисунками: ${Object.keys(canvases).length}`);
+                        showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks))).size}`);
                       }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
                       
                       <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
@@ -4815,12 +5306,18 @@
                               // Новый формат — рисунок по каждой доске; старые бэкапы
                               // хранили один общий, он ложится на основную доску.
                               const canv = d.canvases || (d.canvasData ? { [DEFAULT_BOARD.id]: d.canvasData } : null);
-                              if (canv) {
-                                Object.entries(canv).forEach(([bid, dataUrl]) => saveCanvas(bid, dataUrl));
-                                const cur = canv[activeBoardId];
-                                const c = paintCanvasRef.current;
-                                if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); if (cur) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = cur; } }
-                                lastSaved.current = cur || null; undoStack.current = []; setCanUndo(false);
+                              if (canv) Object.entries(canv).forEach(([bid, dataUrl]) => saveCanvas(bid, dataUrl));
+                              if (d.inks) Object.entries(d.inks).forEach(([bid, json]) => {
+                                let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
+                                saveStrokes(bid, list);
+                              });
+                              if (canv || d.inks) {
+                                strokesRef.current = [];
+                                if (d.inks && d.inks[activeBoardId]) { try { strokesRef.current = JSON.parse(d.inks[activeBoardId]) || []; } catch (err) {} }
+                                loadLegacy((canv && canv[activeBoardId]) || null);
+                                undoStack.current = []; redoStack.current = [];
+                                setCanUndo(false); setCanRedo(false);
+                                bumpInk();
                               }
                               setShowProjectModal(false); showToast("Проект успешно восстановлен!");
                             } catch (err) { showToast("Ошибка структуры файла JSON!"); }
