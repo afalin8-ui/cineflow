@@ -598,6 +598,84 @@
             return s;
           };
 
+        /* =========================================================
+           ЗУМ ДВУМЯ ПАЛЬЦАМИ — общий для доски и для схем света.
+
+           Единственный способ приблизить лист на планшете, а планшет
+           у нас основное устройство: колесо там не крутится, а кнопки
+           «+/−» заставляют целиться в мелкий уголок вместо того, чтобы
+           просто развести пальцы.
+
+           Слушаем НАСТОЯЩИЕ touch-события, а не pointer: щипок — это
+           два пальца одновременно, и собирать его из отдельных
+           pointer-потоков значит писать то, что браузер уже посчитал.
+           Вешаем на контейнер и с `passive: false` — иначе
+           preventDefault не сработает и Safari уедет масштабировать
+           страницу целиком.
+
+           Два пальца делают И масштаб, И перенос разом: точка между
+           пальцами обязана остаться под пальцами. Без этого лист
+           уползает из-под руки, и жест ощущается сломанным, даже когда
+           масштаб считается верно.
+           ========================================================= */
+        const usePinchZoom = (elRef, read, apply, onGrab) => {
+          // Состояние жеста живёт в ref, а НЕ внутри эффекта. Эффект
+          // пересоздаётся на каждую перерисовку (ему нужны свежие zoom
+          // и offset), а первое же движение пальцев вызывает setZoom —
+          // то есть перерисовку. С обычной переменной щипок сбрасывался
+          // после первого шага: пальцы разводишь втрое, а масштаб
+          // подрастает на пару процентов и замирает.
+          const stRef = useRef(null);
+          useEffect(() => {
+            const el = elRef.current;
+            if (!el) return;
+            const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+            const mid = (a, b, r) => ({ x: (a.clientX + b.clientX) / 2 - r.left,
+                                        y: (a.clientY + b.clientY) / 2 - r.top });
+            const down = (e) => {
+              if (e.touches.length !== 2) return;
+              const r = el.getBoundingClientRect();
+              const cur = read();
+              stRef.current = { d0: Math.max(1, dist(e.touches[0], e.touches[1])),
+                     z0: cur.zoom, o0: cur.offset,
+                     m0: mid(e.touches[0], e.touches[1], r) };
+              // Второй палец приходит, когда первый уже мог начать штрих.
+              // Его надо оборвать, иначе каждый щипок оставляет на листе
+              // случайную закорючку.
+              if (onGrab) onGrab();
+              e.preventDefault();
+            };
+            const move = (e) => {
+              const st = stRef.current;
+              if (!st || e.touches.length !== 2) return;
+              e.preventDefault();
+              const r = el.getBoundingClientRect();
+              const m = mid(e.touches[0], e.touches[1], r);
+              const z = read().clamp(st.z0 * (dist(e.touches[0], e.touches[1]) / st.d0));
+              const k = z / st.z0;
+              apply(z, { x: m.x - (st.m0.x - st.o0.x) * k,
+                         y: m.y - (st.m0.y - st.o0.y) * k });
+            };
+            const up = (e) => {
+              if (!stRef.current) return;
+              // Пальцы разводят и сводят по нескольку раз за один жест,
+              // поэтому пока на экране остаётся два касания — щипок
+              // продолжается, а не начинается заново.
+              if (e.touches.length < 2) stRef.current = null;
+            };
+            el.addEventListener('touchstart', down, { passive: false });
+            el.addEventListener('touchmove', move, { passive: false });
+            el.addEventListener('touchend', up);
+            el.addEventListener('touchcancel', up);
+            return () => {
+              el.removeEventListener('touchstart', down);
+              el.removeEventListener('touchmove', move);
+              el.removeEventListener('touchend', up);
+              el.removeEventListener('touchcancel', up);
+            };
+          });
+        };
+
         const ConfirmModal = ({ action, onCancel }) => {
             if (!action) return null;
             return (
@@ -1549,6 +1627,21 @@
               return () => window.removeEventListener('resize', onResize);
             });
 
+            // Щипок двумя пальцами — тот же обработчик, что у доски.
+            usePinchZoom(wrapRef,
+              () => ({ zoom, offset, clamp: (z) => Math.min(4, Math.max(0.15, z)) }),
+              (z, off) => { setZoom(z); setOffset(off); },
+              () => {
+                const wasDrawing = !!live.current && !penErase.current && mode !== 'erase';
+                live.current = null; erasePt.current = null; penErase.current = false;
+                setIsPainting(false); setIsPanning(false); setDrag(null);
+                if (wasDrawing && undoStack.current.length) {
+                  undoStack.current.pop();
+                  setCanUndo(undoStack.current.length > 0);
+                }
+                requestLive();
+              });
+
             // Лист вписываем в окно при открытии — чтобы схема сразу была
             // видна целиком, а не углом.
             useEffect(() => {
@@ -2235,6 +2328,27 @@
           const [isPainting, setIsPainting] = useState(false);
           const [isPanning, setIsPanning] = useState(false);
           const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+          // Область доски целиком — на ней слушается щипок двумя пальцами.
+          // Именно внешний контейнер, а не #wb-container: тот сам едет
+          // и масштабируется, и мерить жест по нему нельзя.
+          const wbViewRef = useRef(null);
+          // Масштаб меняется ВОКРУГ ТОЧКИ — колесо вокруг указателя, кнопки
+          // вокруг середины экрана. Раньше кнопки просто меняли число, и
+          // доска расползалась от левого верхнего угла: нажал «−», а всё,
+          // на что ты смотрел, уехало вниз-вправо.
+          const zoomAround = (nz, sx, sy) => {
+            setZoom(prevZ => {
+              const z = Math.min(2.0, Math.max(0.3, nz));
+              const k = z / prevZ;
+              setCanvasOffset(o => ({ x: sx - (sx - o.x) * k, y: sy - (sy - o.y) * k }));
+              return z;
+            });
+          };
+          const zoomStep = (mul) => {
+            const el = wbViewRef.current;
+            const w = el ? el.clientWidth : 0, h = el ? el.clientHeight : 0;
+            zoomAround(zoom * mul, w / 2, h / 2);
+          };
 
           // Идёт ли сейчас штрих обратным концом стилуса
           const penErase = useRef(false);
@@ -4370,6 +4484,37 @@
           // их верхний слой — значит, его надо трогать руками.
           useEffect(() => { requestLive(); }, [selShapes, wbMode, shapeKind]);
 
+          // Щипок двумя пальцами. Пределы те же, что у колеса и у кнопок
+          // «+/−», иначе доска приближалась бы по-разному от того, чем
+          // её приближали.
+          usePinchZoom(wbViewRef,
+            () => ({ zoom, offset: canvasOffset, clamp: (z) => Math.min(2.0, Math.max(0.3, z)) }),
+            (z, off) => { setZoom(z); setCanvasOffset(off); },
+            () => {
+              // Первый палец мог уже начать штрих, перетаскивание или
+              // фигуру — второй палец это отменяет. Незавершённый штрих
+              // выбрасываем целиком: он нигде ещё не записан.
+              const wasDrawing = !!live.current && !penErase.current && wbMode !== 'erase';
+              live.current = null; erasePt.current = null; penErase.current = false;
+              shapeDraft.current = null; shapeAct.current = null;
+              clearGuides();
+              setIsPainting(false); setIsPanning(false);
+              // Первый палец мог опуститься на КАРТОЧКУ и начать её тащить.
+              // Без этого щипок возил бы карточку по доске вместе с
+              // масштабом. Сдвинуться она успевает разве что на пару точек,
+              // а если больше — на это уже записан обычный шаг отмены.
+              setDraggingWbItems(null);
+              dragMoved.current = false;
+              // Шаг отмены, записанный на нажатии, теперь пустой — снимаем,
+              // иначе после каждого щипка Ctrl+Z возвращал бы пустоту.
+              // У ластика не снимаем: он мог успеть что-то стереть.
+              if (wasDrawing && undoStack.current.length) {
+                undoStack.current.pop();
+                setCanUndo(undoStack.current.length > 0);
+              }
+              requestLive();
+            });
+
 
           // Автосохранение в localStorage — всегда (локальная копия на случай сбоя облака).
           // Кроме режима просмотра: иначе открытый снимок затрёт на чужом
@@ -5913,14 +6058,11 @@
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
                     </div>
 
-                    <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
+                    <div id="whiteboard-canvas" ref={wbViewRef} className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
                     onWheel={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
-                        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-                        const nz = Math.min(2.0, Math.max(0.3, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
-                        const k = nz / zoom;
-                        setCanvasOffset({ x: mx - (mx - canvasOffset.x) * k, y: my - (my - canvasOffset.y) * k });
-                        setZoom(nz);
+                        zoomAround(zoom * (e.deltaY > 0 ? 0.9 : 1.1),
+                                   e.clientX - rect.left, e.clientY - rect.top);
                     }}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
@@ -6850,9 +6992,9 @@
                       )}
 
                       <div className="absolute bottom-6 left-6 glass-panel p-2 rounded-lg flex items-center space-x-3 z-30 border-t border-white/10">
-                        <button onClick={() => setZoom(prev => Math.max(0.3, prev - 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">-</button>
+                        <button onClick={() => zoomStep(1 / 1.15)} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">-</button>
                         <span className="text-xs font-bold font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
-                        <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">+</button>
+                        <button onClick={() => zoomStep(1.15)} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-lg font-bold transition-colors">+</button>
                       </div>
                     </div>
                   </div>
