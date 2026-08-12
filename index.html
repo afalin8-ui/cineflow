@@ -145,7 +145,10 @@
             border-color: var(--accent);
             outline: none;
         }
-        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(217,119,87,0.4); }
+        /* Подсветка цели при перетаскивании — рамкой, без свечения:
+           в этом дизайне ничего не парит и не светится, структуру
+           держат границы. */
+        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent); }
 
         /* ---------- утилиты редизайна ---------- */
         :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
@@ -865,9 +868,9 @@
                 <div className="fixed inset-0 z-[350] bg-[#1a1918]/95 backdrop-blur-md flex flex-col justify-center items-center p-4">
                     <button onClick={onClose} className="absolute top-6 right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
                     <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
-                        {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
+                        {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-500 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
                         <img src={currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
-                        {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
+                        {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-500 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
                     </div>
                     {/* Теги кадра — окошком в левом нижнем углу. Поднято над
                         нижней полосой со счётчиком, чтобы не налезать на неё. */}
@@ -2286,7 +2289,10 @@
           // фигуры (поле `ct` — id хозяина). Второй не имеет своего
           // положения вовсе: он всегда по центру хозяина и едет с ним.
           const isText = (s) => s.k === 'text';
-          const FONT_UI = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          // Именно Archivo, а не Inter: Inter в приложении не подгружается
+          // вовсе, и текст на доске рисовался подстановочным системным
+          // шрифтом. Он же уезжает в выгрузку — см. svgText.
+          const FONT_UI = '"Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
           const textFont = (s) => `${Math.max(8, s.fz || 20)}px ${FONT_UI}`;
           // Перенос по словам с учётом собственных переводов строки.
           // Меряем настоящим шрифтом холста — на глаз ширину не угадать.
@@ -3227,7 +3233,7 @@
                 parts.push(`<rect x="${rn(box.x)}" y="${rn(box.y)}" width="${rn(box.w)}" height="${rn(box.h)}" fill="${bgCol}"/>`);
                 if (legacyUrl.current) parts.push(`<image x="0" y="0" width="4000" height="4000" href="${esc(legacyUrl.current)}"/>`);
                 const txt = (s, x, y, size, color, weight, anchor) =>
-                  `<text x="${rn(x)}" y="${rn(y)}" font-family="Inter, sans-serif" font-size="${size}" fill="${color}"${weight ? ' font-weight="' + weight + '"' : ''}${anchor ? ' text-anchor="' + anchor + '"' : ''}>${esc(s)}</text>`;
+                  `<text x="${rn(x)}" y="${rn(y)}" font-family="Archivo, sans-serif" font-size="${size}" fill="${color}"${weight ? ' font-weight="' + weight + '"' : ''}${anchor ? ' text-anchor="' + anchor + '"' : ''}>${esc(s)}</text>`;
                 const mc = hitCtx.current || (hitCtx.current = document.createElement('canvas').getContext('2d'));
                 cards.forEach(c => {
                   if (c.t === 'sticky') {
@@ -5511,7 +5517,7 @@
                                   Пока пусто. Заметку можно завести здесь или на доске — потяните за кружок сбоку заметки к карточке сцены.
                                 </p>
                               ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))' }}>
                                   {sceneNotes.map(st => (
                                     <div key={st.id} className="rounded-lg p-3 relative group text-zinc-900" style={{ backgroundColor: st.color || '#fef08a' }}>
                                       <button onClick={() => { setItemScene(st.id, 'sticky', ''); showToast('Заметка отвязана · осталась на доске'); }}
@@ -5828,7 +5834,10 @@
                             {sceneFrames.length > 0 && (
                               <div className="space-y-3 pt-3 relative z-10">
                                 <span className="text-[11px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest block ml-1">Раскадровка / План смены:</span>
-                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+                                {/* auto-fill, а не фиксированные колонки: на широком
+                                    мониторе нужно больше кадров в ряд, а не четыре
+                                    растянутых. */}
+                                <div className="grid gap-3 md:gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))' }}>
                                   {sceneFrames.map(frame => (
                                     <div key={frame.id} className="bg-black/40 rounded-lg border border-white/10 p-2.5 flex flex-col space-y-2">
                                       {frame.image && (<div className="aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/5"><img src={frame.image} className="w-full h-full object-cover pointer-events-none" draggable="false" /></div>)}
@@ -6912,7 +6921,7 @@
                                       <span className="text-zinc-600">|</span>
                                       <span className="text-xs font-bold text-zinc-300 bg-black/50 px-3 py-1 rounded-full border border-white/10">{dayScenes.length} сцен</span>
                                     </div>
-                                    {hasSummary && (<div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-2">Итого техника:</span>{Object.entries(summary).map(([key, totalQty]) => { if (totalQty === 0) return null; const item = (gearTypes || DEFAULT_GEAR)[key] || { label: key }; return (<span key={key} className="bg-indigo-950/60 text-indigo-200 text-xs px-3 py-1 rounded-lg font-mono font-semibold flex items-center space-x-2"><span className="text-indigo-400"><Icons.Video/></span><span>{item.label}</span><span className="font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md">{totalQty}</span></span>); })}</div>)}
+                                    {hasSummary && (<div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-2">Итого техника:</span>{Object.entries(summary).map(([key, totalQty]) => { if (totalQty === 0) return null; const item = (gearTypes || DEFAULT_GEAR)[key] || { label: key }; return (<span key={key} className="bg-indigo-950/60 text-indigo-200 text-xs px-3 py-1 rounded-lg font-mono font-semibold flex items-center space-x-2"><span className="text-indigo-400"><Icons.Video/></span><span>{item.label}</span><span className="font-extrabold text-[#1a1918] bg-indigo-500 px-1.5 py-0.5 rounded-md">{totalQty}</span></span>); })}</div>)}
                                   </div>
                                   <div className="divide-y divide-white/5">
                                     {dayScenes.map(s => (
