@@ -384,6 +384,217 @@
           }
         }
 
+        /* =========================================================
+           ДВИЖОК КИСТИ — общий для доски и для схем света.
+
+           Лежит на верхнем уровне файла НАМЕРЕННО: этими же функциями
+           рисует и доска (внутри AppCore), и редактор световых схем
+           (отдельный компонент выше по файлу). Держать две копии
+           движка нельзя — они разъедутся при первой же правке, и
+           заметно это станет ровно тогда, когда схему уже отправили
+           группе. Все функции здесь ЧИСТЫЕ: ни состояния React, ни
+           обращений к облаку, только геометрия и холст.
+           ========================================================= */
+          // --- ДВИЖОК КИСТИ ---
+          // Штрихи хранятся ВЕКТОРОМ — списком точек, а не картинкой.
+          // Раньше линия писалась прямо в холст 4000×4000, растянутый на всю
+          // доску: на планшете, где в одной точке CSS сидят две-три настоящие,
+          // и тем более при увеличении браузеру нечего было показать, кроме
+          // растянутого пикселя. Отсюда и мыло, и рваный край — сколько ни
+          // улучшай форму штриха, растр остаётся растром. Теперь холст
+          // размером с ОКНО, рисуем в него по-настоящему мелко
+          // (devicePixelRatio) и заново на каждый шаг зума: линия резкая при
+          // любом увеличении, как в Excalidraw. Побочно вектор даёт даром
+          // три вещи: отсечение невидимого, дешёвую отмену и ластик, который
+          // режет линии, а не выедает дырки в картинке.
+          // Точек в одном штрихе. Это не предел длины линии: набрав их,
+          // штрих ЗАКРЫВАЕТСЯ и тут же продолжается новым от той же точки —
+          // для человека линия остаётся одной.
+          const INK_MAX = 1200;
+          const INK_LEAD = 0.575;             // «поводок» за указателем, см. ниже
+          const brushAlpha = (type) => type === 'marker' ? 0.32 : (type === 'soft' ? 0.5 : 1.0);
+          const brushWidthK = (type) => type === 'soft' ? 1.7 : 1;
+          // Насколько нажим меняет толщину. У маркера почти не меняет —
+          // у настоящего маркера ширина задана пером, а не рукой.
+          const brushThin = (type) => type === 'marker' ? 0.12 : (type === 'soft' ? 0.34 : 0.62);
+
+          // Нажим в точке. У пера настоящий, у мыши и пальца считаем по
+          // скорости: ведут быстро — след тоньше. Сглаживание обязательно,
+          // иначе толщина скачет от события к событию.
+          const inkPress = (prev, dist, size, dev) => dev != null
+            ? prev + (dev - prev) * 0.5
+            : prev + (Math.min(1, 1 - Math.min(1, dist / Math.max(1, size))) - prev) * 0.275;
+
+          // КОНТУР штриха. Главная мысль (она же у perfect-freehand, на
+          // котором рисует Excalidraw): рисуем не «линию с толщиной», а
+          // замкнутую ФИГУРУ, обведённую по обе стороны от пути, где у каждой
+          // точки свой радиус. Только так получаются и живой нажим, и гладкие
+          // изломы, и сход на нет у концов: линия с lineWidth так не умеет
+          // в принципе — у неё одна толщина на весь отрезок.
+          // jn — стыки: бит 1 «не сужать начало», бит 2 «не сужать конец».
+          // Нужны там, где длинная линия разрезана на куски: без этого на
+          // каждом стыке линия схлопывалась бы в ноль и снова расширялась.
+          const inkOutline = (pts, size, thin, jn) => {
+            const n = pts.length;
+            if (!n) return [];
+            const R = size / 2;
+            const circle = (cx, cy, r) => {
+              const out = [];
+              for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2; out.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+              return out;
+            };
+            if (n === 1) return circle(pts[0][0], pts[0][1], Math.max(0.6, R * 0.7));
+
+            // Шаги и пройденный путь — нужны для сужения у концов.
+            const step = [0], run = [0];
+            for (let i = 1; i < n; i++) {
+              step[i] = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+              run[i] = run[i - 1] + step[i];
+            }
+            const total = run[n - 1] || 0;
+            // Начало набирает ширину, конец её теряет. Именно сход на нет
+            // отличает живую линию от сардельки. Хвост длиннее носа —
+            // так ведёт себя перо, когда его отрывают от бумаги.
+            const tS = ((jn || 0) & 1) ? 0 : Math.min(size * 1.2, total * 0.35);
+            const tE = ((jn || 0) & 2) ? 0 : Math.min(size * 2.2, total * 0.45);
+            const rad = [];
+            for (let i = 0; i < n; i++) {
+              const r = R * 2 * (0.5 - thin * (0.5 - pts[i][2]));
+              const a = tS > 0 ? Math.min(1, run[i] / tS) : 1;
+              const b = tE > 0 ? Math.min(1, (total - run[i]) / tE) : 1;
+              const k = Math.min(a * (2 - a), 1 - Math.pow(1 - b, 3));
+              rad[i] = Math.max(0.35, r * Math.max(0.06, k));
+            }
+
+            const L = [], Rt = [];
+            const add = (p, dx, dy, r) => { L.push([p[0] - dy * r, p[1] + dx * r]); Rt.push([p[0] + dy * r, p[1] - dx * r]); };
+            const dir = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy); return l < 1e-6 ? null : [dx / l, dy / l]; };
+            let last = null, first = null;
+            for (let i = 0; i < n; i++) {
+              const din = i > 0 ? (dir(pts[i - 1], pts[i]) || last) : null;
+              const dout = i < n - 1 ? dir(pts[i], pts[i + 1]) : null;
+              const a = din || dout, b = dout || din;
+              if (!a || !b) continue;
+              if (!first) first = a;
+              last = b;
+              // Вынос кладём трижды: по входу, по биссектрисе и по выходу.
+              // На изломе это скругляет угол снаружи, а самопересечение
+              // внутри съедает заливка по правилу nonzero — поэтому шов
+              // не расходится даже на резком развороте.
+              add(pts[i], a[0], a[1], rad[i]);
+              if (a !== b) {
+                const bx = a[0] + b[0], by = a[1] + b[1], bl = Math.hypot(bx, by);
+                if (bl > 1e-6) add(pts[i], bx / bl, by / bl, rad[i]);
+                add(pts[i], b[0], b[1], rad[i]);
+              }
+            }
+            if (!L.length || !first || !last) return circle(pts[0][0], pts[0][1], Math.max(0.6, rad[0]));
+
+            // Круглые концы: полукруг от левого выноса к правому через
+            // направление движения (в начале — через обратное).
+            const cap = (c, r, d, back) => {
+              const base = Math.atan2(d[0], -d[1]) - (back ? Math.PI : 0);
+              const out = [];
+              for (let k = 1; k < 9; k++) out.push([c[0] + Math.cos(base - Math.PI * k / 9) * r, c[1] + Math.sin(base - Math.PI * k / 9) * r]);
+              return out;
+            };
+            return L
+              .concat(cap(pts[n - 1], rad[n - 1], last, false))
+              .concat(Rt.slice().reverse())
+              .concat(cap(pts[0], rad[0], first, true));
+          };
+
+          // Геометрию описываем СПИСКОМ КОМАНД, а не сразу Path2D: тот же
+          // список уходит и в холст, и в SVG при выгрузке. Держать две копии
+          // всей геометрии нельзя — они разъедутся при первой же правке.
+          const cmdsPath = (cmds) => {
+            const p = new Path2D();
+            for (const c of cmds) {
+              if (c[0] === 'M') p.moveTo(c[1], c[2]);
+              else if (c[0] === 'L') p.lineTo(c[1], c[2]);
+              else if (c[0] === 'Q') p.quadraticCurveTo(c[1], c[2], c[3], c[4]);
+              else if (c[0] === 'A') p.arcTo(c[1], c[2], c[3], c[4], c[5]);
+              else if (c[0] === 'E') p.ellipse(c[1], c[2], c[3], c[4], 0, 0, Math.PI * 2);
+              else if (c[0] === 'Z') p.closePath();
+            }
+            return p;
+          };
+          const rn = (v) => Math.round(v * 10) / 10;
+          const cmdsD = (cmds) => cmds.map(c => {
+            if (c[0] === 'M') return `M${rn(c[1])} ${rn(c[2])}`;
+            if (c[0] === 'L') return `L${rn(c[1])} ${rn(c[2])}`;
+            if (c[0] === 'Q') return `Q${rn(c[1])} ${rn(c[2])} ${rn(c[3])} ${rn(c[4])}`;
+            // Скругление угла в SVG выражаем дугой того же радиуса
+            if (c[0] === 'A') return `L${rn(c[1])} ${rn(c[2])}`;
+            if (c[0] === 'E') return `M${rn(c[1] - c[3])} ${rn(c[2])}a${rn(c[3])} ${rn(c[4])} 0 1 0 ${rn(c[3] * 2)} 0a${rn(c[3])} ${rn(c[4])} 0 1 0 ${rn(-c[3] * 2)} 0`;
+            return 'Z';
+          }).join('');
+
+          // Полигон обводим квадратичными кривыми через середины сторон:
+          // углы полигона исчезают, остаётся гладкий контур.
+          const inkCmds = (pl) => {
+            const m = pl.length;
+            if (m < 3) return [];
+            const out = [];
+            let a = pl[m - 1], b = pl[0];
+            out.push(['M', (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+            for (let i = 0; i < m; i++) {
+              a = pl[i]; b = pl[(i + 1) % m];
+              out.push(['Q', a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+            }
+            out.push(['Z']);
+            return out;
+          };
+
+          // Точки лежат ПЛОСКИМ списком чисел: Firestore не умеет вложенные
+          // массивы. Разворачиваем один раз и держим при штрихе — вместе
+          // с готовой фигурой и габаритом. Фигура не зависит от масштаба,
+          // поэтому переживает и панораму, и зум.
+          const strokePts = (s) => {
+            if (!s._pts) {
+              const a = [];
+              for (let i = 0; i + 2 < s.p.length; i += 3) a.push([s.p[i], s.p[i + 1], s.p[i + 2]]);
+              s._pts = a;
+            }
+            return s._pts;
+          };
+          const strokeCmds = (s) => {
+            if (!s._cmds) s._cmds = inkCmds(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t), s.jn));
+            return s._cmds;
+          };
+          const strokePath = (s) => {
+            if (!s._path) s._path = cmdsPath(strokeCmds(s));
+            return s._path;
+          };
+          const strokeBox = (s) => {
+            if (s._box) return s._box;
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const p of strokePts(s)) {
+              if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+              if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+            }
+            const m = s.w * brushWidthK(s.t) + 4;
+            s._box = { x0: x0 - m, y0: y0 - m, x1: x1 + m, y1: y1 + m };
+            return s._box;
+          };
+          const paintStroke = (ctx, s) => {
+            ctx.save();
+            if (s.t === 'marker') ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = brushAlpha(s.t);
+            ctx.fillStyle = s.c;
+            ctx.fill(strokePath(s));
+            ctx.restore();
+          };
+          // Координаты округляем: на доске 4000×4000 десятой доли точки
+          // хватает с запасом, а документ в Firestore ограничен мегабайтом.
+          const packStroke = (t, color, size, pts, jn) => {
+            const p = [];
+            for (const q of pts) p.push(Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10, Math.round(q[2] * 100) / 100);
+            const s = { id: `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, t, c: color, w: size, p };
+            if (jn) s.jn = jn;
+            return s;
+          };
+
         const ConfirmModal = ({ action, onCancel }) => {
             if (!action) return null;
             return (
@@ -709,188 +920,866 @@
             );
         };
 
-        const LightSchemeEditor = ({ scheme, onSave, onClose }) => {
-            const [elements, setElements] = useState(scheme?.elements || []);
-            const [mode, setMode] = useState('select'); 
-            const [selectedId, setSelectedId] = useState(null);
-            const [drawData, setDrawData] = useState(scheme?.drawData || null);
-            const canvasRef = useRef(null);
-            const containerRef = useRef(null);
-            const [isDrawing, setIsDrawing] = useState(false);
-            const [brushColor, setBrushColor] = useState('#facc15');
-            const [brushSize, setBrushSize] = useState(10);
-            const lastPt = useRef({x:0, y:0});
-            
-            const [draggingEl, setDraggingEl] = useState(null);
+        // Обратный конец стилуса: браузер сообщает о нём отдельной кнопкой
+        // (button 5 при касании, бит 32 в buttons — в том числе на весу).
+        // Проверка одна на всё приложение.
+        const isPenEraserEvt = (e) => e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) === 32);
 
+        /* Приборы и фигуры схемы рисуются ДВАЖДЫ: элементами разметки
+           поверх холста (их хватают пальцем — у разметки это работает
+           само) и на холсте при сборке превью. Формы обязаны совпадать,
+           поэтому обе стороны описаны рядом: разъедутся — и человек
+           увидит в печати не то, что расставил на экране. */
+        const lsShapePoly = (k, x, y, w, h) => {
+          if (k === 'triangle') return [[x + w / 2, y], [x, y + h], [x + w, y + h]];
+          if (k === 'diamond') return [[x + w / 2, y], [x + w, y + h / 2], [x + w / 2, y + h], [x, y + h / 2]];
+          if (k === 'star') {
+            const cx = x + w / 2, cy = y + h / 2, oR = Math.min(w, h) / 2, iR = oR * 0.45, out = [];
+            for (let i = 0; i < 10; i++) {
+              const r = i % 2 === 0 ? oR : iR, a = (Math.PI / 5) * i - Math.PI / 2;
+              out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+            }
+            return out;
+          }
+          return null;
+        };
+
+        const paintElement = (c, el, gearTypes) => {
+          const x = el.x, y = el.y, w = el.w, h = el.h;
+          const cx = x + w / 2, cy = y + h / 2;
+          const col = el.color || '#facc15';
+          c.save();
+          if (el.rot) { c.translate(cx, cy); c.rotate(el.rot * Math.PI / 180); c.translate(-cx, -cy); }
+          c.fillStyle = col; c.strokeStyle = col;
+          if (el.type === 'rect') c.fillRect(x, y, w, h);
+          else if (el.type === 'circle') { c.beginPath(); c.ellipse(cx, cy, Math.abs(w) / 2, Math.abs(h) / 2, 0, 0, Math.PI * 2); c.fill(); }
+          else if (el.type === 'arrow') {
+            // Стрелка = направление луча. Идёт из левого нижнего угла
+            // рамки в правый верхний, а куда именно светит прибор,
+            // задаёт поворот.
+            const x1 = x, y1 = y + h, x2 = x + w, y2 = y;
+            c.lineWidth = Math.max(3, Math.min(Math.abs(w), Math.abs(h)) * 0.06);
+            c.lineCap = 'round';
+            c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+            const a = Math.atan2(y2 - y1, x2 - x1), hl = Math.min(Math.abs(w), Math.abs(h)) * 0.25;
+            c.beginPath(); c.moveTo(x2, y2);
+            c.lineTo(x2 - hl * Math.cos(a - Math.PI / 6), y2 - hl * Math.sin(a - Math.PI / 6));
+            c.lineTo(x2 - hl * Math.cos(a + Math.PI / 6), y2 - hl * Math.sin(a + Math.PI / 6));
+            c.closePath(); c.fill();
+          }
+          else if (el.type === 'text') {
+            c.font = `600 ${Math.max(12, Math.round(h * 0.55))}px Archivo, sans-serif`;
+            c.textBaseline = 'middle';
+            c.fillText(el.text || '', x + 6, cy);
+          }
+          else {
+            const poly = lsShapePoly(el.type, x, y, w, h);
+            if (poly) {
+              c.beginPath();
+              poly.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]));
+              c.closePath(); c.fill();
+            }
+          }
+          c.restore();
+          // Подпись НЕ поворачивается вместе с прибором: повёрнутую
+          // маркировку на схеме не прочесть, а она и есть главное, ради
+          // чего прибор на листе.
+          if (el.label) {
+            c.save();
+            c.font = '500 22px Archivo, sans-serif';
+            c.textAlign = 'center'; c.textBaseline = 'top';
+            const tw = c.measureText(el.label).width;
+            c.fillStyle = 'rgba(20,19,16,.85)';
+            c.fillRect(cx - tw / 2 - 7, y + h + 6, tw + 14, 28);
+            c.fillStyle = '#f0eee6';
+            c.fillText(el.label, cx, y + h + 11);
+            c.restore();
+          }
+        };
+
+        // Тот же элемент в разметке — поверх холста, чтобы его можно было
+        // взять пальцем. Рамка НЕ поворачивается, поворачивается только
+        // сама фигура внутри: так подпись остаётся читаемой.
+        const SchemeEl = ({ el, zoom, offset, gearTypes, selected, readOnly, onGrab, onText }) => {
+          const L = el.x * zoom + offset.x, T = el.y * zoom + offset.y;
+          const W = el.w * zoom, H = el.h * zoom;
+          const col = el.color || '#facc15';
+          const spin = { width: '100%', height: '100%', transform: `rotate(${el.rot || 0}deg)` };
+          const clip = {
+            triangle: 'polygon(50% 0%, 0% 100%, 100% 100%)',
+            diamond: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+            star: 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)'
+          }[el.type];
+          return (
+            <div className="scheme-el absolute"
+                 style={{ left: L, top: T, width: W, height: H,
+                          pointerEvents: readOnly ? 'none' : 'auto',
+                          outline: selected ? '2px solid var(--accent)' : 'none',
+                          outlineOffset: 3, touchAction: 'none' }}
+                 onPointerDown={onGrab}>
+              {el.type === 'rect' && <div style={{ ...spin, background: col, borderRadius: 2 }} />}
+              {el.type === 'circle' && <div style={{ ...spin, background: col, borderRadius: '50%' }} />}
+              {clip && <div style={{ ...spin, background: col, clipPath: clip }} />}
+              {el.type === 'arrow' && (
+                <svg style={spin} viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <line x1="2" y1="98" x2="88" y2="12" stroke={col} strokeWidth="7" strokeLinecap="round" />
+                  <polygon points="98,2 70,10 90,30" fill={col} />
+                </svg>
+              )}
+              {el.type === 'text' && (
+                <textarea value={el.text || ''} readOnly={readOnly}
+                          onChange={e => onText(e.target.value)}
+                          onPointerDown={e => e.stopPropagation()}
+                          className="w-full h-full resize-none focus:outline-none rounded"
+                          style={{ background: 'rgba(20,19,16,.6)', color: col,
+                                   border: '1px solid var(--border)', padding: 4,
+                                   fontSize: Math.max(9, 0.5 * H), fontWeight: 600,
+                                   fontFamily: 'Archivo, sans-serif' }} />
+              )}
+              {el.label && (
+                <div className="absolute whitespace-nowrap pointer-events-none"
+                     style={{ top: '100%', left: '50%', transform: 'translateX(-50%)',
+                              marginTop: 5, padding: '2px 6px', borderRadius: 4,
+                              background: 'rgba(20,19,16,.85)', color: 'var(--text)',
+                              border: '1px solid var(--border)',
+                              fontSize: Math.max(8, Math.min(15, 22 * zoom)) }}>
+                  {el.label}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+
+        /* =========================================================
+           РЕДАКТОР СХЕМЫ СВЕТА
+
+           Тот же движок, что у доски: штрих — это СПИСОК ТОЧЕК, а не
+           картинка. Раньше рисунок писался в холст 1600×900 и растягивался
+           под экран — на планшете, где в одной точке CSS сидят две
+           настоящие, линия выходила мыльной, а увеличить лист было нельзя
+           вовсе. Теперь холст размером с окно и в настоящем разрешении
+           экрана, а лист можно двигать и приближать: линия резкая при
+           любом увеличении.
+
+           Что это дало даром, помимо резкости: отмену на 40 шагов,
+           ластик, который режет линии, а не выедает дырки в картинке,
+           и настоящий нажим у стилуса.
+
+           СИСТЕМА КООРДИНАТ. Внутри схемы всё считается в координатах
+           ЛИСТА 1600×900 — ровно как раньше. Это не прихоть: старые
+           схемы хранят и приборы, и растровый рисунок именно в них,
+           и при смене системы всё нарисованное поехало бы.
+
+           СТАРЫЙ РАСТР (`drawData`) остаётся подложкой: он только
+           читается и стирается ластиком, ничего нового туда не пишется.
+           Схемы, нарисованные до перехода на вектор, открываются ровно
+           как открывались.
+           ========================================================= */
+        const LS_W = 1600, LS_H = 900;        // лист схемы
+        const LS_COLORS = ['#facc15', '#60a5fa', '#f87171', '#34d399', '#d97757', '#f0eee6'];
+        // Приборы рисуются кружком с буквой; фигуры — разметка помещения.
+        const LS_SHAPES = [
+          { k: 'rect',     name: 'Прямоугольник (стена, стол)' },
+          { k: 'circle',   name: 'Круг' },
+          { k: 'triangle', name: 'Треугольник' },
+          { k: 'diamond',  name: 'Ромб' },
+          { k: 'star',     name: 'Звезда' },
+          { k: 'arrow',    name: 'Стрелка — направление луча' },
+          { k: 'text',     name: 'Надпись' }
+        ];
+
+        const LightSchemeEditor = ({ scheme, gearTypes, strokes0, onSaveInk,
+                                     onSaveScheme, onClose, readOnly, toast }) => {
+            // --- Приборы и фигуры ---
+            const [elements, setElements] = useState(() => (scheme && scheme.elements) || []);
+            const [selectedId, setSelectedId] = useState(null);
+            const [mode, setMode] = useState('select');
+            // Пока указатель не сдвинулся на 3 точки, жест не считается
+            // движением. Без этого простое нажатие «чтобы выбрать прибор»
+            // писало пустой шаг отмены, и Ctrl+Z переставал возвращать
+            // то, что человек ждёт. Шаг пишется в момент ПЕРВОГО
+            // настоящего движения.
+            const DRAG_START_PX = 3;
+            const [drag, setDrag] = useState(null);
+            const dragRef = useRef(null);
+            dragRef.current = drag;
+            // Пробел = временно «рука», как во всех редакторах.
+            const spaceHeld = useRef(false);
+
+            // --- Кисть ---
+            const [brushColor, setBrushColor] = useState('#facc15');
+            const [brushSize, setBrushSize] = useState(6);
+            const [eraserSize, setEraserSize] = useState(48);
+
+            // --- Лист ---
+            const [zoom, setZoom] = useState(1);
+            const [offset, setOffset] = useState({ x: 0, y: 0 });
+            const [isPainting, setIsPainting] = useState(false);
+            const [isPanning, setIsPanning] = useState(false);
+            const panStart = useRef({ x: 0, y: 0 });
+
+            const wrapRef = useRef(null);
+            const inkCanvasRef = useRef(null);    // готовые штрихи + старый растр
+            const liveCanvasRef = useRef(null);   // текущий штрих и кольцо кисти
+            const strokesRef = useRef(strokes0 || []);
+            const live = useRef(null);
+            const erasePt = useRef(null);
+            const hoverPt = useRef(null);
+            const penErase = useRef(false);
+            const legacyCv = useRef(null);        // старая растровая подложка
+            const legacyDirty = useRef(false);
+
+            // Стилус: как только по листу хоть раз провели пером, палец
+            // перестаёт рисовать и начинает двигать лист — как в любой
+            // рисовалке на iPad, и ладонь не оставляет клякс. Помним между
+            // запусками: на планшете приложение выгружается из памяти постоянно.
+            const [penSeen, setPenSeen] = useState(() => { try { return localStorage.getItem('cf_pen_seen') === '1'; } catch (e) { return false; } });
+            const notePen = (e) => {
+              if (e.pointerType !== 'pen' || penSeen) return;
+              setPenSeen(true);
+              try { localStorage.setItem('cf_pen_seen', '1'); } catch (err) {}
+            };
+
+            // --- Отмена ---
+            // Шаг ОДИН на всю схему: и штрихи, и приборы. Иначе одно
+            // движение — подвинули прибор вместе с линией — распадалось бы
+            // на два шага, и Ctrl+Z возвращал бы половину.
+            const undoStack = useRef([]);
+            const redoStack = useRef([]);
+            const [canUndo, setCanUndo] = useState(false);
+            const [canRedo, setCanRedo] = useState(false);
+            const elsRef = useRef(elements);
+            elsRef.current = elements;
+
+            const pushUndo = () => {
+              undoStack.current.push({ list: strokesRef.current, els: elsRef.current });
+              if (undoStack.current.length > 40) undoStack.current.shift();
+              redoStack.current = [];
+              setCanUndo(true); setCanRedo(false);
+            };
+            const applySnap = (snap) => {
+              strokesRef.current = snap.list;
+              setElements(snap.els);
+              setSelectedId(id => snap.els.some(e => e.id === id) ? id : null);
+              requestStatic();
+              saveSoon();
+            };
+            const undo = () => {
+              if (!undoStack.current.length) return;
+              const snap = undoStack.current.pop();
+              redoStack.current.push({ list: strokesRef.current, els: elsRef.current });
+              applySnap(snap);
+              setCanUndo(undoStack.current.length > 0); setCanRedo(true);
+            };
+            const redo = () => {
+              if (!redoStack.current.length) return;
+              const snap = redoStack.current.pop();
+              undoStack.current.push({ list: strokesRef.current, els: elsRef.current });
+              applySnap(snap);
+              setCanRedo(redoStack.current.length > 0); setCanUndo(true);
+            };
+
+            /* ---------- Холсты ---------- */
+            // Холст размером с ОКНО и в настоящем разрешении экрана.
+            // Множитель ограничен двойкой: на телефонах он бывает 3,
+            // и втрое больший холст стоит втрое дороже при разнице,
+            // которой не видно.
+            const fitInk = (c) => {
+              const dpr = Math.min(2, window.devicePixelRatio || 1);
+              const w = c.clientWidth || 1, h = c.clientHeight || 1;
+              const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+              if (c.width !== bw || c.height !== bh) { c.width = bw; c.height = bh; }
+              const ctx = c.getContext('2d');
+              ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+              return { w, h, ctx };
+            };
+            // Экран → лист. Холсты лежат ровно по области редактора,
+            // поэтому её левый верхний угол и есть начало отсчёта.
+            const pt = (cx, cy) => {
+              const c = liveCanvasRef.current;
+              const r = c ? c.getBoundingClientRect() : { left: 0, top: 0 };
+              const sx = cx - r.left, sy = cy - r.top;
+              return { sx, sy, x: (sx - offset.x) / zoom, y: (sy - offset.y) / zoom };
+            };
+
+            const drawStatic = () => {
+              const c = inkCanvasRef.current; if (!c) return;
+              const { w, h, ctx } = fitInk(c);
+              ctx.clearRect(0, 0, w, h);
+              ctx.save();
+              ctx.translate(offset.x, offset.y); ctx.scale(zoom, zoom);
+              // Сам лист. Он ОБЯЗАН читаться как лист: за его краем ничего
+              // не попадёт ни в печать, ни в карточку сцены, и человек
+              // должен видеть эту границу, а не гадать. Поле вокруг темнее
+              // самого листа — только так граница видна без яркой рамки.
+              ctx.fillStyle = '#14130f';
+              ctx.fillRect(0, 0, LS_W, LS_H);
+              ctx.strokeStyle = 'rgba(240,238,230,.28)';
+              ctx.lineWidth = 1 / zoom;
+              ctx.strokeRect(0, 0, LS_W, LS_H);
+              if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
+              // Отсекаем то, чего не видно: лист перерисовывается на каждый
+              // шаг зума и панорамы, платить за штрихи за краем экрана незачем.
+              const x0 = -offset.x / zoom, y0 = -offset.y / zoom;
+              const x1 = x0 + w / zoom, y1 = y0 + h / zoom;
+              for (const s of strokesRef.current) {
+                const b = strokeBox(s);
+                if (b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1) continue;
+                paintStroke(ctx, s);
+              }
+              ctx.restore();
+            };
+
+            const drawLive = () => {
+              const c = liveCanvasRef.current; if (!c) return;
+              const { w, h, ctx } = fitInk(c);
+              ctx.clearRect(0, 0, w, h);
+              const L = live.current;
+              if (L && L.pts.length) {
+                ctx.save();
+                ctx.translate(offset.x, offset.y); ctx.scale(zoom, zoom);
+                ctx.globalAlpha = brushAlpha(L.t);
+                ctx.fillStyle = L.c;
+                ctx.fill(cmdsPath(inkCmds(inkOutline(L.pts, L.w, brushThin(L.t), L.jn))));
+                ctx.restore();
+              }
+              // Кольцо кисти и ластика: сколько именно возьмёт инструмент.
+              // Рисуется БЕЗ преобразования листа — значит и точку берём
+              // ЭКРАННУЮ (sx/sy). Пока лист не двигали, они совпадают, и
+              // ошибка не видна; стоит панорамировать, и кольцо уедет от
+              // пера, хотя стирать будет по перу.
+              const hp = hoverPt.current;
+              const er = mode === 'erase' || penErase.current;
+              if (hp && !isPanning && (mode === 'draw' || mode === 'erase')) {
+                const r = Math.max(2.5, (er ? eraserSize : brushSize) / 2 * zoom);
+                ctx.save();
+                ctx.beginPath(); ctx.arc(hp.sx, hp.sy, r + 1, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2.5; ctx.stroke();
+                ctx.beginPath(); ctx.arc(hp.sx, hp.sy, r, 0, Math.PI * 2);
+                if (er) { ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fill(); }
+                ctx.strokeStyle = er ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.6)';
+                ctx.lineWidth = 1.25; ctx.stroke();
+                ctx.restore();
+              }
+            };
+
+            // Перерисовку копим до кадра: за один сдвиг пальца прилетает
+            // десяток событий, а нарисовать надо один раз. Рисовать обязана
+            // САМАЯ СВЕЖАЯ пара функций — иначе отложенный вызов возьмёт
+            // устаревшие панораму и масштаб.
+            const raf = useRef(0);
+            const need = useRef(0);
+            const draw = useRef({});
+            draw.current = { s: drawStatic, l: drawLive };
+            const request = (both) => {
+              need.current = Math.max(need.current, both ? 2 : 1);
+              if (raf.current) return;
+              raf.current = requestAnimationFrame(() => {
+                raf.current = 0;
+                const n = need.current; need.current = 0;
+                if (n >= 2) draw.current.s();
+                draw.current.l();
+              });
+            };
+            const requestStatic = () => request(true);
+            const requestLive = () => request(false);
+
+            // Готовый штрих ДОПИСЫВАЕМ в нижний слой, а не перерисовываем
+            // лист целиком: обычный случай — «провёл линию», и платить за
+            // него полной перерисовкой незачем.
+            const paintOnStatic = (s) => {
+              const c = inkCanvasRef.current; if (!c) { requestStatic(); return; }
+              const ctx = c.getContext('2d');
+              ctx.save();
+              ctx.translate(offset.x, offset.y); ctx.scale(zoom, zoom);
+              paintStroke(ctx, s);
+              ctx.restore();
+            };
+
+            /* ---------- Старая растровая подложка ---------- */
             useEffect(() => {
-                const canvas = canvasRef.current;
-                if(canvas) {
-                    canvas.width = 1600; canvas.height = 900;
-                    const ctx = canvas.getContext('2d');
-                    if (drawData) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0); img.src = drawData; }
+              const url = scheme && scheme.drawData;
+              if (!url) { legacyCv.current = null; requestStatic(); return; }
+              const img = new Image();
+              img.onload = () => {
+                const cv = document.createElement('canvas');
+                cv.width = LS_W; cv.height = LS_H;
+                cv.getContext('2d').drawImage(img, 0, 0, LS_W, LS_H);
+                legacyCv.current = cv;
+                requestStatic();
+              };
+              img.onerror = () => { legacyCv.current = null; requestStatic(); };
+              img.src = url;
+            }, [scheme && scheme.id]);
+
+            /* ---------- Сохранение ---------- */
+            // Автосохранение вместо кнопки. Раньше выход по крестику
+            // молча выбрасывал всё нарисованное: полчаса расстановки
+            // приборов уходили в никуда без единого вопроса.
+            const saveTimer = useRef(null);
+            const savePend = useRef(false);
+            const flush = () => {
+              if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+              if (!savePend.current || readOnly) return;
+              savePend.current = false;
+              onSaveInk(scheme.id, strokesRef.current);
+              const patch = { elements: elsRef.current, preview: buildPreview() };
+              // Старую подложку перезаписываем, ТОЛЬКО если её реально
+              // задели ластиком. Иначе каждое автосохранение заново
+              // кодировало бы картинку 1600×900 в PNG — сотни миллисекунд
+              // и лишние килобайты в облако на ровном месте.
+              if (legacyDirty.current) {
+                patch.drawData = legacyCv.current ? legacyCv.current.toDataURL('image/png') : '';
+                legacyDirty.current = false;
+              }
+              onSaveScheme(scheme.id, patch);
+            };
+            const saveSoon = () => {
+              if (readOnly) return;
+              savePend.current = true;
+              if (saveTimer.current) clearTimeout(saveTimer.current);
+              saveTimer.current = setTimeout(flush, 700);
+            };
+            // Уходя, ДОПИСЫВАЕМ отложенное, а не выбрасываем таймер:
+            // просто снять его значило бы потерять последний штрих.
+            const flushRef = useRef(flush);
+            flushRef.current = flush;
+            useEffect(() => () => flushRef.current(), []);
+
+            /* ---------- Превью ----------
+               Собранная картинка листа: она уходит в печать, в карточку
+               сцены и в мастер-документ. Рисуется теми же командами, что
+               и холст, — двух копий геометрии быть не должно, они
+               разъедутся при первой правке. */
+            const buildPreview = () => {
+              const pc = document.createElement('canvas');
+              pc.width = LS_W; pc.height = LS_H;
+              const c = pc.getContext('2d');
+              c.fillStyle = '#141310'; c.fillRect(0, 0, LS_W, LS_H);
+              if (legacyCv.current) c.drawImage(legacyCv.current, 0, 0);
+              strokesRef.current.forEach(s => paintStroke(c, s));
+              elsRef.current.forEach(el => paintElement(c, el, gearTypes));
+              return pc.toDataURL('image/jpeg', 0.85);
+            };
+
+            /* ---------- Рисование ---------- */
+            // Ластик режет ЛИНИИ, а не пиксели: точки, попавшие под него,
+            // выбрасываются, штрих распадается на куски. Поэтому стёртое
+            // возвращается отменой и не оставляет дыр.
+            const eraseSeg = (x0, y0, x1, y1, r) => {
+              const dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
+              const near = (px, py) => {
+                let t = l2 > 0 ? ((px - x0) * dx + (py - y0) * dy) / l2 : 0;
+                t = Math.max(0, Math.min(1, t));
+                return Math.hypot(px - (x0 + dx * t), py - (y0 + dy * t));
+              };
+              const bx0 = Math.min(x0, x1) - r, bx1 = Math.max(x0, x1) + r;
+              const by0 = Math.min(y0, y1) - r, by1 = Math.max(y0, y1) + r;
+              const next = []; let hit = false;
+              for (const s of strokesRef.current) {
+                const b = strokeBox(s);
+                if (b.x1 < bx0 || b.x0 > bx1 || b.y1 < by0 || b.y0 > by1) { next.push(s); continue; }
+                const pts = strokePts(s);
+                const runs = []; let cur = [];
+                for (const p of pts) {
+                  if (near(p[0], p[1]) <= r) { if (cur.length > 1) runs.push(cur); cur = []; }
+                  else cur.push(p);
                 }
+                if (cur.length > 1) runs.push(cur);
+                if (runs.length === 1 && runs[0].length === pts.length) { next.push(s); continue; }
+                hit = true;
+                runs.forEach(run => next.push(packStroke(s.t, s.c, s.w, run)));
+              }
+              if (hit) { strokesRef.current = next; requestStatic(); }
+              // Старую подложку ластик берёт по-прежнему пикселями — иначе
+              // на схемах, нарисованных до перехода на вектор, он просто
+              // перестал бы работать.
+              if (legacyCv.current) {
+                const lc = legacyCv.current.getContext('2d');
+                lc.save();
+                lc.globalCompositeOperation = 'destination-out';
+                lc.lineCap = 'round'; lc.lineJoin = 'round';
+                lc.lineWidth = r * 2; lc.strokeStyle = 'rgba(0,0,0,1)';
+                lc.beginPath(); lc.moveTo(x0, y0); lc.lineTo(x1, y1); lc.stroke();
+                lc.restore();
+                legacyDirty.current = true;
+                requestStatic();
+              }
+            };
+
+            const canDraw = !readOnly && (mode === 'draw' || mode === 'erase');
+
+            const onDown = (e) => {
+              if (readOnly) return;
+              notePen(e);
+              hoverPt.current = pt(e.clientX, e.clientY);
+              // Средняя кнопка, пробел или палец при замеченном стилусе — панорама
+              const fingerPan = penSeen && e.pointerType === 'touch';
+              if (e.button === 1 || mode === 'pan' || spaceHeld.current || fingerPan) {
+                setIsPanning(true);
+                panStart.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };
+                e.currentTarget.setPointerCapture(e.pointerId);
+                return;
+              }
+              if (mode === 'select' || LS_SHAPES.some(s => s.k === mode)) {
+                if (e.target.closest && e.target.closest('.scheme-el')) return;
+                if (LS_SHAPES.some(s => s.k === mode)) {
+                  const p = pt(e.clientX, e.clientY);
+                  pushUndo();
+                  const el = { id: `el-${Date.now()}`, type: mode, x: p.x - 50, y: p.y - 50,
+                               w: 100, h: 100, color: brushColor, rot: 0,
+                               text: mode === 'text' ? 'Текст' : '', label: '' };
+                  if (mode === 'text') { el.w = 240; el.h = 54; el.x = p.x - 120; el.y = p.y - 27; }
+                  setElements(els => els.concat([el]));
+                  setMode('select'); setSelectedId(el.id);
+                  saveSoon();
+                } else setSelectedId(null);
+                return;
+              }
+              e.currentTarget.setPointerCapture(e.pointerId);
+              // Обратный конец стилуса стирает — но только этим штрихом,
+              // выбранный инструмент не меняем.
+              penErase.current = isPenEraserEvt(e);
+              const wipe = penErase.current || mode === 'erase';
+              const p = pt(e.clientX, e.clientY);
+              pushUndo();
+              setIsPainting(true);
+              if (wipe) {
+                erasePt.current = p;
+                eraseSeg(p.x, p.y, p.x, p.y, eraserSize / 2);
+                requestLive();
+                return;
+              }
+              const press = (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0.5;
+              live.current = { pts: [[p.x, p.y, press]], press, t: 'pen', c: brushColor, w: brushSize };
+              requestLive();
+            };
+
+            const onMove = (e) => {
+              hoverPt.current = pt(e.clientX, e.clientY);
+              if (isPanning) {
+                setOffset({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y });
+                return;
+              }
+              if (drag) {
+                const p = pt(e.clientX, e.clientY);
+                if (!drag.moved) {
+                  // Ещё не тронулись с места: ждём порога, иначе простой
+                  // выбор прибора считался бы переносом.
+                  if (Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < DRAG_START_PX) return;
+                  pushUndo();
+                  drag.moved = true;
+                }
+                setElements(els => els.map(el => el.id === drag.id
+                  ? { ...el, x: p.x - drag.ox, y: p.y - drag.oy } : el));
+                return;
+              }
+              if (!isPainting) { requestLive(); return; }
+              // Браузер копит промежуточные точки между кадрами. Без
+              // getCoalescedEvents они теряются, и быстрый штрих выходит углами.
+              const ne = e.nativeEvent;
+              const raw = (ne.getCoalescedEvents && ne.getCoalescedEvents().length) ? ne.getCoalescedEvents() : [ne];
+              if (penErase.current || mode === 'erase') {
+                for (const q of raw) {
+                  const b = pt(q.clientX, q.clientY);
+                  const a = erasePt.current || b;
+                  eraseSeg(a.x, a.y, b.x, b.y, eraserSize / 2);
+                  erasePt.current = b;
+                }
+                requestLive();
+                return;
+              }
+              const L = live.current;
+              if (!L) { requestLive(); return; }
+              for (const q of raw) {
+                const b = pt(q.clientX, q.clientY);
+                const last = L.pts[L.pts.length - 1];
+                const d = Math.hypot(b.x - last[0], b.y - last[1]);
+                if (d < 0.7) continue;              // отбрасываем дрожание
+                // «Поводок»: точка идёт не прямо в указатель, а тянется за
+                // ним. Это гасит и дрожь руки, и ступеньки от редких
+                // событий — без него линия остаётся гранёной.
+                const nx = last[0] + (b.x - last[0]) * INK_LEAD;
+                const ny = last[1] + (b.y - last[1]) * INK_LEAD;
+                const dev = (e.pointerType === 'pen' && q.pressure > 0) ? q.pressure : null;
+                L.press = inkPress(L.press, d, L.w, dev);
+                L.pts.push([nx, ny, L.press]);
+                if (L.pts.length >= INK_MAX) {
+                  // Набрали предел — ЗАКРЫВАЕМ кусок и тут же продолжаем
+                  // новым от той же точки. Стыки не сужаем, поэтому шва не видно.
+                  const cut = packStroke(L.t, L.c, L.w, L.pts, (L.jn || 0) | 2);
+                  strokesRef.current = strokesRef.current.concat([cut]);
+                  paintOnStatic(cut);
+                  saveSoon();
+                  L.pts = [L.pts[L.pts.length - 1]];
+                  L.jn = 1;
+                }
+              }
+              requestLive();
+            };
+
+            const onUp = (e) => {
+              if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+              const wipe = penErase.current || mode === 'erase';
+              const L = live.current;
+              if (isPainting && !wipe && L && L.pts.length) {
+                const s = packStroke(L.t, L.c, L.w, L.pts, L.jn);
+                strokesRef.current = strokesRef.current.concat([s]);
+                paintOnStatic(s);
+                saveSoon();
+              }
+              if (isPainting && wipe) saveSoon();
+              if (drag && drag.moved) saveSoon();
+              live.current = null; erasePt.current = null; penErase.current = false;
+              setIsPainting(false); setIsPanning(false); setDrag(null);
+              requestLive();
+            };
+
+            /* ---------- Перерисовка при зуме, панораме и смене окна ---------- */
+            useEffect(() => {
+              requestStatic();
+              const onResize = () => requestStatic();
+              window.addEventListener('resize', onResize);
+              return () => window.removeEventListener('resize', onResize);
+            });
+
+            // Лист вписываем в окно при открытии — чтобы схема сразу была
+            // видна целиком, а не углом.
+            useEffect(() => {
+              const c = liveCanvasRef.current; if (!c) return;
+              const w = c.clientWidth || 1, h = c.clientHeight || 1;
+              const z = Math.min(w / LS_W, h / LS_H) * 0.92;
+              setZoom(z);
+              setOffset({ x: (w - LS_W * z) / 2, y: (h - LS_H * z) / 2 });
             }, []);
 
-            const SHAPE_MODES = ['rect', 'circle', 'triangle', 'diamond', 'star', 'arrow', 'text'];
-            const handlePointerDown = (e) => {
-                if (mode === 'select' || SHAPE_MODES.includes(mode)) {
-                    if (e.target.closest('.scheme-el')) return;
-                    if (SHAPE_MODES.includes(mode)) {
-                        const rect = containerRef.current.getBoundingClientRect();
-                        const x = (e.clientX - rect.left) * (1600 / rect.width);
-                        const y = (e.clientY - rect.top) * (900 / rect.height);
-                        const newEl = { id: `el-${Date.now()}`, type: mode, x, y, w: 100, h: 100, color: brushColor, text: mode === 'text' ? 'Текст' : '', label: '' };
-                        if(mode === 'text') { newEl.w = 200; newEl.h = 50; }
-                        setElements([...elements, newEl]);
-                        setMode('select'); setSelectedId(newEl.id);
-                    } else { setSelectedId(null); }
-                    return;
+            /* ---------- Клавиатура ---------- */
+            useEffect(() => {
+              const onKey = (e) => {
+                const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+                // Пробел держат — лист двигается. В поле ввода пробел
+                // обязан оставаться пробелом, иначе в маркировке прибора
+                // нельзя написать «ARRI Skypanel 600».
+                if (e.code === 'Space' && !typing) { spaceHeld.current = true; e.preventDefault(); }
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                  e.preventDefault();
+                  if (e.shiftKey) redo(); else undo();
+                  return;
                 }
-                e.currentTarget.setPointerCapture(e.pointerId);
-                setIsDrawing(true);
-                const rect = canvasRef.current.getBoundingClientRect();
-                lastPt.current = { x: (e.clientX - rect.left) * (1600 / rect.width), y: (e.clientY - rect.top) * (900 / rect.height) };
-                const ctx = canvasRef.current.getContext('2d'); ctx.beginPath(); ctx.arc(lastPt.current.x, lastPt.current.y, brushSize/2, 0, Math.PI*2); ctx.fillStyle = mode==='erase' ? 'rgba(0,0,0,1)' : brushColor;
-                if(mode==='erase') ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.5; }
-                ctx.fill(); ctx.globalAlpha = 1.0; ctx.globalCompositeOperation = 'source-over';
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+                if (typing) return;
+                if (e.key === 'Escape') { onClose(); return; }
+                if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && !readOnly) {
+                  e.preventDefault();
+                  pushUndo();
+                  setElements(els => els.filter(x => x.id !== selectedId));
+                  setSelectedId(null); saveSoon();
+                }
+              };
+              const onUpKey = (e) => { if (e.code === 'Space') spaceHeld.current = false; };
+              window.addEventListener('keydown', onKey);
+              window.addEventListener('keyup', onUpKey);
+              return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUpKey); };
+            });
+
+            const sel = elements.find(e => e.id === selectedId);
+            const patch = (up) => {
+              setElements(els => els.map(el => el.id === selectedId ? { ...el, ...up } : el));
+              saveSoon();
             };
 
-            const handlePointerMove = (e) => {
-                if (draggingEl) {
-                    const rect = containerRef.current.getBoundingClientRect();
-                    const nx = (e.clientX - rect.left) * (1600 / rect.width) - draggingEl.ox;
-                    const ny = (e.clientY - rect.top) * (900 / rect.height) - draggingEl.oy;
-                    setElements(elements.map(el => el.id === draggingEl.id ? {...el, x: nx, y: ny} : el));
-                    return;
-                }
-                if (!isDrawing) return;
-                const rect = canvasRef.current.getBoundingClientRect();
-                const pos = { x: (e.clientX - rect.left) * (1600 / rect.width), y: (e.clientY - rect.top) * (900 / rect.height) };
-                const ctx = canvasRef.current.getContext('2d');
-                ctx.save();
-                if (mode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = brushSize*2; ctx.strokeStyle = 'rgba(0,0,0,1)'; }
-                else { ctx.strokeStyle = brushColor; ctx.lineWidth = brushSize; ctx.globalAlpha = 0.5; ctx.globalCompositeOperation = 'screen'; }
-                ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(lastPt.current.x, lastPt.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke(); ctx.restore();
-                lastPt.current = pos;
-            };
-
-            const handlePointerUp = (e) => { 
-                if (e.target.hasPointerCapture && e.target.hasPointerCapture(e.pointerId)) {
-                    e.target.releasePointerCapture(e.pointerId);
-                }
-                setIsDrawing(false); setDraggingEl(null); 
-            };
-
-            const updateSelected = (updates) => { setElements(elements.map(el => el.id === selectedId ? {...el, ...updates} : el)); };
+            const toolBtn = (on) => ({
+              width: 38, height: 38, borderRadius: 8, display: 'flex',
+              alignItems: 'center', justifyContent: 'center',
+              background: on ? 'var(--accent)' : 'var(--panel)',
+              color: on ? 'var(--bg)' : 'var(--muted)',
+              border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)')
+            });
 
             return (
-                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col">
-                    <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 p-4 glass-panel border-b-0 shrink-0">
-                        <div className="flex flex-wrap items-center gap-y-2 gap-x-4">
-                            <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Интерактивная Схема Света</span>
-                            <div className="flex flex-wrap gap-1 bg-black/50 p-1 rounded-lg">
-                                <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pointer/></button>
-                                <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pen/></button>
-                                <button onClick={() => setMode('erase')} className={`px-2 py-1 text-xs rounded ${mode==='erase'?'bg-zinc-700 text-white':'text-zinc-400'}`}><Icons.Eraser/></button>
-                                <div className="w-[1px] h-4 bg-white/20 my-auto mx-1"></div>
-                                <button onClick={() => setMode('rect')} title="Прямоугольник" className={`px-2 py-1 text-xs rounded ${mode==='rect'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Square/></button>
-                                <button onClick={() => setMode('circle')} title="Круг" className={`px-2 py-1 text-xs rounded ${mode==='circle'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Circle/></button>
-                                <button onClick={() => setMode('triangle')} title="Треугольник" className={`px-2 py-1 text-xs rounded ${mode==='triangle'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Triangle/></button>
-                                <button onClick={() => setMode('diamond')} title="Ромб" className={`px-2 py-1 text-xs rounded ${mode==='diamond'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Diamond/></button>
-                                <button onClick={() => setMode('star')} title="Звезда" className={`px-2 py-1 text-xs rounded ${mode==='star'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Star/></button>
-                                <button onClick={() => setMode('arrow')} title="Стрелка (направление луча)" className={`px-2 py-1 text-xs rounded ${mode==='arrow'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.BeamArrow/></button>
-                                <button onClick={() => setMode('text')} title="Текст" className={`px-2 py-1 text-xs rounded ${mode==='text'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.TextIcon/></button>
-                            </div>
-                            <div className="flex gap-1">
-                                {['#facc15', '#60a5fa', '#f87171', '#34d399', '#ffffff'].map(c => (
-                                    <button key={c} onClick={() => {setBrushColor(c); if(selectedId) updateSelected({color: c});}} style={{background: c}} className={`w-5 h-5 rounded-full border-2 ${brushColor === c ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />
-                                ))}
-                            </div>
+                <div id="ls-editor" className="fixed inset-0 z-[300] flex flex-col" style={{ background: 'var(--bg)' }}>
+                    {/* ПАНЕЛЬ ИНСТРУМЕНТОВ */}
+                    <div className="flex flex-wrap items-center gap-2 px-4 py-2 shrink-0"
+                         style={{ background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
+                        <span className="cf-eyebrow shrink-0 mr-1" style={{ color: 'var(--accent)' }}>Схема света</span>
+                        <span className="truncate max-w-[220px]" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{scheme.title}</span>
+
+                        <div className="cf-edit-only flex items-center gap-1 ml-2">
+                            <button onClick={() => setMode('select')} title="Выбор и перенос" style={toolBtn(mode === 'select')}><Icons.Pointer/></button>
+                            <button onClick={() => setMode('draw')} title="Кисть" style={toolBtn(mode === 'draw')}><Icons.Pen/></button>
+                            <button onClick={() => setMode('erase')} title="Ластик" style={toolBtn(mode === 'erase')}><Icons.Eraser/></button>
+                            <button onClick={() => setMode('pan')} title="Двигать лист" style={toolBtn(mode === 'pan')}><Icons.Hand/></button>
                         </div>
-                        <div className="flex gap-2">
-                            <button onClick={() => {
-                                const pc = document.createElement('canvas'); pc.width = 1600; pc.height = 900;
-                                const pctx = pc.getContext('2d');
-                                pctx.fillStyle = '#262624'; pctx.fillRect(0, 0, 1600, 900);
-                                pctx.globalAlpha = 0.85; pctx.drawImage(canvasRef.current, 0, 0); pctx.globalAlpha = 1;
-                                elements.forEach(el => {
-                                    pctx.fillStyle = el.color || '#facc15';
-                                    if (el.type === 'rect') { pctx.fillRect(el.x, el.y, el.w, el.h); }
-                                    else if (el.type === 'circle') { pctx.beginPath(); pctx.ellipse(el.x + el.w/2, el.y + el.h/2, el.w/2, el.h/2, 0, 0, Math.PI*2); pctx.fill(); }
-                                    else if (el.type === 'triangle') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x, el.y + el.h); pctx.lineTo(el.x + el.w, el.y + el.h); pctx.closePath(); pctx.fill(); }
-                                    else if (el.type === 'diamond') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x + el.w, el.y + el.h/2); pctx.lineTo(el.x + el.w/2, el.y + el.h); pctx.lineTo(el.x, el.y + el.h/2); pctx.closePath(); pctx.fill(); }
-                                    else if (el.type === 'star') {
-                                        const cx = el.x + el.w/2, cy = el.y + el.h/2, oR = Math.min(el.w, el.h)/2, iR = oR * 0.45;
-                                        pctx.beginPath();
-                                        for (let i = 0; i < 10; i++) { const r = i % 2 === 0 ? oR : iR; const ang = (Math.PI/5)*i - Math.PI/2; const px = cx + r*Math.cos(ang), py = cy + r*Math.sin(ang); if (i===0) pctx.moveTo(px,py); else pctx.lineTo(px,py); }
-                                        pctx.closePath(); pctx.fill();
-                                    }
-                                    else if (el.type === 'arrow') {
-                                        const x1 = el.x, y1 = el.y + el.h, x2 = el.x + el.w, y2 = el.y;
-                                        pctx.strokeStyle = el.color || '#facc15'; pctx.lineWidth = Math.max(3, Math.min(el.w, el.h) * 0.06); pctx.lineCap = 'round';
-                                        pctx.beginPath(); pctx.moveTo(x1, y1); pctx.lineTo(x2, y2); pctx.stroke();
-                                        const ang = Math.atan2(y2-y1, x2-x1); const headLen = Math.min(el.w, el.h) * 0.25;
-                                        pctx.beginPath(); pctx.moveTo(x2, y2);
-                                        pctx.lineTo(x2 - headLen*Math.cos(ang - Math.PI/6), y2 - headLen*Math.sin(ang - Math.PI/6));
-                                        pctx.lineTo(x2 - headLen*Math.cos(ang + Math.PI/6), y2 - headLen*Math.sin(ang + Math.PI/6));
-                                        pctx.closePath(); pctx.fill();
-                                    }
-                                    else if (el.type === 'text') { pctx.font = 'bold 30px Archivo, sans-serif'; pctx.fillText(el.text || '', el.x + 8, el.y + 36); }
-                                    if (el.label) { pctx.font = '22px Archivo, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
-                                });
-                                onSave(scheme.id, elements, canvasRef.current.toDataURL('image/png'), pc.toDataURL('image/jpeg', 0.85));
-                            }} className="px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить схему</button>
-                            <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Закрыть</button>
+
+                        <div className="w-px h-6 shrink-0" style={{ background: 'var(--border)' }} />
+
+                        {/* Приборы из каталога: подпись подставляется сама.
+                            Раньше маркировку приходилось набирать руками
+                            на каждый прибор, хотя каталог давно есть. */}
+                        <div className="cf-edit-only flex items-center gap-1">
+                            <select value="" onChange={(e) => {
+                                      const key = e.target.value; if (!key) return;
+                                      const c = liveCanvasRef.current;
+                                      const cx = ((c ? c.clientWidth : 800) / 2 - offset.x) / zoom;
+                                      const cy = ((c ? c.clientHeight : 500) / 2 - offset.y) / zoom;
+                                      pushUndo();
+                                      const el = { id: `el-${Date.now()}`, type: 'circle', gear: key,
+                                                   x: cx - 30, y: cy - 30, w: 60, h: 60, rot: 0,
+                                                   color: '#facc15', text: '',
+                                                   label: (gearTypes[key] || {}).label || key };
+                                      setElements(els => els.concat([el]));
+                                      setSelectedId(el.id); setMode('select'); saveSoon();
+                                      e.target.value = '';
+                                    }}
+                                    className="glass-input rounded-lg px-2 text-xs"
+                                    style={{ height: 38, minWidth: 130 }}>
+                                <option value="">+ Прибор</option>
+                                {Object.entries(gearTypes || {}).map(([k, v]) => (
+                                  <option key={k} value={k}>{v.label}</option>
+                                ))}
+                            </select>
+                            <select value="" onChange={(e) => { if (e.target.value) setMode(e.target.value); e.target.value = ''; }}
+                                    className="glass-input rounded-lg px-2 text-xs"
+                                    style={{ height: 38, minWidth: 120 }}>
+                                <option value="">+ Фигура</option>
+                                {LS_SHAPES.map(s => (<option key={s.k} value={s.k}>{s.name}</option>))}
+                            </select>
+                        </div>
+
+                        <div className="w-px h-6 shrink-0" style={{ background: 'var(--border)' }} />
+
+                        <div className="cf-edit-only flex items-center gap-1">
+                            {LS_COLORS.map(c => (
+                                <button key={c} onClick={() => { setBrushColor(c); if (selectedId) patch({ color: c }); }}
+                                        title="Цвет"
+                                        style={{ width: 22, height: 22, borderRadius: 999, background: c,
+                                                 outline: brushColor === c ? '2px solid var(--text)' : 'none',
+                                                 outlineOffset: 2, border: 'none' }} />
+                            ))}
+                        </div>
+
+                        {/* Размер инструмента виден и задаётся. Раньше размер
+                            ластика был спрятан в коде, и человек стирал вслепую. */}
+                        {(mode === 'draw' || mode === 'erase') && (
+                          <div className="cf-edit-only flex items-center gap-2 ml-1">
+                            <span className="cf-meta">{mode === 'erase' ? 'ластик' : 'кисть'}</span>
+                            <input type="range" min={mode === 'erase' ? 12 : 1} max={mode === 'erase' ? 160 : 40}
+                                   value={mode === 'erase' ? eraserSize : brushSize}
+                                   onChange={e => { const v = Number(e.target.value);
+                                                    if (mode === 'erase') { setEraserSize(v); try { localStorage.setItem('cf_eraser', v); } catch (err) {} }
+                                                    else setBrushSize(v); requestLive(); }}
+                                   className="accent-indigo-500" style={{ width: 90 }} />
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-1 ml-auto">
+                            <button onClick={undo} disabled={!canUndo} title="Отменить (Ctrl+Z)"
+                                    className="cf-edit-only" style={{ ...toolBtn(false), opacity: canUndo ? 1 : .4 }}>↶</button>
+                            <button onClick={redo} disabled={!canRedo} title="Вернуть (Ctrl+Shift+Z)"
+                                    className="cf-edit-only" style={{ ...toolBtn(false), opacity: canRedo ? 1 : .4 }}>↷</button>
+                            <span className="cf-meta mx-2 hidden md:inline">{Math.round(zoom * 100)}%</span>
+                            <button onClick={() => { flush(); onClose(); }}
+                                    className="px-4 rounded-lg text-xs font-bold"
+                                    style={{ height: 38, background: 'var(--accent)', color: 'var(--bg)' }}>Готово</button>
                         </div>
                     </div>
 
-                    <div className="flex-1 flex overflow-hidden">
-                        <div className="flex-1 relative p-4 flex justify-center items-center" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
-                            <div ref={containerRef} onPointerDown={handlePointerDown} className="relative w-full max-w-5xl aspect-video bg-zinc-950 rounded-lg overflow-hidden border border-white/10 cursor-crosshair">
-                                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
-                                {elements.map(el => (
-                                    <div key={el.id} className={`scheme-el absolute pointer-events-auto ${selectedId === el.id ? 'ring-2 ring-indigo-400' : ''}`} 
-                                        style={{ left: `${(el.x/1600)*100}%`, top: `${(el.y/900)*100}%`, width: `${(el.w/1600)*100}%`, height: `${(el.h/900)*100}%` }}
-                                        onPointerDown={(e) => { e.stopPropagation(); setSelectedId(el.id); setMode('select'); setDraggingEl({id: el.id, ox: (e.clientX - e.currentTarget.getBoundingClientRect().left)*(1600/containerRef.current.getBoundingClientRect().width), oy: (e.clientY - e.currentTarget.getBoundingClientRect().top)*(900/containerRef.current.getBoundingClientRect().height)}); }}>
-                                        {el.type === 'rect' && <div className="w-full h-full rounded-md border-2 border-white/20" style={{backgroundColor: el.color}}/>}
-                                        {el.type === 'circle' && <div className="w-full h-full rounded-full border-2 border-white/20" style={{backgroundColor: el.color}}/>}
-                                        {el.type === 'triangle' && <div className="w-full h-full border-2 border-transparent" style={{backgroundColor: el.color, clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)'}}/>}
-                                        {el.type === 'diamond' && <div className="w-full h-full border-2 border-transparent" style={{backgroundColor: el.color, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'}}/>}
-                                        {el.type === 'star' && <div className="w-full h-full border-2 border-transparent" style={{backgroundColor: el.color, clipPath: 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)'}}/>}
-                                        {el.type === 'arrow' && <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="5" y1="95" x2="90" y2="10" stroke={el.color} strokeWidth="6" strokeLinecap="round"/><polygon points="90,10 72,18 82,28" fill={el.color}/></svg>}
-                                        {el.type === 'text' && <textarea value={el.text} onChange={e => {setElements(elements.map(x=>x.id===el.id?{...x, text:e.target.value}:x))}} className="w-full h-full bg-black/60 border border-white/20 text-white font-bold p-1 resize-none focus:outline-none rounded-md text-xs" style={{color: el.color}} />}
-                                        {el.label && (
-                                            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-black/90 text-white font-medium text-[11px] px-2 py-1 rounded border border-white/20 whitespace-nowrap z-50 pointer-events-none">
-                                                {el.label}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
+                    {/* ЛИСТ */}
+                    <div className="flex-1 flex min-h-0">
+                        <div ref={wrapRef} className="relative flex-1 min-w-0 overflow-hidden"
+                             style={{ background: '#0e0d0b',
+                                      cursor: isPanning || mode === 'pan' ? 'grab'
+                                            : mode === 'draw' ? 'crosshair'
+                                            : mode === 'erase' ? 'cell' : 'default',
+                                      touchAction: 'none' }}
+                             onWheel={(e) => {
+                               const r = e.currentTarget.getBoundingClientRect();
+                               const mx = e.clientX - r.left, my = e.clientY - r.top;
+                               const nz = Math.min(4, Math.max(0.15, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+                               const k = nz / zoom;
+                               setOffset({ x: mx - (mx - offset.x) * k, y: my - (my - offset.y) * k });
+                               setZoom(nz);
+                             }}
+                             onPointerDown={onDown} onPointerMove={onMove}
+                             onPointerUp={onUp} onPointerCancel={onUp}
+                             onPointerLeave={() => { hoverPt.current = null; requestLive(); }}>
+
+                            <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+                            <canvas ref={liveCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+
+                            {/* Приборы и фигуры — настоящие элементы разметки
+                                поверх холста: их надо хватать пальцем, а у
+                                элемента разметки это работает само. */}
+                            <div className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+                              {elements.map(el => (
+                                <SchemeEl key={el.id} el={el} zoom={zoom} offset={offset}
+                                          gearTypes={gearTypes} selected={selectedId === el.id}
+                                          readOnly={readOnly}
+                                          onGrab={(e) => {
+                                            if (readOnly || mode === 'draw' || mode === 'erase') return;
+                                            e.stopPropagation();
+                                            setSelectedId(el.id); setMode('select');
+                                            const p = pt(e.clientX, e.clientY);
+                                            // Захватываем указатель: без этого,
+                                            // уведя палец за край прибора, перенос
+                                            // обрывался бы на полпути.
+                                            if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+                                            setDrag({ id: el.id, ox: p.x - el.x, oy: p.y - el.y,
+                                                      cx: e.clientX, cy: e.clientY, moved: false });
+                                          }}
+                                          onText={(v) => { setElements(els => els.map(x => x.id === el.id ? { ...x, text: v } : x)); saveSoon(); }} />
+                              ))}
+                            </div>
+
+                            <div className="absolute bottom-3 left-3 cf-meta pointer-events-none">
+                              колесо — масштаб · пробел или средняя кнопка — двигать лист
+                              {penSeen ? ' · палец двигает, перо рисует' : ''}
                             </div>
                         </div>
-                        {selectedId && elements.find(e=>e.id===selectedId) && (
-                            <div className="w-64 glass-panel border-l border-white/10 p-4 space-y-4 shrink-0 flex flex-col">
-                                <span className="text-xs font-bold text-zinc-400 uppercase">Свойства прибора / формы</span>
-                                <div className="space-y-2">
-                                    <label className="text-[11px] text-zinc-400">Маркировка (Модель/Прибор)</label>
-                                    <input type="text" value={elements.find(e=>e.id===selectedId).label || ''} onChange={e=>updateSelected({label: e.target.value})} className="w-full glass-input rounded px-2 py-1.5 text-xs" placeholder="Напр: ARRI SkyPanel S60" />
+
+                        {/* СВОЙСТВА ВЫДЕЛЕННОГО */}
+                        {sel && !readOnly && (
+                            <div className="w-64 shrink-0 flex flex-col p-4 gap-4 overflow-y-auto"
+                                 style={{ background: 'var(--panel-2)', borderLeft: '1px solid var(--border)' }}>
+                                <span className="cf-eyebrow">Свойства</span>
+                                <div className="space-y-1.5">
+                                    <label className="cf-meta">Маркировка</label>
+                                    <input type="text" value={sel.label || ''} onChange={e => patch({ label: e.target.value })}
+                                           className="w-full glass-input rounded-lg px-2 py-2 text-xs" placeholder="Напр: ARRI SkyPanel S60" />
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[11px] text-zinc-400">Ширина</label>
-                                    <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).w} onChange={e=>updateSelected({w: Number(e.target.value)})} className="w-full accent-indigo-500" />
+                                <div className="space-y-1.5">
+                                    <label className="cf-meta">Ширина · {Math.round(sel.w)}</label>
+                                    <input type="range" min="16" max="600" value={sel.w}
+                                           onChange={e => patch({ w: Number(e.target.value) })} className="w-full accent-indigo-500" />
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[11px] text-zinc-400">Высота</label>
-                                    <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).h} onChange={e=>updateSelected({h: Number(e.target.value)})} className="w-full accent-indigo-500" />
+                                <div className="space-y-1.5">
+                                    <label className="cf-meta">Высота · {Math.round(sel.h)}</label>
+                                    <input type="range" min="16" max="600" value={sel.h}
+                                           onChange={e => patch({ h: Number(e.target.value) })} className="w-full accent-indigo-500" />
                                 </div>
-                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
+                                {/* Поворот — то, чего не хватало больше всего:
+                                    у стрелки это НАПРАВЛЕНИЕ ЛУЧА, а прибор
+                                    на площадке редко стоит по осям. */}
+                                <div className="space-y-1.5">
+                                    <label className="cf-meta">Поворот · {Math.round(sel.rot || 0)}°</label>
+                                    <input type="range" min="0" max="359" value={sel.rot || 0}
+                                           onChange={e => patch({ rot: Number(e.target.value) })} className="w-full accent-indigo-500" />
+                                </div>
+                                <button onClick={() => { pushUndo(); setElements(els => els.filter(x => x.id !== selectedId)); setSelectedId(null); saveSoon(); }}
+                                        className="mt-auto py-2.5 rounded-lg text-xs font-bold"
+                                        style={{ background: 'rgba(239,68,68,.14)', color: '#f87171', border: '1px solid rgba(239,68,68,.3)' }}>
+                                    Удалить объект
+                                </button>
                             </div>
                         )}
                     </div>
                 </div>
             );
         };
+
 
         // Поле тега с подсказками из УЖЕ ИСПОЛЬЗОВАННЫХ в проекте.
         // Отдельным компонентом намеренно: набранные буквы живут в его
@@ -1369,205 +2258,6 @@
           // (button 5 при касании, бит 32 в buttons — в том числе на весу).
           const isPenEraser = (e) => e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) === 32);
 
-          // --- ДВИЖОК КИСТИ ---
-          // Штрихи хранятся ВЕКТОРОМ — списком точек, а не картинкой.
-          // Раньше линия писалась прямо в холст 4000×4000, растянутый на всю
-          // доску: на планшете, где в одной точке CSS сидят две-три настоящие,
-          // и тем более при увеличении браузеру нечего было показать, кроме
-          // растянутого пикселя. Отсюда и мыло, и рваный край — сколько ни
-          // улучшай форму штриха, растр остаётся растром. Теперь холст
-          // размером с ОКНО, рисуем в него по-настоящему мелко
-          // (devicePixelRatio) и заново на каждый шаг зума: линия резкая при
-          // любом увеличении, как в Excalidraw. Побочно вектор даёт даром
-          // три вещи: отсечение невидимого, дешёвую отмену и ластик, который
-          // режет линии, а не выедает дырки в картинке.
-          // Точек в одном штрихе. Это не предел длины линии: набрав их,
-          // штрих ЗАКРЫВАЕТСЯ и тут же продолжается новым от той же точки —
-          // для человека линия остаётся одной.
-          const INK_MAX = 1200;
-          const INK_LEAD = 0.575;             // «поводок» за указателем, см. ниже
-          const brushAlpha = (type) => type === 'marker' ? 0.32 : (type === 'soft' ? 0.5 : 1.0);
-          const brushWidthK = (type) => type === 'soft' ? 1.7 : 1;
-          // Насколько нажим меняет толщину. У маркера почти не меняет —
-          // у настоящего маркера ширина задана пером, а не рукой.
-          const brushThin = (type) => type === 'marker' ? 0.12 : (type === 'soft' ? 0.34 : 0.62);
-
-          // Нажим в точке. У пера настоящий, у мыши и пальца считаем по
-          // скорости: ведут быстро — след тоньше. Сглаживание обязательно,
-          // иначе толщина скачет от события к событию.
-          const inkPress = (prev, dist, size, dev) => dev != null
-            ? prev + (dev - prev) * 0.5
-            : prev + (Math.min(1, 1 - Math.min(1, dist / Math.max(1, size))) - prev) * 0.275;
-
-          // КОНТУР штриха. Главная мысль (она же у perfect-freehand, на
-          // котором рисует Excalidraw): рисуем не «линию с толщиной», а
-          // замкнутую ФИГУРУ, обведённую по обе стороны от пути, где у каждой
-          // точки свой радиус. Только так получаются и живой нажим, и гладкие
-          // изломы, и сход на нет у концов: линия с lineWidth так не умеет
-          // в принципе — у неё одна толщина на весь отрезок.
-          // jn — стыки: бит 1 «не сужать начало», бит 2 «не сужать конец».
-          // Нужны там, где длинная линия разрезана на куски: без этого на
-          // каждом стыке линия схлопывалась бы в ноль и снова расширялась.
-          const inkOutline = (pts, size, thin, jn) => {
-            const n = pts.length;
-            if (!n) return [];
-            const R = size / 2;
-            const circle = (cx, cy, r) => {
-              const out = [];
-              for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2; out.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
-              return out;
-            };
-            if (n === 1) return circle(pts[0][0], pts[0][1], Math.max(0.6, R * 0.7));
-
-            // Шаги и пройденный путь — нужны для сужения у концов.
-            const step = [0], run = [0];
-            for (let i = 1; i < n; i++) {
-              step[i] = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-              run[i] = run[i - 1] + step[i];
-            }
-            const total = run[n - 1] || 0;
-            // Начало набирает ширину, конец её теряет. Именно сход на нет
-            // отличает живую линию от сардельки. Хвост длиннее носа —
-            // так ведёт себя перо, когда его отрывают от бумаги.
-            const tS = ((jn || 0) & 1) ? 0 : Math.min(size * 1.2, total * 0.35);
-            const tE = ((jn || 0) & 2) ? 0 : Math.min(size * 2.2, total * 0.45);
-            const rad = [];
-            for (let i = 0; i < n; i++) {
-              const r = R * 2 * (0.5 - thin * (0.5 - pts[i][2]));
-              const a = tS > 0 ? Math.min(1, run[i] / tS) : 1;
-              const b = tE > 0 ? Math.min(1, (total - run[i]) / tE) : 1;
-              const k = Math.min(a * (2 - a), 1 - Math.pow(1 - b, 3));
-              rad[i] = Math.max(0.35, r * Math.max(0.06, k));
-            }
-
-            const L = [], Rt = [];
-            const add = (p, dx, dy, r) => { L.push([p[0] - dy * r, p[1] + dx * r]); Rt.push([p[0] + dy * r, p[1] - dx * r]); };
-            const dir = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy); return l < 1e-6 ? null : [dx / l, dy / l]; };
-            let last = null, first = null;
-            for (let i = 0; i < n; i++) {
-              const din = i > 0 ? (dir(pts[i - 1], pts[i]) || last) : null;
-              const dout = i < n - 1 ? dir(pts[i], pts[i + 1]) : null;
-              const a = din || dout, b = dout || din;
-              if (!a || !b) continue;
-              if (!first) first = a;
-              last = b;
-              // Вынос кладём трижды: по входу, по биссектрисе и по выходу.
-              // На изломе это скругляет угол снаружи, а самопересечение
-              // внутри съедает заливка по правилу nonzero — поэтому шов
-              // не расходится даже на резком развороте.
-              add(pts[i], a[0], a[1], rad[i]);
-              if (a !== b) {
-                const bx = a[0] + b[0], by = a[1] + b[1], bl = Math.hypot(bx, by);
-                if (bl > 1e-6) add(pts[i], bx / bl, by / bl, rad[i]);
-                add(pts[i], b[0], b[1], rad[i]);
-              }
-            }
-            if (!L.length || !first || !last) return circle(pts[0][0], pts[0][1], Math.max(0.6, rad[0]));
-
-            // Круглые концы: полукруг от левого выноса к правому через
-            // направление движения (в начале — через обратное).
-            const cap = (c, r, d, back) => {
-              const base = Math.atan2(d[0], -d[1]) - (back ? Math.PI : 0);
-              const out = [];
-              for (let k = 1; k < 9; k++) out.push([c[0] + Math.cos(base - Math.PI * k / 9) * r, c[1] + Math.sin(base - Math.PI * k / 9) * r]);
-              return out;
-            };
-            return L
-              .concat(cap(pts[n - 1], rad[n - 1], last, false))
-              .concat(Rt.slice().reverse())
-              .concat(cap(pts[0], rad[0], first, true));
-          };
-
-          // Геометрию описываем СПИСКОМ КОМАНД, а не сразу Path2D: тот же
-          // список уходит и в холст, и в SVG при выгрузке. Держать две копии
-          // всей геометрии нельзя — они разъедутся при первой же правке.
-          const cmdsPath = (cmds) => {
-            const p = new Path2D();
-            for (const c of cmds) {
-              if (c[0] === 'M') p.moveTo(c[1], c[2]);
-              else if (c[0] === 'L') p.lineTo(c[1], c[2]);
-              else if (c[0] === 'Q') p.quadraticCurveTo(c[1], c[2], c[3], c[4]);
-              else if (c[0] === 'A') p.arcTo(c[1], c[2], c[3], c[4], c[5]);
-              else if (c[0] === 'E') p.ellipse(c[1], c[2], c[3], c[4], 0, 0, Math.PI * 2);
-              else if (c[0] === 'Z') p.closePath();
-            }
-            return p;
-          };
-          const rn = (v) => Math.round(v * 10) / 10;
-          const cmdsD = (cmds) => cmds.map(c => {
-            if (c[0] === 'M') return `M${rn(c[1])} ${rn(c[2])}`;
-            if (c[0] === 'L') return `L${rn(c[1])} ${rn(c[2])}`;
-            if (c[0] === 'Q') return `Q${rn(c[1])} ${rn(c[2])} ${rn(c[3])} ${rn(c[4])}`;
-            // Скругление угла в SVG выражаем дугой того же радиуса
-            if (c[0] === 'A') return `L${rn(c[1])} ${rn(c[2])}`;
-            if (c[0] === 'E') return `M${rn(c[1] - c[3])} ${rn(c[2])}a${rn(c[3])} ${rn(c[4])} 0 1 0 ${rn(c[3] * 2)} 0a${rn(c[3])} ${rn(c[4])} 0 1 0 ${rn(-c[3] * 2)} 0`;
-            return 'Z';
-          }).join('');
-
-          // Полигон обводим квадратичными кривыми через середины сторон:
-          // углы полигона исчезают, остаётся гладкий контур.
-          const inkCmds = (pl) => {
-            const m = pl.length;
-            if (m < 3) return [];
-            const out = [];
-            let a = pl[m - 1], b = pl[0];
-            out.push(['M', (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
-            for (let i = 0; i < m; i++) {
-              a = pl[i]; b = pl[(i + 1) % m];
-              out.push(['Q', a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
-            }
-            out.push(['Z']);
-            return out;
-          };
-
-          // Точки лежат ПЛОСКИМ списком чисел: Firestore не умеет вложенные
-          // массивы. Разворачиваем один раз и держим при штрихе — вместе
-          // с готовой фигурой и габаритом. Фигура не зависит от масштаба,
-          // поэтому переживает и панораму, и зум.
-          const strokePts = (s) => {
-            if (!s._pts) {
-              const a = [];
-              for (let i = 0; i + 2 < s.p.length; i += 3) a.push([s.p[i], s.p[i + 1], s.p[i + 2]]);
-              s._pts = a;
-            }
-            return s._pts;
-          };
-          const strokeCmds = (s) => {
-            if (!s._cmds) s._cmds = inkCmds(inkOutline(strokePts(s), s.w * brushWidthK(s.t), brushThin(s.t), s.jn));
-            return s._cmds;
-          };
-          const strokePath = (s) => {
-            if (!s._path) s._path = cmdsPath(strokeCmds(s));
-            return s._path;
-          };
-          const strokeBox = (s) => {
-            if (s._box) return s._box;
-            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-            for (const p of strokePts(s)) {
-              if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
-              if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
-            }
-            const m = s.w * brushWidthK(s.t) + 4;
-            s._box = { x0: x0 - m, y0: y0 - m, x1: x1 + m, y1: y1 + m };
-            return s._box;
-          };
-          const paintStroke = (ctx, s) => {
-            ctx.save();
-            if (s.t === 'marker') ctx.globalCompositeOperation = 'screen';
-            ctx.globalAlpha = brushAlpha(s.t);
-            ctx.fillStyle = s.c;
-            ctx.fill(strokePath(s));
-            ctx.restore();
-          };
-          // Координаты округляем: на доске 4000×4000 десятой доли точки
-          // хватает с запасом, а документ в Firestore ограничен мегабайтом.
-          const packStroke = (t, color, size, pts, jn) => {
-            const p = [];
-            for (const q of pts) p.push(Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10, Math.round(q[2] * 100) / 100);
-            const s = { id: `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, t, c: color, w: size, p };
-            if (jn) s.jn = jn;
-            return s;
-          };
 
           // --- ФИГУРЫ ---
           // Пять примитивов, всё остальное — их настройки. Это осознанный
@@ -2960,6 +3650,56 @@
             );
           };
 
+          // --- Рисунок световой схемы ---
+          // Штрихи схемы лежат ОТДЕЛЬНЫМ документом, ровно как у доски,
+          // и по той же причине: у каждого документа Firestore свой предел
+          // в 1 МБ. Раньше рисунок и собранное превью писались обе картинки
+          // в САМ документ схемы — плотно нарисованная схема выбивала лимит,
+          // и человек получал только всплывашку «не удалось сохранить».
+          const schemeInkDocId = (id) => `lsink-${id}`;
+          const schemeInk = useRef([]);
+          const [schemeInkReady, setSchemeInkReady] = useState(false);
+          const saveSchemeInk = (id, list) => {
+            if (READ_ONLY) return;
+            const json = packInk(list);
+            try {
+              if (list.length) localStorage.setItem('cf_lsink_' + id, json);
+              else localStorage.removeItem('cf_lsink_' + id);
+            } catch (err) {}
+            if (!db || !user) return;
+            trackWrite(
+              dataRef().collection('canvas').doc(schemeInkDocId(id))
+                .set({ strokes: json, lastDrawBy: user.uid })
+                .catch(err => {
+                  console.warn('saveSchemeInk', err);
+                  showToast('⚠️ Схема не сохранилась в облако — слишком много линий');
+                })
+            );
+          };
+          // Рисунок читаем ДО того, как показать редактор: иначе он
+          // откроется пустым, человек проведёт линию — и приехавшие следом
+          // старые штрихи затрут свежий.
+          useEffect(() => {
+            if (!drawingSchemeId) { setSchemeInkReady(false); return; }
+            let alive = true;
+            schemeInk.current = [];
+            let local = null;
+            if (CF_SNAPSHOT) local = (CF_SNAPSHOT.data || {})['cf_lsink_' + drawingSchemeId] || null;
+            else { try { local = localStorage.getItem('cf_lsink_' + drawingSchemeId); } catch (err) {} }
+            if (local) { try { schemeInk.current = JSON.parse(local) || []; } catch (err) {} }
+            if (!db || !user) { setSchemeInkReady(true); return; }
+            dataRef().collection('canvas').doc(schemeInkDocId(drawingSchemeId)).get()
+              .then(doc => {
+                if (!alive) return;
+                if (doc.exists) {
+                  try { schemeInk.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) {}
+                }
+                setSchemeInkReady(true);
+              })
+              .catch(err => { console.warn('loadSchemeInk', err); if (alive) setSchemeInkReady(true); });
+            return () => { alive = false; };
+          }, [drawingSchemeId, user]);
+
           // Запись откладываем и, уходя с доски, ДОПИСЫВАЕМ — иначе последний
           // штрих уехал бы в облако уже под именем следующей доски.
           // Дописываем, а не выбрасываем таймер, ради последнего штриха
@@ -3922,6 +4662,12 @@
                 data.cf_docs = docs; data.cf_crew = crew;
                 data.cf_geartypes = gearTypes; data.cf_lightgeartypes = lightGearTypes;
                 data.cf_lightschemes = lightSchemes;
+                // Рисунок схемы лежит отдельно от самой схемы — без этого
+                // в снимке приехали бы схемы с приборами, но без линий.
+                lightSchemes.forEach(s => {
+                  const kk = s.id === drawingSchemeId ? packInk(schemeInk.current) : localStorage.getItem('cf_lsink_' + s.id);
+                  if (kk && kk !== '[]') data['cf_lsink_' + s.id] = kk;
+                });
               }
               if (scope === 'gallery') { data.cf_scenes = []; data.cf_stickies = []; }
 
@@ -3970,6 +4716,9 @@
             // Рисунок обнуляем записью, а не удалением: пустой документ гасит
             // холст и у тех, у кого доска сейчас открыта на другом устройстве.
             sortedBoards.forEach(b => { saveCanvas(b.id, ''); saveStrokes(b.id, []); saveShapes(b.id, []); deleteNetDoc('boards', b.id); });
+            // Рисунки световых схем — по той же причине: сама схема удаляется,
+            // а её линии лежат отдельным документом и пережили бы сброс.
+            lightSchemes.forEach(s => { saveSchemeInk(s.id, []); });
 
             // Заготовка: одна сцена, один гайд, одна доска, каталоги по умолчанию.
             // Идентификаторы новые — чтобы свежие документы не встретились
@@ -6216,7 +6965,12 @@
                               {lightSchemes.map(sch => (
                                 <div key={sch.id} className="group relative mb-2">
                                   <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
-                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
+                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id);
+                                    // Рисунок лежит ОТДЕЛЬНЫМ документом — без этой
+                                    // строки он остался бы в облаке навсегда и всплыл
+                                    // бы в новой схеме с тем же id.
+                                    deleteNetDoc('canvas', schemeInkDocId(sch.id));
+                                    try { localStorage.removeItem('cf_lsink_' + sch.id); } catch (err) {} }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
                                 </div>
                               ))}
                               <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
@@ -6264,7 +7018,11 @@
                             <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative">
                                 <div className="flex justify-between items-center gap-4">
                                     <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
-                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
+                                    {/* cf-edit-only обязателен: раньше редактор
+                                        открывался и по ссылке-просмотру. Человек
+                                        рисовал схему, а запись наружу заблокирована —
+                                        работа исчезала, и это выглядело как поломка. */}
+                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="cf-edit-only px-6 py-3 rounded-lg font-bold transition-colors shrink-0" style={{ background: 'var(--accent)', color: 'var(--bg)' }}>Открыть редактор схемы</button>
                                 </div>
                                 <div className="w-full aspect-video bg-black/70 rounded-lg border border-white/10 flex items-center justify-center overflow-hidden">
                                     {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
@@ -6547,7 +7305,15 @@
                           const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
                           if (ff && ff !== '[]') figs[b.id] = ff;
                         });
-                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs };
+                        // Рисунок световой схемы лежит отдельным ключом, как
+                        // и рисунок доски: в самом документе схемы его нет,
+                        // и без этой строки бэкап уносил бы схемы без линий.
+                        const schemeInks = {};
+                        lightSchemes.forEach(s => {
+                          const kk = s.id === drawingSchemeId ? packInk(schemeInk.current) : localStorage.getItem('cf_lsink_' + s.id);
+                          if (kk && kk !== '[]') schemeInks[s.id] = kk;
+                        });
+                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs, schemeInks };
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                         showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks), Object.keys(figs))).size}`);
                       }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
@@ -6576,6 +7342,10 @@
                               if (d.shapes) Object.entries(d.shapes).forEach(([bid, json]) => {
                                 let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
                                 saveShapes(bid, list);
+                              });
+                              if (d.schemeInks) Object.entries(d.schemeInks).forEach(([sid, json]) => {
+                                let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
+                                saveSchemeInk(sid, list);
                               });
                               if (canv || d.inks || d.shapes) {
                                 strokesRef.current = []; shapesRef.current = []; setSelShapes([]);
@@ -6664,12 +7434,18 @@
                   }} />
               )}
               
-              {drawingSchemeId && currentView === 'docs' && lightSchemes.find(s=>s.id === drawingSchemeId) && (
-                  <LightSchemeEditor scheme={lightSchemes.find(s=>s.id === drawingSchemeId)} onClose={() => setDrawingSchemeId(null)} onSave={(id, els, draw, preview) => {
-                      const up = lightSchemes.map(s=>s.id===id?{...s, elements: els, drawData: draw, preview: preview}:s);
-                      setLightSchemes(up); syncDoc('lightSchemes', id, up.find(s=>s.id===id));
-                      setDrawingSchemeId(null);
-                  }} />
+              {drawingSchemeId && currentView === 'docs' && lightSchemes.find(s=>s.id === drawingSchemeId) && schemeInkReady && (
+                  <LightSchemeEditor
+                      scheme={lightSchemes.find(s=>s.id === drawingSchemeId)}
+                      gearTypes={lightGearTypes || DEFAULT_LIGHT_GEAR}
+                      strokes0={schemeInk.current}
+                      readOnly={READ_ONLY}
+                      onSaveInk={saveSchemeInk}
+                      onSaveScheme={(id, patch) => {
+                        const up = lightSchemes.map(s => s.id === id ? { ...s, ...patch } : s);
+                        setLightSchemes(up); syncDoc('lightSchemes', id, up.find(s => s.id === id));
+                      }}
+                      onClose={() => setDrawingSchemeId(null)} />
               )}
 
               {lightboxData && (() => {
