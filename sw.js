@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v4';
+const VERSION = 'cineflow-v5';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -91,6 +91,13 @@ self.addEventListener('fetch', event => {
   // worker'ом. Не трогаем её вовсе: иначе навигация на игру подменит
   // в кэше './index.html' CineFlow на страницу игры.
   if (url.origin === self.location.origin && url.pathname.includes('/game/')) return;
+
+  // Папка /proba/ — версия «на посмотреть» перед выкладыванием.
+  // Не трогаем по той же причине, что и игру: обработчик навигации
+  // ниже кладёт ЛЮБУЮ открытую страницу в кэш под именем './index.html',
+  // и без этой строки проба подменила бы собой рабочее приложение
+  // в офлайне.
+  if (url.origin === self.location.origin && url.pathname.includes('/proba/')) return;
 
   // Сама страница: сначала сеть (чтобы приезжали обновления),
   // при отсутствии связи — версия из кэша.
