@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v4';
+const VERSION = 'cineflow-v5';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
