@@ -4454,10 +4454,21 @@
           // карточке на доске при увеличении вдвое, а весит это около
           // 40 КБ вместо полумегабайта.
           const CLOUD_THUMB = 640;
+          // Фотографии со скаута сами раскладываются: папка с именем
+          // объекта и общий тег. Иначе после трёх выездов в галерее
+          // лежит триста картинок без разбора, и найти в них нужный
+          // двор нельзя ничем. Тег строчный — так их хранит всё
+          // приложение (см. addTagTo).
+          const SCOUT_TAG = 'скаут';
 
           const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null) => {
               const cfg = loadCloudCfg();
               const useCloud = !!cfg.provider;
+              // Загруженное в объект сразу ложится в папку с его именем
+              // и метится тегом «скаут» — искать потом всё равно придётся,
+              // а разложить проще один раз при загрузке.
+              const loc = locationId ? locations.find(l => l.id === locationId) : null;
+              const locFolder = loc ? String(loc.name || '').trim() : '';
               showToast(`Оптимизация ${imageFiles.length} изображений...`);
               // В облачном режиме в базу кладём только превью, а оригинал
               // уезжает в облако файлом как есть — незачем портить фотографию
@@ -4478,7 +4489,9 @@
                     // остальные — как раньше, от левого верхнего угла экрана.
                     x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
                     y: place ? place.y + Math.floor(idx / 4) * 26 : (250 - canvasOffset.y) / zoom + (idx*20),
-                    label: file.name, tags: []
+                    label: file.name,
+                    folder: locFolder,
+                    tags: locationId ? [SCOUT_TAG] : []
               }));
               // Показываем сразу, не дожидаясь облака: на площадке связь
               // медленная, и стоять над кружком загрузки никто не будет.
@@ -4554,6 +4567,30 @@
             setActiveLocationId(loc.id);
           };
           const updateLocation = (id, field, val) => {
+            // Переименовали объект — папка его фотографий едет следом.
+            // Иначе они остались бы лежать под старым именем, и человек
+            // искал бы их там, где их уже нет по смыслу.
+            if (field === 'name') {
+              const oldName = String((locations.find(l => l.id === id) || {}).name || '').trim();
+              const newName = String(val || '').trim();
+              if (oldName !== newName) {
+                setReferences(prev => {
+                  const moved = [];
+                  const up = prev.map(r => {
+                    // Только фотографии ЭТОГО объекта и только те, что лежат
+                    // в папке со старым именем: если картинку унесли в другую
+                    // папку руками, тащить её обратно нельзя.
+                    if (r.locationId !== id) return r;
+                    if (String(r.folder || '').trim() !== oldName) return r;
+                    const nr = { ...r, folder: newName };
+                    moved.push(nr);
+                    return nr;
+                  });
+                  moved.forEach(r => syncDoc('references', r.id, r));
+                  return moved.length ? up : prev;
+                });
+              }
+            }
             setLocations(prev => {
               const up = prev.map(l => l.id === id ? { ...l, [field]: val } : l);
               const t = up.find(l => l.id === id);
