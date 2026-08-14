@@ -92,6 +92,13 @@ self.addEventListener('fetch', event => {
   // в кэше './index.html' CineFlow на страницу игры.
   if (url.origin === self.location.origin && url.pathname.includes('/game/')) return;
 
+  // Папка /proba/ — версия «на посмотреть» перед выкладыванием.
+  // Не трогаем по той же причине, что и игру: обработчик навигации
+  // ниже кладёт ЛЮБУЮ открытую страницу в кэш под именем './index.html',
+  // и без этой строки проба подменила бы собой рабочее приложение
+  // в офлайне.
+  if (url.origin === self.location.origin && url.pathname.includes('/proba/')) return;
+
   // Сама страница: сначала сеть (чтобы приезжали обновления),
   // при отсутствии связи — версия из кэша.
   // cache:'reload' обязателен: иначе ответ может прийти из HTTP-кэша
