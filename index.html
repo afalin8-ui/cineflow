@@ -683,6 +683,73 @@
           return ref.url || full;
         };
 
+        // =====================================================================
+        // СОЛНЦЕ НА ОБЪЕКТЕ
+        // =====================================================================
+        // Во сколько встаёт и садится солнце в этом месте в день съёмки.
+        // Считаем САМИ, а не спрашиваем у сервера: на площадке связи часто
+        // нет, а как раз там это и нужно. Алгоритм NOAA, сверен с двумя
+        // независимыми выкладками — расхождение до двух минут.
+        const SUN_RAD = Math.PI / 180;
+        const J2000 = 2451545.0;
+        // Возвращает {sun, golden, transit}; у sun/golden либо {rise, set},
+        // либо {polar:'day'|'night'} — за полярным кругом солнце может
+        // вообще не сесть или не встать, и это не ошибка.
+        const sunTimes = (lat, lon, dateStr) => {
+          const d = new Date(dateStr + 'T12:00:00Z');
+          if (isNaN(d)) return null;
+          const jd = d.getTime() / 86400000 + 2440587.5;
+          const n = Math.round(jd - J2000 - 0.0009 + lon / 360);
+          const Jstar = n + 0.0009 - lon / 360 + J2000;
+          const M = (357.5291 + 0.98560028 * (Jstar - J2000)) % 360;
+          const C = 1.9148 * Math.sin(M * SUN_RAD) + 0.02 * Math.sin(2 * M * SUN_RAD) + 0.0003 * Math.sin(3 * M * SUN_RAD);
+          const lambda = (M + C + 180 + 102.9372) % 360;
+          const Jtransit = Jstar + 0.0053 * Math.sin(M * SUN_RAD) - 0.0069 * Math.sin(2 * lambda * SUN_RAD);
+          const decl = Math.asin(Math.sin(lambda * SUN_RAD) * Math.sin(23.44 * SUN_RAD));
+          const toDate = (j) => new Date((j - 2440587.5) * 86400000);
+          const at = (alt) => {
+            const cosW = (Math.sin(alt * SUN_RAD) - Math.sin(lat * SUN_RAD) * Math.sin(decl))
+                       / (Math.cos(lat * SUN_RAD) * Math.cos(decl));
+            if (cosW > 1) return { polar: 'night' };
+            if (cosW < -1) return { polar: 'day' };
+            const w = Math.acos(cosW) / SUN_RAD;
+            return { rise: toDate(Jtransit - w / 360), set: toDate(Jtransit + w / 360) };
+          };
+          // -0,833° — видимый край солнца с поправкой на преломление воздуха,
+          // это и есть общепринятый «восход». 6° — верхняя граница золотого часа.
+          return { sun: at(-0.833), golden: at(6), transit: toDate(Jtransit) };
+        };
+        const hhmm = (d) => d ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+        // Координаты человек либо ищет по адресу, либо вставляет из карт.
+        // Поэтому храним строкой как есть, а разбираем при счёте: и
+        // «55.7558, 37.6173», и «55,7558 37,6173» — одно и то же.
+        const parseCoords = (s) => {
+          const m = String(s || '').match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);
+          if (!m) return null;
+          const lat = parseFloat(m[1].replace(',', '.'));
+          const lon = parseFloat(m[2].replace(',', '.'));
+          if (!isFinite(lat) || !isFinite(lon)) return null;
+          if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+          return { lat, lon };
+        };
+
+        // Адрес → координаты. Nominatim (карты OpenStreetMap): открытый,
+        // без ключа и без регистрации. Просит не частить — у нас запрос
+        // идёт только по нажатию кнопки, поэтому это не про нас.
+        const geocodeAddress = async (q) => {
+          const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ru&q='
+                    + encodeURIComponent(q);
+          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) throw new Error('Служба карт ответила ' + res.status);
+          const list = await res.json();
+          if (!list || !list.length) throw new Error('Такой адрес не нашёлся');
+          return {
+            coords: `${parseFloat(list[0].lat).toFixed(5)}, ${parseFloat(list[0].lon).toFixed(5)}`,
+            name: list[0].display_name || ''
+          };
+        };
+
         class ErrorBoundary extends React.Component {
           constructor(props) { super(props); this.state = { hasError: false }; }
           static getDerivedStateFromError(error) { return { hasError: true }; }
@@ -4466,8 +4533,8 @@
           // --- Объекты: завести, править, связать ---
           const addLocation = () => {
             const loc = {
-              id: `loc-${Date.now()}`, name: 'НОВЫЙ ОБЪЕКТ', address: '', contact: '',
-              description: '', sceneIds: [], order: Date.now()
+              id: `loc-${Date.now()}`, name: 'НОВЫЙ ОБЪЕКТ', address: '', coords: '',
+              description: '', sceneIds: [], lightSchemeId: '', order: Date.now()
             };
             setLocations(prev => [...prev, loc]);
             syncDoc('locations', loc.id, loc);
@@ -4504,6 +4571,26 @@
               return up;
             });
           };
+          // Поиск координат по адресу. Отдельная кнопка, а не «само при
+          // наборе»: на каждую набранную букву дёргать чужую службу нельзя,
+          // да и адрес человек дописывает не сразу.
+          const [geoBusy, setGeoBusy] = useState('');
+          const [geoError, setGeoError] = useState(null);
+          const findCoords = async (loc) => {
+            const q = String(loc.address || '').trim();
+            if (!q) return;
+            setGeoBusy(loc.id); setGeoError(null);
+            try {
+              const { coords, name } = await geocodeAddress(q);
+              updateLocation(loc.id, 'coords', coords);
+              showToast('Нашёл: ' + (name.split(',').slice(0, 3).join(',') || coords));
+            } catch (err) {
+              setGeoError({ id: loc.id, text: (err && err.message ? err.message : String(err))
+                + '. Можно вписать координаты руками — скопировать из карт.' });
+            }
+            setGeoBusy('');
+          };
+
           const deleteLocation = (id) => {
             const loc = locations.find(l => l.id === id);
             if (!loc) return;
@@ -5808,19 +5895,117 @@
                               </button>
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div className="space-y-1.5">
-                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Адрес</label>
-                                <input type="text" value={l.address || ''} onChange={(e) => updateLocation(l.id, 'address', e.target.value)}
-                                       placeholder="Улица, дом, как заезжать"
-                                       className="glass-input w-full px-3 py-2.5 rounded-lg text-sm text-zinc-200" />
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Адрес</label>
+                              <input type="text" value={l.address || ''} onChange={(e) => updateLocation(l.id, 'address', e.target.value)}
+                                     placeholder="Улица, дом, как заезжать"
+                                     className="glass-input w-full px-3 py-2.5 rounded-lg text-sm text-zinc-200" />
+                            </div>
+
+                            {/* Координаты. Отдельной строкой, потому что нужны
+                                двум разным вещам: показать точку на карте
+                                и посчитать солнце. Можно найти по адресу,
+                                можно вставить из карт руками. */}
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Координаты</label>
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                <input type="text" value={l.coords || ''} onChange={(e) => updateLocation(l.id, 'coords', e.target.value)}
+                                       placeholder="55.75583, 37.61730"
+                                       className="glass-input flex-1 px-3 py-2.5 rounded-lg text-sm text-zinc-200 font-mono" />
+                                <div className="flex gap-2 shrink-0">
+                                  <button onClick={() => findCoords(l)} disabled={geoBusy === l.id || !(l.address || '').trim()}
+                                          title={(l.address || '').trim() ? 'Найти координаты по адресу' : 'Сначала впишите адрес'}
+                                          className="cf-edit-only px-3 py-2.5 rounded-lg text-xs font-bold transition-colors border border-white/10 text-zinc-300 hover:bg-white/10 disabled:opacity-40 whitespace-nowrap">
+                                    {geoBusy === l.id ? 'Ищу...' : 'Найти по адресу'}
+                                  </button>
+                                  {parseCoords(l.coords) && (
+                                    <a href={`https://www.openstreetmap.org/?mlat=${parseCoords(l.coords).lat}&mlon=${parseCoords(l.coords).lon}#map=17/${parseCoords(l.coords).lat}/${parseCoords(l.coords).lon}`}
+                                       target="_blank" rel="noopener"
+                                       className="px-3 py-2.5 rounded-lg text-xs font-bold transition-colors border border-white/10 text-zinc-300 hover:bg-white/10 whitespace-nowrap flex items-center">
+                                      На карте
+                                    </a>
+                                  )}
+                                </div>
                               </div>
-                              <div className="space-y-1.5">
-                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">С кем договариваться</label>
-                                <input type="text" value={l.contact || ''} onChange={(e) => updateLocation(l.id, 'contact', e.target.value)}
-                                       placeholder="Имя и телефон"
-                                       className="glass-input w-full px-3 py-2.5 rounded-lg text-sm text-zinc-200" />
-                              </div>
+                              {geoError && geoError.id === l.id && (
+                                <p className="text-[11px] text-amber-300 ml-1">{geoError.text}</p>
+                              )}
+                              {!parseCoords(l.coords) && (l.coords || '').trim() && (
+                                <p className="text-[11px] text-amber-300 ml-1">Не разобрал координаты. Нужны два числа: широта, долгота.</p>
+                              )}
+                            </div>
+
+                            {/* Солнце. Дату берём у сцен, которые здесь снимают:
+                                отдельного поля даты у объекта нет намеренно —
+                                смена назначается сцене, и две копии даты
+                                разъехались бы. */}
+                            {(() => {
+                              const c = parseCoords(l.coords);
+                              const dates = [...new Set(sortedScenes
+                                .filter(s => (l.sceneIds || []).includes(s.id) && s.date)
+                                .map(s => s.date))].sort();
+                              if (!c && !dates.length) return null;
+                              return (
+                                <div className="bg-black/30 p-4 rounded-lg border border-white/10 space-y-2">
+                                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Солнце</label>
+                                  {!c ? (
+                                    <p className="text-[13px] text-zinc-500">Впишите координаты — и здесь появится, во сколько встаёт и садится солнце в дни съёмки.</p>
+                                  ) : !dates.length ? (
+                                    <p className="text-[13px] text-zinc-500">Поставьте смену у сцены, которую здесь снимают, — и появится время восхода и заката на этот день.</p>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      {dates.map(dt => {
+                                        const t = sunTimes(c.lat, c.lon, dt);
+                                        if (!t) return null;
+                                        const nums = sortedScenes.filter(s => (l.sceneIds || []).includes(s.id) && s.date === dt).map(s => '#' + s.number).join(', ');
+                                        return (
+                                          <div key={dt} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px]">
+                                            <span className="font-mono text-zinc-400 w-[86px] shrink-0">{formatDateDisplay(dt)}</span>
+                                            {t.sun.polar === 'day' ? <span className="text-amber-200">солнце не садится — полярный день</span>
+                                             : t.sun.polar === 'night' ? <span className="text-indigo-200">солнце не встаёт — полярная ночь</span>
+                                             : (
+                                              <React.Fragment>
+                                                <span className="text-zinc-200">восход <b className="font-mono">{hhmm(t.sun.rise)}</b></span>
+                                                <span className="text-zinc-200">закат <b className="font-mono">{hhmm(t.sun.set)}</b></span>
+                                                {t.golden.rise && (
+                                                  <span className="text-amber-200/90">золотой час <b className="font-mono">{hhmm(t.sun.rise)}–{hhmm(t.golden.rise)}</b> и <b className="font-mono">{hhmm(t.golden.set)}–{hhmm(t.sun.set)}</b></span>
+                                                )}
+                                              </React.Fragment>
+                                             )}
+                                            <span className="cf-meta">сцены {nums}</span>
+                                          </div>
+                                        );
+                                      })}
+                                      <p className="text-[11px] text-zinc-500 pt-1">Время по часам этого устройства. Считается на месте, интернет не нужен.</p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Схема света. Та же самая запись, что в разделе
+                                «Экспликации» — не копия: у объекта своё
+                                постоянное освещение, и рисовать его заново
+                                для каждой сцены незачем. */}
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Схема света объекта</label>
+                              {!lightSchemes.length ? (
+                                <p className="text-[13px] text-zinc-500 ml-1">Схем света в проекте пока нет. Их заводят в разделе «Экспликации».</p>
+                              ) : (
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                  <select value={l.lightSchemeId || ''} onChange={(e) => updateLocation(l.id, 'lightSchemeId', e.target.value)}
+                                          className="glass-input rounded-lg px-3 py-2.5 text-sm flex-1 bg-zinc-900">
+                                    <option value="">— схема не выбрана —</option>
+                                    {lightSchemes.map(sch => (<option key={sch.id} value={sch.id}>{sch.title}</option>))}
+                                  </select>
+                                  {l.lightSchemeId && lightSchemes.some(s => s.id === l.lightSchemeId) && (
+                                    <button onClick={() => { setActiveSchemeId(l.lightSchemeId); setActiveDocId(null); setCurrentView('docs'); }}
+                                            className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 px-4 py-2.5 rounded-lg text-xs font-bold transition-colors shrink-0">
+                                      Открыть схему
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             <div className="space-y-1.5">
@@ -7825,12 +8010,38 @@
                         <div key={l.id} className="print-scene" style={{marginBottom: '18pt'}}>
                           <h2 style={{fontSize: '15pt', fontWeight: 800, margin: '0 0 4pt'}}>{l.name || 'Без названия'}</h2>
                           {l.address && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Адрес:</b> {l.address}</p>}
-                          {l.contact && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Контакт:</b> {l.contact}</p>}
+                          {l.coords && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Координаты:</b> {l.coords}</p>}
                           {linked.length > 0 && (
                             <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}>
                               <b>Сцены:</b> {linked.map(s => `#${s.number} ${s.title || ''}`.trim()).join(' · ')}
                             </p>
                           )}
+                          {(() => {
+                            // Восход и закат по дням съёмки — то, ради чего
+                            // отчёт со скаута и возят с собой.
+                            const c = parseCoords(l.coords);
+                            if (!c) return null;
+                            const dates = [...new Set(linked.filter(s => s.date).map(s => s.date))].sort();
+                            if (!dates.length) return null;
+                            return (
+                              <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}>
+                                <b>Солнце:</b>{' '}
+                                {dates.map(dt => {
+                                  const t = sunTimes(c.lat, c.lon, dt);
+                                  if (!t) return null;
+                                  const when = t.sun.polar === 'day' ? 'не садится'
+                                    : t.sun.polar === 'night' ? 'не встаёт'
+                                    : `${hhmm(t.sun.rise)} — ${hhmm(t.sun.set)}`;
+                                  return `${formatDateDisplay(dt)}: ${when}`;
+                                }).filter(Boolean).join(' · ')}
+                              </p>
+                            );
+                          })()}
+                          {(() => {
+                            const sch = lightSchemes.find(s => s.id === l.lightSchemeId);
+                            if (!sch) return null;
+                            return <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Схема света:</b> {sch.title}</p>;
+                          })()}
                           {l.description && <p style={{fontSize: '11pt', margin: '6pt 0 8pt', whiteSpace: 'pre-wrap', lineHeight: 1.5}}>{l.description}</p>}
                           {photos.length > 0 && (
                             <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt'}}>
