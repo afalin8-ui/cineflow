@@ -225,6 +225,7 @@
             Table: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>,
             Docs: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
             Gallery: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+            Place: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>,
             Pointer: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg>,
             Pen: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>,
             Shapes: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="8.5" height="8.5" rx="1.5"/><circle cx="17.5" cy="7.2" r="4.2"/><path d="M3.5 20.5h9L8 15z"/><path d="M15 15.5h5.5V21"/></svg>,
@@ -333,6 +334,23 @@
           if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
           auth = firebase.auth();
           db = firebase.firestore();
+          // Живые правки Firestore шлёт по одному длинному соединению.
+          // Мобильные операторы такое соединение часто копят у себя
+          // и отдают кусками — правка уезжает в облако, но обратно на
+          // телефон приходит с большой задержкой или не приходит вовсе,
+          // пока страницу не перезагрузишь. Ошибок при этом никаких:
+          // подписка жива, просто молчит. Отсюда и «на iPad есть,
+          // а с телефона нет» — iPad обычно сидит в Wi-Fi.
+          // С этой настройкой библиотека сама замечает, что поток
+          // не идёт, и переключается на обычные запросы. Вызывать
+          // строго до первого обращения к базе.
+          // Отдельная попытка: настройка необязательная, и если её
+          // однажды переименуют, приложение должно потерять ускорение,
+          // а не облако целиком — общий catch ниже увёл бы его
+          // в автономный режим совсем без синхронизации.
+          try {
+            db.settings({ experimentalAutoDetectLongPolling: true });
+          } catch (err) { console.warn('Настройка соединения не применилась:', err); }
           // Офлайн-копия базы прямо на устройстве (IndexedDB).
           // Читает из кэша без интернета, копит правки и сам досылает их,
           // когда связь вернётся. Вызывать строго до первых запросов.
@@ -347,21 +365,389 @@
             });
         } catch (e) { console.warn("Локальный режим автономности:", e); }
 
-        const compressImage = (base64Str, maxWidth, maxHeight, callback) => {
+        // --- Возврат к приложению на телефоне ---
+        // Телефон усыпляет вкладку, как только её свернули, и соединение
+        // с облаком засыпает вместе с ней. Обратно оно поднимается само,
+        // но не сразу: минуту-другую приложение показывает вчерашнее.
+        // На iPad это менее заметно — там приложение чаще остаётся
+        // открытым. Поэтому при возврате обрываем соединение и поднимаем
+        // заново: подписки цепляются к облаку сразу и приносят свежее.
+        // Ничего не теряется — правки, которые не успели уехать, лежат
+        // в очереди на устройстве и уходят следом.
+        let cfKickAt = 0, cfHiddenAt = 0;
+        const cfKickSync = (force) => {
+          if (!db) return Promise.resolve();
+          const now = Date.now();
+          if (!force && now - cfKickAt < 10000) return Promise.resolve();
+          cfKickAt = now;
+          return db.disableNetwork()
+            .then(() => db.enableNetwork())
+            .catch(err => console.warn('Переподключение не удалось:', err));
+        };
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') { cfHiddenAt = Date.now(); return; }
+          // Мгновенное переключение вкладки соединение не роняет —
+          // дёргать его на каждый такой чих значит только мешать.
+          if (Date.now() - cfHiddenAt > 5000) cfKickSync();
+        });
+        window.addEventListener('online', () => cfKickSync(true));
+        // Телефон умеет возвращать страницу из «замороженных» целиком,
+        // минуя обычную загрузку: событие приходит с persisted.
+        window.addEventListener('pageshow', (e) => { if (e.persisted) cfKickSync(true); });
+
+        const compressImage = (base64Str, maxWidth, maxHeight, callback, quality) => {
           const img = new Image();
           img.onerror = () => callback(base64Str);
           img.onload = () => {
             const canvas = document.createElement('canvas');
             let width = img.width; let height = img.height;
-            if (width > height) { if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; } } 
+            if (width > height) { if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; } }
             else { if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; } }
             canvas.width = width; canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
             ctx.drawImage(img, 0, 0, width, height);
-            callback(canvas.toDataURL('image/jpeg', 0.8)); 
+            callback(canvas.toDataURL('image/jpeg', quality || 0.8));
           };
           img.src = base64Str;
+        };
+
+        // =====================================================================
+        // ВНЕШНЕЕ ХРАНИЛИЩЕ ФОТОГРАФИЙ (Dropbox / Яндекс.Диск / Nextcloud)
+        // =====================================================================
+        // Зачем: картинки лежали в базе целиком, в base64. Предел документа
+        // Firestore — 1 МБ, и на сотне фотографий проект упирался в потолок.
+        // Теперь оригинал уезжает в облако пользователя, а в базе остаётся
+        // МАЛЕНЬКОЕ превью (`url`) и ссылка на оригинал (`full`).
+        //
+        // Почему превью всё-таки хранится в базе: галерея и доска обязаны
+        // открываться мгновенно и БЕЗ интернета — на площадке связи часто
+        // нет вовсе. Полный размер подтягивается из облака только когда
+        // фотографию открывают на весь экран.
+        //
+        // Поле `url` НЕ переименовано намеренно: на него смотрят галерея,
+        // доска, печать, файл-снимок и старые фотографии, залитые до
+        // появления облака. Пусть в нём лежит то, что показывают.
+        const CLOUD_KEY = 'cf_cloud';
+        const CLOUD_NAMES = { dropbox: 'Dropbox', yandex: 'Яндекс.Диск', nextcloud: 'Nextcloud' };
+        const loadCloudCfg = () => {
+          try { return JSON.parse(localStorage.getItem(CLOUD_KEY)) || {}; } catch (e) { return {}; }
+        };
+        const saveCloudCfg = (cfg) => {
+          try { localStorage.setItem(CLOUD_KEY, JSON.stringify(cfg)); } catch (e) {}
+          return cfg;
+        };
+        // Настройки живут на УСТРОЙСТВЕ, а не в комнате: это ключи от чужого
+        // Dropbox, и класть их в общую базу, куда пускают любого с кодом
+        // комнаты, нельзя. Обратная сторона — подключать облако надо на
+        // каждом устройстве, откуда загружают фотографии. Смотреть их
+        // при этом может кто угодно: ссылки публичные.
+
+        // Имя файла в облаке: латиница и цифры, остальное — подчёркиванием.
+        // Кириллица в пути ломает заголовок Dropbox-API-Arg и путается
+        // в WebDAV, а ценности не несёт — подпись хранится в проекте.
+        const cloudFileName = (refId, original) => {
+          const dot = String(original || '').lastIndexOf('.');
+          let ext = dot > 0 ? String(original).slice(dot + 1).toLowerCase() : 'jpg';
+          if (!/^[a-z0-9]{1,5}$/.test(ext)) ext = 'jpg';
+          return `${refId}.${ext}`;
+        };
+        // Заголовок HTTP не пропускает буквы вне ASCII — Dropbox требует
+        // экранировать их прямо в JSON.
+        const asciiJSON = (obj) => JSON.stringify(obj)
+          .replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+
+        const cloudErr = async (res, what) => {
+          let text = '';
+          try { text = (await res.text()).slice(0, 300); } catch (e) {}
+          throw new Error(`${what}: ${res.status} ${text}`);
+        };
+
+        // --- Dropbox ---
+        // Короткий ключ доступа живёт 4 часа, поэтому храним долгий
+        // refresh_token и меняем его на свежий ключ по необходимости.
+        const dropboxAccess = async (cfg) => {
+          if (cfg.token && cfg.expires && Date.now() < cfg.expires - 60000) return cfg.token;
+          if (!cfg.refresh) {
+            if (cfg.token) return cfg.token; // вставили ключ руками
+            throw new Error('Dropbox не подключён');
+          }
+          const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'refresh_token', refresh_token: cfg.refresh, client_id: cfg.appKey || ''
+            })
+          });
+          if (!res.ok) await cloudErr(res, 'Dropbox не обновил ключ доступа');
+          const j = await res.json();
+          const next = saveCloudCfg({ ...loadCloudCfg(), token: j.access_token, expires: Date.now() + (j.expires_in || 14400) * 1000 });
+          return next.token;
+        };
+        // Ссылка вида .../file.jpg?rlkey=..&dl=0 открывает СТРАНИЦУ Dropbox.
+        // Картинку отдаёт та же ссылка с raw=1; dl=1 не годится — он
+        // помечает файл как вложение, и <img> его не покажет.
+        // Адрес разбираем по-настоящему, а не вырезаем строкой: если dl=0
+        // окажется не последним параметром, вырезание строкой оставит
+        // висящий «&» и склеит ссылку в мусор.
+        const dropboxRaw = (url) => {
+          try {
+            const u = new URL(url);
+            u.searchParams.delete('dl');
+            u.searchParams.set('raw', '1');
+            return u.toString();
+          } catch (e) { return String(url); }
+        };
+        const dropboxUpload = async (cfg, file, name) => {
+          const token = await dropboxAccess(cfg);
+          const path = '/' + (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '') + '/' + name;
+          const up = await fetch('https://content.dropboxapi.com/2/files/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Dropbox-API-Arg': asciiJSON({ path, mode: 'overwrite', mute: true }),
+              'Content-Type': 'application/octet-stream'
+            },
+            body: file
+          });
+          if (!up.ok) await cloudErr(up, 'Dropbox не принял файл');
+          const meta = await up.json();
+          // Публичная ссылка. Если она уже есть, Dropbox отвечает ошибкой —
+          // тогда спрашиваем существующую, а не считаем это провалом.
+          const mk = await fetch('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: asciiJSON({ path: meta.path_lower, settings: { requested_visibility: 'public' } })
+          });
+          let link = '';
+          if (mk.ok) { link = (await mk.json()).url; }
+          else {
+            const list = await fetch('https://api.dropboxapi.com/2/sharing/list_shared_links', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: asciiJSON({ path: meta.path_lower, direct_only: true })
+            });
+            if (!list.ok) await cloudErr(list, 'Dropbox не дал ссылку на файл');
+            const j = await list.json();
+            link = (j.links && j.links[0] && j.links[0].url) || '';
+          }
+          if (!link) throw new Error('Dropbox не дал ссылку на файл');
+          return { full: dropboxRaw(link), path: meta.path_lower };
+        };
+
+        // --- Яндекс.Диск ---
+        const yandexHead = (cfg) => ({ 'Authorization': 'OAuth ' + (cfg.token || '') });
+        const yandexUpload = async (cfg, file, name) => {
+          const folder = (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '');
+          // Папку создаём молча: 409 значит «уже есть», это не ошибка.
+          await fetch('https://cloud-api.yandex.net/v1/disk/resources?path=' + encodeURIComponent('disk:/' + folder),
+            { method: 'PUT', headers: yandexHead(cfg) }).catch(() => {});
+          const path = 'disk:/' + folder + '/' + name;
+          const ask = await fetch('https://cloud-api.yandex.net/v1/disk/resources/upload?overwrite=true&path=' + encodeURIComponent(path),
+            { headers: yandexHead(cfg) });
+          if (!ask.ok) await cloudErr(ask, 'Яндекс.Диск не дал адрес для загрузки');
+          const { href } = await ask.json();
+          // На сам href токен слать не надо — он одноразовый и уже подписан.
+          const put = await fetch(href, { method: 'PUT', body: file });
+          if (!put.ok) await cloudErr(put, 'Яндекс.Диск не принял файл');
+          const pub = await fetch('https://cloud-api.yandex.net/v1/disk/resources/publish?path=' + encodeURIComponent(path),
+            { method: 'PUT', headers: yandexHead(cfg) });
+          if (!pub.ok) await cloudErr(pub, 'Яндекс.Диск не опубликовал файл');
+          const info = await fetch('https://cloud-api.yandex.net/v1/disk/resources?fields=public_url&path=' + encodeURIComponent(path),
+            { headers: yandexHead(cfg) });
+          if (!info.ok) await cloudErr(info, 'Яндекс.Диск не дал ссылку');
+          const { public_url } = await info.json();
+          if (!public_url) throw new Error('Яндекс.Диск не дал ссылку');
+          return { full: public_url, path };
+        };
+
+        // --- Nextcloud ---
+        const ncHead = (cfg) => ({ 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent((cfg.user || '') + ':' + (cfg.pass || '')))) });
+        const ncBase = (cfg) => String(cfg.server || '').replace(/\/+$/, '');
+        const nextcloudUpload = async (cfg, file, name) => {
+          const folder = (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '');
+          const dav = ncBase(cfg) + '/remote.php/dav/files/' + encodeURIComponent(cfg.user || '');
+          await fetch(dav + '/' + encodeURIComponent(folder), { method: 'MKCOL', headers: ncHead(cfg) }).catch(() => {});
+          const rel = '/' + folder + '/' + name;
+          const put = await fetch(dav + '/' + encodeURIComponent(folder) + '/' + encodeURIComponent(name),
+            { method: 'PUT', headers: ncHead(cfg), body: file });
+          if (!put.ok) await cloudErr(put, 'Nextcloud не принял файл');
+          const share = await fetch(ncBase(cfg) + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
+            method: 'POST',
+            headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true', 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ path: rel, shareType: '3', permissions: '1' })
+          });
+          let link = '';
+          if (share.ok) {
+            const j = await share.json();
+            link = ((j.ocs || {}).data || {}).url || '';
+          }
+          if (!link) {
+            // Ссылка на этот файл уже могла быть создана раньше — спрашиваем её.
+            const ex = await fetch(ncBase(cfg) + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json&path=' + encodeURIComponent(rel),
+              { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
+            if (ex.ok) {
+              const j = await ex.json();
+              const arr = ((j.ocs || {}).data) || [];
+              const found = arr.find(s => s.url);
+              link = found ? found.url : '';
+            }
+          }
+          if (!link) throw new Error('Nextcloud не дал публичную ссылку');
+          return { full: link.replace(/\/+$/, '') + '/download', path: rel };
+        };
+
+        // --- Подключение облака ---
+        // Dropbox идёт по PKCE: приложению на статичном хостинге секрет
+        // хранить негде, а PKCE его и не требует. Взамен получаем долгий
+        // refresh_token — иначе ключ протухал бы каждые четыре часа.
+        // Яндекс проще: токен приезжает прямо в адресе и живёт около года.
+        const b64url = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf)))
+          .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const randomVerifier = () => {
+          const a = new Uint8Array(48); crypto.getRandomValues(a); return b64url(a);
+        };
+        const pkceChallenge = async (verifier) =>
+          b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+        // Адрес возврата обязан совпадать с тем, что вписан в кабинете
+        // облака, знак в знак. Поэтому — без параметров: комната и так
+        // помнится на устройстве.
+        const cloudRedirect = () => location.origin + location.pathname;
+
+        // Проверка связи. Дешёвый запрос, по которому сразу видно,
+        // приняли ключ или нет.
+        const cloudCheck = async (cfg) => {
+          if (cfg.provider === 'dropbox') {
+            const token = await dropboxAccess(cfg);
+            const res = await fetch('https://api.dropboxapi.com/2/users/get_current_account',
+              { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            if (!res.ok) await cloudErr(res, 'Dropbox не принял ключ');
+            const j = await res.json();
+            return (j.name && j.name.display_name) || 'подключено';
+          }
+          if (cfg.provider === 'yandex') {
+            const res = await fetch('https://cloud-api.yandex.net/v1/disk/', { headers: yandexHead(cfg) });
+            if (!res.ok) await cloudErr(res, 'Яндекс.Диск не принял ключ');
+            const j = await res.json();
+            const free = j.total_space ? Math.round((j.total_space - j.used_space) / 1073741824) : null;
+            return free === null ? 'подключено' : `свободно ${free} ГБ`;
+          }
+          if (cfg.provider === 'nextcloud') {
+            if (!ncBase(cfg)) throw new Error('Не указан адрес сервера');
+            const res = await fetch(ncBase(cfg) + '/ocs/v2.php/cloud/user?format=json',
+              { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
+            if (!res.ok) await cloudErr(res, 'Nextcloud не принял вход');
+            return 'подключено';
+          }
+          throw new Error('Облако не выбрано');
+        };
+
+        // base64 из базы обратно в файл — нужно, чтобы перенести в облако
+        // фотографии, загруженные до его появления.
+        const dataUrlToBlob = (d) => {
+          const parts = String(d).split(',');
+          const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+          const bin = atob(parts[1] || '');
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          return new Blob([arr], { type: mime });
+        };
+
+        // Единая дверь наружу. Возвращает {full, path} либо бросает ошибку.
+        const cloudUpload = async (cfg, file, name) => {
+          if (cfg.provider === 'dropbox') return dropboxUpload(cfg, file, name);
+          if (cfg.provider === 'yandex') return yandexUpload(cfg, file, name);
+          if (cfg.provider === 'nextcloud') return nextcloudUpload(cfg, file, name);
+          throw new Error('Облако не выбрано');
+        };
+
+        // Ссылка, которую можно поставить в <img src>.
+        // У Dropbox и Nextcloud публичная ссылка уже прямая, а Яндекс
+        // отдаёт СТРАНИЦУ просмотра — настоящий адрес файла приходится
+        // спрашивать отдельно. Спрашиваем без токена: у публичных файлов
+        // это открытый метод, иначе фотографии видел бы только владелец,
+        // а не вся группа. Ответ живёт недолго, поэтому держим его
+        // в памяти на время сеанса.
+        const ydCache = new Map();
+        const cloudDirectUrl = async (ref) => {
+          const full = ref && ref.full;
+          if (!full) return (ref && ref.url) || '';
+          if ((ref.cloud || {}).provider !== 'yandex') return full;
+          if (ydCache.has(full)) return ydCache.get(full);
+          try {
+            const res = await fetch('https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=' + encodeURIComponent(full));
+            if (!res.ok) return ref.url || full;
+            const { href } = await res.json();
+            if (href) { ydCache.set(full, href); return href; }
+          } catch (e) { console.warn('Яндекс.Диск: не удалось получить прямую ссылку', e); }
+          return ref.url || full;
+        };
+
+        // =====================================================================
+        // СОЛНЦЕ НА ОБЪЕКТЕ
+        // =====================================================================
+        // Во сколько встаёт и садится солнце в этом месте в день съёмки.
+        // Считаем САМИ, а не спрашиваем у сервера: на площадке связи часто
+        // нет, а как раз там это и нужно. Алгоритм NOAA, сверен с двумя
+        // независимыми выкладками — расхождение до двух минут.
+        const SUN_RAD = Math.PI / 180;
+        const J2000 = 2451545.0;
+        // Возвращает {sun, golden, transit}; у sun/golden либо {rise, set},
+        // либо {polar:'day'|'night'} — за полярным кругом солнце может
+        // вообще не сесть или не встать, и это не ошибка.
+        const sunTimes = (lat, lon, dateStr) => {
+          const d = new Date(dateStr + 'T12:00:00Z');
+          if (isNaN(d)) return null;
+          const jd = d.getTime() / 86400000 + 2440587.5;
+          const n = Math.round(jd - J2000 - 0.0009 + lon / 360);
+          const Jstar = n + 0.0009 - lon / 360 + J2000;
+          const M = (357.5291 + 0.98560028 * (Jstar - J2000)) % 360;
+          const C = 1.9148 * Math.sin(M * SUN_RAD) + 0.02 * Math.sin(2 * M * SUN_RAD) + 0.0003 * Math.sin(3 * M * SUN_RAD);
+          const lambda = (M + C + 180 + 102.9372) % 360;
+          const Jtransit = Jstar + 0.0053 * Math.sin(M * SUN_RAD) - 0.0069 * Math.sin(2 * lambda * SUN_RAD);
+          const decl = Math.asin(Math.sin(lambda * SUN_RAD) * Math.sin(23.44 * SUN_RAD));
+          const toDate = (j) => new Date((j - 2440587.5) * 86400000);
+          const at = (alt) => {
+            const cosW = (Math.sin(alt * SUN_RAD) - Math.sin(lat * SUN_RAD) * Math.sin(decl))
+                       / (Math.cos(lat * SUN_RAD) * Math.cos(decl));
+            if (cosW > 1) return { polar: 'night' };
+            if (cosW < -1) return { polar: 'day' };
+            const w = Math.acos(cosW) / SUN_RAD;
+            return { rise: toDate(Jtransit - w / 360), set: toDate(Jtransit + w / 360) };
+          };
+          // -0,833° — видимый край солнца с поправкой на преломление воздуха,
+          // это и есть общепринятый «восход». 6° — верхняя граница золотого часа.
+          return { sun: at(-0.833), golden: at(6), transit: toDate(Jtransit) };
+        };
+        const hhmm = (d) => d ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+        // Координаты человек либо ищет по адресу, либо вставляет из карт.
+        // Поэтому храним строкой как есть, а разбираем при счёте: и
+        // «55.7558, 37.6173», и «55,7558 37,6173» — одно и то же.
+        const parseCoords = (s) => {
+          const m = String(s || '').match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);
+          if (!m) return null;
+          const lat = parseFloat(m[1].replace(',', '.'));
+          const lon = parseFloat(m[2].replace(',', '.'));
+          if (!isFinite(lat) || !isFinite(lon)) return null;
+          if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+          return { lat, lon };
+        };
+
+        // Адрес → координаты. Nominatim (карты OpenStreetMap): открытый,
+        // без ключа и без регистрации. Просит не частить — у нас запрос
+        // идёт только по нажатию кнопки, поэтому это не про нас.
+        const geocodeAddress = async (q) => {
+          const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ru&q='
+                    + encodeURIComponent(q);
+          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) throw new Error('Служба карт ответила ' + res.status);
+          const list = await res.json();
+          if (!list || !list.length) throw new Error('Такой адрес не нашёлся');
+          return {
+            coords: `${parseFloat(list[0].lat).toFixed(5)}, ${parseFloat(list[0].lon).toFixed(5)}`,
+            name: list[0].display_name || ''
+          };
         };
 
         class ErrorBoundary extends React.Component {
@@ -648,6 +1034,22 @@
                 return () => window.removeEventListener('keydown', onKey);
             }, [currentIndex, refs, onClose]);
 
+            // Полный размер лежит в облаке, а в проекте — только превью.
+            // Показываем сразу превью (оно уже на устройстве), а следом
+            // подменяем оригиналом, когда тот доедет: пустой экран в
+            // ожидании сети хуже, чем мягковатая картинка на секунду.
+            // У Яндекс.Диска публичная ссылка ведёт на страницу, а не на
+            // файл, поэтому настоящий адрес спрашивается отдельно — этим
+            // и занимается cloudDirectUrl.
+            const [bigUrl, setBigUrl] = useState('');
+            useEffect(() => {
+                setBigUrl('');
+                if (!currentRef || !currentRef.full) return;
+                let alive = true;
+                cloudDirectUrl(currentRef).then(u => { if (alive && u) setBigUrl(u); });
+                return () => { alive = false; };
+            }, [currentRef && currentRef.id, currentRef && currentRef.full]);
+
             if (!currentRef) return null;
 
             return (
@@ -655,7 +1057,8 @@
                     <button onClick={onClose} className="absolute top-6 right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
                     <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
                         {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
-                        <img src={currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+                        <img src={bigUrl || currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()}
+                             onError={() => { if (bigUrl) setBigUrl(''); }} />
                         {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
                     </div>
                     {/* Теги кадра — окошком в левом нижнем углу. Поднято над
@@ -998,7 +1401,25 @@
           const [docs, setDocs] = useState(() => safeLoad('cf_docs', initialDocs, true));
           const [crew, setCrew] = useState(() => safeLoad('cf_crew', [], true));
           const [projectFiles, setProjectFiles] = useState(() => safeLoad('cf_files', [], true));
-          
+
+          // --- Объекты (места съёмки со скаутинга) ---
+          // Объект — это МЕСТО, а не сцена: одна и та же квартира снимается
+          // в пяти сценах, и договариваться о ней надо один раз. Поэтому
+          // связь со сценами хранится списком у объекта (`sceneIds`),
+          // а не полем у сцены.
+          // Фотографии со скаута — обычные референсы с полем `locationId`.
+          // Отдельного хранилища картинок объекту НАМЕРЕННО не заведено:
+          // иначе пришлось бы второй раз писать сжатие, теги, загрузку
+          // в облако и полноэкранный просмотр — и они разъехались бы
+          // при первой же правке. Заодно фото со скаута попадают в общую
+          // галерею, где и должны быть.
+          const [locations, setLocations] = useState(() => safeLoad('cf_locations', [], true));
+          const [activeLocationId, setActiveLocationId] = useState(null);
+          // Порядок — как отсняли на скауте, а не по алфавиту: переименование
+          // объекта не должно перекладывать список под руками.
+          const sortedLocations = useMemo(
+            () => [...locations].sort((a, b) => (a.order || 0) - (b.order || 0)), [locations]);
+
           const [gearTypes, setGearTypes] = useState(() => safeLoad('cf_geartypes', DEFAULT_GEAR, false));
           const [lightGearTypes, setLightGearTypes] = useState(() => safeLoad('cf_lightgeartypes', DEFAULT_LIGHT_GEAR, false));
           const [lightSchemes, setLightSchemes] = useState(() => safeLoad('cf_lightschemes', [], true));
@@ -3230,7 +3651,167 @@
           const [geminiKey, setGeminiKeyRaw] = useState(() => localStorage.getItem('cf_gemini_key') || '');
           const saveGeminiKey = (v) => { setGeminiKeyRaw(v); localStorage.setItem('cf_gemini_key', v.trim()); };
           const [showGeminiKey, setShowGeminiKey] = useState(true);
-          
+
+          // --- Внешнее хранилище фотографий ---
+          // Настройки лежат в localStorage (см. CLOUD_KEY): это ключи от
+          // ЛИЧНОГО облака, и в общей комнате им не место.
+          const [cloudCfg, setCloudCfgRaw] = useState(() => loadCloudCfg());
+          const patchCloud = (patch) => setCloudCfgRaw(prev => saveCloudCfg({ ...prev, ...patch }));
+          const [showCloudModal, setShowCloudModal] = useState(false);
+          // Последняя ошибка облака показывается целиком: без неё человек
+          // видит «не получилось» и не может ничего сделать, а в ответе
+          // сервера обычно прямо написано, чего не хватает.
+          const [cloudError, setCloudError] = useState('');
+          const [cloudBusy, setCloudBusy] = useState('');
+
+          // Возврат из окна разрешения. Dropbox приводит обратно с ?code=,
+          // Яндекс — с #access_token= в самом адресе (на сервер эта часть
+          // не уходит вовсе, поэтому так и сделано). Разбираем оба и
+          // сразу чистим адресную строку: ключ не должен остаться
+          // в истории браузера и в закладках.
+          useEffect(() => {
+            const qs = new URLSearchParams(location.search);
+            const code = qs.get('code');
+            const hash = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+            const ytok = hash.get('access_token');
+            if (!code && !ytok) return;
+            const clean = () => { try { history.replaceState(null, '', cloudRedirect()); } catch (e) {} };
+            if (ytok) {
+              const life = parseInt(hash.get('expires_in') || '0', 10);
+              patchCloud({ provider: 'yandex', token: ytok, expires: life ? Date.now() + life * 1000 : 0 });
+              clean(); setShowCloudModal(true);
+              showToast('Яндекс.Диск подключён');
+              return;
+            }
+            const cfg = loadCloudCfg();
+            const verifier = localStorage.getItem('cf_cloud_pkce') || '';
+            clean();
+            if (!verifier || !cfg.appKey) { showToast('Не удалось завершить подключение Dropbox'); return; }
+            (async () => {
+              try {
+                const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: new URLSearchParams({
+                    code, grant_type: 'authorization_code', client_id: cfg.appKey,
+                    code_verifier: verifier, redirect_uri: cloudRedirect()
+                  })
+                });
+                if (!res.ok) await cloudErr(res, 'Dropbox не выдал ключ');
+                const j = await res.json();
+                patchCloud({
+                  provider: 'dropbox', token: j.access_token, refresh: j.refresh_token || '',
+                  expires: Date.now() + (j.expires_in || 14400) * 1000
+                });
+                showToast('Dropbox подключён');
+              } catch (err) {
+                setCloudError(err.message || String(err));
+                showToast('⚠️ Не удалось подключить Dropbox');
+              } finally {
+                localStorage.removeItem('cf_cloud_pkce');
+                setShowCloudModal(true);
+              }
+            })();
+          }, []);
+
+          const connectDropbox = async () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.appKey) { setCloudError('Сначала впишите ключ приложения (App key)'); return; }
+            // Подпись запроса умеет только защищённое соединение. По адресу
+            // на https (а приложение живёт на нём) всё в порядке; сообщение
+            // нужно тем, кто открыл файл с диска — иначе они увидели бы
+            // невнятную ошибку про undefined.
+            if (!window.crypto || !crypto.subtle) {
+              setCloudError('Подключить Dropbox можно только с сайта по адресу https://, а не из файла, открытого с диска.');
+              return;
+            }
+            try {
+              const verifier = randomVerifier();
+              localStorage.setItem('cf_cloud_pkce', verifier);
+              const u = new URL('https://www.dropbox.com/oauth2/authorize');
+              u.searchParams.set('client_id', cfg.appKey);
+              u.searchParams.set('response_type', 'code');
+              u.searchParams.set('code_challenge', await pkceChallenge(verifier));
+              u.searchParams.set('code_challenge_method', 'S256');
+              // offline — чтобы вместе с ключом приехал долгий refresh_token:
+              // без него связь отваливалась бы каждые четыре часа.
+              u.searchParams.set('token_access_type', 'offline');
+              u.searchParams.set('redirect_uri', cloudRedirect());
+              location.href = u.toString();
+            } catch (err) { setCloudError(err.message || String(err)); }
+          };
+          const connectYandex = () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.clientId) { setCloudError('Сначала впишите ClientID приложения'); return; }
+            const u = new URL('https://oauth.yandex.ru/authorize');
+            u.searchParams.set('response_type', 'token');
+            u.searchParams.set('client_id', cfg.clientId);
+            u.searchParams.set('redirect_uri', cloudRedirect());
+            location.href = u.toString();
+          };
+          const checkCloud = async () => {
+            setCloudBusy('check'); setCloudError('');
+            try {
+              const who = await cloudCheck(loadCloudCfg());
+              showToast(`${CLOUD_NAMES[loadCloudCfg().provider]}: связь есть · ${who}`);
+            } catch (err) {
+              setCloudError(err.message || String(err));
+              showToast('⚠️ Связи с облаком нет');
+            }
+            setCloudBusy('');
+          };
+          const disconnectCloud = () => {
+            setCloudCfgRaw(saveCloudCfg({ provider: '' }));
+            setCloudError('');
+            showToast('Облако отключено · новые фото снова хранятся в проекте');
+          };
+
+          // --- Перенос уже загруженных фотографий ---
+          // Идёт по одной и не трогает то, что уже в облаке. Прерывается
+          // кнопкой: на сотне фотографий с телефона это долго, и запирать
+          // человека в этом окне нельзя.
+          const migrateStop = useRef(false);
+          const [migrate, setMigrate] = useState(null); // {done, total, failed}
+          const localRefs = useMemo(
+            () => references.filter(r => !r.full && String(r.url || '').startsWith('data:')),
+            [references]);
+          const migrateToCloud = async () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) { setCloudError('Сначала подключите облако'); return; }
+            const list = references.filter(r => !r.full && String(r.url || '').startsWith('data:'));
+            if (!list.length) { showToast('Переносить нечего — всё уже в облаке'); return; }
+            migrateStop.current = false;
+            setMigrate({ done: 0, total: list.length, failed: 0 });
+            let done = 0, failed = 0;
+            for (const ref of list) {
+              if (migrateStop.current) break;
+              try {
+                const blob = dataUrlToBlob(ref.url);
+                const { full, path } = await cloudUpload(cfg, blob, cloudFileName(ref.id, ref.label || 'photo.jpg'));
+                // Превью пересобираем из того же изображения: в базе
+                // должно остаться лёгкое, ради этого перенос и затевался.
+                const thumb = await new Promise(res => compressImage(ref.url, CLOUD_THUMB, CLOUD_THUMB, res, 0.72));
+                setReferences(prev => {
+                  const up = prev.map(r => r.id === ref.id
+                    ? { ...r, full, url: thumb || r.url, cloud: { provider: cfg.provider, path } } : r);
+                  const t = up.find(r => r.id === ref.id);
+                  if (t) syncDoc('references', ref.id, t);
+                  return up;
+                });
+                done++;
+              } catch (err) {
+                failed++;
+                console.warn('Перенос в облако:', err);
+                setCloudError(err.message || String(err));
+              }
+              setMigrate({ done, total: list.length, failed });
+            }
+            setMigrate(null);
+            showToast(failed
+              ? `Перенесено ${done}, не вышло ${failed} — эти остались в проекте`
+              : `Перенесено в облако: ${done} шт.`);
+          };
+
           const callGeminiAI = async (promptText, isAgent = false) => {
             if (!geminiKey.trim()) { showToast("🔑 Укажите ключ Gemini API в меню «Проект»."); return null; }
             try {
@@ -3534,6 +4115,7 @@
               subList('stickies', setStickies, stickies),
               subList('docs', setDocs, docs),
               subList('crew', setCrew, crew),
+              subList('locations', setLocations, locations),
               subList('projectFiles', setProjectFiles, projectFiles),
               subList('lightSchemes', setLightSchemes, lightSchemes),
               subMap('gearTypes', setGearTypes, gearTypes),
@@ -3650,12 +4232,12 @@
               save('cf_docs', docs); save('cf_crew', crew);
               save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
               save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
-              save('cf_boards', boards);
+              save('cf_boards', boards); save('cf_locations', locations);
             };
             flushLocal.current = doSave;
             const t = setTimeout(doSave, 700);
             return () => clearTimeout(t);
-          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards]);
+          }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards, locations]);
 
           // Задержка экономит силы при печати, но приложение могут свернуть
           // раньше, чем она истечёт, — на iPad это происходит постоянно.
@@ -3782,6 +4364,12 @@
             if (activeSchemeId || !docs.length) return;
             if (!docs.some(d => d.id === activeDocId)) setActiveDocId(docs[0].id);
           }, [docs, activeDocId, activeSchemeId]);
+          // Объект мог быть удалён на другом устройстве — тогда возвращаемся
+          // к первому, иначе правая половина вкладки встречает пустотой.
+          useEffect(() => {
+            if (!sortedLocations.length) { if (activeLocationId) setActiveLocationId(null); return; }
+            if (!sortedLocations.some(l => l.id === activeLocationId)) setActiveLocationId(sortedLocations[0].id);
+          }, [sortedLocations, activeLocationId]);
 
           // Номера, которые встречаются больше одного раза, — их подсвечиваем.
           // Не запрещаем: посреди перенумерации совпадение неизбежно.
@@ -3815,7 +4403,7 @@
           // place — куда класть: {boardId, x, y}. Задаётся, когда картинку
           // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
-          const handleMultiFileUpload = async (files, sceneId = null, place = null) => {
+          const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null) => {
               const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
               if (imageFiles.length === 0) return;
 
@@ -3835,31 +4423,108 @@
                   const dupSet = new Set(dups.map(f => normName(f.name)));
                   const kept = imageFiles.filter(f => !dupSet.has(normName(f.name)));
                   if (kept.length === 0) { showToast('Все выбранные картинки уже есть — ничего не загружено'); return; }
-                  return uploadFiles(kept, sceneId, place);
+                  return uploadFiles(kept, sceneId, place, locationId);
                 }
               }
-              return uploadFiles(imageFiles, sceneId, place);
+              return uploadFiles(imageFiles, sceneId, place, locationId);
           };
 
-          const uploadFiles = async (imageFiles, sceneId, place = null) => {
+          // Сжать файл к нужному размеру. Отдельно от uploadFiles, потому
+          // что то же самое нужно и при откате, когда облако не ответило.
+          const compressFile = (file, w, h, q) => new Promise(resolve => {
+            const r = new FileReader();
+            r.onerror = () => resolve('');
+            r.onloadend = () => compressImage(r.result, w, h, resolve, q);
+            r.readAsDataURL(file);
+          });
+          // Размер превью в базе. 640 точек хватает и сетке галереи, и
+          // карточке на доске при увеличении вдвое, а весит это около
+          // 40 КБ вместо полумегабайта.
+          const CLOUD_THUMB = 640;
+          // Фотографии со скаута сами раскладываются: папка с именем
+          // объекта и общий тег. Иначе после трёх выездов в галерее
+          // лежит триста картинок без разбора, и найти в них нужный
+          // двор нельзя ничем. Тег строчный — так их хранит всё
+          // приложение (см. addTagTo).
+          const SCOUT_TAG = 'скаут';
+
+          const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null) => {
+              const cfg = loadCloudCfg();
+              const useCloud = !!cfg.provider;
+              // Загруженное в объект сразу ложится в папку с его именем
+              // и метится тегом «скаут» — искать потом всё равно придётся,
+              // а разложить проще один раз при загрузке.
+              const loc = locationId ? locations.find(l => l.id === locationId) : null;
+              const locFolder = loc ? String(loc.name || '').trim() : '';
               showToast(`Оптимизация ${imageFiles.length} изображений...`);
-              const newRefs = await Promise.all(imageFiles.map((file, idx) => new Promise(resolve => {
-                  const r = new FileReader();
-                  r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => resolve({
-                    id: `ref-${Date.now()}-${idx}`,
+              // В облачном режиме в базу кладём только превью, а оригинал
+              // уезжает в облако файлом как есть — незачем портить фотографию
+              // со скаута пересжатием, если она всё равно хранится снаружи.
+              const stamp = Date.now();
+              const prepared = await Promise.all(imageFiles.map(async (file, idx) => ({
+                file, idx,
+                thumb: await compressFile(file, useCloud ? CLOUD_THUMB : 1440, useCloud ? CLOUD_THUMB : 1080,
+                                          useCloud ? 0.72 : 0.8)
+              })));
+              const newRefs = prepared.map(({ file, thumb, idx }) => ({
+                    id: `ref-${stamp}-${idx}`,
                     sceneId: sceneId || '',
+                    locationId: locationId || '',
                     boardId: place ? place.boardId : '',
-                    url: c,
+                    url: thumb,
                     // Брошенные на доску раскладываем лесенкой от точки броска,
                     // остальные — как раньше, от левого верхнего угла экрана.
                     x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
                     y: place ? place.y + Math.floor(idx / 4) * 26 : (250 - canvasOffset.y) / zoom + (idx*20),
-                    label: file.name, tags: []
-                  }));
-                  r.readAsDataURL(file);
-              })));
+                    label: file.name,
+                    folder: locFolder,
+                    tags: locationId ? [SCOUT_TAG] : []
+              }));
+              // Показываем сразу, не дожидаясь облака: на площадке связь
+              // медленная, и стоять над кружком загрузки никто не будет.
               setReferences(prev => { const up = [...prev, ...newRefs]; newRefs.forEach(nr => syncDoc('references', nr.id, nr)); return up; });
               if (place) showToast(`На доску добавлено ${newRefs.length} шт.`);
+              else if (locationId) showToast(`К объекту добавлено ${newRefs.length} фото`);
+              if (useCloud) sendOriginals(newRefs, prepared.map(p => p.file), cfg);
+          };
+
+          // Отправка оригиналов в облако. Идёт ПОСЛЕ того, как картинки
+          // уже показаны, и по одной: пачка параллельных загрузок с телефона
+          // только мешает друг другу, а порядок здесь не важен.
+          const sendOriginals = async (refs, files, cfg) => {
+            let ok = 0; const bad = [];
+            for (let i = 0; i < refs.length; i++) {
+              const ref = refs[i], file = files[i];
+              if (refs.length > 1) showToast(`${CLOUD_NAMES[cfg.provider] || 'Облако'}: отправляю ${i + 1} из ${refs.length}...`);
+              try {
+                const { full, path } = await cloudUpload(cfg, file, cloudFileName(ref.id, file.name));
+                setReferences(prev => {
+                  const up = prev.map(r => r.id === ref.id ? { ...r, full, cloud: { provider: cfg.provider, path } } : r);
+                  const t = up.find(r => r.id === ref.id);
+                  if (t) syncDoc('references', ref.id, t);
+                  return up;
+                });
+                ok++;
+              } catch (err) {
+                console.warn('Облако не приняло файл:', err);
+                bad.push(err && err.message ? err.message : String(err));
+                // Оригинал никуда не уехал, а в базе лежит только мелкое
+                // превью — то есть фотография пропала бы. Возвращаем ей
+                // обычный полный размер прямо в базу, как было до облака.
+                const fallback = await compressFile(file, 1440, 1080, 0.8);
+                if (fallback) setReferences(prev => {
+                  const up = prev.map(r => r.id === ref.id ? { ...r, url: fallback } : r);
+                  const t = up.find(r => r.id === ref.id);
+                  if (t) syncDoc('references', ref.id, t);
+                  return up;
+                });
+              }
+            }
+            if (!bad.length) showToast(`${CLOUD_NAMES[cfg.provider]}: отправлено ${ok} шт.`);
+            else {
+              setCloudError(bad[0]);
+              showToast(`⚠️ ${CLOUD_NAMES[cfg.provider]} не принял ${bad.length} из ${refs.length} — фото сохранены в проекте`);
+            }
           };
 
           // Пустая карточка референса на доске: заполняем именно её,
@@ -3876,6 +4541,109 @@
                 });
               });
               r.readAsDataURL(file);
+          };
+
+          // --- Объекты: завести, править, связать ---
+          const addLocation = () => {
+            const loc = {
+              id: `loc-${Date.now()}`, name: 'НОВЫЙ ОБЪЕКТ', address: '', coords: '',
+              description: '', sceneIds: [], lightSchemeId: '', order: Date.now()
+            };
+            setLocations(prev => [...prev, loc]);
+            syncDoc('locations', loc.id, loc);
+            setActiveLocationId(loc.id);
+          };
+          const updateLocation = (id, field, val) => {
+            // Переименовали объект — папка его фотографий едет следом.
+            // Иначе они остались бы лежать под старым именем, и человек
+            // искал бы их там, где их уже нет по смыслу.
+            if (field === 'name') {
+              const oldName = String((locations.find(l => l.id === id) || {}).name || '').trim();
+              const newName = String(val || '').trim();
+              if (oldName !== newName) {
+                setReferences(prev => {
+                  const moved = [];
+                  const up = prev.map(r => {
+                    // Только фотографии ЭТОГО объекта и только те, что лежат
+                    // в папке со старым именем: если картинку унесли в другую
+                    // папку руками, тащить её обратно нельзя.
+                    if (r.locationId !== id) return r;
+                    if (String(r.folder || '').trim() !== oldName) return r;
+                    const nr = { ...r, folder: newName };
+                    moved.push(nr);
+                    return nr;
+                  });
+                  moved.forEach(r => syncDoc('references', r.id, r));
+                  return moved.length ? up : prev;
+                });
+              }
+            }
+            setLocations(prev => {
+              const up = prev.map(l => l.id === id ? { ...l, [field]: val } : l);
+              const t = up.find(l => l.id === id);
+              if (t) syncDoc('locations', id, t);
+              return up;
+            });
+          };
+          // Объект снимается со сцены и обратно одной кнопкой. Список
+          // хранится у объекта: одна квартира живёт в пяти сценах, и
+          // держать эту связь у каждой сцены значило бы чинить её в пяти
+          // местах при каждом переносе.
+          const toggleLocationScene = (locId, sceneId) => {
+            const loc = locations.find(l => l.id === locId);
+            if (!loc) return;
+            const has = (loc.sceneIds || []).includes(sceneId);
+            updateLocation(locId, 'sceneIds',
+              has ? (loc.sceneIds || []).filter(s => s !== sceneId) : [...(loc.sceneIds || []), sceneId]);
+          };
+          // Фотографии объекта — референсы с его меткой.
+          const locationPhotos = (locId) => references.filter(r => r.locationId === locId);
+          // Отвязать — не то же, что удалить: это правило всего приложения.
+          // Крестик у фотографии в объекте снимает метку, а сама картинка
+          // остаётся в галерее.
+          const setRefLocation = (refId, locId) => {
+            setReferences(prev => {
+              const up = prev.map(r => r.id === refId ? { ...r, locationId: locId } : r);
+              syncDoc('references', refId, up.find(r => r.id === refId));
+              return up;
+            });
+          };
+          // Поиск координат по адресу. Отдельная кнопка, а не «само при
+          // наборе»: на каждую набранную букву дёргать чужую службу нельзя,
+          // да и адрес человек дописывает не сразу.
+          const [geoBusy, setGeoBusy] = useState('');
+          const [geoError, setGeoError] = useState(null);
+          const findCoords = async (loc) => {
+            const q = String(loc.address || '').trim();
+            if (!q) return;
+            setGeoBusy(loc.id); setGeoError(null);
+            try {
+              const { coords, name } = await geocodeAddress(q);
+              updateLocation(loc.id, 'coords', coords);
+              showToast('Нашёл: ' + (name.split(',').slice(0, 3).join(',') || coords));
+            } catch (err) {
+              setGeoError({ id: loc.id, text: (err && err.message ? err.message : String(err))
+                + '. Можно вписать координаты руками — скопировать из карт.' });
+            }
+            setGeoBusy('');
+          };
+
+          const deleteLocation = (id) => {
+            const loc = locations.find(l => l.id === id);
+            if (!loc) return;
+            const photos = locationPhotos(id);
+            setConfirmAction({
+              title: `Удалить объект «${loc.name || 'без названия'}»?`,
+              message: photos.length
+                ? `Фотографии (${photos.length} шт.) НЕ удаляются — они останутся в галерее, просто перестанут числиться за этим объектом.`
+                : 'Объект удалится из проекта.',
+              onConfirm: () => {
+                photos.forEach(p => setRefLocation(p.id, ''));
+                setLocations(prev => prev.filter(l => l.id !== id));
+                deleteNetDoc('locations', id);
+                showToast('Объект удалён');
+              }
+            });
           };
 
           const addCustomGear = (isLight) => {
@@ -3919,7 +4687,7 @@
               }
               if (scope === 'all') {
                 data.cf_scenes = scenes; data.cf_storyboard = storyboard;
-                data.cf_docs = docs; data.cf_crew = crew;
+                data.cf_docs = docs; data.cf_crew = crew; data.cf_locations = locations;
                 data.cf_geartypes = gearTypes; data.cf_lightgeartypes = lightGearTypes;
                 data.cf_lightschemes = lightSchemes;
               }
@@ -3957,13 +4725,14 @@
             // осталось в памяти. Помечаем коллекции засеянными, иначе всё
             // удалённое немедленно вернётся обратно.
             ['scenes', 'storyboard', 'references', 'stickies', 'docs', 'crew', 'projectFiles',
-             'lightSchemes', 'gearTypes', 'lightGearTypes', 'boards'].forEach(c => { seededRef.current[c] = true; });
+             'lightSchemes', 'gearTypes', 'lightGearTypes', 'boards', 'locations'].forEach(c => { seededRef.current[c] = true; });
 
             const wipe = (coll, list) => list.forEach(x => deleteNetDoc(coll, x.id));
             wipe('scenes', scenes);         wipe('storyboard', storyboard);
             wipe('references', references); wipe('stickies', stickies);
             wipe('docs', docs);             wipe('crew', crew);
             wipe('projectFiles', projectFiles); wipe('lightSchemes', lightSchemes);
+            wipe('locations', locations);
             wipe('messages', messages);
             Object.keys(gearTypes || {}).forEach(k => deleteNetDoc('gearTypes', k));
             Object.keys(lightGearTypes || {}).forEach(k => deleteNetDoc('lightGearTypes', k));
@@ -3987,6 +4756,7 @@
 
             setStoryboard([]); setReferences([]); setStickies([]); setCrew([]);
             setProjectFiles([]); setLightSchemes([]); setMessages([]);
+            setLocations([]); setActiveLocationId(null);
 
             // Куда приложение смотрит после сброса
             setActiveSceneId(freshScene.id); setActiveDocId(freshDoc.id);
@@ -4324,6 +5094,7 @@
             { id: 'notion',     label: 'Сцены',        icon: <Icons.Scene /> },
             { id: 'whiteboard', label: 'Доска',        icon: <Icons.Board /> },
             { id: 'gallery',    label: 'Галерея',      icon: <Icons.Gallery /> },
+            { id: 'locations',  label: 'Объекты',      icon: <Icons.Place /> },
             { id: 'master',     label: 'Документ',     icon: <Icons.Master /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
             { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
@@ -4371,6 +5142,18 @@
             ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
             : (syncing ? `Отправка в облако · ${pendingWrites}` : 'Всё сохранено в облаке');
           const syncDot = !isOnline ? '#f59e0b' : (syncing ? '#fbbf24' : '#10b981');
+          // Соединение поднимается заново и само, но ждать этого вслепую —
+          // худшее, что можно предложить человеку на площадке. Нажатие на
+          // точку связи делает то же самое немедленно.
+          const [kicking, setKicking] = useState(false);
+          const kickSyncNow = () => {
+            if (kicking) return;
+            setKicking(true); showToast('Обновляю связь с облаком...');
+            Promise.resolve(cfKickSync(true))
+              .then(() => showToast('Связь обновлена'))
+              .catch(() => showToast('⚠️ Не удалось обновить связь'))
+              .finally(() => setKicking(false));
+          };
           const ghostBtn = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors";
           const ghostStyle = { fontSize: '11.5px', color: 'var(--muted)', border: '1px solid var(--border)', minHeight: '28px' };
 
@@ -4447,7 +5230,14 @@
                         style={{ minHeight: 'var(--header-h)', padding: '0 16px', background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
                   <div className="flex items-center gap-3 min-w-0">
                     <span style={{ fontFamily: "'Lora', Georgia, serif", fontSize: 16, fontWeight: 600, color: 'var(--text)' }}>CineFlow</span>
-                    <span title={syncTitle} className="rounded-full shrink-0" style={{ width: 6, height: 6, background: syncDot, display: 'inline-block' }}></span>
+                    {/* Точка связи заодно и кнопка: нажать, если кажется,
+                        что телефон показывает вчерашнее. Площадь нажатия
+                        сделана пальцем, сама точка осталась мелкой */}
+                    <button onClick={kickSyncNow} title={syncTitle + ' · нажмите, чтобы обновить связь'}
+                            className="shrink-0 flex items-center justify-center -m-2 p-2"
+                            style={{ opacity: kicking ? 0.4 : 1 }}>
+                      <span className="rounded-full block" style={{ width: 6, height: 6, background: syncDot }}></span>
+                    </button>
                     <span className="cf-meta hidden lg:inline truncate">{scenes.length} сцен · {storyboard.length} кадров</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -4551,6 +5341,31 @@
                                           placeholder="Текст сцены из сценария. Можно вставить вручную или загрузить весь сценарий разом — «Агент КПП» на панели слева." />
                               )}
                             </div>
+
+                            {/* Где снимаем. Связь заведена у объекта, здесь
+                                показываем её обратную сторону: со стороны сцены
+                                вопрос «куда ехать» задают чаще, чем со стороны
+                                объекта — «что тут снимаем». Нажатие открывает
+                                объект с фотографиями и адресом. */}
+                            {(() => {
+                              const sceneLocs = locations.filter(l => (l.sceneIds || []).includes(s.id));
+                              if (!sceneLocs.length) return null;
+                              return (
+                                <div className="bg-black/30 p-4 rounded-lg border border-white/10 space-y-2">
+                                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Объект съёмки</label>
+                                  <div className="flex flex-wrap gap-2">
+                                    {sceneLocs.map(l => (
+                                      <button key={l.id} onClick={() => { setActiveLocationId(l.id); setCurrentView('locations'); }}
+                                              className="flex items-center gap-1.5 rounded-lg text-xs font-semibold transition-colors border px-3 py-1.5 bg-transparent text-zinc-300 border-white/10 hover:bg-white/5 hover:text-white">
+                                        <Icons.Place />
+                                        <span>{l.name || 'Без названия'}</span>
+                                        {l.address ? <span className="text-zinc-500 font-normal truncate" style={{ maxWidth: 220 }}>· {l.address}</span> : null}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
 
                             {/* Световая схема и сетап */}
                             <div className="bg-black/30 p-5 rounded-lg border border-white/10 space-y-4">
@@ -5059,6 +5874,254 @@
                         </div>
                      </div>
                     </div>
+                  </div>
+
+                  {/* ОБЪЕКТЫ — места съёмки со скаутинга.
+                      Собирается только когда открыт: у объекта могут быть
+                      десятки фотографий, и держать их в памяти круглосуточно
+                      незачем — ровно как у мастер-дока и галереи. */}
+                  <div className={`h-full w-full ${currentView === 'locations' ? 'block' : 'hidden'}`}>
+                    {currentView === 'locations' && (
+                    <div className="flex flex-col md:flex-row h-full max-w-7xl mx-auto p-2 md:p-6 gap-3 md:gap-6 overflow-hidden">
+                      <div className="w-full md:w-64 glass-panel p-2 md:p-4 rounded-lg flex flex-row md:flex-col space-x-2 md:space-x-0 md:space-y-1.5 overflow-x-auto md:overflow-y-auto shrink-0 hide-scrollbar snap-x">
+                        {sortedLocations.map(l => {
+                          const cnt = locationPhotos(l.id).length;
+                          return (
+                            <button key={l.id} onClick={() => setActiveLocationId(l.id)}
+                                    className={`snap-center whitespace-nowrap md:whitespace-normal shrink-0 md:w-full text-left px-3.5 py-2.5 rounded-lg text-sm transition-all border ${activeLocationId === l.id ? 'bg-indigo-600/30 text-white border-indigo-500/40 font-bold' : 'bg-transparent text-zinc-400 border-transparent hover:bg-white/5'}`}>
+                              {l.name || 'Без названия'}
+                              <span className="font-mono text-indigo-400 ml-2 text-[11px]">{cnt ? `${cnt} фото` : '—'}</span>
+                            </button>
+                          );
+                        })}
+                        <button onClick={addLocation}
+                                className="cf-edit-only snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-sm transition-all border border-dashed border-zinc-700 text-zinc-500 hover:text-white shrink-0 font-medium">+ Добавить объект</button>
+                        {sortedLocations.length > 0 && (
+                          <button onClick={() => requestPrint('locations')}
+                                  title="Отчёт со скаутинга: адреса, заметки и фотографии по всем объектам"
+                                  className="snap-center md:w-full text-center px-3.5 py-2.5 rounded-lg text-xs transition-all border border-white/10 text-zinc-400 hover:text-white hover:bg-white/5 shrink-0 font-semibold md:mt-2">
+                            Отчёт по объектам (PDF)
+                          </button>
+                        )}
+                      </div>
+
+                      {!sortedLocations.length ? (
+                        <div className="flex-1 glass-panel rounded-lg flex items-center justify-center p-8">
+                          <div className="text-center max-w-md">
+                            <p className="text-zinc-300 text-sm font-semibold mb-2">Объектов пока нет</p>
+                            <p className="text-zinc-500 text-[13px] leading-relaxed">
+                              Объект — это место съёмки: квартира, двор, лестница. Сюда складывают
+                              фотографии со скаутинга, заметки и список сцен, которые там снимаются.
+                            </p>
+                          </div>
+                        </div>
+                      ) : activeLocationId && locations.find(l => l.id === activeLocationId) && (() => {
+                        const l = locations.find(x => x.id === activeLocationId);
+                        const photos = locationPhotos(l.id);
+                        const linked = l.sceneIds || [];
+                        return (
+                          <div className="flex-1 glass-panel p-5 md:p-8 rounded-lg overflow-y-auto space-y-6 border-t border-white/10">
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start border-b border-white/10 pb-4 gap-3">
+                              <input type="text" value={l.name || ''} onChange={(e) => updateLocation(l.id, 'name', e.target.value)}
+                                     placeholder="Название объекта"
+                                     className="bg-transparent text-xl md:text-2xl font-bold text-white focus:outline-none w-full border-b border-transparent focus:border-indigo-400/50 transition-colors placeholder-zinc-600"
+                                     style={{ fontFamily: "'Lora', Georgia, serif" }} />
+                              <button onClick={() => deleteLocation(l.id)}
+                                      className="cf-edit-only text-xs text-red-400 hover:text-white hover:bg-red-500/20 px-3 py-1.5 rounded-lg transition-colors border border-transparent font-semibold flex items-center gap-1 self-end sm:self-auto shrink-0">
+                                <Icons.Trash /> Удалить объект
+                              </button>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Адрес</label>
+                              <input type="text" value={l.address || ''} onChange={(e) => updateLocation(l.id, 'address', e.target.value)}
+                                     placeholder="Улица, дом, как заезжать"
+                                     className="glass-input w-full px-3 py-2.5 rounded-lg text-sm text-zinc-200" />
+                            </div>
+
+                            {/* Координаты. Отдельной строкой, потому что нужны
+                                двум разным вещам: показать точку на карте
+                                и посчитать солнце. Можно найти по адресу,
+                                можно вставить из карт руками. */}
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Координаты</label>
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                <input type="text" value={l.coords || ''} onChange={(e) => updateLocation(l.id, 'coords', e.target.value)}
+                                       placeholder="55.75583, 37.61730"
+                                       className="glass-input flex-1 px-3 py-2.5 rounded-lg text-sm text-zinc-200 font-mono" />
+                                <div className="flex gap-2 shrink-0">
+                                  <button onClick={() => findCoords(l)} disabled={geoBusy === l.id || !(l.address || '').trim()}
+                                          title={(l.address || '').trim() ? 'Найти координаты по адресу' : 'Сначала впишите адрес'}
+                                          className="cf-edit-only px-3 py-2.5 rounded-lg text-xs font-bold transition-colors border border-white/10 text-zinc-300 hover:bg-white/10 disabled:opacity-40 whitespace-nowrap">
+                                    {geoBusy === l.id ? 'Ищу...' : 'Найти по адресу'}
+                                  </button>
+                                  {parseCoords(l.coords) && (
+                                    <a href={`https://www.openstreetmap.org/?mlat=${parseCoords(l.coords).lat}&mlon=${parseCoords(l.coords).lon}#map=17/${parseCoords(l.coords).lat}/${parseCoords(l.coords).lon}`}
+                                       target="_blank" rel="noopener"
+                                       className="px-3 py-2.5 rounded-lg text-xs font-bold transition-colors border border-white/10 text-zinc-300 hover:bg-white/10 whitespace-nowrap flex items-center">
+                                      На карте
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                              {geoError && geoError.id === l.id && (
+                                <p className="text-[11px] text-amber-300 ml-1">{geoError.text}</p>
+                              )}
+                              {!parseCoords(l.coords) && (l.coords || '').trim() && (
+                                <p className="text-[11px] text-amber-300 ml-1">Не разобрал координаты. Нужны два числа: широта, долгота.</p>
+                              )}
+                            </div>
+
+                            {/* Солнце. Дату берём у сцен, которые здесь снимают:
+                                отдельного поля даты у объекта нет намеренно —
+                                смена назначается сцене, и две копии даты
+                                разъехались бы. */}
+                            {(() => {
+                              const c = parseCoords(l.coords);
+                              const dates = [...new Set(sortedScenes
+                                .filter(s => (l.sceneIds || []).includes(s.id) && s.date)
+                                .map(s => s.date))].sort();
+                              if (!c && !dates.length) return null;
+                              return (
+                                <div className="bg-black/30 p-4 rounded-lg border border-white/10 space-y-2">
+                                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Солнце</label>
+                                  {!c ? (
+                                    <p className="text-[13px] text-zinc-500">Впишите координаты — и здесь появится, во сколько встаёт и садится солнце в дни съёмки.</p>
+                                  ) : !dates.length ? (
+                                    <p className="text-[13px] text-zinc-500">Поставьте смену у сцены, которую здесь снимают, — и появится время восхода и заката на этот день.</p>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      {dates.map(dt => {
+                                        const t = sunTimes(c.lat, c.lon, dt);
+                                        if (!t) return null;
+                                        const nums = sortedScenes.filter(s => (l.sceneIds || []).includes(s.id) && s.date === dt).map(s => '#' + s.number).join(', ');
+                                        return (
+                                          <div key={dt} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px]">
+                                            <span className="font-mono text-zinc-400 w-[86px] shrink-0">{formatDateDisplay(dt)}</span>
+                                            {t.sun.polar === 'day' ? <span className="text-amber-200">солнце не садится — полярный день</span>
+                                             : t.sun.polar === 'night' ? <span className="text-indigo-200">солнце не встаёт — полярная ночь</span>
+                                             : (
+                                              <React.Fragment>
+                                                <span className="text-zinc-200">восход <b className="font-mono">{hhmm(t.sun.rise)}</b></span>
+                                                <span className="text-zinc-200">закат <b className="font-mono">{hhmm(t.sun.set)}</b></span>
+                                                {t.golden.rise && (
+                                                  <span className="text-amber-200/90">золотой час <b className="font-mono">{hhmm(t.sun.rise)}–{hhmm(t.golden.rise)}</b> и <b className="font-mono">{hhmm(t.golden.set)}–{hhmm(t.sun.set)}</b></span>
+                                                )}
+                                              </React.Fragment>
+                                             )}
+                                            <span className="cf-meta">сцены {nums}</span>
+                                          </div>
+                                        );
+                                      })}
+                                      <p className="text-[11px] text-zinc-500 pt-1">Время по часам этого устройства. Считается на месте, интернет не нужен.</p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Схема света. Та же самая запись, что в разделе
+                                «Экспликации» — не копия: у объекта своё
+                                постоянное освещение, и рисовать его заново
+                                для каждой сцены незачем. */}
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Схема света объекта</label>
+                              {!lightSchemes.length ? (
+                                <p className="text-[13px] text-zinc-500 ml-1">Схем света в проекте пока нет. Их заводят в разделе «Экспликации».</p>
+                              ) : (
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                  <select value={l.lightSchemeId || ''} onChange={(e) => updateLocation(l.id, 'lightSchemeId', e.target.value)}
+                                          className="glass-input rounded-lg px-3 py-2.5 text-sm flex-1 bg-zinc-900">
+                                    <option value="">— схема не выбрана —</option>
+                                    {lightSchemes.map(sch => (<option key={sch.id} value={sch.id}>{sch.title}</option>))}
+                                  </select>
+                                  {l.lightSchemeId && lightSchemes.some(s => s.id === l.lightSchemeId) && (
+                                    <button onClick={() => { setActiveSchemeId(l.lightSchemeId); setActiveDocId(null); setCurrentView('docs'); }}
+                                            className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 px-4 py-2.5 rounded-lg text-xs font-bold transition-colors shrink-0">
+                                      Открыть схему
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Заметки со скаутинга</label>
+                              <textarea value={l.description || ''} onChange={(e) => updateLocation(l.id, 'description', e.target.value)}
+                                        placeholder="Свет, окна, розетки, шум, что мешает, во сколько солнце уходит..."
+                                        className="glass-input w-full px-3 py-2.5 rounded-lg text-sm text-zinc-200 leading-relaxed resize-y"
+                                        style={{ minHeight: 130 }} />
+                            </div>
+
+                            {/* Связь со сценами. Список живёт у объекта: одна
+                                квартира снимается в пяти сценах, и держать эту
+                                связь у каждой сцены значило бы чинить её
+                                в пяти местах при каждом переносе. */}
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Снимаем здесь сцены</label>
+                                <span className="cf-meta">{linked.length ? `выбрано ${linked.length}` : 'ничего не выбрано'}</span>
+                              </div>
+                              {!sortedScenes.length ? (
+                                <p className="text-[13px] text-zinc-500 ml-1">Сцен в проекте ещё нет.</p>
+                              ) : (
+                                <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto p-1">
+                                  {sortedScenes.map(s => {
+                                    const on = linked.includes(s.id);
+                                    // В режиме просмотра кнопки не нажимаются, но
+                                    // ОСТАЮТСЯ на месте: какие сцены здесь снимают —
+                                    // это как раз то, ради чего ссылку и открывают.
+                                    return (
+                                      <button key={s.id} onClick={() => toggleLocationScene(l.id, s.id)}
+                                              disabled={READ_ONLY} title={s.title || 'Без названия'}
+                                              className={`rounded-lg text-xs font-semibold transition-colors border px-2.5 py-1.5 text-left ${on ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'bg-transparent text-zinc-400 border-white/10 hover:bg-white/5'}`}>
+                                        <span className="font-mono text-[11px] mr-1.5" style={{ color: on ? 'var(--accent)' : 'var(--muted-2)' }}>#{s.number}</span>
+                                        <span className="truncate inline-block align-bottom" style={{ maxWidth: 150 }}>{s.title || 'Без названия'}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-3">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Фотографии со скаута</label>
+                                <label className="cf-edit-only text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                  <span><Icons.Gallery /></span> Загрузить фото
+                                  <input type="file" multiple accept="image/*" className="hidden"
+                                         onChange={(e) => handleMultiFileUpload(e.target.files, null, null, l.id)} />
+                                </label>
+                              </div>
+                              {!photos.length ? (
+                                <p className="text-[13px] text-zinc-500 ml-1">Фотографий пока нет. Их видно и здесь, и в общей галерее.</p>
+                              ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                                  {photos.map(ref => (
+                                    <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center"
+                                         onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: ref.id })}>
+                                      <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={bgStyle(ref.id, ref.url)}></div>
+                                      {/* Отвязываем от объекта, а НЕ удаляем из проекта —
+                                          это правило всего приложения */}
+                                      <button onClick={(e) => { e.stopPropagation(); setRefLocation(ref.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
+                                              title="Убрать из объекта — фото останется в галерее"
+                                              className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-white w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center">✕</button>
+                                      <img src={ref.url} className="w-full h-full object-contain pointer-events-none relative z-10" draggable="false" loading="lazy" />
+                                      <div className="absolute bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md p-1.5 border-t border-white/10 z-20" onClick={e => e.stopPropagation()}>
+                                        <input type="text" value={ref.label || ''}
+                                               onChange={(e) => { const up = references.map(r => r.id === ref.id ? { ...r, label: e.target.value } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }}
+                                               className="bg-transparent w-full text-[11px] font-bold text-center text-zinc-300 truncate focus:outline-none placeholder-zinc-600" placeholder="Подпись..." />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    )}
                   </div>
 
                   {/* МАСТЕР-ДОК. Собирается только когда открыт: он показывает
@@ -6430,6 +7493,182 @@
               )}
 
               {/* МОДАЛЬНЫЕ ОКНА */}
+              {/* ГДЕ ХРАНЯТСЯ ФОТОГРАФИИ.
+                  Настройки лежат на устройстве, а не в комнате: это ключи
+                  от личного облака, а в комнату пускают любого, у кого есть
+                  код. Смотреть фотографии при этом может вся группа —
+                  ссылки на файлы публичные. */}
+              {showCloudModal && (() => {
+                const p = cloudCfg.provider || '';
+                const connected = p === 'nextcloud' ? !!(cloudCfg.server && cloudCfg.user) : !!cloudCfg.token;
+                // Адрес возврата надо перенести в кабинет облака знак в знак.
+                // На планшете выделять его пальцем мучительно, поэтому кнопкой.
+                const copyRedirect = () => {
+                  const v = cloudRedirect();
+                  const done = () => showToast('Адрес скопирован');
+                  navigator.clipboard.writeText(v).then(done).catch(() => {
+                    const t = document.createElement('input');
+                    t.value = v; document.body.appendChild(t); t.select();
+                    document.execCommand('copy'); document.body.removeChild(t); done();
+                  });
+                };
+                const redirectRow = (
+                  <span className="flex items-start gap-2 mt-1">
+                    <span className="font-mono text-indigo-300 break-all flex-1">{cloudRedirect()}</span>
+                    <button onClick={copyRedirect}
+                            className="shrink-0 text-[11px] font-bold px-2 py-1 rounded-md border border-white/10 text-zinc-300 hover:bg-white/10 transition-colors">
+                      копировать
+                    </button>
+                  </span>
+                );
+                const field = (label, key, opts = {}) => (
+                  <div className="mb-3">
+                    <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">{label}</label>
+                    <input type={opts.secret ? 'password' : 'text'} value={cloudCfg[key] || ''}
+                           onChange={(e) => patchCloud({ [key]: e.target.value.trim() })}
+                           placeholder={opts.placeholder || ''} autoComplete="off" spellCheck="false"
+                           className="w-full glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
+                    {opts.hint && <p className="text-[11px] text-zinc-500 mt-1.5 ml-1 leading-relaxed">{opts.hint}</p>}
+                  </div>
+                );
+                return (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                  <div className="glass-panel rounded-lg p-6 md:p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
+                    <button onClick={() => setShowCloudModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Gallery /> Где хранить фотографии</h3>
+
+                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
+                      <p>Обычно фотографии лежат внутри самого проекта. Это удобно, пока их немного: примерно после сотни проект становится тяжёлым и начинает медленно открываться.</p>
+                      <p>Можно хранить их в своём облаке. Тогда в проекте останется только маленькое превью — галерея и доска будут открываться быстро и без интернета, а полный размер подтянется, когда откроете фотографию на весь экран.</p>
+                      <p className="text-[12px] text-zinc-500">Настройка запоминается на этом устройстве. На другом устройстве, откуда вы тоже загружаете фото, её нужно повторить. Смотреть фотографии сможет вся группа — для этого ничего настраивать не надо.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mb-5">
+                      {[['', 'В проекте'], ['dropbox', 'Dropbox'], ['yandex', 'Яндекс.Диск'], ['nextcloud', 'Nextcloud']].map(([id, label]) => (
+                        <button key={id} onClick={() => { patchCloud({ provider: id }); setCloudError(''); }}
+                                className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-colors border ${p === id ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'bg-transparent text-zinc-400 border-white/10 hover:bg-white/5'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {p === '' && (
+                      <p className="text-[13px] text-zinc-400 leading-relaxed bg-black/30 p-4 rounded-lg border border-white/10">
+                        Фотографии хранятся внутри проекта, как и раньше. Ничего настраивать не нужно.
+                      </p>
+                    )}
+
+                    {p === 'dropbox' && (
+                      <div>
+                        <details className="mb-4 bg-black/30 rounded-lg border border-white/10 p-3">
+                          <summary className="text-[13px] font-bold text-zinc-300 cursor-pointer">Как получить ключ приложения</summary>
+                          <ol className="text-[12px] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
+                            <li>Откройте <span className="font-mono text-zinc-300">dropbox.com/developers/apps</span> и нажмите Create app.</li>
+                            <li>Выберите Scoped access, затем App folder — приложение будет видеть только свою папку, а не весь ваш Dropbox.</li>
+                            <li>На вкладке Permissions отметьте <span className="font-mono">files.content.write</span>, <span className="font-mono">files.content.read</span>, <span className="font-mono">sharing.write</span> и нажмите Submit.</li>
+                            <li>На вкладке Settings в поле Redirect URIs впишите ровно этот адрес и нажмите Add:{redirectRow}</li>
+                            <li>Оттуда же скопируйте App key и вставьте ниже.</li>
+                          </ol>
+                        </details>
+                        {field('Ключ приложения (App key)', 'appKey', { placeholder: 'например, a1b2c3d4e5f6g7h' })}
+                        {field('Папка в облаке', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                        <button onClick={connectDropbox}
+                                className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
+                          {connected ? 'Подключить заново' : 'Подключить Dropbox'}
+                        </button>
+                      </div>
+                    )}
+
+                    {p === 'yandex' && (
+                      <div>
+                        <details className="mb-4 bg-black/30 rounded-lg border border-white/10 p-3">
+                          <summary className="text-[13px] font-bold text-zinc-300 cursor-pointer">Как получить ClientID</summary>
+                          <ol className="text-[12px] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
+                            <li>Откройте <span className="font-mono text-zinc-300">oauth.yandex.ru/client/new</span>.</li>
+                            <li>Платформа — «Веб-сервисы». В поле Redirect URI впишите ровно этот адрес:{redirectRow}</li>
+                            <li>В доступах отметьте «Яндекс.Диск REST API»: запись, чтение и информация о диске.</li>
+                            <li>Скопируйте ClientID и вставьте ниже.</li>
+                          </ol>
+                        </details>
+                        {field('ClientID приложения', 'clientId', { placeholder: '32 знака из кабинета Яндекса' })}
+                        {field('Папка на Диске', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                        <button onClick={connectYandex}
+                                className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
+                          {connected ? 'Подключить заново' : 'Подключить Яндекс.Диск'}
+                        </button>
+                      </div>
+                    )}
+
+                    {p === 'nextcloud' && (
+                      <div>
+                        <div className="mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                          <p className="text-[12px] text-amber-200 leading-relaxed">
+                            Nextcloud по умолчанию не разрешает загрузку из браузера с чужого адреса. Если проверка связи не проходит, покажите администратору сервера эту строку: нужно разрешить запросы с <span className="font-mono break-all">{location.origin}</span> (заголовки CORS для WebDAV и OCS). У Dropbox и Яндекс.Диска такого ограничения нет.
+                          </p>
+                        </div>
+                        {field('Адрес сервера', 'server', { placeholder: 'https://cloud.example.com' })}
+                        {field('Логин', 'user', { placeholder: 'ваш логин' })}
+                        {field('Пароль приложения', 'pass', { secret: true, hint: 'Не основной пароль! Настройки → Безопасность → «Пароль приложения». Его можно отозвать, не меняя свой.' })}
+                        {field('Папка', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                      </div>
+                    )}
+
+                    {p && (
+                      <React.Fragment>
+                        <div className="flex gap-2 mb-3">
+                          <button onClick={checkCloud} disabled={cloudBusy === 'check'}
+                                  className="flex-1 py-2.5 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors border border-white/10">
+                            {cloudBusy === 'check' ? 'Проверяю...' : 'Проверить связь'}
+                          </button>
+                          {connected && (
+                            <button onClick={disconnectCloud}
+                                    className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-500/20 rounded-lg text-sm font-bold transition-colors border border-transparent">
+                              Отключить
+                            </button>
+                          )}
+                        </div>
+
+                        {cloudError && (
+                          <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                            <p className="text-[12px] text-red-200 leading-relaxed break-all">
+                              <b>Что ответило облако:</b><br />{cloudError}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Перенос уже загруженного */}
+                        <div className="bg-black/30 p-4 rounded-lg border border-white/10">
+                          <p className="text-[13px] font-bold text-zinc-200 mb-1">Уже загруженные фотографии</p>
+                          <p className="text-[12px] text-zinc-500 leading-relaxed mb-3">
+                            {localRefs.length
+                              ? `Внутри проекта лежит ${localRefs.length} шт. Их можно перенести в облако — в проекте останется превью, а сами файлы уедут в вашу папку. Фотографии при этом никуда не пропадают.`
+                              : 'Всё, что есть в проекте, уже перенесено в облако.'}
+                          </p>
+                          {migrate ? (
+                            <div>
+                              <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-2">
+                                <div className="h-full transition-all" style={{ width: `${Math.round(migrate.done / Math.max(1, migrate.total) * 100)}%`, background: 'var(--accent)' }} />
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="cf-meta">Перенесено {migrate.done} из {migrate.total}{migrate.failed ? ` · не вышло ${migrate.failed}` : ''}</span>
+                                <button onClick={() => { migrateStop.current = true; }}
+                                        className="text-xs text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/10">Остановить</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button onClick={migrateToCloud} disabled={!localRefs.length || !connected}
+                                    className="w-full py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-all disabled:opacity-40">
+                              Перенести в облако ({localRefs.length})
+                            </button>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    )}
+                  </div>
+                </div>
+                );
+              })()}
+
               {showShareModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
                   <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
@@ -6518,6 +7757,20 @@
                         </div>
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
                       </div>
+
+                      <button onClick={() => { setShowProjectModal(false); setShowCloudModal(true); }}
+                              className="w-full flex items-center justify-between gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-white/5 mb-2 text-left"
+                              style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-zinc-200">Где хранить фотографии</span>
+                          <span className="block text-[11px] text-zinc-500 leading-relaxed mt-0.5">
+                            {cloudCfg.provider
+                              ? `Сейчас: ${CLOUD_NAMES[cloudCfg.provider]}${localRefs.length ? ` · в проекте ещё ${localRefs.length} шт.` : ''}`
+                              : 'Сейчас: внутри проекта. Можно перенести в Dropbox, на Яндекс.Диск или Nextcloud.'}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-zinc-500">›</span>
+                      </button>
                       {/* Прибор для замеров на своём устройстве. Галочкой, а не
                           адресом: в установленном приложении адресной строки нет */}
                       <label className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
@@ -6547,7 +7800,7 @@
                           const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
                           if (ff && ff !== '[]') figs[b.id] = ff;
                         });
-                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs };
+                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, locations, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs };
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                         showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks), Object.keys(figs))).size}`);
                       }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
@@ -6563,6 +7816,7 @@
                               if (d.references) setReferences(d.references); if (d.stickies) setStickies(d.stickies);
                               if (d.boards && d.boards.length) { setBoards(d.boards); d.boards.forEach(b => syncDoc('boards', b.id, b)); }
                               if (d.docs) setDocs(d.docs); if (d.crew) setCrew(d.crew);
+                              if (d.locations) { setLocations(d.locations); d.locations.forEach(l => syncDoc('locations', l.id, l)); }
                               if (d.gearTypes) setGearTypes(d.gearTypes); if(d.lightGearTypes) setLightGearTypes(d.lightGearTypes);
                               if(d.lightSchemes) setLightSchemes(d.lightSchemes); if (d.projectFiles) setProjectFiles(d.projectFiles);
                               // Новый формат — рисунок по каждой доске; старые бэкапы
@@ -6777,15 +8031,86 @@
                   </div>
                 )}
 
+                {/* Отчёт со скаутинга: то, что отправляют группе перед выездом.
+                    Фотографии крупные — по ним и решают, годится ли объект. */}
+                {printMode === 'locations' && (
+                  <div>
+                    <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>Объекты съёмки</h1>
+                    <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>
+                      Отчёт со скаутинга · CineFlow · {new Date().toLocaleDateString('ru-RU')} · объектов: {sortedLocations.length}
+                    </p>
+                    {!sortedLocations.length && <p style={{fontSize: '11pt', color: '#777'}}>Объектов в проекте нет.</p>}
+                    {sortedLocations.map(l => {
+                      const photos = locationPhotos(l.id);
+                      const linked = sortedScenes.filter(s => (l.sceneIds || []).includes(s.id));
+                      return (
+                        <div key={l.id} className="print-scene" style={{marginBottom: '18pt'}}>
+                          <h2 style={{fontSize: '15pt', fontWeight: 800, margin: '0 0 4pt'}}>{l.name || 'Без названия'}</h2>
+                          {l.address && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Адрес:</b> {l.address}</p>}
+                          {l.coords && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Координаты:</b> {l.coords}</p>}
+                          {linked.length > 0 && (
+                            <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}>
+                              <b>Сцены:</b> {linked.map(s => `#${s.number} ${s.title || ''}`.trim()).join(' · ')}
+                            </p>
+                          )}
+                          {(() => {
+                            // Восход и закат по дням съёмки — то, ради чего
+                            // отчёт со скаута и возят с собой.
+                            const c = parseCoords(l.coords);
+                            if (!c) return null;
+                            const dates = [...new Set(linked.filter(s => s.date).map(s => s.date))].sort();
+                            if (!dates.length) return null;
+                            return (
+                              <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}>
+                                <b>Солнце:</b>{' '}
+                                {dates.map(dt => {
+                                  const t = sunTimes(c.lat, c.lon, dt);
+                                  if (!t) return null;
+                                  const when = t.sun.polar === 'day' ? 'не садится'
+                                    : t.sun.polar === 'night' ? 'не встаёт'
+                                    : `${hhmm(t.sun.rise)} — ${hhmm(t.sun.set)}`;
+                                  return `${formatDateDisplay(dt)}: ${when}`;
+                                }).filter(Boolean).join(' · ')}
+                              </p>
+                            );
+                          })()}
+                          {(() => {
+                            const sch = lightSchemes.find(s => s.id === l.lightSchemeId);
+                            if (!sch) return null;
+                            return <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Схема света:</b> {sch.title}</p>;
+                          })()}
+                          {l.description && <p style={{fontSize: '11pt', margin: '6pt 0 8pt', whiteSpace: 'pre-wrap', lineHeight: 1.5}}>{l.description}</p>}
+                          {photos.length > 0 && (
+                            <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt'}}>
+                              {photos.map(p => (
+                                <div key={p.id} style={{width: '31%', fontSize: '9pt'}}>
+                                  <img src={p.url} style={{width: '100%', border: '1px solid #ccc'}} />
+                                  {p.label && <div style={{marginTop: '2pt'}}>{p.label}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {printMode === 'full' && (<>
                 <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>CineFlow — План подготовки к съёмкам</h1>
                 <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Сформировано: {new Date().toLocaleDateString('ru-RU')} · Сцен: {scenes.length}</p>
                 {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
                   const pFrames = storyboard.filter(f => f.sceneId === s.id);
+                  const pLocs = locations.filter(l => (l.sceneIds || []).includes(s.id));
                   return (
                     <div key={s.id} className="print-scene">
                       <h2 style={{fontSize: '14pt', fontWeight: 800, margin: '0 0 4pt'}}>Сцена #{s.number} — {s.title || 'Без названия'}</h2>
                       <p style={{fontSize: '10pt', color: '#555', margin: '0 0 6pt'}}>Смена: {s.date ? formatDateDisplay(s.date) : 'не назначена'}</p>
+                      {pLocs.length > 0 && (
+                        <p style={{fontSize: '10pt', margin: '0 0 6pt'}}>
+                          <b>Объект:</b> {pLocs.map(l => l.name + (l.address ? ` (${l.address})` : '')).join('; ')}
+                        </p>
+                      )}
                       {s.content && <p style={{fontSize: '11pt', margin: '0 0 8pt', whiteSpace: 'pre-wrap'}}>{s.content}</p>}
                       {Object.keys(s.gear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 4pt'}}><b>Техника:</b> {Object.entries(s.gear).map(([k, v]) => `${((gearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}
                       {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>Свет:</b> {Object.entries(s.lightGear).map(([k, v]) => `${((lightGearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}

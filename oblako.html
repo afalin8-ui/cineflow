@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Своё облако для фотографий — CineFlow</title>
+<link rel="icon" href="./icon.svg">
+<style>
+  /* Светлая тема — основная запись токенов. Тёмная переопределяет
+     только их, и дважды: по настройке системы и по явному выбору. */
+  :root {
+    --bg:        #faf8f5;
+    --panel:     #ffffff;
+    --panel-2:   #f3efe9;
+    --text:      #26231f;
+    --text-2:    #4a453e;
+    --muted:     #7d766c;
+    --border:    #e3dcd2;
+    --border-2:  #d3cabd;
+    --accent:    #a8482a;
+    --accent-2:  #8d3c22;
+    --soft:      #f9ece4;
+    --warn-bg:   #fdf3e3;
+    --warn-line: #e6c68a;
+    --warn-text: #6d4c14;
+    --shadow:    0 1px 2px rgba(38,35,31,.06), 0 8px 24px rgba(38,35,31,.05);
+
+    --display: Georgia, 'Times New Roman', 'Droid Serif', serif;
+    --body: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #1a1918;
+      --panel:     #242322;
+      --panel-2:   #2c2a27;
+      --text:      #f0eee6;
+      --text-2:    #d8d3c8;
+      --muted:     #968f84;
+      --border:    #35322e;
+      --border-2:  #46423c;
+      --accent:    #d97757;
+      --accent-2:  #e08e70;
+      --soft:      #33241e;
+      --warn-bg:   #2e2417;
+      --warn-line: #6b5426;
+      --warn-text: #e7c98b;
+      --shadow:    0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.22);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:        #1a1918;
+    --panel:     #242322;
+    --panel-2:   #2c2a27;
+    --text:      #f0eee6;
+    --text-2:    #d8d3c8;
+    --muted:     #968f84;
+    --border:    #35322e;
+    --border-2:  #46423c;
+    --accent:    #d97757;
+    --accent-2:  #e08e70;
+    --soft:      #33241e;
+    --warn-bg:   #2e2417;
+    --warn-line: #6b5426;
+    --warn-text: #e7c98b;
+    --shadow:    0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.22);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2.75rem;
+  }
+
+  h1, h2, h3 { font-family: var(--display); font-weight: 600; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(1.9rem, 6vw, 2.6rem); line-height: 1.15; letter-spacing: -.015em; }
+  h2 { font-size: clamp(1.3rem, 4vw, 1.6rem); line-height: 1.25; }
+  h3 { font-size: 1.06rem; font-family: var(--body); font-weight: 700; }
+  p { margin: 0; }
+
+  .lede { color: var(--text-2); font-size: 1.06rem; }
+  .eyebrow {
+    font-size: .715rem; letter-spacing: .14em; text-transform: uppercase;
+    font-weight: 700; color: var(--accent);
+  }
+  .muted { color: var(--muted); font-size: .9rem; }
+
+  header { display: flex; flex-direction: column; gap: .7rem;
+           border-bottom: 1px solid var(--border); padding-bottom: 2rem; }
+
+  section { display: flex; flex-direction: column; gap: 1rem; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.15rem 1.25rem;
+    display: flex; flex-direction: column; gap: .6rem;
+  }
+  .gate { border-color: var(--border-2); box-shadow: var(--shadow); }
+  .gate .yes { color: var(--accent); font-weight: 700; }
+
+  .note {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+    color: var(--warn-text);
+    border-radius: 10px;
+    padding: .85rem 1rem;
+    font-size: .92rem;
+  }
+  .note b { color: inherit; }
+
+  /* Шаги пронумерованы, потому что это НАСТОЯЩАЯ последовательность:
+     пропустишь шаг — подключение не заработает. */
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: s;
+             display: flex; flex-direction: column; gap: 1rem; }
+  ol.steps > li { counter-increment: s; display: grid;
+                  grid-template-columns: 1.85rem 1fr; gap: .85rem; align-items: start; }
+  ol.steps > li::before {
+    content: counter(s);
+    font-family: var(--mono); font-size: .8rem; font-weight: 600;
+    color: var(--accent);
+    background: var(--soft);
+    border-radius: 6px;
+    width: 1.85rem; height: 1.85rem;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: .05rem;
+  }
+  ol.steps .body { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+
+  ul.plain { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .45rem; }
+
+  code, .mono { font-family: var(--mono); font-size: .87em; }
+  code {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: .1em .38em; word-break: break-word;
+  }
+
+  .copyrow { display: flex; gap: .5rem; align-items: stretch; flex-wrap: wrap; }
+  .copyrow .addr {
+    flex: 1 1 16rem; min-width: 0;
+    font-family: var(--mono); font-size: .82rem;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: .55rem .7rem;
+    display: flex; align-items: center; word-break: break-all;
+  }
+  button.copy {
+    flex: 0 0 auto;
+    font: inherit; font-size: .82rem; font-weight: 600;
+    color: var(--accent); background: var(--soft);
+    border: 1px solid var(--border-2); border-radius: 8px;
+    padding: .55rem .9rem; cursor: pointer; min-height: 44px;
+    transition: background .15s ease, color .15s ease;
+  }
+  button.copy:hover { background: var(--accent); color: var(--bg); }
+  button.copy:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Три облака — читателю нужно одно, поэтому переключателем,
+     а не тремя простынями подряд. На печати раскрываются все. */
+  .tabs { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .tab {
+    font: inherit; font-size: .93rem; font-weight: 600;
+    background: var(--panel); color: var(--text-2);
+    border: 1px solid var(--border); border-radius: 9px;
+    padding: .6rem 1rem; cursor: pointer; min-height: 44px;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .tab:hover { border-color: var(--border-2); }
+  .tab[aria-selected="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .panel[hidden] { display: none; }
+  .panel { display: flex; flex-direction: column; gap: 1.1rem; }
+  .panel > .why { color: var(--text-2); font-size: .95rem; }
+
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+  .scroll { overflow-x: auto; }
+  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  td:first-child { color: var(--text); font-weight: 600; width: 40%; }
+  td:last-child { color: var(--text-2); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 1.5rem; color: var(--muted); font-size: .88rem;
+           display: flex; flex-direction: column; gap: .5rem; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media print {
+    .panel[hidden] { display: flex !important; }
+    .tabs, button.copy { display: none; }
+    body { background: #fff; color: #000; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">CineFlow · фотографии</span>
+    <h1>Своё облако для фотографий</h1>
+    <p class="lede">Чтобы фотографии со скаутинга не лежали внутри проекта и не утяжеляли его, их можно хранить в своём облаке: Яндекс.Диск, Dropbox или Nextcloud. Настраивается один раз, минут за десять.</p>
+  </header>
+
+  <section>
+    <div class="card gate">
+      <h3>Сначала: нужно ли это лично вам?</h3>
+      <p><b class="yes">Нужно</b> — если вы <b>загружаете</b> фотографии в проект: со скаутинга, референсы, кадры.</p>
+      <p><b>Не нужно</b> — если вы только смотрите. Фотографии открываются у всех и без всякой настройки. Ничего делать не надо.</p>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Как это устроено</span>
+    <h2>Три вещи, которые стоит знать заранее</h2>
+    <ul class="plain">
+      <li><b>Каждый подключает свой аккаунт.</b> Ваши фотографии уедут в ваше облако, чужие — в чужое. Видеть их при этом будет вся группа.</li>
+      <li><b>Настройка живёт на устройстве.</b> Подключили на iPad — на телефоне надо повторить. Это сделано нарочно: ключи от вашего облака не уходят в общий проект.</li>
+      <li><b>В проекте остаётся маленькое превью.</b> Поэтому галерея и доска открываются мгновенно и работают без интернета. Полный размер подтягивается, когда открываете фотографию на весь экран.</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Самый быстрый путь</span>
+    <h2>Один раз на всю группу</h2>
+    <p>Заводить «приложение» в Яндексе или Dropbox не нужно каждому. Достаточно одного раза — дальше группа пользуется готовым кодом.</p>
+    <ol class="steps">
+      <li><div class="body"><p>Один человек — обычно оператор — проходит инструкцию ниже до конца и получает код приложения (<span class="mono">ClientID</span> у Яндекса, <span class="mono">App key</span> у Dropbox).</p></div></li>
+      <li><div class="body"><p>Этот код он присылает группе. Секретом он не является: подключиться по нему можно только к своему аккаунту и только со своим паролем.</p></div></li>
+      <li><div class="body"><p>Каждый вставляет код у себя, жмёт «Подключить» и разрешает доступ. Заводить приложение заново уже не нужно.</p></div></li>
+    </ol>
+    <div class="note">Если вся группа должна складывать фотографии в <b>одну общую папку</b>, а не каждый в свою — смотрите раздел «Всё в одно место» ниже.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">По шагам</span>
+    <h2>Выберите своё облако</h2>
+
+    <div class="tabs" role="tablist" aria-label="Выбор облака">
+      <button class="tab" role="tab" id="t-ya" aria-controls="p-ya" aria-selected="true">Яндекс.Диск</button>
+      <button class="tab" role="tab" id="t-db" aria-controls="p-db" aria-selected="false">Dropbox</button>
+      <button class="tab" role="tab" id="t-nc" aria-controls="p-nc" aria-selected="false">Nextcloud</button>
+    </div>
+
+    <!-- ЯНДЕКС -->
+    <div class="panel" id="p-ya" role="tabpanel" aria-labelledby="t-ya">
+      <p class="why">Самый простой вариант, если вы в России: место обычно уже есть, подключение живёт около года.</p>
+      <ol class="steps">
+        <li><div class="body">
+          <p>Откройте <code>oauth.yandex.ru/client/new</code> и войдите под своим Яндексом.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Название — любое, например <b>CineFlow</b>. Платформа — <b>«Веб-сервисы»</b>.</p>
+        </div></li>
+        <li><div class="body">
+          <p>В поле <b>Redirect URI</b> впишите адрес приложения. Скопируйте кнопкой — вписывать руками нельзя, ошибётесь в одном знаке и подключение не пройдёт.</p>
+          <div class="copyrow">
+            <span class="addr" id="a1">https://afalin8-ui.github.io/cineflow/</span>
+            <button class="copy" type="button" data-for="a1">Копировать</button>
+          </div>
+        </div></li>
+        <li><div class="body">
+          <p>В доступах отметьте <b>Яндекс.Диск REST API</b>: запись, чтение и информация о диске. Больше ничего не нужно.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Сохраните и скопируйте <b>ClientID</b> — длинная строка из букв и цифр.</p>
+        </div></li>
+        <li><div class="body">
+          <p>В CineFlow: <b>«Проект» → «Где хранить фотографии» → «Яндекс.Диск»</b>. Вставьте ClientID, при желании впишите имя папки и нажмите <b>«Подключить Яндекс.Диск»</b>. Разрешите доступ — вас вернёт обратно в приложение.</p>
+        </div></li>
+      </ol>
+    </div>
+
+    <!-- DROPBOX -->
+    <div class="panel" id="p-db" role="tabpanel" aria-labelledby="t-db" hidden>
+      <p class="why">Подойдёт, если группа уже живёт в Dropbox. Подключение не протухает — приложение само продлевает доступ.</p>
+      <ol class="steps">
+        <li><div class="body">
+          <p>Откройте <code>dropbox.com/developers/apps</code> и нажмите <b>Create app</b>.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Выберите <b>Scoped access</b>, затем <b>App folder</b> — приложение будет видеть только свою папку, а не весь ваш Dropbox. Название — любое, но уникальное на весь Dropbox: если ругается, добавьте пару цифр.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Вкладка <b>Permissions</b>: отметьте <code>files.content.write</code>, <code>files.content.read</code>, <code>sharing.write</code> и нажмите <b>Submit</b> внизу страницы.</p>
+          <p class="muted">Этот шаг забывают чаще всего. Без него загрузка не пройдёт, а сообщение будет невнятным.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Вкладка <b>Settings</b>, поле <b>Redirect URIs</b>: вставьте адрес и нажмите <b>Add</b>.</p>
+          <div class="copyrow">
+            <span class="addr" id="a2">https://afalin8-ui.github.io/cineflow/</span>
+            <button class="copy" type="button" data-for="a2">Копировать</button>
+          </div>
+        </div></li>
+        <li><div class="body">
+          <p>Там же скопируйте <b>App key</b>.</p>
+        </div></li>
+        <li><div class="body">
+          <p>В CineFlow: <b>«Проект» → «Где хранить фотографии» → «Dropbox»</b>. Вставьте App key и нажмите <b>«Подключить Dropbox»</b>.</p>
+        </div></li>
+      </ol>
+      <div class="note">Пока приложение не отправлено в Dropbox на проверку, к нему может подключиться ограниченное число аккаунтов. Для съёмочной группы этого с запасом хватает.</div>
+    </div>
+
+    <!-- NEXTCLOUD -->
+    <div class="panel" id="p-nc" role="tabpanel" aria-labelledby="t-nc" hidden>
+      <p class="why">Свой сервер. Заводить приложение не нужно, но одна настройка на стороне сервера обязательна — без неё браузер загружать не даст.</p>
+      <ol class="steps">
+        <li><div class="body">
+          <p>Войдите в свой Nextcloud, откройте <b>Настройки → Безопасность</b>.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Внизу создайте <b>пароль приложения</b> с именем CineFlow. Скопируйте его — показывают один раз.</p>
+          <p class="muted">Это не ваш обычный пароль. Его можно отозвать отдельно, не меняя основной.</p>
+        </div></li>
+        <li><div class="body">
+          <p>В CineFlow: <b>«Проект» → «Где хранить фотографии» → «Nextcloud»</b>. Впишите адрес сервера, логин, пароль приложения и папку.</p>
+        </div></li>
+        <li><div class="body">
+          <p>Нажмите <b>«Проверить связь»</b>. Если не проходит — покажите администратору сервера строку ниже: нужно разрешить обращения с этого адреса (заголовки CORS для WebDAV и OCS).</p>
+          <div class="copyrow">
+            <span class="addr" id="a3">https://afalin8-ui.github.io</span>
+            <button class="copy" type="button" data-for="a3">Копировать</button>
+          </div>
+        </div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Если нужно</span>
+    <h2>Всё в одно место</h2>
+    <p>По умолчанию фотографии каждого уезжают в его собственное облако. Чтобы всё складывалось в одну общую папку:</p>
+    <ol class="steps">
+      <li><div class="body"><p>Владелец облака создаёт папку — например <b>Съёмка</b> — и делится ею с группой обычным способом своего облака.</p></div></li>
+      <li><div class="body"><p>У остальных эта папка появляется на их Диске. Каждый вписывает её имя в поле <b>«Папка»</b> в настройках CineFlow — ровно так, как она называется.</p></div></li>
+      <li><div class="body"><p>Проверьте одной фотографией: загрузите её и убедитесь, что она легла в общую папку.</p></div></li>
+    </ol>
+    <div class="note"><b>Для Dropbox есть оговорка.</b> Если на шаге создания приложения выбрать <b>App folder</b>, оно видит только свою папку и общую не найдёт. Чтобы складывать в общую, выбирайте <b>Full Dropbox</b> — тогда приложение видит весь диск, и путь к общей папке сработает.</div>
+    <p class="muted">Русские имена папок работают — можно называть «Съёмка Иры», а не Semka_Iry.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">После настройки</span>
+    <h2>Проверить и перенести</h2>
+    <ul class="plain">
+      <li><b>«Проверить связь»</b> — покажет, приняли ключ или нет. У Яндекса заодно скажет, сколько места свободно.</li>
+      <li><b>«Перенести в облако»</b> — переносит фотографии, которые уже лежат внутри проекта. Идёт по одной, можно остановить и продолжить потом. Фотографии при этом не пропадают.</li>
+      <li>Если облако вдруг не ответит при загрузке, фотография всё равно останется в проекте, в полном размере. Потерять её нельзя.</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Если не получилось</span>
+    <h2>Что обычно не так</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Что видите</th><th>Что делать</th></tr></thead>
+        <tbody>
+          <tr><td>После «Подключить» страница ругается на адрес возврата</td><td>Адрес в кабинете облака не совпадает с адресом приложения. Скопируйте его кнопкой выше и вставьте заново — до последней косой черты.</td></tr>
+          <tr><td>Подключилось, но фотографии не уезжают</td><td>Dropbox: не нажат <b>Submit</b> на вкладке Permissions. Вернитесь и отметьте три разрешения.</td></tr>
+          <tr><td>Nextcloud: «Проверить связь» не проходит</td><td>Сервер не пускает браузер. Это лечится только на стороне сервера — покажите администратору адрес из шага 4.</td></tr>
+          <tr><td>На телефоне облако не подключено, хотя на iPad всё работает</td><td>Так и должно быть: настройка живёт на устройстве. Повторите на телефоне.</td></tr>
+          <tr><td>Ничего не помогает</td><td>В окне настройки под кнопками показывается ответ облака целиком. Пришлите эту строку — по ней обычно сразу видно, чего не хватает.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p><b>Адрес приложения:</b> <span class="mono">afalin8-ui.github.io/cineflow/</span></p>
+    <p>Если вы настраивали облако на пробной версии (адрес заканчивался на <span class="mono">/proba/</span>), добавьте в кабинете облака этот адрес вторым, рядом со старым. Оба живут одновременно.</p>
+  </footer>
+</div>
+
+<script>
+  // Переключение облаков
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  function show(id) {
+    tabs.forEach(function (t) {
+      var on = t.id === id;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { show(t.id); });
+    t.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      var next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+      next.focus(); show(next.id);
+    });
+  });
+
+  // Копирование адреса. Ручной ввод — главный источник ошибок,
+  // поэтому запасной путь через выделение обязателен.
+  document.querySelectorAll('button.copy').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var text = document.getElementById(b.dataset.for).textContent.trim();
+      var done = function () {
+        var was = b.textContent;
+        b.textContent = 'Скопировано';
+        setTimeout(function () { b.textContent = was; }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else { fallback(); }
+      function fallback() {
+        var i = document.createElement('textarea');
+        i.value = text; document.body.appendChild(i); i.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(i);
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

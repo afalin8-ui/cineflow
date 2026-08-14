@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v5';
+const VERSION = 'cineflow-v6';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -92,35 +92,43 @@ self.addEventListener('fetch', event => {
   // в кэше './index.html' CineFlow на страницу игры.
   if (url.origin === self.location.origin && url.pathname.includes('/game/')) return;
 
-  // Папка /proba/ — версия «на посмотреть» перед выкладыванием.
-  // Не трогаем по той же причине, что и игру: обработчик навигации
-  // ниже кладёт ЛЮБУЮ открытую страницу в кэш под именем './index.html',
-  // и без этой строки проба подменила бы собой рабочее приложение
-  // в офлайне.
-  if (url.origin === self.location.origin && url.pathname.includes('/proba/')) return;
-
   // Сама страница: сначала сеть (чтобы приезжали обновления),
   // при отсутствии связи — версия из кэша.
   // cache:'reload' обязателен: иначе ответ может прийти из HTTP-кэша
   // браузера, и пользователь после обновления увидит старое приложение.
+  //
+  // ВАЖНО: под именем './index.html' кэшируется ТОЛЬКО сама страница
+  // приложения. Раньше туда попадала любая открытая страница из этой
+  // папки — и офлайн вместо приложения показывалось то, что человек
+  // открыл последним (инструкция, пробная версия, что угодно).
+  // Ошибок при этом не было: страница просто оказывалась не та.
   if (req.mode === 'navigate') {
+    const appRoot = new URL('./', self.location).pathname;
+    const isApp = url.origin === self.location.origin
+               && (url.pathname === appRoot || url.pathname === appRoot + 'index.html');
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req.url, { cache: 'reload' });
-        const cache = await caches.open(APP_CACHE);
-        cache.put('./index.html', fresh.clone());
+        if (isApp) {
+          const cache = await caches.open(APP_CACHE);
+          cache.put('./index.html', fresh.clone());
+        }
         return fresh;
       } catch (e) {
         const cache = await caches.open(APP_CACHE);
-        return (await cache.match('./index.html')) || (await cache.match('./')) || Response.error();
+        if (isApp) return (await cache.match('./index.html')) || (await cache.match('./')) || Response.error();
+        return (await cache.match(req)) || Response.error();
       }
     })());
     return;
   }
 
   // index.html, запрошенный не как навигация (например проверка обновления):
-  // тоже сначала сеть, иначе отдадим устаревшую копию.
-  if (url.origin === self.location.origin && /\/index\.html$/.test(url.pathname)) {
+  // тоже сначала сеть, иначе отдадим устаревшую копию. Сверяем ПОЛНЫЙ
+  // путь, а не окончание: «любой index.html» затянул бы сюда страницы
+  // из соседних папок — та же ловушка, что и у навигации выше.
+  if (url.origin === self.location.origin
+      && url.pathname === new URL('./index.html', self.location).pathname) {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req.url, { cache: 'reload' });
