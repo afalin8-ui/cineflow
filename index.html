@@ -395,21 +395,292 @@
         // минуя обычную загрузку: событие приходит с persisted.
         window.addEventListener('pageshow', (e) => { if (e.persisted) cfKickSync(true); });
 
-        const compressImage = (base64Str, maxWidth, maxHeight, callback) => {
+        const compressImage = (base64Str, maxWidth, maxHeight, callback, quality) => {
           const img = new Image();
           img.onerror = () => callback(base64Str);
           img.onload = () => {
             const canvas = document.createElement('canvas');
             let width = img.width; let height = img.height;
-            if (width > height) { if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; } } 
+            if (width > height) { if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; } }
             else { if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; } }
             canvas.width = width; canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
             ctx.drawImage(img, 0, 0, width, height);
-            callback(canvas.toDataURL('image/jpeg', 0.8)); 
+            callback(canvas.toDataURL('image/jpeg', quality || 0.8));
           };
           img.src = base64Str;
+        };
+
+        // =====================================================================
+        // ВНЕШНЕЕ ХРАНИЛИЩЕ ФОТОГРАФИЙ (Dropbox / Яндекс.Диск / Nextcloud)
+        // =====================================================================
+        // Зачем: картинки лежали в базе целиком, в base64. Предел документа
+        // Firestore — 1 МБ, и на сотне фотографий проект упирался в потолок.
+        // Теперь оригинал уезжает в облако пользователя, а в базе остаётся
+        // МАЛЕНЬКОЕ превью (`url`) и ссылка на оригинал (`full`).
+        //
+        // Почему превью всё-таки хранится в базе: галерея и доска обязаны
+        // открываться мгновенно и БЕЗ интернета — на площадке связи часто
+        // нет вовсе. Полный размер подтягивается из облака только когда
+        // фотографию открывают на весь экран.
+        //
+        // Поле `url` НЕ переименовано намеренно: на него смотрят галерея,
+        // доска, печать, файл-снимок и старые фотографии, залитые до
+        // появления облака. Пусть в нём лежит то, что показывают.
+        const CLOUD_KEY = 'cf_cloud';
+        const CLOUD_NAMES = { dropbox: 'Dropbox', yandex: 'Яндекс.Диск', nextcloud: 'Nextcloud' };
+        const loadCloudCfg = () => {
+          try { return JSON.parse(localStorage.getItem(CLOUD_KEY)) || {}; } catch (e) { return {}; }
+        };
+        const saveCloudCfg = (cfg) => {
+          try { localStorage.setItem(CLOUD_KEY, JSON.stringify(cfg)); } catch (e) {}
+          return cfg;
+        };
+        // Настройки живут на УСТРОЙСТВЕ, а не в комнате: это ключи от чужого
+        // Dropbox, и класть их в общую базу, куда пускают любого с кодом
+        // комнаты, нельзя. Обратная сторона — подключать облако надо на
+        // каждом устройстве, откуда загружают фотографии. Смотреть их
+        // при этом может кто угодно: ссылки публичные.
+
+        // Имя файла в облаке: латиница и цифры, остальное — подчёркиванием.
+        // Кириллица в пути ломает заголовок Dropbox-API-Arg и путается
+        // в WebDAV, а ценности не несёт — подпись хранится в проекте.
+        const cloudFileName = (refId, original) => {
+          const dot = String(original || '').lastIndexOf('.');
+          let ext = dot > 0 ? String(original).slice(dot + 1).toLowerCase() : 'jpg';
+          if (!/^[a-z0-9]{1,5}$/.test(ext)) ext = 'jpg';
+          return `${refId}.${ext}`;
+        };
+        // Заголовок HTTP не пропускает буквы вне ASCII — Dropbox требует
+        // экранировать их прямо в JSON.
+        const asciiJSON = (obj) => JSON.stringify(obj)
+          .replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+
+        const cloudErr = async (res, what) => {
+          let text = '';
+          try { text = (await res.text()).slice(0, 300); } catch (e) {}
+          throw new Error(`${what}: ${res.status} ${text}`);
+        };
+
+        // --- Dropbox ---
+        // Короткий ключ доступа живёт 4 часа, поэтому храним долгий
+        // refresh_token и меняем его на свежий ключ по необходимости.
+        const dropboxAccess = async (cfg) => {
+          if (cfg.token && cfg.expires && Date.now() < cfg.expires - 60000) return cfg.token;
+          if (!cfg.refresh) {
+            if (cfg.token) return cfg.token; // вставили ключ руками
+            throw new Error('Dropbox не подключён');
+          }
+          const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'refresh_token', refresh_token: cfg.refresh, client_id: cfg.appKey || ''
+            })
+          });
+          if (!res.ok) await cloudErr(res, 'Dropbox не обновил ключ доступа');
+          const j = await res.json();
+          const next = saveCloudCfg({ ...loadCloudCfg(), token: j.access_token, expires: Date.now() + (j.expires_in || 14400) * 1000 });
+          return next.token;
+        };
+        // Ссылка вида .../file.jpg?rlkey=..&dl=0 открывает СТРАНИЦУ Dropbox.
+        // Картинку отдаёт та же ссылка с raw=1; dl=1 не годится — он
+        // помечает файл как вложение, и <img> его не покажет.
+        // Адрес разбираем по-настоящему, а не вырезаем строкой: если dl=0
+        // окажется не последним параметром, вырезание строкой оставит
+        // висящий «&» и склеит ссылку в мусор.
+        const dropboxRaw = (url) => {
+          try {
+            const u = new URL(url);
+            u.searchParams.delete('dl');
+            u.searchParams.set('raw', '1');
+            return u.toString();
+          } catch (e) { return String(url); }
+        };
+        const dropboxUpload = async (cfg, file, name) => {
+          const token = await dropboxAccess(cfg);
+          const path = '/' + (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '') + '/' + name;
+          const up = await fetch('https://content.dropboxapi.com/2/files/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Dropbox-API-Arg': asciiJSON({ path, mode: 'overwrite', mute: true }),
+              'Content-Type': 'application/octet-stream'
+            },
+            body: file
+          });
+          if (!up.ok) await cloudErr(up, 'Dropbox не принял файл');
+          const meta = await up.json();
+          // Публичная ссылка. Если она уже есть, Dropbox отвечает ошибкой —
+          // тогда спрашиваем существующую, а не считаем это провалом.
+          const mk = await fetch('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: asciiJSON({ path: meta.path_lower, settings: { requested_visibility: 'public' } })
+          });
+          let link = '';
+          if (mk.ok) { link = (await mk.json()).url; }
+          else {
+            const list = await fetch('https://api.dropboxapi.com/2/sharing/list_shared_links', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: asciiJSON({ path: meta.path_lower, direct_only: true })
+            });
+            if (!list.ok) await cloudErr(list, 'Dropbox не дал ссылку на файл');
+            const j = await list.json();
+            link = (j.links && j.links[0] && j.links[0].url) || '';
+          }
+          if (!link) throw new Error('Dropbox не дал ссылку на файл');
+          return { full: dropboxRaw(link), path: meta.path_lower };
+        };
+
+        // --- Яндекс.Диск ---
+        const yandexHead = (cfg) => ({ 'Authorization': 'OAuth ' + (cfg.token || '') });
+        const yandexUpload = async (cfg, file, name) => {
+          const folder = (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '');
+          // Папку создаём молча: 409 значит «уже есть», это не ошибка.
+          await fetch('https://cloud-api.yandex.net/v1/disk/resources?path=' + encodeURIComponent('disk:/' + folder),
+            { method: 'PUT', headers: yandexHead(cfg) }).catch(() => {});
+          const path = 'disk:/' + folder + '/' + name;
+          const ask = await fetch('https://cloud-api.yandex.net/v1/disk/resources/upload?overwrite=true&path=' + encodeURIComponent(path),
+            { headers: yandexHead(cfg) });
+          if (!ask.ok) await cloudErr(ask, 'Яндекс.Диск не дал адрес для загрузки');
+          const { href } = await ask.json();
+          // На сам href токен слать не надо — он одноразовый и уже подписан.
+          const put = await fetch(href, { method: 'PUT', body: file });
+          if (!put.ok) await cloudErr(put, 'Яндекс.Диск не принял файл');
+          const pub = await fetch('https://cloud-api.yandex.net/v1/disk/resources/publish?path=' + encodeURIComponent(path),
+            { method: 'PUT', headers: yandexHead(cfg) });
+          if (!pub.ok) await cloudErr(pub, 'Яндекс.Диск не опубликовал файл');
+          const info = await fetch('https://cloud-api.yandex.net/v1/disk/resources?fields=public_url&path=' + encodeURIComponent(path),
+            { headers: yandexHead(cfg) });
+          if (!info.ok) await cloudErr(info, 'Яндекс.Диск не дал ссылку');
+          const { public_url } = await info.json();
+          if (!public_url) throw new Error('Яндекс.Диск не дал ссылку');
+          return { full: public_url, path };
+        };
+
+        // --- Nextcloud ---
+        const ncHead = (cfg) => ({ 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent((cfg.user || '') + ':' + (cfg.pass || '')))) });
+        const ncBase = (cfg) => String(cfg.server || '').replace(/\/+$/, '');
+        const nextcloudUpload = async (cfg, file, name) => {
+          const folder = (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '');
+          const dav = ncBase(cfg) + '/remote.php/dav/files/' + encodeURIComponent(cfg.user || '');
+          await fetch(dav + '/' + encodeURIComponent(folder), { method: 'MKCOL', headers: ncHead(cfg) }).catch(() => {});
+          const rel = '/' + folder + '/' + name;
+          const put = await fetch(dav + '/' + encodeURIComponent(folder) + '/' + encodeURIComponent(name),
+            { method: 'PUT', headers: ncHead(cfg), body: file });
+          if (!put.ok) await cloudErr(put, 'Nextcloud не принял файл');
+          const share = await fetch(ncBase(cfg) + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
+            method: 'POST',
+            headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true', 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ path: rel, shareType: '3', permissions: '1' })
+          });
+          let link = '';
+          if (share.ok) {
+            const j = await share.json();
+            link = ((j.ocs || {}).data || {}).url || '';
+          }
+          if (!link) {
+            // Ссылка на этот файл уже могла быть создана раньше — спрашиваем её.
+            const ex = await fetch(ncBase(cfg) + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json&path=' + encodeURIComponent(rel),
+              { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
+            if (ex.ok) {
+              const j = await ex.json();
+              const arr = ((j.ocs || {}).data) || [];
+              const found = arr.find(s => s.url);
+              link = found ? found.url : '';
+            }
+          }
+          if (!link) throw new Error('Nextcloud не дал публичную ссылку');
+          return { full: link.replace(/\/+$/, '') + '/download', path: rel };
+        };
+
+        // --- Подключение облака ---
+        // Dropbox идёт по PKCE: приложению на статичном хостинге секрет
+        // хранить негде, а PKCE его и не требует. Взамен получаем долгий
+        // refresh_token — иначе ключ протухал бы каждые четыре часа.
+        // Яндекс проще: токен приезжает прямо в адресе и живёт около года.
+        const b64url = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf)))
+          .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const randomVerifier = () => {
+          const a = new Uint8Array(48); crypto.getRandomValues(a); return b64url(a);
+        };
+        const pkceChallenge = async (verifier) =>
+          b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+        // Адрес возврата обязан совпадать с тем, что вписан в кабинете
+        // облака, знак в знак. Поэтому — без параметров: комната и так
+        // помнится на устройстве.
+        const cloudRedirect = () => location.origin + location.pathname;
+
+        // Проверка связи. Дешёвый запрос, по которому сразу видно,
+        // приняли ключ или нет.
+        const cloudCheck = async (cfg) => {
+          if (cfg.provider === 'dropbox') {
+            const token = await dropboxAccess(cfg);
+            const res = await fetch('https://api.dropboxapi.com/2/users/get_current_account',
+              { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            if (!res.ok) await cloudErr(res, 'Dropbox не принял ключ');
+            const j = await res.json();
+            return (j.name && j.name.display_name) || 'подключено';
+          }
+          if (cfg.provider === 'yandex') {
+            const res = await fetch('https://cloud-api.yandex.net/v1/disk/', { headers: yandexHead(cfg) });
+            if (!res.ok) await cloudErr(res, 'Яндекс.Диск не принял ключ');
+            const j = await res.json();
+            const free = j.total_space ? Math.round((j.total_space - j.used_space) / 1073741824) : null;
+            return free === null ? 'подключено' : `свободно ${free} ГБ`;
+          }
+          if (cfg.provider === 'nextcloud') {
+            if (!ncBase(cfg)) throw new Error('Не указан адрес сервера');
+            const res = await fetch(ncBase(cfg) + '/ocs/v2.php/cloud/user?format=json',
+              { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
+            if (!res.ok) await cloudErr(res, 'Nextcloud не принял вход');
+            return 'подключено';
+          }
+          throw new Error('Облако не выбрано');
+        };
+
+        // base64 из базы обратно в файл — нужно, чтобы перенести в облако
+        // фотографии, загруженные до его появления.
+        const dataUrlToBlob = (d) => {
+          const parts = String(d).split(',');
+          const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+          const bin = atob(parts[1] || '');
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          return new Blob([arr], { type: mime });
+        };
+
+        // Единая дверь наружу. Возвращает {full, path} либо бросает ошибку.
+        const cloudUpload = async (cfg, file, name) => {
+          if (cfg.provider === 'dropbox') return dropboxUpload(cfg, file, name);
+          if (cfg.provider === 'yandex') return yandexUpload(cfg, file, name);
+          if (cfg.provider === 'nextcloud') return nextcloudUpload(cfg, file, name);
+          throw new Error('Облако не выбрано');
+        };
+
+        // Ссылка, которую можно поставить в <img src>.
+        // У Dropbox и Nextcloud публичная ссылка уже прямая, а Яндекс
+        // отдаёт СТРАНИЦУ просмотра — настоящий адрес файла приходится
+        // спрашивать отдельно. Спрашиваем без токена: у публичных файлов
+        // это открытый метод, иначе фотографии видел бы только владелец,
+        // а не вся группа. Ответ живёт недолго, поэтому держим его
+        // в памяти на время сеанса.
+        const ydCache = new Map();
+        const cloudDirectUrl = async (ref) => {
+          const full = ref && ref.full;
+          if (!full) return (ref && ref.url) || '';
+          if ((ref.cloud || {}).provider !== 'yandex') return full;
+          if (ydCache.has(full)) return ydCache.get(full);
+          try {
+            const res = await fetch('https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=' + encodeURIComponent(full));
+            if (!res.ok) return ref.url || full;
+            const { href } = await res.json();
+            if (href) { ydCache.set(full, href); return href; }
+          } catch (e) { console.warn('Яндекс.Диск: не удалось получить прямую ссылку', e); }
+          return ref.url || full;
         };
 
         class ErrorBoundary extends React.Component {
@@ -696,6 +967,22 @@
                 return () => window.removeEventListener('keydown', onKey);
             }, [currentIndex, refs, onClose]);
 
+            // Полный размер лежит в облаке, а в проекте — только превью.
+            // Показываем сразу превью (оно уже на устройстве), а следом
+            // подменяем оригиналом, когда тот доедет: пустой экран в
+            // ожидании сети хуже, чем мягковатая картинка на секунду.
+            // У Яндекс.Диска публичная ссылка ведёт на страницу, а не на
+            // файл, поэтому настоящий адрес спрашивается отдельно — этим
+            // и занимается cloudDirectUrl.
+            const [bigUrl, setBigUrl] = useState('');
+            useEffect(() => {
+                setBigUrl('');
+                if (!currentRef || !currentRef.full) return;
+                let alive = true;
+                cloudDirectUrl(currentRef).then(u => { if (alive && u) setBigUrl(u); });
+                return () => { alive = false; };
+            }, [currentRef && currentRef.id, currentRef && currentRef.full]);
+
             if (!currentRef) return null;
 
             return (
@@ -703,7 +990,8 @@
                     <button onClick={onClose} className="absolute top-6 right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
                     <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
                         {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
-                        <img src={currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+                        <img src={bigUrl || currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()}
+                             onError={() => { if (bigUrl) setBigUrl(''); }} />
                         {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
                     </div>
                     {/* Теги кадра — окошком в левом нижнем углу. Поднято над
@@ -3296,7 +3584,167 @@
           const [geminiKey, setGeminiKeyRaw] = useState(() => localStorage.getItem('cf_gemini_key') || '');
           const saveGeminiKey = (v) => { setGeminiKeyRaw(v); localStorage.setItem('cf_gemini_key', v.trim()); };
           const [showGeminiKey, setShowGeminiKey] = useState(true);
-          
+
+          // --- Внешнее хранилище фотографий ---
+          // Настройки лежат в localStorage (см. CLOUD_KEY): это ключи от
+          // ЛИЧНОГО облака, и в общей комнате им не место.
+          const [cloudCfg, setCloudCfgRaw] = useState(() => loadCloudCfg());
+          const patchCloud = (patch) => setCloudCfgRaw(prev => saveCloudCfg({ ...prev, ...patch }));
+          const [showCloudModal, setShowCloudModal] = useState(false);
+          // Последняя ошибка облака показывается целиком: без неё человек
+          // видит «не получилось» и не может ничего сделать, а в ответе
+          // сервера обычно прямо написано, чего не хватает.
+          const [cloudError, setCloudError] = useState('');
+          const [cloudBusy, setCloudBusy] = useState('');
+
+          // Возврат из окна разрешения. Dropbox приводит обратно с ?code=,
+          // Яндекс — с #access_token= в самом адресе (на сервер эта часть
+          // не уходит вовсе, поэтому так и сделано). Разбираем оба и
+          // сразу чистим адресную строку: ключ не должен остаться
+          // в истории браузера и в закладках.
+          useEffect(() => {
+            const qs = new URLSearchParams(location.search);
+            const code = qs.get('code');
+            const hash = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+            const ytok = hash.get('access_token');
+            if (!code && !ytok) return;
+            const clean = () => { try { history.replaceState(null, '', cloudRedirect()); } catch (e) {} };
+            if (ytok) {
+              const life = parseInt(hash.get('expires_in') || '0', 10);
+              patchCloud({ provider: 'yandex', token: ytok, expires: life ? Date.now() + life * 1000 : 0 });
+              clean(); setShowCloudModal(true);
+              showToast('Яндекс.Диск подключён');
+              return;
+            }
+            const cfg = loadCloudCfg();
+            const verifier = localStorage.getItem('cf_cloud_pkce') || '';
+            clean();
+            if (!verifier || !cfg.appKey) { showToast('Не удалось завершить подключение Dropbox'); return; }
+            (async () => {
+              try {
+                const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: new URLSearchParams({
+                    code, grant_type: 'authorization_code', client_id: cfg.appKey,
+                    code_verifier: verifier, redirect_uri: cloudRedirect()
+                  })
+                });
+                if (!res.ok) await cloudErr(res, 'Dropbox не выдал ключ');
+                const j = await res.json();
+                patchCloud({
+                  provider: 'dropbox', token: j.access_token, refresh: j.refresh_token || '',
+                  expires: Date.now() + (j.expires_in || 14400) * 1000
+                });
+                showToast('Dropbox подключён');
+              } catch (err) {
+                setCloudError(err.message || String(err));
+                showToast('⚠️ Не удалось подключить Dropbox');
+              } finally {
+                localStorage.removeItem('cf_cloud_pkce');
+                setShowCloudModal(true);
+              }
+            })();
+          }, []);
+
+          const connectDropbox = async () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.appKey) { setCloudError('Сначала впишите ключ приложения (App key)'); return; }
+            // Подпись запроса умеет только защищённое соединение. По адресу
+            // на https (а приложение живёт на нём) всё в порядке; сообщение
+            // нужно тем, кто открыл файл с диска — иначе они увидели бы
+            // невнятную ошибку про undefined.
+            if (!window.crypto || !crypto.subtle) {
+              setCloudError('Подключить Dropbox можно только с сайта по адресу https://, а не из файла, открытого с диска.');
+              return;
+            }
+            try {
+              const verifier = randomVerifier();
+              localStorage.setItem('cf_cloud_pkce', verifier);
+              const u = new URL('https://www.dropbox.com/oauth2/authorize');
+              u.searchParams.set('client_id', cfg.appKey);
+              u.searchParams.set('response_type', 'code');
+              u.searchParams.set('code_challenge', await pkceChallenge(verifier));
+              u.searchParams.set('code_challenge_method', 'S256');
+              // offline — чтобы вместе с ключом приехал долгий refresh_token:
+              // без него связь отваливалась бы каждые четыре часа.
+              u.searchParams.set('token_access_type', 'offline');
+              u.searchParams.set('redirect_uri', cloudRedirect());
+              location.href = u.toString();
+            } catch (err) { setCloudError(err.message || String(err)); }
+          };
+          const connectYandex = () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.clientId) { setCloudError('Сначала впишите ClientID приложения'); return; }
+            const u = new URL('https://oauth.yandex.ru/authorize');
+            u.searchParams.set('response_type', 'token');
+            u.searchParams.set('client_id', cfg.clientId);
+            u.searchParams.set('redirect_uri', cloudRedirect());
+            location.href = u.toString();
+          };
+          const checkCloud = async () => {
+            setCloudBusy('check'); setCloudError('');
+            try {
+              const who = await cloudCheck(loadCloudCfg());
+              showToast(`${CLOUD_NAMES[loadCloudCfg().provider]}: связь есть · ${who}`);
+            } catch (err) {
+              setCloudError(err.message || String(err));
+              showToast('⚠️ Связи с облаком нет');
+            }
+            setCloudBusy('');
+          };
+          const disconnectCloud = () => {
+            setCloudCfgRaw(saveCloudCfg({ provider: '' }));
+            setCloudError('');
+            showToast('Облако отключено · новые фото снова хранятся в проекте');
+          };
+
+          // --- Перенос уже загруженных фотографий ---
+          // Идёт по одной и не трогает то, что уже в облаке. Прерывается
+          // кнопкой: на сотне фотографий с телефона это долго, и запирать
+          // человека в этом окне нельзя.
+          const migrateStop = useRef(false);
+          const [migrate, setMigrate] = useState(null); // {done, total, failed}
+          const localRefs = useMemo(
+            () => references.filter(r => !r.full && String(r.url || '').startsWith('data:')),
+            [references]);
+          const migrateToCloud = async () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) { setCloudError('Сначала подключите облако'); return; }
+            const list = references.filter(r => !r.full && String(r.url || '').startsWith('data:'));
+            if (!list.length) { showToast('Переносить нечего — всё уже в облаке'); return; }
+            migrateStop.current = false;
+            setMigrate({ done: 0, total: list.length, failed: 0 });
+            let done = 0, failed = 0;
+            for (const ref of list) {
+              if (migrateStop.current) break;
+              try {
+                const blob = dataUrlToBlob(ref.url);
+                const { full, path } = await cloudUpload(cfg, blob, cloudFileName(ref.id, ref.label || 'photo.jpg'));
+                // Превью пересобираем из того же изображения: в базе
+                // должно остаться лёгкое, ради этого перенос и затевался.
+                const thumb = await new Promise(res => compressImage(ref.url, CLOUD_THUMB, CLOUD_THUMB, res, 0.72));
+                setReferences(prev => {
+                  const up = prev.map(r => r.id === ref.id
+                    ? { ...r, full, url: thumb || r.url, cloud: { provider: cfg.provider, path } } : r);
+                  const t = up.find(r => r.id === ref.id);
+                  if (t) syncDoc('references', ref.id, t);
+                  return up;
+                });
+                done++;
+              } catch (err) {
+                failed++;
+                console.warn('Перенос в облако:', err);
+                setCloudError(err.message || String(err));
+              }
+              setMigrate({ done, total: list.length, failed });
+            }
+            setMigrate(null);
+            showToast(failed
+              ? `Перенесено ${done}, не вышло ${failed} — эти остались в проекте`
+              : `Перенесено в облако: ${done} шт.`);
+          };
+
           const callGeminiAI = async (promptText, isAgent = false) => {
             if (!geminiKey.trim()) { showToast("🔑 Укажите ключ Gemini API в меню «Проект»."); return null; }
             try {
@@ -3914,27 +4362,89 @@
               return uploadFiles(imageFiles, sceneId, place, locationId);
           };
 
+          // Сжать файл к нужному размеру. Отдельно от uploadFiles, потому
+          // что то же самое нужно и при откате, когда облако не ответило.
+          const compressFile = (file, w, h, q) => new Promise(resolve => {
+            const r = new FileReader();
+            r.onerror = () => resolve('');
+            r.onloadend = () => compressImage(r.result, w, h, resolve, q);
+            r.readAsDataURL(file);
+          });
+          // Размер превью в базе. 640 точек хватает и сетке галереи, и
+          // карточке на доске при увеличении вдвое, а весит это около
+          // 40 КБ вместо полумегабайта.
+          const CLOUD_THUMB = 640;
+
           const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null) => {
+              const cfg = loadCloudCfg();
+              const useCloud = !!cfg.provider;
               showToast(`Оптимизация ${imageFiles.length} изображений...`);
-              const newRefs = await Promise.all(imageFiles.map((file, idx) => new Promise(resolve => {
-                  const r = new FileReader();
-                  r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => resolve({
-                    id: `ref-${Date.now()}-${idx}`,
+              // В облачном режиме в базу кладём только превью, а оригинал
+              // уезжает в облако файлом как есть — незачем портить фотографию
+              // со скаута пересжатием, если она всё равно хранится снаружи.
+              const stamp = Date.now();
+              const prepared = await Promise.all(imageFiles.map(async (file, idx) => ({
+                file, idx,
+                thumb: await compressFile(file, useCloud ? CLOUD_THUMB : 1440, useCloud ? CLOUD_THUMB : 1080,
+                                          useCloud ? 0.72 : 0.8)
+              })));
+              const newRefs = prepared.map(({ file, thumb, idx }) => ({
+                    id: `ref-${stamp}-${idx}`,
                     sceneId: sceneId || '',
                     locationId: locationId || '',
                     boardId: place ? place.boardId : '',
-                    url: c,
+                    url: thumb,
                     // Брошенные на доску раскладываем лесенкой от точки броска,
                     // остальные — как раньше, от левого верхнего угла экрана.
                     x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
                     y: place ? place.y + Math.floor(idx / 4) * 26 : (250 - canvasOffset.y) / zoom + (idx*20),
                     label: file.name, tags: []
-                  }));
-                  r.readAsDataURL(file);
-              })));
+              }));
+              // Показываем сразу, не дожидаясь облака: на площадке связь
+              // медленная, и стоять над кружком загрузки никто не будет.
               setReferences(prev => { const up = [...prev, ...newRefs]; newRefs.forEach(nr => syncDoc('references', nr.id, nr)); return up; });
               if (place) showToast(`На доску добавлено ${newRefs.length} шт.`);
               else if (locationId) showToast(`К объекту добавлено ${newRefs.length} фото`);
+              if (useCloud) sendOriginals(newRefs, prepared.map(p => p.file), cfg);
+          };
+
+          // Отправка оригиналов в облако. Идёт ПОСЛЕ того, как картинки
+          // уже показаны, и по одной: пачка параллельных загрузок с телефона
+          // только мешает друг другу, а порядок здесь не важен.
+          const sendOriginals = async (refs, files, cfg) => {
+            let ok = 0; const bad = [];
+            for (let i = 0; i < refs.length; i++) {
+              const ref = refs[i], file = files[i];
+              if (refs.length > 1) showToast(`${CLOUD_NAMES[cfg.provider] || 'Облако'}: отправляю ${i + 1} из ${refs.length}...`);
+              try {
+                const { full, path } = await cloudUpload(cfg, file, cloudFileName(ref.id, file.name));
+                setReferences(prev => {
+                  const up = prev.map(r => r.id === ref.id ? { ...r, full, cloud: { provider: cfg.provider, path } } : r);
+                  const t = up.find(r => r.id === ref.id);
+                  if (t) syncDoc('references', ref.id, t);
+                  return up;
+                });
+                ok++;
+              } catch (err) {
+                console.warn('Облако не приняло файл:', err);
+                bad.push(err && err.message ? err.message : String(err));
+                // Оригинал никуда не уехал, а в базе лежит только мелкое
+                // превью — то есть фотография пропала бы. Возвращаем ей
+                // обычный полный размер прямо в базу, как было до облака.
+                const fallback = await compressFile(file, 1440, 1080, 0.8);
+                if (fallback) setReferences(prev => {
+                  const up = prev.map(r => r.id === ref.id ? { ...r, url: fallback } : r);
+                  const t = up.find(r => r.id === ref.id);
+                  if (t) syncDoc('references', ref.id, t);
+                  return up;
+                });
+              }
+            }
+            if (!bad.length) showToast(`${CLOUD_NAMES[cfg.provider]}: отправлено ${ok} шт.`);
+            else {
+              setCloudError(bad[0]);
+              showToast(`⚠️ ${CLOUD_NAMES[cfg.provider]} не принял ${bad.length} из ${refs.length} — фото сохранены в проекте`);
+            }
           };
 
           // Пустая карточка референса на доске: заполняем именно её,
@@ -6761,6 +7271,182 @@
               )}
 
               {/* МОДАЛЬНЫЕ ОКНА */}
+              {/* ГДЕ ХРАНЯТСЯ ФОТОГРАФИИ.
+                  Настройки лежат на устройстве, а не в комнате: это ключи
+                  от личного облака, а в комнату пускают любого, у кого есть
+                  код. Смотреть фотографии при этом может вся группа —
+                  ссылки на файлы публичные. */}
+              {showCloudModal && (() => {
+                const p = cloudCfg.provider || '';
+                const connected = p === 'nextcloud' ? !!(cloudCfg.server && cloudCfg.user) : !!cloudCfg.token;
+                // Адрес возврата надо перенести в кабинет облака знак в знак.
+                // На планшете выделять его пальцем мучительно, поэтому кнопкой.
+                const copyRedirect = () => {
+                  const v = cloudRedirect();
+                  const done = () => showToast('Адрес скопирован');
+                  navigator.clipboard.writeText(v).then(done).catch(() => {
+                    const t = document.createElement('input');
+                    t.value = v; document.body.appendChild(t); t.select();
+                    document.execCommand('copy'); document.body.removeChild(t); done();
+                  });
+                };
+                const redirectRow = (
+                  <span className="flex items-start gap-2 mt-1">
+                    <span className="font-mono text-indigo-300 break-all flex-1">{cloudRedirect()}</span>
+                    <button onClick={copyRedirect}
+                            className="shrink-0 text-[11px] font-bold px-2 py-1 rounded-md border border-white/10 text-zinc-300 hover:bg-white/10 transition-colors">
+                      копировать
+                    </button>
+                  </span>
+                );
+                const field = (label, key, opts = {}) => (
+                  <div className="mb-3">
+                    <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">{label}</label>
+                    <input type={opts.secret ? 'password' : 'text'} value={cloudCfg[key] || ''}
+                           onChange={(e) => patchCloud({ [key]: e.target.value.trim() })}
+                           placeholder={opts.placeholder || ''} autoComplete="off" spellCheck="false"
+                           className="w-full glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
+                    {opts.hint && <p className="text-[11px] text-zinc-500 mt-1.5 ml-1 leading-relaxed">{opts.hint}</p>}
+                  </div>
+                );
+                return (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                  <div className="glass-panel rounded-lg p-6 md:p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
+                    <button onClick={() => setShowCloudModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Gallery /> Где хранить фотографии</h3>
+
+                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
+                      <p>Обычно фотографии лежат внутри самого проекта. Это удобно, пока их немного: примерно после сотни проект становится тяжёлым и начинает медленно открываться.</p>
+                      <p>Можно хранить их в своём облаке. Тогда в проекте останется только маленькое превью — галерея и доска будут открываться быстро и без интернета, а полный размер подтянется, когда откроете фотографию на весь экран.</p>
+                      <p className="text-[12px] text-zinc-500">Настройка запоминается на этом устройстве. На другом устройстве, откуда вы тоже загружаете фото, её нужно повторить. Смотреть фотографии сможет вся группа — для этого ничего настраивать не надо.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mb-5">
+                      {[['', 'В проекте'], ['dropbox', 'Dropbox'], ['yandex', 'Яндекс.Диск'], ['nextcloud', 'Nextcloud']].map(([id, label]) => (
+                        <button key={id} onClick={() => { patchCloud({ provider: id }); setCloudError(''); }}
+                                className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-colors border ${p === id ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'bg-transparent text-zinc-400 border-white/10 hover:bg-white/5'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {p === '' && (
+                      <p className="text-[13px] text-zinc-400 leading-relaxed bg-black/30 p-4 rounded-lg border border-white/10">
+                        Фотографии хранятся внутри проекта, как и раньше. Ничего настраивать не нужно.
+                      </p>
+                    )}
+
+                    {p === 'dropbox' && (
+                      <div>
+                        <details className="mb-4 bg-black/30 rounded-lg border border-white/10 p-3">
+                          <summary className="text-[13px] font-bold text-zinc-300 cursor-pointer">Как получить ключ приложения</summary>
+                          <ol className="text-[12px] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
+                            <li>Откройте <span className="font-mono text-zinc-300">dropbox.com/developers/apps</span> и нажмите Create app.</li>
+                            <li>Выберите Scoped access, затем App folder — приложение будет видеть только свою папку, а не весь ваш Dropbox.</li>
+                            <li>На вкладке Permissions отметьте <span className="font-mono">files.content.write</span>, <span className="font-mono">files.content.read</span>, <span className="font-mono">sharing.write</span> и нажмите Submit.</li>
+                            <li>На вкладке Settings в поле Redirect URIs впишите ровно этот адрес и нажмите Add:{redirectRow}</li>
+                            <li>Оттуда же скопируйте App key и вставьте ниже.</li>
+                          </ol>
+                        </details>
+                        {field('Ключ приложения (App key)', 'appKey', { placeholder: 'например, a1b2c3d4e5f6g7h' })}
+                        {field('Папка в облаке', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                        <button onClick={connectDropbox}
+                                className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
+                          {connected ? 'Подключить заново' : 'Подключить Dropbox'}
+                        </button>
+                      </div>
+                    )}
+
+                    {p === 'yandex' && (
+                      <div>
+                        <details className="mb-4 bg-black/30 rounded-lg border border-white/10 p-3">
+                          <summary className="text-[13px] font-bold text-zinc-300 cursor-pointer">Как получить ClientID</summary>
+                          <ol className="text-[12px] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
+                            <li>Откройте <span className="font-mono text-zinc-300">oauth.yandex.ru/client/new</span>.</li>
+                            <li>Платформа — «Веб-сервисы». В поле Redirect URI впишите ровно этот адрес:{redirectRow}</li>
+                            <li>В доступах отметьте «Яндекс.Диск REST API»: запись, чтение и информация о диске.</li>
+                            <li>Скопируйте ClientID и вставьте ниже.</li>
+                          </ol>
+                        </details>
+                        {field('ClientID приложения', 'clientId', { placeholder: '32 знака из кабинета Яндекса' })}
+                        {field('Папка на Диске', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                        <button onClick={connectYandex}
+                                className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
+                          {connected ? 'Подключить заново' : 'Подключить Яндекс.Диск'}
+                        </button>
+                      </div>
+                    )}
+
+                    {p === 'nextcloud' && (
+                      <div>
+                        <div className="mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                          <p className="text-[12px] text-amber-200 leading-relaxed">
+                            Nextcloud по умолчанию не разрешает загрузку из браузера с чужого адреса. Если проверка связи не проходит, покажите администратору сервера эту строку: нужно разрешить запросы с <span className="font-mono break-all">{location.origin}</span> (заголовки CORS для WebDAV и OCS). У Dropbox и Яндекс.Диска такого ограничения нет.
+                          </p>
+                        </div>
+                        {field('Адрес сервера', 'server', { placeholder: 'https://cloud.example.com' })}
+                        {field('Логин', 'user', { placeholder: 'ваш логин' })}
+                        {field('Пароль приложения', 'pass', { secret: true, hint: 'Не основной пароль! Настройки → Безопасность → «Пароль приложения». Его можно отозвать, не меняя свой.' })}
+                        {field('Папка', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                      </div>
+                    )}
+
+                    {p && (
+                      <React.Fragment>
+                        <div className="flex gap-2 mb-3">
+                          <button onClick={checkCloud} disabled={cloudBusy === 'check'}
+                                  className="flex-1 py-2.5 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors border border-white/10">
+                            {cloudBusy === 'check' ? 'Проверяю...' : 'Проверить связь'}
+                          </button>
+                          {connected && (
+                            <button onClick={disconnectCloud}
+                                    className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-500/20 rounded-lg text-sm font-bold transition-colors border border-transparent">
+                              Отключить
+                            </button>
+                          )}
+                        </div>
+
+                        {cloudError && (
+                          <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                            <p className="text-[12px] text-red-200 leading-relaxed break-all">
+                              <b>Что ответило облако:</b><br />{cloudError}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Перенос уже загруженного */}
+                        <div className="bg-black/30 p-4 rounded-lg border border-white/10">
+                          <p className="text-[13px] font-bold text-zinc-200 mb-1">Уже загруженные фотографии</p>
+                          <p className="text-[12px] text-zinc-500 leading-relaxed mb-3">
+                            {localRefs.length
+                              ? `Внутри проекта лежит ${localRefs.length} шт. Их можно перенести в облако — в проекте останется превью, а сами файлы уедут в вашу папку. Фотографии при этом никуда не пропадают.`
+                              : 'Всё, что есть в проекте, уже перенесено в облако.'}
+                          </p>
+                          {migrate ? (
+                            <div>
+                              <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-2">
+                                <div className="h-full transition-all" style={{ width: `${Math.round(migrate.done / Math.max(1, migrate.total) * 100)}%`, background: 'var(--accent)' }} />
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="cf-meta">Перенесено {migrate.done} из {migrate.total}{migrate.failed ? ` · не вышло ${migrate.failed}` : ''}</span>
+                                <button onClick={() => { migrateStop.current = true; }}
+                                        className="text-xs text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/10">Остановить</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button onClick={migrateToCloud} disabled={!localRefs.length || !connected}
+                                    className="w-full py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-all disabled:opacity-40">
+                              Перенести в облако ({localRefs.length})
+                            </button>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    )}
+                  </div>
+                </div>
+                );
+              })()}
+
               {showShareModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
                   <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
@@ -6849,6 +7535,20 @@
                         </div>
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
                       </div>
+
+                      <button onClick={() => { setShowProjectModal(false); setShowCloudModal(true); }}
+                              className="w-full flex items-center justify-between gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-white/5 mb-2 text-left"
+                              style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-zinc-200">Где хранить фотографии</span>
+                          <span className="block text-[11px] text-zinc-500 leading-relaxed mt-0.5">
+                            {cloudCfg.provider
+                              ? `Сейчас: ${CLOUD_NAMES[cloudCfg.provider]}${localRefs.length ? ` · в проекте ещё ${localRefs.length} шт.` : ''}`
+                              : 'Сейчас: внутри проекта. Можно перенести в Dropbox, на Яндекс.Диск или Nextcloud.'}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-zinc-500">›</span>
+                      </button>
                       {/* Прибор для замеров на своём устройстве. Галочкой, а не
                           адресом: в установленном приложении адресной строки нет */}
                       <label className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
