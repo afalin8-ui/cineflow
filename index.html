@@ -3730,6 +3730,9 @@
           const [cloudCfg, setCloudCfgRaw] = useState(() => loadCloudCfg());
           const patchCloud = (patch) => setCloudCfgRaw(prev => saveCloudCfg({ ...prev, ...patch }));
           const [showCloudModal, setShowCloudModal] = useState(false);
+          // Объяснение режима просмотра. Живёт даже когда READ_ONLY —
+          // это единственное окно, которое там вообще открывается.
+          const [showViewInfo, setShowViewInfo] = useState(false);
           // Последняя ошибка облака показывается целиком: без неё человек
           // видит «не получилось» и не может ничего сделать, а в ответе
           // сервера обычно прямо написано, чего не хватает.
@@ -5376,9 +5379,17 @@
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {READ_ONLY ? (
-                      <span className="cf-meta" style={{ color: 'var(--accent)' }}>
-                        Только просмотр{CF_SNAPSHOT ? ' · снимок' : ''}
-                      </span>
+                      // Надпись сделана КНОПКОЙ намеренно. Раньше человек,
+                      // которому прислали ссылку для просмотра, видел пустой
+                      // проект без «Проекта» и «Доступа» и не понимал, почему
+                      // ничего не нажимается и куда делись кнопки. Выхода
+                      // из этого режима не было вовсе.
+                      <button onClick={() => setShowViewInfo(true)}
+                              title="Почему нельзя ничего менять"
+                              className="cf-meta flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
+                              style={{ color: 'var(--accent)', border: '1px solid var(--accent-line, var(--border))', minHeight: 28 }}>
+                        Только просмотр{CF_SNAPSHOT ? ' · снимок' : ''} <span style={{ opacity: .7 }}>?</span>
+                      </button>
                     ) : (
                       <React.Fragment>
                         <button onClick={() => setShowProjectModal(true)} className={ghostBtn} style={ghostStyle}><Icons.Folder /> Проект</button>
@@ -7841,6 +7852,42 @@
                 );
               })()}
 
+              {/* РЕЖИМ ПРОСМОТРА — что происходит и как выйти.
+                  Единственное окно, доступное при READ_ONLY: человеку,
+                  которому прислали ссылку для просмотра, больше некуда
+                  нажать, а «пустой проект без кнопок» выглядит поломкой. */}
+              {showViewInfo && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                  <div className="glass-panel rounded-lg p-6 md:p-8 max-w-md w-full relative">
+                    <button onClick={() => setShowViewInfo(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                    <h3 className="text-xl font-extrabold text-white mb-4">Это режим просмотра</h3>
+                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
+                      {CF_SNAPSHOT ? (
+                        <React.Fragment>
+                          <p>Вы открыли файл-снимок — копию проекта, сохранённую на один раз. Менять в нём ничего нельзя, и с облаком он не связан.</p>
+                          <p>Чтобы вести свой проект, откройте само приложение: <span className="font-mono text-[12px] text-indigo-300 break-all">afalin8-ui.github.io/cineflow/</span></p>
+                        </React.Fragment>
+                      ) : (
+                        <React.Fragment>
+                          <p>Ссылку, по которой вы пришли, дали <b>для просмотра</b>: показать материалы, не давая их менять. Поэтому кнопок «Проект» и «Доступ» здесь нет, а поля не набираются — это не поломка.</p>
+                          <p>Если вы хотели вести <b>свой</b> проект, откройте приложение по обычному адресу. Вы начнёте с чистого листа: свои сцены, своё облако для фотографий, свой ключ ИИ.</p>
+                        </React.Fragment>
+                      )}
+                    </div>
+                    {!CF_SNAPSHOT && (
+                      <button onClick={() => { location.href = plainLink; }}
+                              className="w-full py-3.5 rounded-lg text-sm font-extrabold transition-all"
+                              style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                        Открыть своё приложение
+                      </button>
+                    )}
+                    <p className="text-[11px] text-zinc-500 mt-3 leading-relaxed">
+                      Тому, кто прислал ссылку: чтобы дать человеку само приложение, нужна ссылка из окна «Доступ» → «Дать человеку само приложение» — она без кода комнаты.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {showShareModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
                   <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
@@ -7865,6 +7912,13 @@
                               }}
                               className="mt-2 cf-chip">+ Новая пустая комната</button>
                     </div>
+                    {/* Ссылок в этом окне ТРИ, и они делают разное. Раньше
+                        подписана была только третья, и «дать человеку
+                        приложение» легко было спутать с «показать проект». */}
+                    <h4 className="text-sm font-bold text-white mb-1.5 mt-5">Позвать в этот проект</h4>
+                    <p className="text-[12px] text-zinc-400 leading-relaxed mb-2">
+                      Человек будет работать вместе с вами: видит ваши сцены и фотографии и может их править.
+                    </p>
                     <div className="bg-black/50 p-2 pl-4 rounded-lg border border-white/10 flex items-center justify-between gap-3">
                       {/* Ссылка ОБЯЗАНА нести код комнаты: без него получатель
                           заведёт себе пустой проект, а не присоединится к нашему */}
@@ -7893,7 +7947,10 @@
 
                     {/* ТОЛЬКО ПРОСМОТР */}
                     <div className="mt-6 pt-5" style={{ borderTop: '1px solid var(--border)' }}>
-                      <h4 className="text-sm font-bold text-white mb-1.5">Показать, не давая менять</h4>
+                      <h4 className="text-sm font-bold text-white mb-1.5">Показать этот проект, не давая менять</h4>
+                      <p className="text-[12px] text-amber-200/80 leading-relaxed mb-2">
+                        Это НЕ способ дать человеку приложение: по такой ссылке кнопок «Проект» и «Доступ» у него не будет.
+                      </p>
                       <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
                         Ссылка показывает живые данные — вы правите, человек видит обновления.
                         Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
