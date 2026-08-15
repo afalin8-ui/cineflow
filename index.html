@@ -563,16 +563,60 @@
 
         // --- Nextcloud ---
         const ncHead = (cfg) => ({ 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent((cfg.user || '') + ':' + (cfg.pass || '')))) });
-        const ncBase = (cfg) => String(cfg.server || '').replace(/\/+$/, '');
+        // Адрес сервера человек пишет как придётся: «cloud.example.com»,
+        // «https://cloud.example.com/», с пробелом на конце. Без «https://»
+        // адрес превращается в ОТНОСИТЕЛЬНЫЙ путь, и запрос уходит не на
+        // сервер пользователя, а на сайт самого приложения — в ответ
+        // прилетает чужая страница «404», и выглядит это так, будто
+        // Nextcloud отказал во входе. Поэтому схему дописываем сами.
+        // Именно https: приложение открыто по https, и на обычный http
+        // браузер его не пустит вовсе (смешанное содержимое).
+        const ncBase = (cfg) => {
+          let s = String(cfg.server || '').trim().replace(/\/+$/, '');
+          if (!s) return '';
+          if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+          return s;
+        };
+        // Отдельная дверь для проверок: возвращает адрес либо понятную
+        // причину, почему по нему нельзя обратиться.
+        const ncCheckedBase = (cfg) => {
+          const base = ncBase(cfg);
+          if (!base) throw new Error('Не указан адрес сервера');
+          let u;
+          try { u = new URL(base); } catch (e) { throw new Error('Не могу разобрать адрес сервера: ' + base); }
+          if (u.protocol === 'http:') {
+            throw new Error('Адрес начинается с http:// — браузер не пустит: приложение открыто по https. '
+                          + 'Нужен адрес на https://');
+          }
+          return base;
+        };
+        // Nextcloud отвечает JSON. Если пришла веб-страница, значит по
+        // этому адресу сидит не он — самая частая причина, и по голому
+        // коду ответа её не видно.
+        const ncNotNextcloud = (text, base) => {
+          if (!/^\s*<(!doctype|html)/i.test(String(text || ''))) return null;
+          return `по адресу ${base} ответил не Nextcloud, а обычная веб-страница. `
+               + 'Проверьте адрес сервера — он должен быть тем, по которому вы входите в Nextcloud.';
+        };
         const nextcloudUpload = async (cfg, file, name) => {
+          const base = ncCheckedBase(cfg);
           const folder = (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '');
-          const dav = ncBase(cfg) + '/remote.php/dav/files/' + encodeURIComponent(cfg.user || '');
+          const dav = base + '/remote.php/dav/files/' + encodeURIComponent(cfg.user || '');
           await fetch(dav + '/' + encodeURIComponent(folder), { method: 'MKCOL', headers: ncHead(cfg) }).catch(() => {});
           const rel = '/' + folder + '/' + name;
-          const put = await fetch(dav + '/' + encodeURIComponent(folder) + '/' + encodeURIComponent(name),
-            { method: 'PUT', headers: ncHead(cfg), body: file });
-          if (!put.ok) await cloudErr(put, 'Nextcloud не принял файл');
-          const share = await fetch(ncBase(cfg) + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
+          let put;
+          try {
+            put = await fetch(dav + '/' + encodeURIComponent(folder) + '/' + encodeURIComponent(name),
+              { method: 'PUT', headers: ncHead(cfg), body: file });
+          } catch (err) {
+            throw new Error(`Не удалось связаться с ${base}. Проверьте адрес; если он верный — `
+              + `сервер не разрешает обращения из браузера (нужны заголовки CORS для ${location.origin}).`);
+          }
+          if (!put.ok) {
+            const text = await put.text().catch(() => '');
+            throw new Error(ncNotNextcloud(text, base) || `Nextcloud не принял файл: ${put.status} ${text.slice(0, 200)}`);
+          }
+          const share = await fetch(base + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
             method: 'POST',
             headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true', 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({ path: rel, shareType: '3', permissions: '1' })
@@ -584,7 +628,7 @@
           }
           if (!link) {
             // Ссылка на этот файл уже могла быть создана раньше — спрашиваем её.
-            const ex = await fetch(ncBase(cfg) + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json&path=' + encodeURIComponent(rel),
+            const ex = await fetch(base + '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json&path=' + encodeURIComponent(rel),
               { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
             if (ex.ok) {
               const j = await ex.json();
@@ -633,11 +677,25 @@
             return free === null ? 'подключено' : `свободно ${free} ГБ`;
           }
           if (cfg.provider === 'nextcloud') {
-            if (!ncBase(cfg)) throw new Error('Не указан адрес сервера');
-            const res = await fetch(ncBase(cfg) + '/ocs/v2.php/cloud/user?format=json',
-              { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
-            if (!res.ok) await cloudErr(res, 'Nextcloud не принял вход');
-            return 'подключено';
+            const base = ncCheckedBase(cfg);
+            let res;
+            try {
+              res = await fetch(base + '/ocs/v2.php/cloud/user?format=json',
+                { headers: { ...ncHead(cfg), 'OCS-APIRequest': 'true' } });
+            } catch (err) {
+              // До сервера вообще не достучались: либо адрес не тот, либо
+              // сервер не разрешает обращения из браузера с чужого адреса.
+              throw new Error(`Не удалось связаться с ${base}. Проверьте адрес; `
+                + 'если он верный — сервер не разрешает обращения из браузера '
+                + `(нужны заголовки CORS для ${location.origin}).`);
+            }
+            const text = await res.text();
+            const notNc = ncNotNextcloud(text, base);
+            if (notNc) throw new Error(notNc);
+            if (!res.ok) throw new Error(`Nextcloud не принял вход: ${res.status} ${text.slice(0, 200)}`);
+            let who = '';
+            try { who = (((JSON.parse(text).ocs || {}).data || {}).id) || ''; } catch (e) {}
+            return who ? 'вошли как ' + who : 'подключено';
           }
           throw new Error('Облако не выбрано');
         };
@@ -7683,6 +7741,15 @@
                           </p>
                         </div>
                         {field('Адрес сервера', 'server', { placeholder: 'https://cloud.example.com' })}
+                        {/* Показываем адрес, по которому приложение реально
+                            пойдёт. Без «https://» адрес считается путём внутри
+                            сайта, запрос уходит не туда, и ответ приходит
+                            чужой — по нему причину не понять. */}
+                        {(cloudCfg.server || '').trim() && (
+                          <p className="text-[11px] text-zinc-500 -mt-1 mb-3 ml-1 break-all">
+                            Обращаться будем к: <span className="font-mono text-zinc-400">{ncBase(cloudCfg)}</span>
+                          </p>
+                        )}
                         {field('Логин', 'user', { placeholder: 'ваш логин' })}
                         {field('Пароль приложения', 'pass', { secret: true, hint: 'Не основной пароль! Настройки → Безопасность → «Пароль приложения». Его можно отозвать, не меняя свой.' })}
                         {field('Папка', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
