@@ -3572,6 +3572,20 @@
           const canvasRef = useRef(null);
 
           const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
+          // Копирование с запасным путём: на старых планшетах и по
+          // незащищённому адресу navigator.clipboard недоступен.
+          const copyText = (text, message) => {
+            const done = () => showToast(message);
+            const fallback = () => {
+              const t = document.createElement('input');
+              t.value = text; document.body.appendChild(t); t.select();
+              try { document.execCommand('copy'); done(); } catch (e) { showToast('Не удалось скопировать'); }
+              document.body.removeChild(t);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).then(done).catch(fallback);
+            } else fallback();
+          };
 
           // Авторизация Firebase
           useEffect(() => {
@@ -3760,6 +3774,65 @@
             }
             setCloudBusy('');
           };
+          // --- Проверка всей цепочки целиком ---
+          // «Проверить связь» отвечает только на вопрос «приняли ли ключ».
+          // А ломается обычно дальше: не отмечены разрешения, облако не
+          // даёт публичную ссылку, ссылка есть — но картинка по ней не
+          // открывается, и группа фотографий не увидит. Поэтому здесь
+          // проходим весь путь настоящей фотографии и показываем, на
+          // каком шаге всё встало.
+          const [cloudTest, setCloudTest] = useState(null);
+          const makeTestImage = () => new Promise(resolve => {
+            const c = document.createElement('canvas');
+            c.width = c.height = 64;
+            const x = c.getContext('2d');
+            x.fillStyle = '#d97757'; x.fillRect(0, 0, 64, 64);
+            x.fillStyle = '#1a1918'; x.font = 'bold 22px sans-serif'; x.fillText('CF', 12, 40);
+            c.toBlob(b => resolve(b), 'image/jpeg', 0.85);
+          });
+          const runCloudTest = async () => {
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) return;
+            setCloudBusy('test'); setCloudError('');
+            const steps = [];
+            const step = (name, ok, note) => { steps.push({ name, ok, note }); setCloudTest([...steps]); };
+            let full = '';
+            try {
+              const blob = await makeTestImage();
+              const res = await cloudUpload(cfg, blob, 'cineflow-test.jpg');
+              full = res.full;
+              step('Облако приняло файл', true, res.path);
+              step('Публичная ссылка получена', true, full);
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              step('Облако приняло файл', false, msg);
+              setCloudError(msg); setCloudBusy('');
+              return;
+            }
+            try {
+              // У Яндекса прямой адрес живёт недолго и лежит в памяти —
+              // для честной проверки берём свежий.
+              ydCache.delete(full);
+              const direct = await cloudDirectUrl({ full, url: '', cloud: { provider: cfg.provider } });
+              const shown = await new Promise(resolve => {
+                const im = new Image();
+                const t = setTimeout(() => resolve(false), 20000);
+                im.onload = () => { clearTimeout(t); resolve(true); };
+                im.onerror = () => { clearTimeout(t); resolve(false); };
+                im.src = direct;
+              });
+              step('Фотография открывается по ссылке', shown,
+                   shown ? 'её увидит вся группа, даже без настройки'
+                         : 'ссылка есть, но картинка по ней не открывается — группа фотографий не увидит');
+              if (!shown) setCloudError('Публичная ссылка получена, но изображение по ней не загрузилось: ' + full);
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              step('Фотография открывается по ссылке', false, msg);
+              setCloudError(msg);
+            }
+            setCloudBusy('');
+          };
+
           const disconnectCloud = () => {
             setCloudCfgRaw(saveCloudCfg({ provider: '' }));
             setCloudError('');
@@ -5106,6 +5179,9 @@
           });
           // Приглашение в СВОЮ комнату; голый адрес даёт человеку пустой проект
           const inviteLink = location.origin + location.pathname + '?room=' + encodeURIComponent(appId);
+          // Тот же адрес, но БЕЗ кода комнаты: им дают приложение,
+          // а не свой проект.
+          const plainLink = location.origin + location.pathname;
           // Счётчик кадров. Включается адресом ?fps=1 и по умолчанию не работает
           // вовсе. Нужен, чтобы мерить на НАСТОЯЩЕМ устройстве: на компьютере
           // разработчика цифры другие, и «медленно» без чисел не починить.
@@ -7615,18 +7691,47 @@
 
                     {p && (
                       <React.Fragment>
-                        <div className="flex gap-2 mb-3">
-                          <button onClick={checkCloud} disabled={cloudBusy === 'check'}
-                                  className="flex-1 py-2.5 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors border border-white/10">
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          <button onClick={checkCloud} disabled={!!cloudBusy}
+                                  className="flex-1 py-2.5 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors border border-white/10 disabled:opacity-40"
+                                  style={{ minWidth: 130 }}>
                             {cloudBusy === 'check' ? 'Проверяю...' : 'Проверить связь'}
                           </button>
+                          <button onClick={runCloudTest} disabled={!!cloudBusy || !connected}
+                                  title="Отправит пробную картинку и попробует открыть её по ссылке — как это сделает группа"
+                                  className="flex-1 py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-colors disabled:opacity-40"
+                                  style={{ minWidth: 130 }}>
+                            {cloudBusy === 'test' ? 'Проверяю...' : 'Проверить загрузку'}
+                          </button>
                           {connected && (
-                            <button onClick={disconnectCloud}
-                                    className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-500/20 rounded-lg text-sm font-bold transition-colors border border-transparent">
+                            <button onClick={disconnectCloud} disabled={!!cloudBusy}
+                                    className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-500/20 rounded-lg text-sm font-bold transition-colors border border-transparent disabled:opacity-40">
                               Отключить
                             </button>
                           )}
                         </div>
+
+                        {/* Результат проверки по шагам: видно, где именно встало */}
+                        {cloudTest && cloudTest.length > 0 && (
+                          <div className="mb-3 bg-black/30 border border-white/10 rounded-lg p-3 space-y-2">
+                            {cloudTest.map((s, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className="shrink-0 font-bold" style={{ color: s.ok ? '#10b981' : '#f87171', lineHeight: 1.5 }}>
+                                  {s.ok ? '✓' : '✕'}
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block text-[13px] font-semibold text-zinc-200">{s.name}</span>
+                                  {s.note && <span className="block text-[11px] text-zinc-500 break-all leading-relaxed">{s.note}</span>}
+                                </span>
+                              </div>
+                            ))}
+                            {cloudTest.length === 3 && cloudTest.every(s => s.ok) && (
+                              <p className="text-[12px] text-emerald-300 pt-1">
+                                Всё работает. Пробный файл <span className="font-mono">cineflow-test.jpg</span> остался в папке — его можно удалить, он больше не нужен.
+                              </p>
+                            )}
+                          </div>
+                        )}
 
                         {cloudError && (
                           <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
@@ -7697,7 +7802,26 @@
                       {/* Ссылка ОБЯЗАНА нести код комнаты: без него получатель
                           заведёт себе пустой проект, а не присоединится к нашему */}
                       <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{inviteLink}</span>
-                      <button onClick={() => { navigator.clipboard.writeText(inviteLink).then(() => showToast('Ссылка-приглашение скопирована')).catch(() => { const t = document.createElement('input'); t.value = inviteLink; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); showToast('Ссылка-приглашение скопирована'); }); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                      <button onClick={() => copyText(inviteLink, 'Ссылка-приглашение скопирована')}
+                              className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                    </div>
+
+                    {/* Вторая ссылка — БЕЗ кода комнаты. Она нужна, чтобы дать
+                        человеку само приложение, а не свой проект. Отдельной
+                        кнопкой намеренно: вырезать «?room=...» из приглашения
+                        руками — ровно тот промах, после которого посторонний
+                        оказывается внутри вашего проекта и может там править. */}
+                    <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+                      <h4 className="text-sm font-bold text-white mb-1.5">Дать человеку само приложение</h4>
+                      <p className="text-[12px] text-zinc-400 leading-relaxed mb-2">
+                        Он начнёт с чистого листа: свой пустой проект, своё облако для фотографий, свой ключ ИИ.
+                        Ваших сцен, фотографий и настроек он не увидит.
+                      </p>
+                      <div className="bg-black/50 p-2 pl-4 rounded-lg border border-white/10 flex items-center justify-between gap-3">
+                        <span className="text-[11px] text-zinc-400 font-mono font-semibold truncate select-all">{plainLink}</span>
+                        <button onClick={() => copyText(plainLink, 'Ссылка на приложение скопирована')}
+                                className="glass-panel hover:bg-white/10 text-zinc-300 text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors border border-white/10">Скопировать</button>
+                      </div>
                     </div>
 
                     {/* ТОЛЬКО ПРОСМОТР */}
