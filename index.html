@@ -201,6 +201,51 @@
         .cf-rail-item:hover { color: var(--text-2); }
         .cf-rail-on { background: #2b2a28; color: var(--accent); }
         .cf-rail-on:hover { color: var(--accent); }
+
+        /* Чат на телефоне выезжает справа ПОВЕРХ страницы, но живёт внутри
+           слоя основной части (z-10), а шапка приложения лежит снаружи и
+           выше (z-40). Из-за этого шапка накрывала верх чата вместе с его
+           крестиком: нажатие на крестик попадало в кнопку «Доступ».
+           Поднять чат выше нельзя — вместе с ним поднялась бы вся
+           страница, — поэтому на телефоне он начинается ПОД шапкой.
+           Класс повторён дважды намеренно: так правило перевешивает
+           tailwind-классы (inset-y-0, h-full) и не зависит от того,
+           в каком порядке браузер собрал таблицы стилей. */
+        @media (max-width: 767px) {
+          .cf-chat-drawer.cf-chat-drawer { top: var(--header-h); height: auto; }
+        }
+
+        /* ---------- всплывающие окна ---------- */
+        /* На телефоне окно почти всегда выше экрана. Раньше оно
+           центрировалось ЦЕЛИКОМ, и лишняя высота уезжала за ОБА края:
+           верх вместе с крестиком оказывался выше экрана, прокрутить
+           туда было нельзя (окно не прокручивалось вовсе) — закрыть
+           «Проект» или «Доступ» с телефона было попросту нечем.
+           Теперь высота ограничена экраном, прокручивается содержимое,
+           а крестик прилипает к верхнему краю и виден на любой прокрутке.
+           Второй мерой обязателен dvh — высота ВИДИМОЙ части: панели
+           браузера на телефоне то появляются, то исчезают, и 100vh
+           заметно больше того, что человек видит. Строка с vh стоит
+           первой как запасная, где dvh не понимают. */
+        .cf-modal-box {
+          max-height: calc(100vh - 32px);
+          max-height: calc(100dvh - 32px);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          -webkit-overflow-scrolling: touch;
+        }
+        /* Крестик вынут из потока (float) и прилипает (sticky), поэтому
+           не сдвигает заголовок и не уезжает вверх при прокрутке.
+           Фон обязателен НЕПРОЗРАЧНЫЙ: прилипший крестик проходит
+           поверх текста, и сквозь полупрозрачный читались бы буквы. */
+        .cf-modal-x {
+          position: sticky;
+          top: 0;
+          float: right;
+          z-index: 30;
+          margin: -4px -4px 0 10px;
+          background: var(--panel);
+        }
         #print-area { display: none; }
         @media print {
             body { background: white !important; color: black !important; overflow: auto; touch-action: auto; }
@@ -832,7 +877,7 @@
             if (!action) return null;
             return (
                 <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-                    <div className="glass-panel p-6 rounded-lg max-w-sm w-full text-center border-t border-red-500/50">
+                    <div className="cf-modal-box glass-panel p-6 rounded-lg max-w-sm w-full text-center border-t border-red-500/50">
                         <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
                         <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
                         {/* pre-line — чтобы в длинных предупреждениях работал абзац */}
@@ -913,7 +958,7 @@
 
             return (
                 <div className="fixed inset-0 bg-black/85 backdrop-blur-lg flex items-center justify-center z-[500] p-4">
-                    <div className="glass-panel p-8 rounded-lg w-full max-w-sm">
+                    <div className="cf-modal-box glass-panel p-8 rounded-lg w-full max-w-sm">
                         <div className="flex justify-center mb-4 text-indigo-400"><Icons.User /></div>
                         <h2 className="text-2xl font-extrabold text-white mb-2 text-center">Профиль Оператора</h2>
                         {step === 'name' && (
@@ -5291,6 +5336,21 @@
               .catch(() => showToast('⚠️ Не удалось обновить связь'))
               .finally(() => setKicking(false));
           };
+          // Чат открывается ДВУМЯ кнопками: в рельсе (компьютер) и в ленте
+          // табов (телефон) — рельса на телефоне не показывается вовсе,
+          // и другого пути к чату оттуда нет. Обработчик поэтому ОДИН:
+          // разрешение на уведомления спрашивается ровно там, где человек
+          // открывает чат, и только при ОТКРЫТИИ: на закрытии окно
+          // браузера выглядит непрошеным.
+          // Спрашивать можно ТОЛЬКО из обработчика нажатия: без жеста
+          // человека браузер запрос молча отклоняет.
+          const toggleChat = () => {
+            const opening = !showChat;
+            setShowChat(opening);
+            if (opening && 'Notification' in window && Notification.permission === 'default') {
+              try { Notification.requestPermission(); } catch (e) {}
+            }
+          };
           const ghostBtn = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors";
           const ghostStyle = { fontSize: '11.5px', color: 'var(--muted)', border: '1px solid var(--border)', minHeight: '28px' };
 
@@ -5344,7 +5404,7 @@
                   </button>
                 ))}
                 <div className="mt-auto flex flex-col items-center gap-1.5 cf-edit-only">
-                  <button onClick={() => { setShowChat(!showChat); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }}
+                  <button onClick={toggleChat}
                           title="Чат группы"
                           className={`cf-rail-item relative transition-colors ${showChat ? 'cf-rail-on' : ''}`}>
                     <Icons.Chat /><span>Чат</span>
@@ -5400,15 +5460,40 @@
                 </header>
 
                 {/* ЛЕНТА ТАБОВ (телефон) */}
-                <div className="md:hidden flex overflow-x-auto hide-scrollbar snap-x nav-scroll-hint shrink-0"
+                <div className="md:hidden flex items-stretch shrink-0"
                      style={{ background: 'var(--panel-3)', borderBottom: '1px solid var(--border)' }}>
-                  {navItems.map(t => (
-                    <button key={t.id} onClick={() => setCurrentView(t.id)}
-                            className="snap-center shrink-0 flex items-center gap-1.5 px-4 min-h-[44px] text-xs font-semibold transition-colors"
-                            style={currentView === t.id ? { background: 'var(--accent)', color: 'var(--bg)' } : { color: 'var(--muted)' }}>
-                      {t.icon}{t.label}
+                  <div className="flex-1 min-w-0 flex overflow-x-auto hide-scrollbar snap-x nav-scroll-hint">
+                    {navItems.map(t => (
+                      <button key={t.id} onClick={() => setCurrentView(t.id)}
+                              className="snap-center shrink-0 flex items-center gap-1.5 px-4 min-h-[44px] text-xs font-semibold transition-colors"
+                              style={currentView === t.id ? { background: 'var(--accent)', color: 'var(--bg)' } : { color: 'var(--muted)' }}>
+                        {t.icon}{t.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Чат и агент КПП жили ТОЛЬКО в рельсе, а рельс на телефоне
+                      не показывается — значит, с телефона до них было не
+                      добраться вовсе. Заодно не спрашивалось и разрешение
+                      на уведомления: его просит кнопка чата.
+                      Кнопки закреплены СПРАВА, вне прокручиваемой ленты:
+                      уехав в прокрутку, чат остался бы так же ненайденным. */}
+                  <div className="shrink-0 flex items-center gap-0.5 px-1.5 cf-edit-only"
+                       style={{ borderLeft: '1px solid var(--border)' }}>
+                    <button onClick={toggleChat} title="Чат группы"
+                            className="relative flex items-center justify-center rounded-lg transition-colors"
+                            style={{ width: 40, minHeight: 44, color: showChat ? 'var(--accent)' : 'var(--muted)' }}>
+                      <Icons.Chat />
+                      {unreadCount > 0 && (
+                        <span className="absolute flex items-center justify-center font-bold rounded-full"
+                              style={{ top: 4, right: 2, minWidth: 15, height: 15, padding: '0 4px', fontSize: 9.5, background: 'var(--accent)', color: 'var(--bg)' }}>{unreadCount}</span>
+                      )}
                     </button>
-                  ))}
+                    <button onClick={() => setShowAgentModal(true)} title="Агент КПП"
+                            className="flex items-center justify-center rounded-lg transition-colors"
+                            style={{ width: 40, minHeight: 44, color: 'var(--muted)' }}>
+                      <Icons.Bot />
+                    </button>
+                  </div>
                 </div>
 
               <div className="flex flex-1 overflow-hidden relative z-10">
@@ -7552,7 +7637,7 @@
 
                 {/* ЧАТ КОМАНДЫ */}
                 {showChat && <div className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-sm" onClick={() => setShowChat(false)}></div>}
-                <div className={`fixed inset-y-0 right-0 z-50 md:relative md:z-10 glass-panel flex flex-col h-full transition-transform duration-300 ease-out md:shadow-none md:border-l border-white/10 ${showChat ? 'translate-x-0 w-[85%] sm:w-80' : 'translate-x-full md:translate-x-0 w-0 border-none'}`}>
+                <div className={`cf-chat-drawer fixed inset-y-0 right-0 z-50 md:relative md:z-10 glass-panel flex flex-col h-full transition-transform duration-300 ease-out md:shadow-none md:border-l border-white/10 ${showChat ? 'translate-x-0 w-[85%] sm:w-80' : 'translate-x-full md:translate-x-0 w-0 border-none'}`}>
                   
                   <div className="p-5 border-b border-white/10 space-y-4 bg-white/5 relative">
                     <button onClick={() => setShowChat(false)} className="md:hidden absolute top-4 right-4 w-8 h-8 flex items-center justify-center glass-panel rounded-full text-zinc-400 font-bold">✕</button>
@@ -7605,7 +7690,7 @@
               {/* ПОВТОРНАЯ ЗАГРУЗКА КАРТИНОК */}
               {dupPrompt && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[420] p-4">
-                  <div className="glass-panel rounded-lg p-6 max-w-md w-full relative">
+                  <div className="cf-modal-box glass-panel rounded-lg p-6 max-w-md w-full relative">
                     <h3 className="text-lg font-bold text-white mb-2">Такие картинки уже есть</h3>
                     <p className="text-sm text-zinc-400 mb-3 leading-relaxed">
                       {dupPrompt.names.length === dupPrompt.total
@@ -7678,8 +7763,8 @@
                 );
                 return (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-lg p-6 md:p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
-                    <button onClick={() => setShowCloudModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                  <div className="cf-modal-box glass-panel rounded-lg p-6 md:p-8 max-w-lg w-full relative">
+                    <button onClick={() => setShowCloudModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Gallery /> Где хранить фотографии</h3>
 
                     <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
@@ -7858,8 +7943,8 @@
                   нажать, а «пустой проект без кнопок» выглядит поломкой. */}
               {showViewInfo && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-lg p-6 md:p-8 max-w-md w-full relative">
-                    <button onClick={() => setShowViewInfo(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                  <div className="cf-modal-box glass-panel rounded-lg p-6 md:p-8 max-w-md w-full relative">
+                    <button onClick={() => setShowViewInfo(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4">Это режим просмотра</h3>
                     <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
                       {CF_SNAPSHOT ? (
@@ -7890,8 +7975,8 @@
 
               {showShareModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
-                    <button onClick={() => setShowShareModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-md w-full relative">
+                    <button onClick={() => setShowShareModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
                     <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
                       <p>Проект живёт в «комнате». Кто открыл ссылку с кодом комнаты — тот работает вместе с вами; кто открыл адрес без кода — получает свой пустой проект и ваших данных не видит.</p>
@@ -7993,8 +8078,8 @@
 
               {showProjectModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-lg p-8 max-w-md w-full relative">
-                    <button onClick={() => setShowProjectModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-md w-full relative">
+                    <button onClick={() => setShowProjectModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-6 flex items-center gap-2"><Icons.Folder/> Управление проектом</h3>
                     <div className="space-y-3">
                       <div className="mb-2">
@@ -8106,8 +8191,8 @@
 
               {showAgentModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="glass-panel rounded-lg p-8 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
-                    <button onClick={() => setShowAgentModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-lg w-full relative">
+                    <button onClick={() => setShowAgentModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> Агент импорта: КПП и сценарий</h3>
                     
                     <div className="space-y-6">
