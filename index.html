@@ -458,6 +458,151 @@
         };
 
         // =====================================================================
+        // ПАНОРАМЫ 360° (Insta360 X5 и любые другие сферические кадры)
+        // =====================================================================
+        // Что кладут в приложение: ГОТОВЫЙ 360-снимок в обычном JPG.
+        // Сама камера пишет свой формат .insp — это НЕ панорама, а два
+        // круглых полукадра, которые сшивает приложение Insta360 по
+        // калибровке конкретной камеры. Повторить сшивку в браузере нечем,
+        // поэтому шаг «Экспорт → 360 фото» в приложении камеры остаётся
+        // ручным всегда. Забирать кадры прямо с камеры по её Wi-Fi тоже
+        // нельзя: камера отвечает по http, а приложение живёт на https,
+        // и браузер такие запросы запрещает наглухо.
+        //
+        // Готовый кадр — равнопромежуточная развёртка: вся сфера разложена
+        // в прямоугольник ровно 2:1. Плоским его смотреть бессмысленно,
+        // поэтому в полноэкранном просмотре он натягивается обратно на сферу.
+
+        // Сколько точек в ширину показываем. Полный кадр X5 — 11968×5984,
+        // в распакованном виде это около 290 МБ памяти видеокарты: планшет
+        // столько не даст и молча покажет пустоту, без единой ошибки.
+        // 4096 — практический потолок для iPad и заметно больше того,
+        // что реально видно на экране.
+        const PANO_VIEW_W = 4096;
+        // Панорамное превью, которое лежит в САМОМ проекте. Оно тут ради
+        // площадки: связи там часто нет вовсе, а полный размер живёт
+        // в облаке. Предел документа Firestore — 1 МБ, и base64 раздувает
+        // картинку ещё на треть, поэтому 2048×1024 — мягко, но осмотреться
+        // можно, и весит около 300 КБ.
+        const PANO_THUMB_W = 2048;
+        const PANO_THUMB_MAX = 640 * 1024;
+
+        // Уменьшение ПРИ РАСПАКОВКЕ. Обычный путь «прочитать файл целиком
+        // → отдать картинке → нарисовать в canvas» на 72 мегапикселях
+        // разворачивает в памяти те самые 290 МБ, и Safari на планшете
+        // отдаёт пустоту вместо картинки. createImageBitmap умеет
+        // распаковывать сразу в нужный размер, полный кадр в память
+        // не попадает. Где его нет — старый путь, он хотя бы работает
+        // на снимках поменьше.
+        const decodeScaled = async (src, w, h) => {
+          const blob = src instanceof Blob ? src : await (await fetch(src)).blob();
+          if (typeof createImageBitmap === 'function') {
+            try {
+              return await createImageBitmap(blob, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
+            } catch (e) { /* старый Safari не знает про resizeWidth — идём ниже */ }
+          }
+          const url = URL.createObjectURL(blob);
+          try {
+            return await new Promise((res, rej) => {
+              const img = new Image();
+              img.onload = () => res(img);
+              img.onerror = rej;
+              img.src = url;
+            });
+          } finally { setTimeout(() => URL.revokeObjectURL(url), 10000); }
+        };
+
+        // Ближайшая степень двойки вверх. Нужна, потому что бесшовное
+        // заворачивание текстуры по горизонтали (без него на стыке
+        // панорамы видна щель) в WebGL работает только на таких размерах.
+        const potCeil = (v) => { let p = 1; while (p < v) p *= 2; return p; };
+
+        // Размер кадра ИЗ ЗАГОЛОВКА файла, без распаковки. Обычный путь
+        // «отдать файл картинке и спросить naturalWidth» заставляет браузер
+        // распаковать все 72 мегапикселя — только чтобы узнать два числа.
+        // На планшете это лишние 290 МБ на каждую фотографию в пачке.
+        const jpegSizeOf = (buf) => {
+          try {
+            const d = new DataView(buf);
+            if (d.getUint16(0) !== 0xFFD8) return null;
+            let o = 2;
+            while (o + 9 < d.byteLength) {
+              if (d.getUint8(o) !== 0xFF) { o++; continue; }
+              const m = d.getUint8(o + 1);
+              if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { o += 2; continue; }
+              const len = d.getUint16(o + 2);
+              // Начало кадра (SOF): там и лежат высота с шириной.
+              // C4, C8, CC — это таблицы, а не кадр.
+              if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+                return { h: d.getUint16(o + 5), w: d.getUint16(o + 7) };
+              }
+              if (len < 2) return null;
+              o += 2 + len;
+            }
+          } catch (e) {}
+          return null;
+        };
+
+        const imageSizeOf = (file) => new Promise((resolve) => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+          };
+          img.src = url;
+        });
+
+        // Панорама или обычная фотография. Сначала метка в файле, и только
+        // если её нет — пропорции: у развёртки они ровно 2:1. Ошибиться
+        // может и то и другое (метки Insta360 кладёт не всегда, а 2:1
+        // бывает и у обычного кадрированного снимка), поэтому последнее
+        // слово оставлено человеку — в просмотре есть переключатель.
+        const detectPano = async (file) => {
+          let size = null;
+          try {
+            const head = await file.slice(0, 512 * 1024).arrayBuffer();
+            const txt = new TextDecoder('iso-8859-1').decode(head);
+            const i = txt.indexOf('GPano:ProjectionType');
+            if (i >= 0) return /equirectangular/i.test(txt.slice(i, i + 120));
+            if (/GPano:UsePanoramaViewer[^a-z]{1,4}True/i.test(txt)) return true;
+            size = jpegSizeOf(head);
+          } catch (e) {}
+          if (!size) size = await imageSizeOf(file);
+          return !!size && size.w >= 2048 && Math.abs(size.w / size.h - 2) < 0.01;
+        };
+
+        // Две картинки из одного распаковывания: панорамное превью для
+        // проекта и обычная плоская миниатюра для галереи, доски и печати.
+        // Распаковывать дважды незачем — большой кадр это самая дорогая
+        // часть всей загрузки.
+        const makePanoAssets = async (file) => {
+          try {
+            const bmp = await decodeScaled(file, PANO_THUMB_W, PANO_THUMB_W / 2);
+            const cv = document.createElement('canvas');
+            cv.width = PANO_THUMB_W; cv.height = PANO_THUMB_W / 2;
+            cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+            let pano = '';
+            // Качество снижаем ступенями: лучше мягче, чем не влезть
+            // в документ и потерять возможность смотреть офлайн.
+            for (const q of [0.72, 0.6, 0.5, 0.4]) {
+              pano = cv.toDataURL('image/jpeg', q);
+              if (pano.length <= PANO_THUMB_MAX) break;
+            }
+            if (pano.length > PANO_THUMB_MAX) pano = '';
+            const flat = document.createElement('canvas');
+            flat.width = 640; flat.height = 320;
+            flat.getContext('2d').drawImage(cv, 0, 0, flat.width, flat.height);
+            if (bmp.close) bmp.close();
+            return { panoUrl: pano, url: flat.toDataURL('image/jpeg', 0.75) };
+          } catch (e) {
+            console.warn('Панорама: не удалось подготовить превью', e);
+            return { panoUrl: '', url: '' };
+          }
+        };
+
+        // =====================================================================
         // ВНЕШНЕЕ ХРАНИЛИЩЕ ФОТОГРАФИЙ (Dropbox / Яндекс.Диск / Nextcloud)
         // =====================================================================
         // Зачем: картинки лежали в базе целиком, в base64. Предел документа
@@ -1103,7 +1248,248 @@
             );
         };
 
-        const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag }) => {
+        // Показ панорамы: кадр натягивается обратно на сферу.
+        // Сделано на «голом» WebGL, а не на готовой библиотеке, НАМЕРЕННО.
+        // three.js в репозитории есть — им пользуется игра, — но лежит он
+        // в папке game, которую service worker не кэширует, то есть без
+        // интернета панорама просто не открылась бы. А ради площадки без
+        // связи всё и затевалось.
+        //
+        // Геометрии здесь нет вовсе: рисуется один прямоугольник на весь
+        // экран, и для каждой точки считается, куда смотрит луч. Это и
+        // проще сферы из треугольников, и точнее — у сферы на полюсах
+        // видны грани, а тут их взяться неоткуда.
+        const PANO_VS = 'attribute vec2 p;varying vec2 v;void main(){v=p;gl_Position=vec4(p,0.0,1.0);}';
+        const PANO_FS = [
+          'precision highp float;',
+          'varying vec2 v;',
+          'uniform sampler2D tex;',
+          'uniform float aspect;',   // ширина холста к высоте
+          'uniform float tanHalf;',  // тангенс половины угла обзора
+          'uniform mat3 rot;',
+          'void main(){',
+          '  vec3 dir = normalize(vec3(v.x*aspect*tanHalf, v.y*tanHalf, -1.0));',
+          '  vec3 d = rot*dir;',
+          '  float lon = atan(d.x, -d.z);',
+          '  float lat = asin(clamp(d.y,-1.0,1.0));',
+          // 0.15915494 = 1/2π, 0.31830989 = 1/π
+          '  gl_FragColor = texture2D(tex, vec2(lon*0.15915494+0.5, 0.5-lat*0.31830989));',
+          '}'
+        ].join('\n');
+
+        const PANO_FOV_MIN = 28, PANO_FOV_MAX = 100;
+
+        const PanoView = ({ src, maxW, onFail }) => {
+          const canvasRef = useRef(null);
+          const glRef = useRef(null);
+          const locRef = useRef(null);
+          const viewRef = useRef({ yaw: 0, pitch: 0, fov: 78, vy: 0, vp: 0 });
+          const ptrRef = useRef(new Map());
+          const pinchRef = useRef(0);
+          const rafRef = useRef(0);
+          const dirtyRef = useRef(true);
+          const [broken, setBroken] = useState(false);
+          const [loading, setLoading] = useState(true);
+
+          // Рисуем ПО НАДОБНОСТИ, а не каждый кадр: панорама висит на экране
+          // подолгу, и крутить пустой цикл шестьдесят раз в секунду — это
+          // просто съеденная батарея на площадке.
+          const draw = () => {
+            const gl = glRef.current, cv = canvasRef.current, loc = locRef.current;
+            if (!gl || !cv || !loc) return;
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const w = Math.max(1, Math.round(cv.clientWidth * dpr));
+            const h = Math.max(1, Math.round(cv.clientHeight * dpr));
+            if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+            gl.viewport(0, 0, w, h);
+            const v = viewRef.current;
+            const cy = Math.cos(v.yaw), sy = Math.sin(v.yaw);
+            const cp = Math.cos(v.pitch), sp = Math.sin(v.pitch);
+            // Поворот «рыскание, затем тангаж», по столбцам — так его ждёт WebGL
+            gl.uniformMatrix3fv(loc.rot, false, new Float32Array([
+              cy, 0, -sy,
+              sy * sp, cp, cy * sp,
+              sy * cp, -sp, cy * cp
+            ]));
+            gl.uniform1f(loc.aspect, w / h);
+            gl.uniform1f(loc.tanHalf, Math.tan(v.fov * Math.PI / 360));
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          };
+
+          const tick = () => {
+            rafRef.current = 0;
+            const v = viewRef.current;
+            let moving = false;
+            // Лёгкий выбег после отпускания: без него панорама
+            // останавливается как вкопанная и кажется тяжёлой.
+            if (ptrRef.current.size === 0 && (Math.abs(v.vy) > 2e-5 || Math.abs(v.vp) > 2e-5)) {
+              v.yaw += v.vy;
+              v.pitch = Math.max(-1.55, Math.min(1.55, v.pitch + v.vp));
+              v.vy *= 0.9; v.vp *= 0.9;
+              moving = true;
+            }
+            if (dirtyRef.current || moving) { dirtyRef.current = false; draw(); }
+            if (moving) kick();
+          };
+          const kick = () => {
+            dirtyRef.current = true;
+            if (!rafRef.current) rafRef.current = requestAnimationFrame(tick);
+          };
+
+          // Заводим WebGL один раз на всё время показа
+          useEffect(() => {
+            const cv = canvasRef.current;
+            if (!cv) return;
+            const gl = cv.getContext('webgl', { alpha: false, antialias: false, preserveDrawingBuffer: false })
+                    || cv.getContext('experimental-webgl');
+            if (!gl) { setBroken(true); if (onFail) onFail(); return; }
+            const mk = (type, code) => {
+              const s = gl.createShader(type);
+              gl.shaderSource(s, code); gl.compileShader(s);
+              if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                console.warn('Панорама, шейдер:', gl.getShaderInfoLog(s)); return null;
+              }
+              return s;
+            };
+            const vs = mk(gl.VERTEX_SHADER, PANO_VS), fs = mk(gl.FRAGMENT_SHADER, PANO_FS);
+            if (!vs || !fs) { setBroken(true); if (onFail) onFail(); return; }
+            const prog = gl.createProgram();
+            gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+            if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { setBroken(true); if (onFail) onFail(); return; }
+            gl.useProgram(prog);
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+            const ap = gl.getAttribLocation(prog, 'p');
+            gl.enableVertexAttribArray(ap);
+            gl.vertexAttribPointer(ap, 2, gl.FLOAT, false, 0, 0);
+            const tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            // По горизонтали текстура заворачивается — иначе на стыке
+            // панорамы стоит щель. По вертикали, наоборот, зажимаем:
+            // над головой и под ногами заворачивать нечего.
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.uniform1i(gl.getUniformLocation(prog, 'tex'), 0);
+            glRef.current = gl;
+            locRef.current = {
+              rot: gl.getUniformLocation(prog, 'rot'),
+              aspect: gl.getUniformLocation(prog, 'aspect'),
+              tanHalf: gl.getUniformLocation(prog, 'tanHalf')
+            };
+            const onResize = () => kick();
+            window.addEventListener('resize', onResize);
+            kick();
+            return () => {
+              window.removeEventListener('resize', onResize);
+              if (rafRef.current) cancelAnimationFrame(rafRef.current);
+              rafRef.current = 0;
+              try {
+                gl.deleteTexture(tex); gl.deleteBuffer(buf); gl.deleteProgram(prog);
+                const lose = gl.getExtension('WEBGL_lose_context');
+                if (lose) lose.loseContext();
+              } catch (e) {}
+              glRef.current = null; locRef.current = null;
+            };
+          }, []);
+
+          // Картинка приезжает и подменяется прямо на ходу: сначала
+          // панорамное превью из проекта, следом — полный размер из облака.
+          useEffect(() => {
+            const gl = glRef.current;
+            if (!gl || !src) return;
+            let alive = true;
+            setLoading(true);
+            (async () => {
+              try {
+                const cap = Math.min(potCeil(maxW || PANO_VIEW_W), gl.getParameter(gl.MAX_TEXTURE_SIZE), PANO_VIEW_W);
+                const bmp = await decodeScaled(src, cap, cap / 2);
+                if (!alive) { if (bmp.close) bmp.close(); return; }
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, bmp);
+                if (bmp.close) bmp.close();
+                setLoading(false);
+                kick();
+              } catch (e) {
+                console.warn('Панорама: не удалось показать кадр', e);
+                if (alive) { setLoading(false); setBroken(true); if (onFail) onFail(); }
+              }
+            })();
+            return () => { alive = false; };
+          }, [src, maxW]);
+
+          const angPerPx = () => (viewRef.current.fov * Math.PI / 180) / Math.max(1, canvasRef.current ? canvasRef.current.clientHeight : 1);
+
+          const onDown = (e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            ptrRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            const v = viewRef.current; v.vy = 0; v.vp = 0;
+            pinchRef.current = 0;
+          };
+          const onMove = (e) => {
+            const pts = ptrRef.current;
+            if (!pts.has(e.pointerId)) return;
+            const prev = pts.get(e.pointerId);
+            pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            const v = viewRef.current;
+            if (pts.size >= 2) {
+              // Щипок двумя пальцами приближает — на планшете это
+              // единственный привычный способ, колеса там нет.
+              const [a, b] = [...pts.values()];
+              const d = Math.hypot(a.x - b.x, a.y - b.y);
+              if (pinchRef.current) {
+                v.fov = Math.max(PANO_FOV_MIN, Math.min(PANO_FOV_MAX, v.fov * (pinchRef.current / Math.max(1, d))));
+              }
+              pinchRef.current = d;
+              kick();
+              return;
+            }
+            const k = angPerPx();
+            const dx = (e.clientX - prev.x) * k, dy = (e.clientY - prev.y) * k;
+            // Кадр держится за палец: ведём вправо — картинка едет вправо,
+            // то есть смотрим левее. Знак тут ровно тот, при котором
+            // панорама ощущается взятой рукой, а не проматываемой мимо.
+            v.yaw += dx; v.pitch = Math.max(-1.55, Math.min(1.55, v.pitch + dy));
+            v.vy = dx; v.vp = dy;
+            kick();
+          };
+          const onUp = (e) => {
+            try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+            ptrRef.current.delete(e.pointerId);
+            if (ptrRef.current.size < 2) pinchRef.current = 0;
+            kick();
+          };
+          const onWheel = (e) => {
+            const v = viewRef.current;
+            v.fov = Math.max(PANO_FOV_MIN, Math.min(PANO_FOV_MAX, v.fov * (e.deltaY > 0 ? 1.1 : 1 / 1.1)));
+            kick();
+          };
+
+          if (broken) {
+            return (
+              <img src={src} className="max-w-full max-h-full object-contain rounded-lg"
+                   onClick={(e) => e.stopPropagation()} />
+            );
+          }
+          return (
+            <div className="relative w-full h-full" onClick={(e) => e.stopPropagation()}>
+              <canvas ref={canvasRef}
+                      onPointerDown={onDown} onPointerMove={onMove}
+                      onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}
+                      className="w-full h-full rounded-lg touch-none cursor-grab active:cursor-grabbing"
+                      style={{ display: 'block' }} />
+              {loading && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold text-zinc-300">Разворачиваю панораму...</span>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano }) => {
             const [currentId, setCurrentId] = useState(initialId);
             const currentIndex = refs.findIndex(r => r.id === currentId);
             const currentRef = refs[currentIndex];
@@ -1153,15 +1539,67 @@
                 return () => { alive = false; };
             }, [currentRef && currentRef.id, currentRef && currentRef.full]);
 
+            // Полный размер панорамы приходится сначала СКАЧАТЬ файлом,
+            // а не отдать адресом прямо в картинку. Причина: кадр уходит
+            // в видеокарту, а туда чужие изображения пускают только с
+            // разрешения самого облака. Скачанный файл считается своим —
+            // и вопрос снимается. Не дало скачать (облако не разрешает
+            // читать файлы чужому сайту) — не беда: остаётся панорамное
+            // превью из проекта, ради него оно и лежит рядом.
+            const [panoFull, setPanoFull] = useState('');
+            useEffect(() => {
+                setPanoFull('');
+                if (!currentRef || !currentRef.pano || !bigUrl) return;
+                let alive = true, made = '';
+                (async () => {
+                    try {
+                        const res = await fetch(bigUrl);
+                        if (!res.ok) return;
+                        const blob = await res.blob();
+                        if (!alive) return;
+                        made = URL.createObjectURL(blob);
+                        setPanoFull(made);
+                    } catch (e) {
+                        console.warn('Панорама: полный размер не забрать, показываю превью', e);
+                    }
+                })();
+                return () => {
+                    alive = false;
+                    // С запасом: показ мог ещё не дочитать файл
+                    if (made) setTimeout(() => URL.revokeObjectURL(made), 10000);
+                };
+            }, [currentRef && currentRef.id, currentRef && currentRef.pano, bigUrl]);
+
             if (!currentRef) return null;
+
+            const isPano = !!currentRef.pano;
+            const panoSrc = panoFull || currentRef.panoUrl || currentRef.url;
+            const panoMax = panoFull ? PANO_VIEW_W : PANO_THUMB_W;
 
             return (
                 <div className="fixed inset-0 z-[350] bg-[#1a1918]/95 backdrop-blur-md flex flex-col justify-center items-center p-4">
                     <button onClick={onClose} className="absolute top-6 right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
+                    {/* Метка «это панорама» — она же переключатель.
+                        Распознавание ошибается в обе стороны, и починить
+                        это должно быть можно прямо здесь, где кадр виден. */}
+                    {onSetPano && (
+                        <button onClick={() => onSetPano(currentRef, !isPano)}
+                                title={isPano ? 'Показывать обычным плоским кадром' : 'Это панорама 360° — развернуть на сферу'}
+                                className="cf-edit-only absolute top-6 left-6 z-20 rounded-full px-3 py-1.5 transition-colors"
+                                style={isPano
+                                  ? { background: 'var(--accent)', color: 'var(--bg)', fontSize: 11.5, fontWeight: 700 }
+                                  : { background: 'rgba(255,255,255,.08)', color: 'var(--muted-2)', border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 700 }}>
+                            360°
+                        </button>
+                    )}
                     <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
                         {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
-                        <img src={bigUrl || currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()}
-                             onError={() => { if (bigUrl) setBigUrl(''); }} />
+                        {isPano ? (
+                            <PanoView key={currentRef.id} src={panoSrc} maxW={panoMax} />
+                        ) : (
+                            <img src={bigUrl || currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()}
+                                 onError={() => { if (bigUrl) setBigUrl(''); }} />
+                        )}
                         {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
                     </div>
                     {/* Теги кадра — окошком в левом нижнем углу. Поднято над
@@ -1208,6 +1646,15 @@
 
                     <div className="absolute bottom-6 flex items-center gap-2 max-w-[92vw]">
                         <span className="glass-panel rounded-full px-4 py-2 text-xs font-mono font-bold text-zinc-300 shrink-0">{currentIndex + 1} / {refs.length}</span>
+                        {/* Подсказка нужна и в режиме просмотра: человеку,
+                            которому прислали ссылку, иначе неоткуда узнать,
+                            что кадр можно крутить. */}
+                        {isPano && (
+                            <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
+                                  style={{ color: 'var(--accent)' }}>
+                                360° <span className="hidden sm:inline" style={{ color: 'var(--muted-2)' }}>· ведите пальцем, щипок приближает</span>
+                            </span>
+                        )}
                         {scopeLabel && <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 hidden sm:block" style={{ color: 'var(--accent)' }}>{scopeLabel}</span>}
                         {currentRef.label && <span className="px-5 py-2 glass-panel rounded-full text-sm font-medium text-white text-center truncate">{currentRef.label}</span>}
                     </div>
@@ -1852,6 +2299,36 @@
           const commitTag = (ref, inputEl) => {
             const v = inputEl.value; inputEl.value = '';
             addTagTo(ref, v);
+          };
+
+          // Переключатель «это панорама» вручную — последнее слово всегда
+          // за человеком: метку в файл Insta360 кладёт не всегда, а ровно
+          // 2:1 бывает и у обычного кадрированного снимка.
+          // У фотографии, приехавшей как обычная, панорамного превью нет,
+          // и без интернета крутить было бы нечего. Поэтому, если оригинал
+          // лежит в облаке, готовим превью прямо сейчас — один раз.
+          const setRefPano = async (ref, value) => {
+            const up = references.map(r => r.id === ref.id ? { ...r, pano: !!value } : r);
+            setReferences(up);
+            syncDoc('references', ref.id, up.find(r => r.id === ref.id));
+            if (!value || ref.panoUrl || !ref.full) return;
+            try {
+              showToast('Готовлю панораму для работы без интернета...');
+              const res = await fetch(await cloudDirectUrl(ref));
+              if (!res.ok) throw new Error('облако не отдало файл');
+              const { panoUrl } = await makePanoAssets(await res.blob());
+              if (!panoUrl) throw new Error('превью не собралось');
+              setReferences(prev => {
+                const n = prev.map(r => r.id === ref.id ? { ...r, panoUrl } : r);
+                const t = n.find(r => r.id === ref.id);
+                if (t) syncDoc('references', ref.id, t);
+                return n;
+              });
+              showToast('Панорама готова, теперь открывается и без связи');
+            } catch (e) {
+              console.warn('Панорама: превью для офлайна не сделать', e);
+              showToast('Смотреть можно, но без связи эта панорама не откроется');
+            }
           };
 
           const [lastReadChat, setLastReadChat] = useState(() => Number(localStorage.getItem('cf_last_read')) || Date.now());
@@ -4640,17 +5117,40 @@
               // уезжает в облако файлом как есть — незачем портить фотографию
               // со скаута пересжатием, если она всё равно хранится снаружи.
               const stamp = Date.now();
-              const prepared = await Promise.all(imageFiles.map(async (file, idx) => ({
-                file, idx,
-                thumb: await compressFile(file, useCloud ? CLOUD_THUMB : 1440, useCloud ? CLOUD_THUMB : 1080,
-                                          useCloud ? 0.72 : 0.8)
-              })));
-              const newRefs = prepared.map(({ file, thumb, idx }) => ({
+              const flatOf = (file) => compressFile(file, useCloud ? CLOUD_THUMB : 1440, useCloud ? CLOUD_THUMB : 1080,
+                                                   useCloud ? 0.72 : 0.8);
+              // Кто тут панорама — выясняем ДО распаковки, по заголовку файла:
+              // это дёшево и памяти не стоит ничего.
+              const panoFlags = await Promise.all(imageFiles.map(f => detectPano(f).catch(() => false)));
+              const prepared = new Array(imageFiles.length);
+              // Обычные фотографии — разом, как и раньше.
+              await Promise.all(imageFiles.map(async (file, idx) => {
+                if (panoFlags[idx]) return;
+                prepared[idx] = { file, idx, thumb: await flatOf(file) };
+              }));
+              // Панорамы — строго ПО ОДНОЙ: распаковывать несколько кадров
+              // по 72 мегапикселя разом планшет не станет, он просто отдаст
+              // пустые картинки, и это никак не проявится в виде ошибки.
+              for (let idx = 0; idx < imageFiles.length; idx++) {
+                if (!panoFlags[idx]) continue;
+                const file = imageFiles[idx];
+                if (imageFiles.length > 1) showToast(`Панорама ${idx + 1} из ${imageFiles.length}...`);
+                const a = await makePanoAssets(file);
+                prepared[idx] = a.url
+                  ? { file, idx, thumb: a.url, pano: true, panoUrl: a.panoUrl }
+                  // Не вышло — пусть ляжет обычной фотографией: это лучше,
+                  // чем не лечь вовсе.
+                  : { file, idx, thumb: await flatOf(file) };
+              }
+              const newRefs = prepared.map(({ file, thumb, idx, pano, panoUrl }) => ({
                     id: `ref-${stamp}-${idx}`,
                     sceneId: sceneId || '',
                     locationId: locationId || '',
                     boardId: place ? place.boardId : '',
                     url: thumb,
+                    // Поля панорамы заводим только у панорам: у остальных
+                    // они были бы лишним весом в каждом документе
+                    ...(pano ? { pano: true, panoUrl: panoUrl || '' } : {}),
                     // Брошенные на доску раскладываем лесенкой от точки броска,
                     // остальные — как раньше, от левого верхнего угла экрана.
                     x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
@@ -4690,7 +5190,10 @@
                 // Оригинал никуда не уехал, а в базе лежит только мелкое
                 // превью — то есть фотография пропала бы. Возвращаем ей
                 // обычный полный размер прямо в базу, как было до облака.
-                const fallback = await compressFile(file, 1440, 1080, 0.8);
+                // У панорамы возвращать нечего: её панорамное превью
+                // 2048×1024 и так лежит в проекте, а плоская полоса на
+                // 1440 точек только съела бы место в документе.
+                const fallback = ref.pano ? '' : await compressFile(file, 1440, 1080, 0.8);
                 if (fallback) setReferences(prev => {
                   const up = prev.map(r => r.id === ref.id ? { ...r, url: fallback } : r);
                   const t = up.find(r => r.id === ref.id);
@@ -6066,6 +6569,14 @@
                                           );
                                         })()}
                                         <img src={ref.url} className="w-full h-full object-contain relative z-10" draggable="false" />
+                                        {/* Панораму надо отличать от обычного кадра на общем
+                                            листе: плоская развёртка сама по себе выглядит
+                                            просто странно снятой фотографией. */}
+                                        {ref.pano && (
+                                          <span className="absolute bottom-2 right-2 z-20 rounded-md pointer-events-none"
+                                                style={{ background: 'rgba(0,0,0,.75)', color: 'var(--accent)',
+                                                         fontSize: 10, fontWeight: 700, letterSpacing: '.04em', padding: '2px 5px' }}>360°</span>
+                                        )}
                                     </div>
                                     <div className="p-3 space-y-2 bg-black/30">
                                         <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
@@ -8267,7 +8778,8 @@
                       : references.filter(r => lightboxData.sceneId ? r.sceneId === lightboxData.sceneId : true);
                   return <Lightbox refs={list} scopeLabel={lightboxData.scopeLabel} initialId={lightboxData.currentId}
                                    onClose={() => setLightboxData(null)}
-                                   hints={tagHints} onAddTag={addTagTo} onRemoveTag={removeTagFrom} />;
+                                   hints={tagHints} onAddTag={addTagTo} onRemoveTag={removeTagFrom}
+                                   onSetPano={setRefPano} />;
               })()}
 
               {/* Печатная версия. Содержимое зависит от выбранной кнопки
