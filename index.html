@@ -5703,13 +5703,18 @@
               const fld = READ_ONLY ? null : e.target.closest('[data-card-field]');
               const fkey = fld ? fld.getAttribute('data-card-field') : null;
               const now = Date.now(), lt = lastCardTap.current;
-              if (fkey && lt.id === id && lt.key === fkey && now - lt.t < 400) {
+              if (fkey && lt.id === id && lt.key === fkey && now - lt.t < 700) {
                   lastCardTap.current = { id: null, key: null, t: 0 };
                   setSelectedWbItems([id]); setEditCard({ id, key: fkey });
                   return;
               }
               lastCardTap.current = { id, key: fkey, t: now };
               if (editCard && editCard.id !== id) setEditCard(null);
+              // Нажали по тексту УЖЕ выбранной карточки — если палец не
+              // поедет, на отпускании откроем правку. Так писать можно
+              // спокойным вторым нажатием, не попадая в 700 мс: ровно как
+              // переименовывают файл — выбрал, нажал ещё раз.
+              tapToEdit.current = (fkey && selectedWbItems.includes(id)) ? { id, key: fkey } : null;
               
               let currentSelected = selectedWbItems;
               if (!currentSelected.includes(id)) {
@@ -5730,6 +5735,7 @@
           const [editCard, setEditCard] = useState(null);      // {id, key}
           const editCardRef = useRef(null);
           const lastCardTap = useRef({ id: null, key: null, t: 0 });
+          const tapToEdit = useRef(null);
           // Фокус ставим РУКАМИ, а не через autoFocus: поле появляется после
           // жеста, во время которого фокус успевает уехать на что-то другое.
           useEffect(() => {
@@ -5867,6 +5873,14 @@
               x: (300 - canvasOffset.x) / zoom + Math.random() * 60,
               y: (200 - canvasOffset.y) / zoom + Math.random() * 60 });
             showToast('Документ на доске');
+          };
+          const removeRefFromBoard = (id) => {
+            pushUndo(false, [{ coll: 'references', id }]);
+            freezeArrowsForCards([id]);
+            const up = references.map(r => r.id === id ? { ...r, boardId: '' } : r);
+            setReferences(up); syncDoc('references', id, up.find(r => r.id === id));
+            setSelectedWbItems(prev => prev.filter(x => x !== id));
+            showToast('Убрано с доски · референс остался в галерее');
           };
           const removeDocFromBoard = (id) => {
             pushUndo(false, [{ coll: 'docs', id }]);
@@ -7312,6 +7326,15 @@
                             }
                             setSelectionBox(null);
                         }
+                        // Нажали и отпустили, не сдвинув, по тексту УЖЕ выбранной
+                        // карточки — это просьба писать, а не двигать. Проверка
+                        // стоит здесь, а не в handleDragUp: тот выходит сразу,
+                        // если состояние перетаскивания ещё не применилось,
+                        // и на быстром касании правка не открывалась бы.
+                        if (tapToEdit.current) {
+                            const t = tapToEdit.current; tapToEdit.current = null;
+                            if (!dragMoved.current) { setSelectedWbItems([t.id]); setEditCard({ id: t.id, key: t.key }); }
+                        }
                         handleDragUp(e);
                         handleResizeUp(e);
                         handleStickyResizeUp(e);
@@ -7656,7 +7679,14 @@
                             {references.filter(r => r.boardId === activeBoardId).map(ref => (
                             <div key={ref.id} data-card-id={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${(resizingRef && resizingRef.id === ref.id) || isDragging(ref.id) ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'} ${hoveredSceneId === ref.id ? 'scene-drop-target' : ''}`}>
                                 <div className="relative bg-black/60 rounded-lg overflow-hidden border border-white/10" style={{ aspectRatio: String(refAR(ref)) }}>
-                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
+                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className={`cf-edit-only absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-8 h-8 rounded-lg transition-all text-xs z-20 flex items-center justify-center ${selectedWbItems.includes(ref.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}><Icons.Trash/></button>
+                                {/* Убрать с доски — не то же, что удалить: в галерее
+                                    референс остаётся. У сцены и документа такая
+                                    кнопка есть, у референса её не было вовсе, и
+                                    пустую карточку убрать было нечем. */}
+                                <button title="Убрать с доски — референс останется в галерее"
+                                        onClick={(e) => { e.stopPropagation(); removeRefFromBoard(ref.id); }}
+                                        className={`cf-edit-only absolute top-1.5 left-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-white w-8 h-8 rounded-lg transition-all text-[13px] z-20 flex items-center justify-center ${selectedWbItems.includes(ref.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
                                 {ref.url ? (<React.Fragment>
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={bgStyle(ref.id, ref.url)}></div>
                                     <img src={ref.url} onLoad={(e) => noteRefRatio(ref, e.target)}
@@ -7835,8 +7865,8 @@
                                 className={`cf-edit-only rounded-lg text-sm md:text-base shrink-0 transition-colors flex items-center justify-center p-2.5 ${scenePickerOpen ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}>
                           <Icons.Scene/>
                         </button>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: 'Операторская заметка...', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
+                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: '', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); setWbMode('select'); setSelectedWbItems([ns.id]); setEditCard({ id: ns.id, key: 'text' }); }} className="cf-edit-only p-2.5 text-xs text-amber-300 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Стикер"><Icons.Sticky/></button>
+                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); setWbMode('select'); setSelectedWbItems([nr.id]); }} className="cf-edit-only p-2.5 text-xs text-blue-400 hover:bg-white/10 rounded-lg shrink-0 font-bold flex items-center justify-center gap-1" title="Новый референс"><Icons.Gallery/></button>
                         {/* Выгрузка доски картинкой: то, что отправляют группе.
                             PNG для мессенджера, SVG для печати и правки в
                             векторном редакторе. */}
