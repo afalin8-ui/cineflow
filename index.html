@@ -4253,8 +4253,13 @@
                 if (!linkingFrom) return;
                 setMousePos({ x: e.clientX, y: e.clientY });
                 const el = document.elementFromPoint(e.clientX, e.clientY);
-                const targetScene = el?.closest('[data-scene-id]');
-                setHoveredSceneId(targetScene ? targetScene.getAttribute('data-scene-id') : null);
+                // Цель — ЛЮБАЯ карточка, а не только сцена: кружок на краю
+                // карточки и есть тот жест, которым связывают. Раньше он
+                // принимал одну лишь сцену, и потянув от заметки к заметке
+                // человек не получал ничего — связь просто не возникала.
+                const t = el && el.closest ? el.closest('[data-card-id]') : null;
+                const id = t ? t.getAttribute('data-card-id') : null;
+                setHoveredSceneId(id && id !== linkingFrom.id ? id : null);
             };
             window.addEventListener('pointermove', handleMouseMove);
             return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); window.removeEventListener('pointermove', handleMouseMove); };
@@ -5854,7 +5859,36 @@
           const linkAnchor = (item, type) =>
               type === 'sticky' ? { x: item.x + stickyW(item), y: item.y + stickyH(item) / 2 }
             : type === 'doc'    ? { x: item.x + docCardW(item), y: item.y + docCardH(item) / 2 }
+            : type === 'scene'  ? { x: item.x + 288, y: item.y + 75 }
             :                     { x: item.x + refW(item), y: item.y + refH(item) / 2 };
+
+          // Связь стрелкой между двумя объектами доски. Это тот же коннектор,
+          // что рисуется инструментом «Стрелка», просто заведённый жестом:
+          // маршруты, отмена и выгрузка у него уже есть.
+          const addConnector = (aId, bId) => {
+            if (READ_ONLY || !aId || !bId || aId === bId) return;
+            const dup = shapesRef.current.some(q => isLineKind(q.k)
+              && ((q.b1 === aId && q.b2 === bId) || (q.b1 === bId && q.b2 === aId)));
+            if (dup) { showToast('Такая связь уже есть'); return; }
+            const A = findBind(aId), B = findBind(bId);
+            if (!A || !B) return;
+            const ac = shapeCenter(A), bc = shapeCenter(B);
+            pushUndo(false);
+            const sh = makeShape('arrow', ac.x, ac.y);
+            sh.w = bc.x - ac.x; sh.h = bc.y - ac.y;
+            sh.b1 = aId; sh.b2 = bId;
+            shapesRef.current = [...shapesRef.current, sh];
+            bumpInk(); scheduleInkSave('shapes');
+            showToast('Связь создана · двигайте карточки, линия идёт следом');
+          };
+          // Куда бросили кружок: на сцену — это привязка карточки к сцене
+          // (та самая, что показывает #N и работает вне доски), на любую
+          // другую карточку — обычная связь стрелкой.
+          const dropLink = (from, toId) => {
+            const toScene = (cardsRef.current.scenes || []).some(x => x.id === toId);
+            if (toScene && from.type !== 'scene') { setItemScene(from.id, from.type, toId); return; }
+            addConnector(from.id, toId);
+          };
 
           // Привязать/отвязать от сцены. Одинаково для референса, заметки
           // и документа: сама карточка никуда не девается, меняется
@@ -7251,8 +7285,8 @@
                         handleStickyResizeUp(e);
                         handleDocResizeUp(e);
                         if (linkingFrom) {
-                            if (hoveredSceneId) setItemScene(linkingFrom.id, linkingFrom.type, hoveredSceneId);
-                            setLinkingFrom(null);
+                            if (hoveredSceneId) dropLink(linkingFrom, hoveredSceneId);
+                            setLinkingFrom(null); setHoveredSceneId(null);
                         }
                     }}>
                       {/* РИСУНОК КИСТЬЮ. Холста два, и оба размером с ОКНО,
@@ -7541,6 +7575,7 @@
                           {linkingFrom && (() => {
                              const src = linkingFrom.type === 'sticky' ? stickies.find(x => x.id === linkingFrom.id)
                                        : linkingFrom.type === 'doc' ? docs.find(x => x.id === linkingFrom.id)
+                                       : linkingFrom.type === 'scene' ? scenes.find(x => x.id === linkingFrom.id)
                                        : references.find(x => x.id === linkingFrom.id);
                              if (!src) return null;
                              const a = linkAnchor(src, linkingFrom.type);
@@ -7553,7 +7588,7 @@
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
-                            <div key={s.id} data-scene-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-lg cursor-move overflow-hidden pointer-events-auto hover:border-indigo-500/50 group ${isDragging(s.id) ? '' : 'transition-all'} ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
+                            <div key={s.id} data-scene-id={s.id} data-card-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-lg cursor-move overflow-hidden pointer-events-auto hover:border-indigo-500/50 group ${isDragging(s.id) ? '' : 'transition-all'} ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
                                 <div className="bg-white/5 px-4 py-2.5 border-b border-white/10 flex justify-between items-center">
                                   <span className="text-[11px] font-mono text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1"><Icons.Scene/> Сцена #{s.number}</span>
                                   {/* Убирает карточку с доски, а не сцену из проекта */}
@@ -7568,11 +7603,17 @@
                                   { multiline: true, placeholder: 'Экспликация…', style: { minHeight: 46, maxHeight: 46 },
                                     className: 'w-full bg-black/50 border border-white/10 rounded-lg p-2.5 text-[11px] text-zinc-300 resize-none focus:outline-none font-medium' })}
                                 </div>
+                                {/* Тот же кружок, что у остальных карточек: со сцены
+                                    тоже надо уметь протянуть связь */}
+                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: s.id, type: 'scene' }); }}
+                                     title="Потяните к любой карточке — получится связь"
+                                     className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30"
+                                     style={{ pointerEvents: 'auto' }} />
                             </div>
                             ))}
 
                             {references.filter(r => r.boardId === activeBoardId).map(ref => (
-                            <div key={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${(resizingRef && resizingRef.id === ref.id) || isDragging(ref.id) ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'}`}>
+                            <div key={ref.id} data-card-id={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${(resizingRef && resizingRef.id === ref.id) || isDragging(ref.id) ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'} ${hoveredSceneId === ref.id ? 'scene-drop-target' : ''}`}>
                                 <div className="relative bg-black/60 rounded-lg overflow-hidden border border-white/10" style={{ aspectRatio: String(refAR(ref)) }}>
                                 <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-10 flex items-center justify-center"><Icons.Trash/></button>
                                 {ref.url ? (<React.Fragment>
@@ -7590,7 +7631,7 @@
                                 {cardField(ref.id, 'label', ref.label,
                                   (v) => { const up = references.map(r => r.id === ref.id ? { ...r, label: v } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); },
                                   { placeholder: 'Подпись...', className: 'w-full bg-transparent text-[11px] text-center font-bold text-zinc-300 focus:outline-none mt-2 placeholder-zinc-600' })}
-                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: ref.id, type: 'ref' }); }} title="Потяните к карточке сцены, чтобы связать" className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
+                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: ref.id, type: 'ref' }); }} title="Потяните к любой карточке — получится связь. К сцене — референс привяжется к ней" className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
                                 <div
                                     onPointerDown={(e) => { e.stopPropagation(); setResizingRef({ id: ref.id, pointerId: e.pointerId, startX: e.clientX, startW: refW(ref) }); e.currentTarget.setPointerCapture(e.pointerId); }}
                                     onDoubleClick={(e) => { e.stopPropagation(); const up = references.map(r => r.id === ref.id ? { ...r, w: REF_W } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }}
@@ -7612,9 +7653,9 @@
                             const dRes = resizingDoc && resizingDoc.id === d.id;
                             const dScene = d.sceneId ? scenes.find(x => x.id === d.sceneId) : null;
                             return (
-                            <div key={d.id} onPointerDown={(e) => handleElementPointerDown(e, d.id, 'doc')}
+                            <div key={d.id} data-card-id={d.id} onPointerDown={(e) => handleElementPointerDown(e, d.id, 'doc')}
                                  style={{ left: `${d.x}px`, top: `${d.y}px`, width: `${docCardW(d)}px`, height: `${docCardH(d)}px`, position: 'absolute', zIndex: dSel ? 40 : 20 }}
-                                 className={`glass-panel rounded-lg cursor-move pointer-events-auto flex flex-col overflow-hidden group ${dRes || isDragging(d.id) ? '' : 'transition-all'} ${dSel ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'}`}>
+                                 className={`glass-panel rounded-lg cursor-move pointer-events-auto flex flex-col overflow-hidden group ${dRes || isDragging(d.id) ? '' : 'transition-all'} ${dSel ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'} ${hoveredSceneId === d.id ? 'scene-drop-target' : ''}`}>
                                 <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ minHeight: 32, background: 'rgba(255,255,255,.05)', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ color: 'var(--muted)' }}><Icons.Docs /></span>
                                     {cardField(d.id, 'title', d.title, (v) => patchDoc(d.id, { title: v }),
@@ -7633,7 +7674,7 @@
                                     className: 'flex-1 w-full bg-transparent border-none text-[12px] leading-relaxed text-zinc-300 focus:outline-none resize-none p-3 placeholder-zinc-600' })}
 
                                 <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: d.id, type: 'doc' }); }}
-                                     title="Потяните к карточке сцены, чтобы связать документ с ней"
+                                     title="Потяните к любой карточке — получится связь. К сцене — документ привяжется к ней"
                                      className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30"
                                      style={{ pointerEvents: 'auto' }} />
                                 {dScene && (
@@ -7662,9 +7703,9 @@
                             const stSel = selectedWbItems.includes(st.id);
                             const stResizing = resizingSticky && resizingSticky.id === st.id;
                             return (
-                            <div key={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')}
+                            <div key={st.id} data-card-id={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')}
                                  style={{ left: `${st.x}px`, top: `${st.y}px`, width: `${stickyW(st)}px`, height: `${stickyH(st)}px`, position: 'absolute', backgroundColor: st.color, zIndex: stSel ? 40 : 20 }}
-                                 className={`p-4 rounded-lg cursor-move pointer-events-auto text-zinc-900 transform rotate-1 hover:rotate-0 group ${stResizing || isDragging(st.id) ? '' : 'transition-all'} ${stSel ? 'ring-2 ring-indigo-500' : 'border border-white/20'}`}>
+                                 className={`p-4 rounded-lg cursor-move pointer-events-auto text-zinc-900 transform rotate-1 hover:rotate-0 group ${stResizing || isDragging(st.id) ? '' : 'transition-all'} ${stSel ? 'ring-2 ring-indigo-500' : 'border border-white/20'} ${hoveredSceneId === st.id ? 'scene-drop-target' : ''}`}>
                                 <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { pushUndo(false, [{ coll: 'stickies', id: st.id }]); freezeArrowsForCards([st.id]); setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className={`cf-edit-only absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors ${stSel ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
                                 {cardField(st.id, 'text', st.text,
                                   (v) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: v } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); },
@@ -7673,7 +7714,7 @@
 
                                 {/* Ручка связи — та же, что у референса: тянем к сцене */}
                                 <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: st.id, type: 'sticky' }); }}
-                                     title="Потяните к карточке сцены, чтобы связать заметку с ней"
+                                     title="Потяните к любой карточке — получится связь. К сцене — заметка привяжется к ней"
                                      className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30"
                                      style={{ pointerEvents: 'auto' }} />
                                 {/* Привязанная сцена: видно с доски и можно отцепить */}
