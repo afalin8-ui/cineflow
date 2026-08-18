@@ -427,15 +427,24 @@
         // заново: подписки цепляются к облаку сразу и приносят свежее.
         // Ничего не теряется — правки, которые не успели уехать, лежат
         // в очереди на устройстве и уходят следом.
-        let cfKickAt = 0, cfHiddenAt = 0;
+        let cfKickAt = 0, cfHiddenAt = 0, cfKicking = null;
         const cfKickSync = (force) => {
           if (!db) return Promise.resolve();
+          // Второй заход поверх первого запускать НЕЛЬЗЯ. «Появилась сеть»,
+          // возврат из фона и нажатие на точку связи прилетают почти
+          // одновременно, а disableNetwork/enableNetwork — дело
+          // асинхронное: именно наложение таких переключений и роняет
+          // библиотеку с «INTERNAL ASSERTION FAILED». Пока идёт одно
+          // переподключение, всем желающим отдаём его же.
+          if (cfKicking) return cfKicking;
           const now = Date.now();
           if (!force && now - cfKickAt < 10000) return Promise.resolve();
           cfKickAt = now;
-          return db.disableNetwork()
+          cfKicking = db.disableNetwork()
             .then(() => db.enableNetwork())
-            .catch(err => console.warn('Переподключение не удалось:', err));
+            .catch(err => console.warn('Переподключение не удалось:', err))
+            .then(() => { cfKicking = null; cfKickAt = Date.now(); });
+          return cfKicking;
         };
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'hidden') { cfHiddenAt = Date.now(); return; }
@@ -447,6 +456,29 @@
         // Телефон умеет возвращать страницу из «замороженных» целиком,
         // минуя обычную загрузку: событие приходит с persisted.
         window.addEventListener('pageshow', (e) => { if (e.persisted) cfKickSync(true); });
+
+        // --- СБОЙ ВНУТРИ САМОЙ БИБЛИОТЕКИ FIRESTORE ---
+        // «INTERNAL ASSERTION FAILED: Unexpected state» — давняя её болезнь:
+        // сообщения о ней есть на всех версиях с 7-й по 12-ю, и обновлением
+        // она не лечится. Нам важно другое: после неё подписки МОЛЧАТ.
+        // Приложение продолжает работать, показывает вчерашнюю картину и
+        // ни слова об этом не говорит — а на площадке это значит, что
+        // человек правит проект, которого никто не видит. Поэтому ловим
+        // сами и говорим прямо. Данные при этом целы: в облаке лежит всё,
+        // что успело уехать, испорчена только местная копия базы.
+        window.cfCloudBroken = '';
+        const cfIsAssert = (m) => /INTERNAL ASSERTION FAILED/i.test(String(m || ''));
+        const cfCloudCrash = (msg) => {
+          if (window.cfCloudBroken) return;
+          window.cfCloudBroken = String(msg || 'Firestore').slice(0, 300);
+          try { window.dispatchEvent(new CustomEvent('cf-cloud-broken')); } catch (e) {}
+        };
+        window.addEventListener('error', (e) => { if (cfIsAssert(e && e.message)) cfCloudCrash(e.message); });
+        window.addEventListener('unhandledrejection', (e) => {
+          const r = (e && e.reason) || '';
+          const m = r && r.message ? r.message : r;
+          if (cfIsAssert(m)) cfCloudCrash(m);
+        });
 
         const compressImage = (base64Str, maxWidth, maxHeight, callback, quality) => {
           const img = new Image();
@@ -4437,6 +4469,26 @@
           const canvasRef = useRef(null);
 
           const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
+
+          // Сбой внутри библиотеки Firestore (см. cfCloudCrash в шапке файла).
+          // Сам он не чинится и не проходит: пока страницу не перезагрузят,
+          // облако молчит. Молча жить с этим нельзя — показываем полоску.
+          const [cloudBroken, setCloudBroken] = useState(() => !!window.cfCloudBroken);
+          useEffect(() => {
+            const on = () => setCloudBroken(true);
+            window.addEventListener('cf-cloud-broken', on);
+            return () => window.removeEventListener('cf-cloud-broken', on);
+          }, []);
+          const [repairing, setRepairing] = useState(false);
+          // Лечение: стираем МЕСТНУЮ копию базы и перечитываем всё из облака.
+          // Правки, которые не успели уехать, при этом пропадут — поэтому
+          // спрашиваем прямо, а не делаем молча.
+          const repairCloudCache = async () => {
+            setRepairing(true);
+            try { await db.terminate(); } catch (e) { console.warn('terminate', e); }
+            try { await db.clearPersistence(); } catch (e) { console.warn('clearPersistence', e); }
+            location.reload();
+          };
           // Копирование с запасным путём: на старых планшетах и по
           // незащищённому адресу navigator.clipboard недоступен.
           const copyText = (text, message) => {
@@ -6434,6 +6486,31 @@
                   плавность {fpsNow.now} fps <span style={{ color: 'var(--muted-2)' }}>· хуже всего {fpsNow.low}</span>
                 </div>
               )}
+              {/* СБОЙ ОБЛАКА. Полоска сверху, а не сообщение внизу: пока
+                  страницу не перезагрузят, правки никуда не уезжают, и
+                  узнать об этом человек обязан сразу, а не через три часа
+                  съёмки. Данные при этом целы — так и написано. */}
+              {cloudBroken && (
+                <div className="fixed top-0 left-0 right-0 z-[500] px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-center"
+                     style={{ background: '#7f1d1d', color: '#fee2e2' }}>
+                  <span className="text-xs font-bold">
+                    Связь с облаком оборвалась внутри Firebase. Правки сейчас НЕ уезжают — проект в облаке цел, но перезагрузите страницу.
+                  </span>
+                  <button onClick={() => location.reload()} disabled={repairing}
+                          className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 transition-colors">
+                    Перезагрузить
+                  </button>
+                  <button onClick={() => setConfirmAction({
+                            title: 'Починить местную копию базы?',
+                            message: 'Копия базы на этом устройстве будет стёрта, и всё перечитается из облака. Правки, которые не успели уехать в облако, пропадут. Обычной перезагрузки чаще всего достаточно — это на случай, если сбой повторяется.',
+                            onConfirm: repairCloudCache })}
+                          disabled={repairing}
+                          className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+                    {repairing ? 'Чиню...' : 'Сбой повторяется'}
+                  </button>
+                </div>
+              )}
+
               {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
 
               {/* Возврат только что удалённого. Держится 15 секунд — этого
