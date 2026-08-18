@@ -2702,10 +2702,18 @@
             }
             return null;
           };
+          // Сама линия целью быть не может, но и загораживать собой то, что
+          // под ней, не должна: связей на доске много, они пересекают всё
+          // подряд, и нажатие по карточке попадало в чужую линию — связь
+          // просто не начиналась. Поэтому линии пропускаем и смотрим ниже.
           const bindAt = (x, y) => {
-            const sh = shapeAt(x, y, true);
-            if (sh && !isLineKind(sh.k)) return sh;
-            return sh ? null : cardAt(x, y);
+            const pad = 8 / Math.max(0.05, zoom);
+            for (let i = shapesRef.current.length - 1; i >= 0; i--) {
+              const q = shapesRef.current[i];
+              if (q.ct || isLineKind(q.k)) continue;
+              if (shapeHit(q, x, y, pad, true)) return q;
+            }
+            return cardAt(x, y);
           };
           // Стрелки, привязанные к перечисленным объектам
           const arrowsBoundTo = (ids) => {
@@ -3065,6 +3073,7 @@
           const shapeDraft = useRef(null);      // фигура, которую тянут прямо сейчас
           const shapeAct = useRef(null);        // идёт перемещение или изменение размера
           const bindCand = useRef(null);        // фигура, к которой сейчас притянется конец
+          const linkPick = useRef(null);        // первый объект, выбранный в режиме «Связь»
           const guides = useRef([]);            // направляющие, показанные сейчас
           const snapPool = useRef(null);        // к чему притягиваемся в этом жесте
           // Ластик живёт своим размером, а не «кисть × 2,5», как раньше:
@@ -4259,7 +4268,17 @@
                 // человек не получал ничего — связь просто не возникала.
                 const t = el && el.closest ? el.closest('[data-card-id]') : null;
                 const id = t ? t.getAttribute('data-card-id') : null;
-                setHoveredSceneId(id && id !== linkingFrom.id ? id : null);
+                if (id) { setHoveredSceneId(id !== linkingFrom.id ? id : null); bindCand.current = null; }
+                else {
+                  // Под пальцем не карточка — может быть надпись или фигура.
+                  // Они нарисованы на холсте, в разметке их нет вовсе,
+                  // поэтому ищем по геометрии и подсвечиваем на холсте.
+                  const p = inkPt(e.clientX, e.clientY);
+                  const sh = bindAt(p.x, p.y);
+                  bindCand.current = (sh && sh.id !== linkingFrom.id) ? sh.id : null;
+                  setHoveredSceneId(null);
+                }
+                requestLive();
             };
             window.addEventListener('pointermove', handleMouseMove);
             return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); window.removeEventListener('pointermove', handleMouseMove); };
@@ -5674,6 +5693,7 @@
           };
 
           const handleElementPointerDown = (e, id, type) => {
+              if (wbMode === 'link') { e.stopPropagation(); pickLink(id); return; }
               if (wbMode !== 'select') return;
               if (['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName) || e.target.closest('.node-handle')) return;
               e.stopPropagation();
@@ -5881,6 +5901,18 @@
             bumpInk(); scheduleInkSave('shapes');
             showToast('Связь создана · двигайте карточки, линия идёт следом');
           };
+          // Выбор объекта в режиме «Связь». Ходов ровно два: первый объект,
+          // второй объект. Зовётся и с холста (фигуры, надписи), и прямо
+          // с карточки: выделенная карточка лежит ВЫШЕ холста, и нажатие по
+          // ней до холста не доходит вовсе.
+          const pickLink = (id) => {
+            if (!id) { linkPick.current = null; bindCand.current = null; requestLive(); return; }
+            if (!linkPick.current) { linkPick.current = id; bindCand.current = id; showToast('Теперь нажмите на второй объект'); }
+            else if (linkPick.current === id) { linkPick.current = null; bindCand.current = null; }
+            else { addConnector(linkPick.current, id); linkPick.current = null; bindCand.current = null; }
+            requestLive();
+          };
+
           // Куда бросили кружок: на сцену — это привязка карточки к сцене
           // (та самая, что показывает #N и работает вне доски), на любую
           // другую карточку — обычная связь стрелкой.
@@ -7286,6 +7318,8 @@
                         handleDocResizeUp(e);
                         if (linkingFrom) {
                             if (hoveredSceneId) dropLink(linkingFrom, hoveredSceneId);
+                            else if (bindCand.current) addConnector(linkingFrom.id, bindCand.current);
+                            bindCand.current = null; requestLive();
                             setLinkingFrom(null); setHoveredSceneId(null);
                         }
                     }}>
@@ -7303,7 +7337,7 @@
                           <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 26 }} />
                           <canvas ref={liveCanvasRef}
                             className={`absolute inset-0 w-full h-full ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'}`}
-                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'shape' ? 'crosshair' : (wbMode === 'select' ? 'default' : 'none')) }}
+                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'shape' || wbMode === 'link' ? 'crosshair' : (wbMode === 'select' ? 'default' : 'none')) }}
                             onPointerEnter={(e) => { hoverPt.current = inkPt(e.clientX, e.clientY); requestLive(); }}
                             onPointerLeave={() => { hoverPt.current = null; requestLive(); }}
                             onPointerDown={(e) => {
@@ -7318,6 +7352,13 @@
                                   setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
                                   return;
                               }
+                              // Связь в два нажатия. Тут нет ни точного ведения,
+                              // ни маленьких ручек: ткнул в один объект, ткнул
+                              // в другой. Цель ищется по ГЕОМЕТРИИ (bindAt),
+                              // поэтому одинаково берутся и карточки, и фигуры,
+                              // и надписи — кружок на карточке умеет только
+                              // карточки, потому что ищет их в разметке.
+                              if (wbMode === 'link') { const t = bindAt(pt.x, pt.y); pickLink(t ? t.id : null); return; }
                               if (wbMode === 'shape') {
                                 e.currentTarget.setPointerCapture(e.pointerId);
                                 noSnap.current = e.ctrlKey || e.metaKey;
@@ -7588,8 +7629,8 @@
 
                         <div className="absolute inset-0 w-[4000px] h-[4000px] z-20 pointer-events-none">
                             {boardScenes.map(s => (
-                            <div key={s.id} data-scene-id={s.id} data-card-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-lg cursor-move overflow-hidden pointer-events-auto hover:border-indigo-500/50 group ${isDragging(s.id) ? '' : 'transition-all'} ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
-                                <div className="bg-white/5 px-4 py-2.5 border-b border-white/10 flex justify-between items-center">
+                            <div key={s.id} data-scene-id={s.id} data-card-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-lg cursor-move pointer-events-auto hover:border-indigo-500/50 group ${isDragging(s.id) ? '' : 'transition-all'} ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-white/10'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
+                                <div className="bg-white/5 px-4 py-2.5 border-b border-white/10 flex justify-between items-center" style={{ borderTopLeftRadius: 11, borderTopRightRadius: 11 }}>
                                   <span className="text-[11px] font-mono text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1"><Icons.Scene/> Сцена #{s.number}</span>
                                   {/* Убирает карточку с доски, а не сцену из проекта */}
                                   <button onClick={(e) => { e.stopPropagation(); removeSceneFromBoard(s.id); }}
@@ -7769,6 +7810,9 @@
                         <button onClick={() => setWbMode('draw')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'draw' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Кисть"><Icons.Pen/></button>
                         <button onClick={() => setWbMode('shape')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'shape' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Фигуры: прямоугольник, овал, ромб, стрелка, линия"><Icons.Shapes/></button>
                         <button onClick={() => setWbMode('erase')} className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'erase' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Ластик"><Icons.Eraser/></button>
+                        <button onClick={() => { setWbMode('link'); linkPick.current = null; bindCand.current = null; requestLive(); showToast('Нажмите на первый объект, потом на второй'); }}
+                                className={`cf-edit-only p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'link' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`}
+                                title="Связь: нажмите на один объект, потом на другой"><Icons.Link/></button>
                         <button onClick={() => setWbMode('pan')} className={`p-2.5 rounded-lg text-sm md:text-base shrink-0 transition-colors ${wbMode === 'pan' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400 hover:bg-white/10'}`} title="Панорамирование"><Icons.Move/></button>
                         {/* Появляется только после первого касания стилусом:
                             на устройстве без пера этой кнопке нечего делать. */}
