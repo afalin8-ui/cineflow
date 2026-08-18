@@ -5962,8 +5962,16 @@
           // верхнем слое, а полная перерисовка нижнего на каждый кадр
           // съела бы всю плавность. По окончании жеста состояние
           // обнуляется, эффект срабатывает и всё встаёт на место.
+          const arrowSyncKey = useRef(null);
           useEffect(() => {
             if (currentView !== 'whiteboard') return;
+            // Смена доски и вход на доску рисуют себя САМИ, и вмешиваться
+            // сюда нельзя: наш кадр прилетает раньше, чем загрузились штрихи
+            // новой доски, и на экране остаётся рисунок предыдущей. Ошибок
+            // при этом нет — просто чужой рисунок поверх чистой доски,
+            // и выглядит это как «сломалась кисть».
+            const key = activeBoardId + '|' + currentView;
+            if (arrowSyncKey.current !== key) { arrowSyncKey.current = key; return; }
             if (draggingWbItems || resizingSticky || resizingDoc || resizingRef) return;
             if (shapesRef.current.some(q => isLineKind(q.k) && (q.b1 || q.b2))) requestStatic();
           }, [scenes, references, stickies, docs, currentView, activeBoardId,
