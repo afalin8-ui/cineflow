@@ -2677,6 +2677,15 @@
           const [isPainting, setIsPainting] = useState(false);
           const [isPanning, setIsPanning] = useState(false);
           const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+          // Щипок двумя пальцами по доске. Живёт в ССЫЛКАХ, а не в состоянии:
+          // за один жест прилетают сотни событий, и перерисовывать на каждое
+          // всю доску вместе с карточками нельзя. Наружу отдаём только
+          // готовые zoom и canvasOffset — ровно как это делает панорама.
+          const boardTouch = useRef(new Map());   // пальцы, лежащие на доске
+          const pinchRef2 = useRef(null);         // что было в начале щипка
+          // Пока не оторваны ВСЕ пальцы, ни рисование, ни перенос карточек
+          // событий не получают: иначе после щипка остаётся случайная линия.
+          const pinchLock = useRef(false);
 
           // Идёт ли сейчас штрих обратным концом стилуса
           const penErase = useRef(false);
@@ -6236,6 +6245,75 @@
               requestLive();
           };
 
+          // Второй палец ОТМЕНЯЕТ всё, что успел начать первый: штрих,
+          // ластик, черновик фигуры, перенос карточек, рамку выделения.
+          // Без этого «приблизить двумя пальцами» оставляет на доске
+          // случайную линию или утаскивает карточку вместе с жестом.
+          // Делает ровно то же, что onPointerCancel у холста, плюс то,
+          // что живёт в режиме выбора.
+          const abortBoardGesture = () => {
+              live.current = null; erasePt.current = null; penErase.current = false;
+              shapeDraft.current = null; shapeAct.current = null;
+              ocrDraft.current = null; linkDown.current = null;
+              bindCand.current = null;
+              clearGuides();
+              // Перенос, начатый первым пальцем, ОТКАТЫВАЕМ на исходные места.
+              // Иначе «приблизить двумя пальцами» заодно сдвигает карточку,
+              // причём заметно: к случайному сдвигу притяжка добавляет ещё
+              // до половины клетки сетки. В облако на этом этапе ничего
+              // не ушло — перенос пишется туда только на отпускании.
+              const dd = draggingWbItems;
+              if (dd) {
+                  const back = (setter, type) => {
+                      const items = dd.items.filter(i => i.type === type);
+                      if (!items.length) return;
+                      setter(prev => prev.map(o => {
+                          const it = items.find(i => i.id === o.id);
+                          return it && (o.x !== it.ox || o.y !== it.oy) ? { ...o, x: it.ox, y: it.oy } : o;
+                      }));
+                  };
+                  back(setScenes, 'scene'); back(setReferences, 'ref');
+                  back(setStickies, 'sticky'); back(setDocs, 'doc');
+                  dd.items.filter(i => i.type === 'shape').forEach(it => {
+                      const sh = shapesRef.current.find(q => q.id === it.id);
+                      if (sh) { sh.x = it.ox; sh.y = it.oy; shapeDirty(sh); }
+                  });
+              }
+              dragMoved.current = false; dragPos.current = null;
+              setDraggingWbItems(null);
+              setSelectionBox(null);
+              setIsPainting(false); setIsPanning(false);
+              requestStatic(); requestLive();
+          };
+
+          // Щипок: два пальца всегда двигают и приближают доску, в любом
+          // режиме. Так устроены все доски (Freeform, Excalidraw, Miro),
+          // и это единственный способ приблизиться, не бросая кисть.
+          const boardPinchStart = (rect) => {
+              const [a, b] = [...boardTouch.current.values()];
+              const mx = (a.x + b.x) / 2 - rect.left, my = (a.y + b.y) / 2 - rect.top;
+              pinchRef2.current = {
+                  d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+                  z: zoom, rect,
+                  // Точка ДОСКИ под серединой между пальцами. Держим на месте
+                  // её, а не середину экрана: иначе доска уползает из-под рук.
+                  wx: (mx - canvasOffset.x) / zoom,
+                  wy: (my - canvasOffset.y) / zoom
+              };
+          };
+          const boardPinchMove = () => {
+              const p = pinchRef2.current;
+              if (!p || boardTouch.current.size < 2) return;
+              const [a, b] = [...boardTouch.current.values()];
+              const d = Math.hypot(a.x - b.x, a.y - b.y);
+              const mx = (a.x + b.x) / 2 - p.rect.left, my = (a.y + b.y) / 2 - p.rect.top;
+              // Пределы те же, что у колеса мыши, — иначе щипком можно
+              // было бы уехать туда, откуда колесом не вернуться.
+              const nz = Math.min(2.0, Math.max(0.3, p.z * (d / p.d)));
+              setZoom(nz);
+              setCanvasOffset({ x: mx - p.wx * nz, y: my - p.wy * nz });
+          };
+
           const handleElementPointerDown = (e, id, type) => {
               if (wbMode === 'link') { e.stopPropagation(); pickLink(id); return; }
               if (wbMode !== 'select') return;
@@ -7766,6 +7844,51 @@
                     </div>
 
                     <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
+                    /* Щипок ловим В ФАЗЕ ПЕРЕХВАТА, до холста и карточек:
+                       рисование и перенос успевают начаться от первого
+                       пальца, и перехватить второй уже некому. Пока идёт
+                       щипок, дети событий не получают вовсе. */
+                    onPointerDownCapture={(e) => {
+                        if (e.pointerType !== 'touch') return;
+                        // Кнопки панели инструментов не доска: два пальца
+                        // на них не должны утаскивать холст.
+                        if (e.target.closest && e.target.closest('button, input, textarea, select')) return;
+                        // Подчищаем забытые пальцы. Отпускание изредка теряется
+                        // (палец увели за край, вкладку свернули), и один
+                        // застрявший в списке превращал бы следующее обычное
+                        // касание в щипок — доска дёргалась бы сама собой.
+                        const now = Date.now();
+                        boardTouch.current.forEach((v, k) => { if (now - v.t > 10000) boardTouch.current.delete(k); });
+                        boardTouch.current.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+                        if (boardTouch.current.size === 2) {
+                            abortBoardGesture();
+                            pinchLock.current = true;
+                            boardPinchStart(e.currentTarget.getBoundingClientRect());
+                            e.stopPropagation();
+                        }
+                    }}
+                    onPointerMoveCapture={(e) => {
+                        if (e.pointerType !== 'touch' || !boardTouch.current.has(e.pointerId)) return;
+                        boardTouch.current.set(e.pointerId, { x: e.clientX, y: e.clientY, t: Date.now() });
+                        if (!pinchLock.current) return;
+                        boardPinchMove();
+                        e.stopPropagation();
+                    }}
+                    onPointerUpCapture={(e) => {
+                        if (e.pointerType !== 'touch') return;
+                        boardTouch.current.delete(e.pointerId);
+                        if (!pinchLock.current) return;
+                        // Замок держим, пока на доске остаётся хоть один палец:
+                        // иначе оставшийся продолжил бы прерванный жест и
+                        // дорисовал линию от места, где пальцы разошлись.
+                        if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; }
+                        e.stopPropagation();
+                    }}
+                    onPointerCancelCapture={(e) => {
+                        if (e.pointerType !== 'touch') return;
+                        boardTouch.current.delete(e.pointerId);
+                        if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; }
+                    }}
                     onWheel={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
