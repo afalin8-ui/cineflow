@@ -1422,13 +1422,14 @@
 
         const PANO_FOV_MIN = 28, PANO_FOV_MAX = 100;
 
-        const PanoView = ({ src, maxW, onFail }) => {
+        const PanoView = ({ src, maxW, onFail, onTap }) => {
           const canvasRef = useRef(null);
           const glRef = useRef(null);
           const locRef = useRef(null);
           const viewRef = useRef({ yaw: 0, pitch: 0, fov: 78, vy: 0, vp: 0 });
           const ptrRef = useRef(new Map());
           const pinchRef = useRef(0);
+          const tapRef = useRef({ x: 0, y: 0, moved: true });
           const rafRef = useRef(0);
           const dirtyRef = useRef(true);
           const [broken, setBroken] = useState(false);
@@ -1570,12 +1571,17 @@
             ptrRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             const v = viewRef.current; v.vy = 0; v.vp = 0;
             pinchRef.current = 0;
+            // Второй палец не может быть «касанием»: иначе конец щипка
+            // переключал бы подписи, хотя человек просто приближал кадр.
+            tapRef.current = { x: e.clientX, y: e.clientY, moved: ptrRef.current.size > 1 };
           };
           const onMove = (e) => {
             const pts = ptrRef.current;
             if (!pts.has(e.pointerId)) return;
             const prev = pts.get(e.pointerId);
             pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            const t = tapRef.current;
+            if (Math.hypot(e.clientX - t.x, e.clientY - t.y) > 8) t.moved = true;
             const v = viewRef.current;
             if (pts.size >= 2) {
               // Щипок двумя пальцами приближает — на планшете это
@@ -1600,8 +1606,13 @@
           };
           const onUp = (e) => {
             try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+            const было = ptrRef.current.size;
             ptrRef.current.delete(e.pointerId);
             if (ptrRef.current.size < 2) pinchRef.current = 0;
+            // Касание без ведения — это «покажи/спрячь подписи», то же
+            // самое, что и на обычной фотографии. Без этого спрятанную
+            // полосу на панораме было бы нечем вернуть.
+            if (было === 1 && !tapRef.current.moved && onTap) onTap();
             kick();
           };
           const onWheel = (e) => {
@@ -1628,6 +1639,135 @@
                   <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold text-zinc-300">Разворачиваю панораму...</span>
                 </div>
               )}
+            </div>
+          );
+        };
+
+        // Приближение обычной фотографии в полноэкранном просмотре.
+        // Панорама умела это с самого начала (щипок меняет угол обзора),
+        // а обычный кадр открывался «как есть»: рассмотреть на телефоне
+        // фактуру стены или номер прибора в углу было нечем.
+        //
+        // Двигаем НЕ через состояние React, а прямо стилем узла: за один
+        // щипок прилетают десятки событий, и перерисовывать на каждое
+        // весь просмотр вместе со списком тегов незачем.
+        const ZOOM_MAX = 6;
+        const ZOOM_TAP_MS = 300;
+
+        const ZoomImage = ({ src, onTap, onError }) => {
+          const boxRef = useRef(null);
+          const imgRef = useRef(null);
+          const stRef = useRef({ s: 1, x: 0, y: 0 });
+          const ptrRef = useRef(new Map());
+          const pinchRef = useRef(null);
+          const tapRef = useRef({ t: 0, x: 0, y: 0, moved: false, timer: 0 });
+          const [zoomed, setZoomed] = useState(false);
+
+          const apply = () => {
+            const im = imgRef.current;
+            if (!im) return;
+            const st = stRef.current;
+            im.style.transform = 'translate(' + st.x + 'px,' + st.y + 'px) scale(' + st.s + ')';
+          };
+          // Не даём утащить кадр за собственные края: иначе фотография
+          // уезжает с экрана, и человек не понимает, куда она делась
+          // и как её вернуть.
+          const clamp = () => {
+            const im = imgRef.current, box = boxRef.current;
+            if (!im || !box) return;
+            const st = stRef.current;
+            const mx = Math.max(0, (im.offsetWidth * st.s - box.clientWidth) / 2);
+            const my = Math.max(0, (im.offsetHeight * st.s - box.clientHeight) / 2);
+            st.x = Math.max(-mx, Math.min(mx, st.x));
+            st.y = Math.max(-my, Math.min(my, st.y));
+          };
+          // Приближаем ВОКРУГ ТОЧКИ ПОД ПАЛЬЦАМИ, а не вокруг середины
+          // кадра: иначе то, что рассматриваешь, уезжает из-под пальца.
+          const setScale = (ns, cx, cy) => {
+            const box = boxRef.current;
+            if (!box) return;
+            const st = stRef.current;
+            ns = Math.max(1, Math.min(ZOOM_MAX, ns));
+            const r = box.getBoundingClientRect();
+            const ox = cx - (r.left + r.width / 2), oy = cy - (r.top + r.height / 2);
+            const k = ns / st.s;
+            st.x = ox - (ox - st.x) * k;
+            st.y = oy - (oy - st.y) * k;
+            st.s = ns;
+            if (ns <= 1.001) { st.x = 0; st.y = 0; }
+            clamp(); apply();
+            setZoomed(ns > 1.01);
+          };
+
+          useEffect(() => {
+            const onResize = () => { clamp(); apply(); };
+            window.addEventListener('resize', onResize);
+            return () => { window.removeEventListener('resize', onResize); clearTimeout(tapRef.current.timer); };
+          }, []);
+
+          const handleTap = (x, y) => {
+            const t = tapRef.current, now = Date.now();
+            if (now - t.t < ZOOM_TAP_MS) {
+              // Двойное касание приближает и возвращает обратно — так это
+              // работает в любой смотрелке, и палец тянется туда сам.
+              clearTimeout(t.timer); t.t = 0;
+              setScale(stRef.current.s > 1.01 ? 1 : 2.5, x, y);
+              return;
+            }
+            t.t = now;
+            // Одиночное касание ждёт: вдруг это первое из двойного.
+            t.timer = setTimeout(() => { t.t = 0; if (onTap) onTap(); }, ZOOM_TAP_MS);
+          };
+
+          const onDown = (e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            ptrRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (ptrRef.current.size === 2) {
+              const [a, b] = [...ptrRef.current.values()];
+              pinchRef.current = { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), s: stRef.current.s };
+            }
+            const t = tapRef.current;
+            // Второй палец — это щипок, а не касание (см. PanoView)
+            t.moved = ptrRef.current.size > 1; t.x = e.clientX; t.y = e.clientY;
+          };
+          const onMove = (e) => {
+            const pts = ptrRef.current;
+            if (!pts.has(e.pointerId)) return;
+            const prev = pts.get(e.pointerId);
+            pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            const t = tapRef.current;
+            if (Math.hypot(e.clientX - t.x, e.clientY - t.y) > 8) t.moved = true;
+            if (pts.size >= 2 && pinchRef.current) {
+              const [a, b] = [...pts.values()];
+              const d = Math.hypot(a.x - b.x, a.y - b.y);
+              setScale(pinchRef.current.s * (d / pinchRef.current.d), (a.x + b.x) / 2, (a.y + b.y) / 2);
+              return;
+            }
+            // Пока кадр не приближен, тянуть нечего: он и так виден целиком.
+            if (stRef.current.s > 1.01) {
+              stRef.current.x += e.clientX - prev.x;
+              stRef.current.y += e.clientY - prev.y;
+              clamp(); apply();
+            }
+          };
+          const onUp = (e) => {
+            try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+            const было = ptrRef.current.size;
+            ptrRef.current.delete(e.pointerId);
+            if (ptrRef.current.size < 2) pinchRef.current = null;
+            if (было === 1 && !tapRef.current.moved) handleTap(e.clientX, e.clientY);
+          };
+          const onWheel = (e) => setScale(stRef.current.s * (e.deltaY > 0 ? 1 / 1.15 : 1.15), e.clientX, e.clientY);
+
+          return (
+            <div ref={boxRef}
+                 className="relative w-full h-full flex items-center justify-center overflow-hidden"
+                 onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+                 onWheel={onWheel}
+                 style={{ touchAction: 'none', cursor: zoomed ? 'grab' : 'zoom-in' }}>
+              <img ref={imgRef} src={src} draggable="false" onError={onError}
+                   className="max-w-full max-h-full object-contain rounded-lg select-none"
+                   style={{ transformOrigin: 'center center', willChange: 'transform' }} />
             </div>
           );
         };
@@ -1713,9 +1853,40 @@
                 };
             }, [currentRef && currentRef.id, currentRef && currentRef.pano, bigUrl]);
 
+            // Подписи и стрелки лежат ПОВЕРХ кадра и на телефоне закрывают
+            // его низ. Убрать их совсем нельзя — по счётчику понимают, какой
+            // это кадр из скольких, а по стрелкам листают. Поэтому они
+            // уходят сами через пару секунд и возвращаются по касанию:
+            // так устроена любая смотрелка фотографий, палец уже знает.
+            // На компьютере не прячем вовсе — там мышь и большой экран,
+            // прятать не от чего, а исчезающие кнопки только путают.
+            // Крестик закрытия НЕ прячется никогда: «нечем закрыть» —
+            // ровно та беда, которую мы только что чинили в окнах.
+            const [chromeOn, setChromeOn] = useState(true);
+            const chromeTimer = useRef(0);
+            const touchUI = useRef(typeof matchMedia === 'function' && matchMedia('(hover: none)').matches);
+            const showChrome = () => {
+                clearTimeout(chromeTimer.current);
+                setChromeOn(true);
+                // Пока открыто окошко тегов, прятать нечего: человек размечает кадр
+                if (touchUI.current && !tagsOpen) chromeTimer.current = setTimeout(() => setChromeOn(false), 2800);
+            };
+            const toggleChrome = () => {
+                if (!touchUI.current) return;
+                if (chromeOn) { clearTimeout(chromeTimer.current); setChromeOn(false); }
+                else showChrome();
+            };
+            useEffect(() => {
+                showChrome();
+                return () => clearTimeout(chromeTimer.current);
+            }, [currentId, tagsOpen]);
+
             if (!currentRef) return null;
 
             const isPano = !!currentRef.pano;
+            // Скрытое не должно ловить нажатия, иначе невидимая стрелка
+            // листает кадр под пальцем.
+            const chromeCls = 'transition-opacity duration-200 ' + (chromeOn ? 'opacity-100' : 'opacity-0 pointer-events-none');
             const panoSrc = panoFull || currentRef.panoUrl || currentRef.url;
             const panoMax = panoFull ? PANO_VIEW_W : PANO_THUMB_W;
 
@@ -1728,7 +1899,7 @@
                     {onSetPano && (
                         <button onClick={() => onSetPano(currentRef, !isPano)}
                                 title={isPano ? 'Показывать обычным плоским кадром' : 'Это панорама 360° — развернуть на сферу'}
-                                className="cf-edit-only absolute top-6 left-6 z-20 rounded-full px-3 py-1.5 transition-colors"
+                                className={'cf-edit-only absolute top-6 left-6 z-20 rounded-full px-3 py-1.5 ' + chromeCls}
                                 style={isPano
                                   ? { background: 'var(--accent)', color: 'var(--bg)', fontSize: 11.5, fontWeight: 700 }
                                   : { background: 'rgba(255,255,255,.08)', color: 'var(--muted-2)', border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 700 }}>
@@ -1736,19 +1907,19 @@
                         </button>
                     )}
                     <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
-                        {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className="absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
+                        {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className={'absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 ' + chromeCls}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
                         {isPano ? (
-                            <PanoView key={currentRef.id} src={panoSrc} maxW={panoMax} />
+                            <PanoView key={currentRef.id} src={panoSrc} maxW={panoMax} onTap={toggleChrome} />
                         ) : (
-                            <img src={bigUrl || currentRef.url} className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()}
-                                 onError={() => { if (bigUrl) setBigUrl(''); }} />
+                            <ZoomImage key={currentRef.id} src={bigUrl || currentRef.url} onTap={toggleChrome}
+                                       onError={() => { if (bigUrl) setBigUrl(''); }} />
                         )}
-                        {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className="absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 transition-colors"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
+                        {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className={'absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 ' + chromeCls}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
                     </div>
                     {/* Теги кадра — окошком в левом нижнем углу. Поднято над
                         нижней полосой со счётчиком, чтобы не налезать на неё. */}
                     {onAddTag && (tagsOpen ? (
-                        <div className="cf-lb-tags absolute glass-panel rounded-lg z-20 border-t border-white/10"
+                        <div className={'cf-lb-tags absolute glass-panel rounded-lg z-20 border-t border-white/10 ' + chromeCls}
                              style={{ left: 16, bottom: 76, padding: 8, width: 'max-content',
                                       minWidth: 150, maxWidth: 'min(320px, calc(100vw - 32px))' }}>
                             {/* Поле ввода СВЕРХУ, теги под ним. Окошко стоит внизу
@@ -1778,7 +1949,7 @@
                         </div>
                     ) : (
                         <button onClick={() => toggleTags(true)} title="Показать теги кадра"
-                                className="absolute glass-panel rounded-full px-3 py-1.5 z-20 flex items-center gap-1.5 text-zinc-400 hover:text-white transition-colors"
+                                className={'absolute glass-panel rounded-full px-3 py-1.5 z-20 flex items-center gap-1.5 text-zinc-400 hover:text-white ' + chromeCls}
                                 style={{ left: 16, bottom: 76 }}>
                             <Icons.Tag/>
                             <span style={{ fontSize: 11, fontWeight: 600 }}>
@@ -1787,19 +1958,19 @@
                         </button>
                     ))}
 
-                    <div className="absolute bottom-6 flex items-center gap-2 max-w-[92vw]">
-                        <span className="glass-panel rounded-full px-4 py-2 text-xs font-mono font-bold text-zinc-300 shrink-0">{currentIndex + 1} / {refs.length}</span>
+                    <div className={'absolute bottom-4 md:bottom-6 flex items-center gap-1.5 md:gap-2 max-w-[94vw] ' + chromeCls}>
+                        <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-mono font-bold text-zinc-300 shrink-0">{currentIndex + 1} / {refs.length}</span>
                         {/* Подсказка нужна и в режиме просмотра: человеку,
                             которому прислали ссылку, иначе неоткуда узнать,
                             что кадр можно крутить. */}
                         {isPano && (
-                            <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
+                            <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
                                   style={{ color: 'var(--accent)' }}>
                                 360° <span className="hidden sm:inline" style={{ color: 'var(--muted-2)' }}>· ведите пальцем, щипок приближает</span>
                             </span>
                         )}
                         {scopeLabel && <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 hidden sm:block" style={{ color: 'var(--accent)' }}>{scopeLabel}</span>}
-                        {currentRef.label && <span className="px-5 py-2 glass-panel rounded-full text-sm font-medium text-white text-center truncate">{currentRef.label}</span>}
+                        {currentRef.label && <span className="px-3 md:px-5 py-1.5 md:py-2 glass-panel rounded-full text-xs md:text-sm font-medium text-white text-center truncate">{currentRef.label}</span>}
                     </div>
                 </div>
             );
