@@ -293,6 +293,7 @@
             Link: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
             Folder: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>,
             Ocr: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="m7.5 15.5 3-7 3 7"/><path d="M8.4 13.4h4.2"/><path d="M16.5 8.5v7"/></svg>,
+            Paste: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>,
             Cloud: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 13v8"/><path d="m8 17 4-4 4 4"/><path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.2"/></svg>,
             Chat: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
             Bot: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="14" x="3" y="7" rx="2" ry="2"/><path d="M12 7V3"/><path d="M9 3h6"/><path d="M9 13v2"/><path d="M15 13v2"/></svg>,
@@ -924,11 +925,33 @@
         const cloudCheck = async (cfg) => {
           if (cfg.provider === 'dropbox') {
             const token = await dropboxAccess(cfg);
-            const res = await fetch('https://api.dropboxapi.com/2/users/get_current_account',
-              { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            // **Спрашиваем `check/user`, а НЕ `users/get_current_account`.**
+            // Второй требует разрешения `account_info.read`, а наша же
+            // инструкция по настройке велит отметить только файловые
+            // разрешения — то есть проверка спрашивала то, чего сама
+            // никогда не просила выдать. Дропбокс отвечал на это 403
+            // из своих внутренностей (текст про spiffe/envoy-edge), и
+            // человек видел «не принял ключ» там, где ключ ЖИВОЙ и
+            // фотографии уезжают нормально. `check/user` заведён ровно
+            // для такой проверки и не требует НИКАКИХ разрешений.
+            const res = await fetch('https://api.dropboxapi.com/2/check/user', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: 'cineflow' })
+            });
             if (!res.ok) await cloudErr(res, 'Dropbox не принял ключ');
-            const j = await res.json();
-            return (j.name && j.name.display_name) || 'подключено';
+            // Имя владельца — приятная мелочь, а не предмет проверки: за
+            // него отвечает отдельное разрешение, которого у большинства
+            // нет. Не ответили — связь всё равно есть.
+            try {
+              const who = await fetch('https://api.dropboxapi.com/2/users/get_current_account',
+                { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+              if (who.ok) {
+                const j = await who.json();
+                if (j.name && j.name.display_name) return j.name.display_name;
+              }
+            } catch (e) {}
+            return 'подключено';
           }
           if (cfg.provider === 'yandex') {
             const res = await fetch('https://cloud-api.yandex.net/v1/disk/', { headers: yandexHead(cfg) });
@@ -2332,6 +2355,10 @@
           // галерею, где и должны быть.
           const [locations, setLocations] = useState(() => safeLoad('cf_locations', [], true));
           const [activeLocationId, setActiveLocationId] = useState(null);
+          // Подсветка объекта, над которым держат файл. Без неё непонятно,
+          // отпустят картинку «сюда» или мимо: у перетаскивания нет курсора,
+          // который сам говорит, что цель приняла.
+          const [dragOverLoc, setDragOverLoc] = useState(false);
           // Порядок — как отсняли на скауте, а не по алфавиту: переименование
           // объекта не должно перекладывать список под руками.
           const sortedLocations = useMemo(
@@ -5836,6 +5863,152 @@
             }
           };
 
+          // --- Картинку можно БРОСИТЬ и ВСТАВИТЬ, а не только выбирать файлом ---
+          // Раньше путь был один: кнопка, окно выбора файла, поиск в папках.
+          // Увиденное в браузере приходилось сперва скачивать к себе, а потом
+          // искать в загрузках. Все три двери ниже ведут в тот же
+          // handleMultiFileUpload — вторая ветка загрузки разъехалась бы
+          // с первой при первой же правке.
+
+          // Своё имя для картинки из буфера. Браузер отдаёт их ВСЕ под одним
+          // именем «image.png», а имя файла у нас — и подпись референса, и то,
+          // по чему ищутся повторы: вторая вставка подряд упиралась бы
+          // в вопрос «такая картинка уже есть». Счётчик рядом — потому что
+          // имя считается до СЕКУНДЫ, а вставить две картинки подряд — дело
+          // как раз одной секунды.
+          const pasteSeq = useRef({ base: '', n: 0 });
+          const pasteName = (type) => {
+            let ext = String(type || '').split('/')[1] || 'png';
+            ext = ext.replace(/[^a-z0-9]/gi, '').slice(0, 4).toLowerCase() || 'png';
+            const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+            const base = `Вставлено ${p2(d.getDate())}.${p2(d.getMonth() + 1)} ${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}`;
+            if (pasteSeq.current.base === base) pasteSeq.current.n++;
+            else pasteSeq.current = { base, n: 0 };
+            const n = pasteSeq.current.n;
+            return `${base}${n ? ` (${n + 1})` : ''}.${ext}`;
+          };
+          const renamedFile = (blob, name) => {
+            try { return new File([blob], name, { type: blob.type }); } catch (e) { return blob; }
+          };
+
+          // Картинки из брошенного или вставленного. Лежат они в двух местах
+          // и не всегда в обоих: у перетаскивания это `files`, у буфера
+          // обмена — `items`, откуда файл надо ещё попросить. Читать оба
+          // списка надо СИНХРОННО, прямо в обработчике события: после
+          // первого await браузер их уже опустошил.
+          const imagesFrom = (dt) => {
+            if (!dt) return [];
+            const out = [], seen = new Set();
+            const push = (f) => {
+              if (!f || !f.type || !f.type.startsWith('image/')) return;
+              const key = `${f.name}|${f.size}|${f.lastModified || 0}`;
+              if (seen.has(key)) return;
+              seen.add(key);
+              out.push(!f.name || /^image\.\w+$/i.test(f.name) ? renamedFile(f, pasteName(f.type)) : f);
+            };
+            Array.from(dt.files || []).forEach(push);
+            Array.from(dt.items || []).forEach(it => { if (it.kind === 'file') push(it.getAsFile()); });
+            return out;
+          };
+
+          // Картинку, притащенную ПРЯМО ИЗ ДРУГОЙ ВКЛАДКИ, браузер отдаёт
+          // не файлом, а ссылкой: он её не скачивал, файла у него нет.
+          const urlFrom = (dt) => {
+            if (!dt || !dt.getData) return '';
+            const uri = dt.getData('text/uri-list') || '';
+            const first = uri.split('\n').map(x => x.trim()).find(x => x && x[0] !== '#');
+            if (first) return first;
+            const m = /<img[^>]+src\s*=\s*["']([^"']+)["']/i.exec(dt.getData('text/html') || '');
+            if (m) return m[1];
+            const txt = (dt.getData('text/plain') || '').trim();
+            return /^(https?:|data:image\/)/i.test(txt) ? txt : '';
+          };
+          const fileFromUrl = async (url) => {
+            const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+            if (!res.ok) throw new Error(`сервер ответил ${res.status}`);
+            const blob = await res.blob();
+            if (!blob.type.startsWith('image/')) throw new Error('это не картинка');
+            let name = '';
+            try {
+              const tail = new URL(url, location.href).pathname.split('/').pop() || '';
+              if (/\.(jpe?g|png|gif|webp|avif|bmp)$/i.test(tail)) name = decodeURIComponent(tail);
+            } catch (e) {}
+            return renamedFile(blob, name || pasteName(blob.type));
+          };
+
+          // Общий приём брошенного. opts — те же координаты, что и у выбора
+          // файлом: {sceneId, place, locationId}.
+          const acceptDropped = async (dt, opts = {}) => {
+            if (READ_ONLY) return;
+            // Оба чтения — ДО первого await, пока списки ещё живы.
+            const files = imagesFrom(dt);
+            const url = files.length ? '' : urlFrom(dt);
+            const go = (list) => handleMultiFileUpload(list, opts.sceneId || null, opts.place || null, opts.locationId || null);
+            if (files.length) return go(files);
+            if (!url) { showToast('В брошенном картинки нет'); return; }
+            showToast('Забираю картинку по ссылке...');
+            try { return go([await fileFromUrl(url)]); }
+            catch (e) {
+              // Чужой сайт почти всегда запрещает читать свои картинки
+              // посторонним страницам, и обойти это нечем. Но путь через
+              // буфер работает ВСЕГДА: там лежат сами точки, а не адрес.
+              console.warn('Картинка по ссылке не забралась:', e);
+              showToast('Сайт не отдал картинку. Скопируйте её (правая кнопка → «Копировать изображение») и вставьте сюда');
+            }
+          };
+
+          // Кнопка «Вставить» — для планшета: Ctrl+V там нет вовсе, а
+          // картинку из браузера копируют долгим нажатием. Спрашивать буфер
+          // можно ТОЛЬКО из обработчика нажатия: без жеста человека браузер
+          // отказывает, причём молча.
+          const pasteFromClipboard = async (opts = {}) => {
+            if (READ_ONLY) return;
+            if (!navigator.clipboard || !navigator.clipboard.read) {
+              showToast('Этот браузер не даёт читать буфер — нажмите Ctrl+V или перетащите файл'); return;
+            }
+            let items;
+            try { items = await navigator.clipboard.read(); }
+            catch (e) { showToast('Буфер прочитать не дали. Нажмите Ctrl+V или перетащите файл'); return; }
+            const files = [];
+            for (const it of items) {
+              const type = (it.types || []).find(t => t.startsWith('image/'));
+              if (!type) continue;
+              try { files.push(renamedFile(await it.getType(type), pasteName(type))); } catch (e) {}
+            }
+            if (!files.length) { showToast('В буфере нет картинки — скопируйте её в браузере и попробуйте снова'); return; }
+            return handleMultiFileUpload(files, opts.sceneId || null, opts.place || null, opts.locationId || null);
+          };
+
+          // Что несёт перетаскивание. Проверяем ДО preventDefault: перехватив
+          // всё подряд, мы отняли бы у полей ввода обычный перенос текста.
+          // Выделенный текст несёт text/plain и text/html, но НЕ uri-list,
+          // поэтому список короткий и набору не мешает.
+          const dropHasImage = (dt) => {
+            const types = Array.from((dt && dt.types) || []);
+            return types.indexOf('Files') >= 0 || types.indexOf('text/uri-list') >= 0;
+          };
+
+          // Ctrl+V на вкладке «Объекты» кладёт картинку в ОТКРЫТЫЙ объект.
+          // Слушаем на документе: своего поля у вставки нет, и требовать
+          // сперва «выбрать, куда именно» значило бы вернуть лишний шаг.
+          useEffect(() => {
+            if (READ_ONLY || currentView !== 'locations' || !activeLocationId) return;
+            const onPaste = (e) => {
+              const files = imagesFrom(e.clipboardData);
+              if (!files.length) return;
+              // В поле ввода не мешаем, когда вставляют текст. Но если
+              // в буфере ОДНА картинка, класть в поле нечего — она бы
+              // просто пропала, поэтому забираем себе.
+              const t = e.target;
+              const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+              if (inField && (e.clipboardData.getData('text/plain') || '').trim()) return;
+              e.preventDefault();
+              handleMultiFileUpload(files, null, null, activeLocationId);
+            };
+            document.addEventListener('paste', onPaste);
+            return () => document.removeEventListener('paste', onPaste);
+          }, [currentView, activeLocationId, references, locations]);
+
           // --- Файлы проекта: КПП, сценарий в PDF, доки ---
           // Файл лежит в документе базы строкой base64, а предел документа
           // Firestore — 1 МБ, то есть около 650 КБ настоящего файла. Раньше
@@ -7626,7 +7799,29 @@
                         const photos = locationPhotos(l.id);
                         const linked = l.sceneIds || [];
                         return (
-                          <div className="flex-1 glass-panel p-5 md:p-8 rounded-lg overflow-y-auto space-y-6 border-t border-white/10">
+                          /* Файл можно бросить на ВЕСЬ лист объекта, а не в узкую
+                             полоску: целиться в маленькую цель мышью с зажатой
+                             кнопкой неудобно, а на планшете и вовсе нечем.
+                             Перехватываем только то, что несёт картинку
+                             (dropHasImage) — иначе у полей ввода отнялся бы
+                             обычный перенос текста. */
+                          <div className={`flex-1 glass-panel p-5 md:p-8 rounded-lg overflow-y-auto space-y-6 border-t border-white/10 transition-shadow ${dragOverLoc ? 'ring-2 ring-indigo-400/70' : ''}`}
+                               onDragOver={(e) => {
+                                 if (READ_ONLY || !dropHasImage(e.dataTransfer)) return;
+                                 e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+                                 if (!dragOverLoc) setDragOverLoc(true);
+                               }}
+                               onDragLeave={(e) => {
+                                 // Уход к СВОЕМУ же потомку — не уход: без этой
+                                 // проверки подсветка мигает над каждой картинкой.
+                                 if (e.currentTarget.contains(e.relatedTarget)) return;
+                                 setDragOverLoc(false);
+                               }}
+                               onDrop={(e) => {
+                                 if (READ_ONLY || !dropHasImage(e.dataTransfer)) return;
+                                 e.preventDefault(); setDragOverLoc(false);
+                                 acceptDropped(e.dataTransfer, { locationId: l.id });
+                               }}>
                             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start border-b border-white/10 pb-4 gap-3">
                               <input type="text" value={l.name || ''} onChange={(e) => updateLocation(l.id, 'name', e.target.value)}
                                      placeholder="Название объекта"
@@ -7791,14 +7986,30 @@
                             </div>
 
                             <div className="space-y-3">
-                              <div className="flex justify-between items-center">
+                              <div className="flex flex-wrap justify-between items-center gap-2">
                                 <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Фотографии со скаута</label>
-                                <label className="cf-edit-only text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
-                                  <span><Icons.Gallery /></span> Загрузить фото
-                                  <input type="file" multiple accept="image/*" className="hidden"
-                                         onChange={(e) => handleMultiFileUpload(e.target.files, null, null, l.id)} />
-                                </label>
+                                <div className="flex items-center gap-2">
+                                  {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
+                                      там нет вовсе, а картинку из браузера копируют
+                                      долгим нажатием. Спрашивать буфер можно только
+                                      из обработчика нажатия. */}
+                                  <button onClick={() => pasteFromClipboard({ locationId: l.id })}
+                                          title="Вставить картинку из буфера обмена"
+                                          className="cf-edit-only text-xs text-zinc-300 hover:text-white font-bold bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                    <span><Icons.Paste /></span> Вставить
+                                  </button>
+                                  <label className="cf-edit-only text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                    <span><Icons.Gallery /></span> Загрузить фото
+                                    <input type="file" multiple accept="image/*" className="hidden"
+                                           onChange={(e) => handleMultiFileUpload(e.target.files, null, null, l.id)} />
+                                  </label>
+                                </div>
                               </div>
+                              {/* Про два новых пути надо СКАЗАТЬ: невидимая
+                                  возможность — это возможность, которой нет. */}
+                              <p className="cf-edit-only text-[12px] text-zinc-500 ml-1 leading-relaxed">
+                                Картинку можно просто бросить на этот лист или вставить из буфера — Ctrl+V, а на планшете кнопкой «Вставить».
+                              </p>
                               {!photos.length ? (
                                 <p className="text-[13px] text-zinc-500 ml-1">Фотографий пока нет. Их видно и здесь, и в общей галерее.</p>
                               ) : (
