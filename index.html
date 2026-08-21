@@ -722,7 +722,37 @@
         const cloudErr = async (res, what) => {
           let text = '';
           try { text = (await res.text()).slice(0, 300); } catch (e) {}
-          throw new Error(`${what}: ${res.status} ${text}`);
+          // Номер запроса Dropbox кладёт в заголовок и НАМЕРЕННО открывает
+          // его браузеру (он перечислен в Access-Control-Expose-Headers).
+          // Без него ответ «501 unexpected error occurred» — тупик: по
+          // такому тексту нельзя понять ничего, а по номеру их поддержка
+          // видит, что именно случилось на их стороне.
+          let rid = '';
+          try { rid = res.headers.get('x-dropbox-request-id') || ''; } catch (e) {}
+          throw new Error(`${what}: ${res.status} ${text}${rid ? ` · номер запроса ${rid}` : ''}`);
+        };
+
+        // **Ответ 5xx — это «сломалось у них», а не «файл плохой».**
+        // Один такой ответ не должен стоить фотографии: пробуем ещё
+        // дважды с нарастающей паузой. Повторять безопасно — файл
+        // уезжает в режиме overwrite, то есть повтор кладёт то же самое
+        // на то же место. Ошибки 4xx не повторяем вовсе: там дело
+        // в самой заявке, и второй такой же ответ будет тем же.
+        const cloudFetch = async (url, opts, tries = 3) => {
+          let last = null;
+          for (let i = 0; i < tries; i++) {
+            try {
+              const res = await fetch(url, opts);
+              if (res.status < 500) return res;
+              last = res;
+            } catch (e) {
+              last = e;
+              if (i === tries - 1) throw e;
+            }
+            if (i < tries - 1) await new Promise(r => setTimeout(r, 700 * (i + 1)));
+          }
+          if (last instanceof Error) throw last;
+          return last;
         };
 
         // --- Dropbox ---
@@ -763,7 +793,7 @@
         const dropboxUpload = async (cfg, file, name) => {
           const token = await dropboxAccess(cfg);
           const path = '/' + (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '') + '/' + name;
-          const up = await fetch('https://content.dropboxapi.com/2/files/upload', {
+          const up = await cloudFetch('https://content.dropboxapi.com/2/files/upload', {
             method: 'POST',
             headers: {
               'Authorization': 'Bearer ' + token,
