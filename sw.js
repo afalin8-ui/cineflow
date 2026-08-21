@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v9';
+const VERSION = 'cineflow-v10';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -68,7 +68,12 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter(k => !k.startsWith(VERSION)).map(k => caches.delete(k)));
+    // Собранное приложение лежит в отдельном кэше и к версиям не привязано:
+  // его ключ — хэш исходника, устаревшее там подчищается само. Снести его
+  // вместе со старыми версиями значило бы заставлять Babel переводить
+  // десять тысяч строк заново после каждого обновления.
+  await Promise.all(keys.filter(k => !k.startsWith(VERSION) && k !== 'cf-app-build')
+                        .map(k => caches.delete(k)));
     await self.clients.claim();
   })());
 });

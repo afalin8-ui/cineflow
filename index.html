@@ -62,8 +62,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:wght@600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
@@ -266,7 +264,7 @@
 <body class="no-select">
     <div id="root" class="relative z-10 w-full h-full"></div>
 
-    <script type="text/babel">
+    <script type="text/cf-jsx" id="cf-app">
         const { useState, useEffect, useRef, useMemo } = React;
 
         const Icons = {
@@ -479,6 +477,23 @@
           const m = r && r.message ? r.message : r;
           if (cfIsAssert(m)) cfCloudCrash(m);
         });
+
+        // Чтение Excel нужно ровно в одном месте — при импорте КПП.
+        // На старте эта библиотека стоила 861 КБ загрузки и разбора КАЖДОМУ,
+        // включая тех, кто таблиц не открывает вовсе. Теперь подгружаем её
+        // в момент нажатия. Из кэша service worker'а она достаётся и офлайн.
+        let xlsxLoading = null;
+        const loadXLSX = () => {
+          if (window.XLSX) return Promise.resolve(window.XLSX);
+          if (!xlsxLoading) xlsxLoading = new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+            s.onload = () => res(window.XLSX);
+            s.onerror = () => { xlsxLoading = null; rej(new Error('не удалось загрузить чтение таблиц')); };
+            document.head.appendChild(s);
+          });
+          return xlsxLoading;
+        };
 
         const compressImage = (base64Str, maxWidth, maxHeight, callback, quality) => {
           const img = new Image();
@@ -5060,6 +5075,7 @@
               let textContent = "";
               try {
                 if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv')) {
+                  const XLSX = await loadXLSX();
                   const data = new Uint8Array(event.target.result); const workbook = XLSX.read(data, {type: 'array'});
                   const rawArray = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1, defval: ""});
                   const cleanArray = rawArray.filter(row => row.some(cell => String(cell).trim() !== ""));
@@ -10123,6 +10139,93 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<ErrorBoundary><AppCore /></ErrorBoundary>);
+    </script>
+
+    <script>
+    /* ЗАПУСК ПРИЛОЖЕНИЯ.
+       Код в файле написан на JSX, и его надо перевести в обычный JavaScript.
+       Делает это Babel прямо в браузере — на том и держится правило «без
+       сборщиков»: сборка живёт внутри страницы. Но перевод десяти тысяч
+       строк занимает СЕКУНДЫ, и раньше он делался заново при КАЖДОМ
+       открытии, вместе с загрузкой самого Babel на 2,4 МБ. Замер: на
+       пустом проекте и на проекте с тремя сотнями фотографий время
+       открытия одинаковое — значит, платим мы не за данные, а вот за это.
+       Теперь готовый перевод кладётся в Cache Storage. Именно туда, а не
+       в localStorage: у того свой предел около 5 МБ, и у большого проекта
+       он и так переполнен. Ключ — длина и хэш исходника: правим
+       приложение — ключ другой, и перевод делается заново сам.
+       Babel грузится ТОЛЬКО когда переводить действительно надо. */
+    (function () {
+      var el = document.getElementById('cf-app');
+      var src = el.textContent;
+      var CACHE = 'cf-app-build';
+      var h = 5381;
+      for (var i = 0; i < src.length; i++) h = ((h * 33) ^ src.charCodeAt(i)) >>> 0;
+      var key = '/cf-build/' + src.length + '-' + h.toString(36);
+      var МЕТКА = '\n;window.__CF_APP_OK=1;';
+
+      function run(code) {
+        var s = document.createElement('script');
+        s.textContent = code;
+        document.body.appendChild(s);
+      }
+      function loadBabel() {
+        return new Promise(function (res, rej) {
+          if (window.Babel) return res();
+          var s = document.createElement('script');
+          s.src = 'https://unpkg.com/@babel/standalone/babel.min.js';
+          s.onload = function () { res(); }; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+      }
+      function compileAndRun() {
+        return loadBabel().then(function () {
+          // runtime classic ОБЯЗАТЕЛЕН: по умолчанию Babel собирает код
+          // под модули и вставляет import из react/jsx-runtime, а у нас
+          // React лежит глобально, обычным тегом, и модулей нет вовсе.
+          // Без этого браузер отвечает «Cannot use import statement».
+          var out = Babel.transform(src, {
+            presets: [['react', { runtime: 'classic' }]], filename: 'app.jsx'
+          }).code + МЕТКА;
+          run(out);
+          if (!window.caches) return;
+          caches.open(CACHE).then(function (c) {
+            // Старые сборки убираем: иначе кэш растёт с каждой правкой файла.
+            c.keys().then(function (ks) {
+              ks.forEach(function (k) { if (k.url.indexOf(key) === -1) c.delete(k); });
+            });
+            c.put(key, new Response(out, { headers: { 'Content-Type': 'text/javascript' } }));
+          }).catch(function () {});
+        });
+      }
+      function fail(e) {
+        console.error('Не удалось собрать приложение', e);
+        var r = document.getElementById('root');
+        if (r) r.innerHTML = '<div style="padding:24px;font:15px/1.6 -apple-system,sans-serif;color:#f0eee6">' +
+          'Не удалось запустить приложение. Проверьте интернет и обновите страницу.</div>';
+      }
+      var ПОВТОР = 'cf_build_retry';
+      function былПовтор() { try { return sessionStorage.getItem(ПОВТОР) === '1'; } catch (e) { return false; } }
+      function пометить(v) { try { v ? sessionStorage.setItem(ПОВТОР, '1') : sessionStorage.removeItem(ПОВТОР); } catch (e) {} }
+
+      if (!window.caches) { compileAndRun().catch(fail); return; }
+      caches.open(CACHE)
+        .then(function (c) { return c.match(key); })
+        .then(function (r) { return r ? r.text() : null; })
+        .then(function (code) {
+          if (!code) return compileAndRun();
+          run(code);
+          if (window.__CF_APP_OK) { пометить(false); return; }
+          // Сохранённая сборка не запустилась. Доигрывать поверх наполовину
+          // выполненного кода нельзя — стираем её и начинаем страницу заново.
+          // Второй раз не перезагружаемся: если и свежая сборка падает,
+          // дело не в кэше, и вечный круг перезагрузок хуже честного текста.
+          if (былПовтор()) { пометить(false); fail(new Error('сборка не запускается')); return; }
+          пометить(true);
+          return caches.delete(CACHE).then(function () { location.reload(); });
+        })
+        .catch(function () { return compileAndRun().catch(fail); });
+    })();
     </script>
 </body>
 </html>
