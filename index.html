@@ -738,6 +738,26 @@
         // уезжает в режиме overwrite, то есть повтор кладёт то же самое
         // на то же место. Ошибки 4xx не повторяем вовсе: там дело
         // в самой заявке, и второй такой же ответ будет тем же.
+        // **«Failed to fetch» — это НЕ ответ облака, это ОТСУТСТВИЕ ответа.**
+        // Запрос не дошёл вовсе: ни кода, ни текста, ни номера запроса.
+        // Человеку такая строка не говорит ничего, а причина почти всегда
+        // лежит снаружи приложения — VPN, антивирус со сканированием
+        // соединений, расширение браузера или сеть, где этот адрес закрыт.
+        // Отличать это от «облако отказало» обязательно: там чинят
+        // настройки, здесь — дорогу до облака, и советы прямо
+        // противоположные.
+        const netErr = (url) => {
+          let host = url;
+          try { host = new URL(url).hostname; } catch (e) {}
+          return new Error(
+            `Не удалось соединиться с ${host}: запрос не дошёл, ответа нет вовсе. ` +
+            `Это не отказ облака — до него ничего не долетело. Обычно мешает ` +
+            `что-то снаружи приложения: VPN, антивирус, расширение браузера ` +
+            `или сеть, где этот адрес закрыт. Проверить просто: откройте ` +
+            `https://${host}/ в новой вкладке — если страница не открывается ` +
+            `вовсе, дело в дороге до облака, а не в настройках.`);
+        };
+
         const cloudFetch = async (url, opts, tries = 3) => {
           let last = null;
           for (let i = 0; i < tries; i++) {
@@ -747,11 +767,11 @@
               last = res;
             } catch (e) {
               last = e;
-              if (i === tries - 1) throw e;
+              if (i === tries - 1) throw netErr(url);
             }
             if (i < tries - 1) await new Promise(r => setTimeout(r, 700 * (i + 1)));
           }
-          if (last instanceof Error) throw last;
+          if (last instanceof Error) throw netErr(url);
           return last;
         };
 
@@ -964,7 +984,7 @@
             // человек видел «не принял ключ» там, где ключ ЖИВОЙ и
             // фотографии уезжают нормально. `check/user` заведён ровно
             // для такой проверки и не требует НИКАКИХ разрешений.
-            const res = await fetch('https://api.dropboxapi.com/2/check/user', {
+            const res = await cloudFetch('https://api.dropboxapi.com/2/check/user', {
               method: 'POST',
               headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
               body: JSON.stringify({ query: 'cineflow' })
@@ -2265,6 +2285,129 @@
         // Отдельным компонентом намеренно: набранные буквы живут в его
         // собственном состоянии и не заставляют перерисовываться всю
         // галерею — при сотне референсов это заметно на планшете.
+        // --- Выбор референсов ИЗ УЖЕ ЗАГРУЖЕННЫХ ---
+        // Один компонент на все места, где нужно «взять картинку из
+        // галереи»: в карточке сцены и на доске. Ветку не копируем —
+        // две таких разъехались бы при первой же правке, и человек
+        // получил бы поиск в одном месте и список из шестидесяти штук
+        // в другом.
+        //
+        // Поиск и папки тут обязательны, а не «удобство»: на проекте
+        // в триста референсов простой список — это стена картинок,
+        // в которой нужную не найти. Раньше на доску предлагались
+        // ПЕРВЫЕ ШЕСТЬДЕСЯТ и молча — отчего и выглядело так, будто
+        // часть референсов пропала.
+        //
+        // Своё состояние (набранные буквы, выбранное) живёт ВНУТРИ —
+        // как у TagInput: иначе каждая буква перерисовывала бы всё
+        // приложение вместе с доской.
+        const RefPicker = ({ refs, title, hint, actionLabel, onClose, onPick, bgStyle }) => {
+          const [q, setQ] = useState('');
+          const [folder, setFolder] = useState('');
+          const [sel, setSel] = useState([]);
+
+          // Папки считаем по тому, что реально предлагается выбрать,
+          // а не по всей галерее: пустая папка в списке — обещание,
+          // за которым ничего нет.
+          const folders = useMemo(() => {
+            const m = new Map();
+            refs.forEach(r => { const f = String(r.folder || '').trim(); if (f) m.set(f, (m.get(f) || 0) + 1); });
+            return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+          }, [refs]);
+
+          const shown = useMemo(() => {
+            const needle = q.trim().toLowerCase();
+            return refs.filter(r => {
+              if (folder && String(r.folder || '').trim() !== folder) return false;
+              if (!needle) return true;
+              // Ищем и по подписи, и по тегам: «ночь» человек ставил
+              // тегом, а «двор школы» писал в названии файла.
+              return String(r.label || '').toLowerCase().includes(needle)
+                  || (r.tags || []).some(t => String(t).toLowerCase().includes(needle));
+            });
+          }, [refs, q, folder]);
+
+          const toggle = (id) => setSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+          const done = () => { if (sel.length) onPick(sel.map(id => refs.find(r => r.id === id)).filter(Boolean)); onClose(); };
+
+          return ReactDOM.createPortal(
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[240] p-4"
+                 onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+              {/* cf-modal-box и cf-modal-x обязательны: на телефоне окно выше
+                  экрана, и без них крестик уезжает выше видимой части. */}
+              <div className="cf-modal-box glass-panel rounded-lg w-full max-w-3xl relative flex flex-col" style={{ padding: 0 }}>
+                <div className="p-5 pb-3 shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <button onClick={onClose} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                  <h3 className="text-lg font-extrabold text-white mb-1 flex items-center gap-2"><Icons.Gallery /> {title}</h3>
+                  {hint && <p className="text-[12px] text-zinc-500 leading-relaxed mb-3">{hint}</p>}
+                  <input type="text" value={q} onChange={e => setQ(e.target.value)}
+                         placeholder="Поиск по подписи и тегам..."
+                         className="glass-input w-full rounded-lg px-3 py-2.5 text-sm" />
+                  {folders.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto hide-scrollbar mt-2.5 pb-1">
+                      <button onClick={() => setFolder('')} className={`cf-chip shrink-0 ${folder === '' ? 'cf-chip-accent' : ''}`}>Все · {refs.length}</button>
+                      {folders.map(([f, n]) => (
+                        <button key={f} onClick={() => setFolder(folder === f ? '' : f)}
+                                className={`cf-chip shrink-0 flex items-center gap-1.5 ${folder === f ? 'cf-chip-accent' : ''}`}>
+                          <Icons.Folder /> {f} · {n}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 160 }}>
+                  {refs.length === 0 ? (
+                    <p className="text-[13px] text-zinc-500 px-1 py-6 text-center leading-relaxed">
+                      Свободных референсов нет — все уже здесь.<br />Загрузить новые можно во вкладке «Галерея».
+                    </p>
+                  ) : shown.length === 0 ? (
+                    <p className="text-[13px] text-zinc-500 px-1 py-6 text-center">По запросу ничего не нашлось.</p>
+                  ) : (
+                    <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))' }}>
+                      {shown.map(r => {
+                        const on = sel.includes(r.id);
+                        return (
+                          <button key={r.id} onClick={() => toggle(r.id)} title={r.label || ''}
+                                  className="cf-ref-card rounded-lg overflow-hidden relative text-left transition-all"
+                                  style={{ aspectRatio: '1 / 1', containIntrinsicSize: 'auto 118px',
+                                           border: on ? '2px solid var(--accent)' : '1px solid var(--border)' }}>
+                            <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={bgStyle(r.id, r.url)}></div>
+                            {r.url
+                              ? <img src={r.url} alt="" className="w-full h-full object-contain relative z-10 pointer-events-none" draggable="false" />
+                              : <span className="absolute inset-0 flex items-center justify-center text-zinc-600 text-[11px]">без картинки</span>}
+                            {on && (
+                              <span className="absolute top-1.5 left-1.5 z-20 rounded-full flex items-center justify-center font-bold"
+                                    style={{ width: 20, height: 20, background: 'var(--accent)', color: 'var(--bg)', fontSize: 11 }}>
+                                {sel.indexOf(r.id) + 1}
+                              </span>
+                            )}
+                            <span className="absolute bottom-0 left-0 right-0 z-20 px-1.5 py-1 truncate"
+                                  style={{ background: 'rgba(0,0,0,.82)', fontSize: 10.5, color: 'var(--text-2)' }}>
+                              {r.label || 'без подписи'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 flex items-center justify-between gap-3 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+                  <span className="cf-meta">{sel.length ? `выбрано ${sel.length}` : `показано ${shown.length} из ${refs.length}`}</span>
+                  <div className="flex gap-2">
+                    {sel.length > 0 && <button onClick={() => setSel([])} className="cf-chip shrink-0">Снять</button>}
+                    <button onClick={done} disabled={!sel.length}
+                            className="rounded-lg px-4 py-2 text-sm font-bold transition-colors disabled:opacity-40"
+                            style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                      {actionLabel}{sel.length ? ` · ${sel.length}` : ''}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>, document.body);
+        };
+
         const TagInput = ({ ref_, hints, onAdd, narrow }) => {
           const [typed, setTyped] = useState('');
           const [open, setOpen] = useState(false);
@@ -2389,6 +2532,10 @@
           // отпустят картинку «сюда» или мимо: у перетаскивания нет курсора,
           // который сам говорит, что цель приняла.
           const [dragOverLoc, setDragOverLoc] = useState(false);
+          // То же самое для галереи: без подсветки непонятно, примут
+          // картинку «сюда» или мимо — у перетаскивания нет курсора,
+          // который сам сказал бы, что цель готова.
+          const [dragOverGal, setDragOverGal] = useState(false);
           // Порядок — как отсняли на скауте, а не по алфавиту: переименование
           // объекта не должно перекладывать список под руками.
           const sortedLocations = useMemo(
@@ -4746,6 +4893,65 @@
           };
 
 
+          // Положить сразу несколько выбранных из галереи. Кладём
+          // сеткой от видимого угла, а не в одну точку: шесть карточек
+          // друг на друге пришлось бы растаскивать руками.
+          const putRefsOnBoard = (list, boardId = activeBoardId, at = null) => {
+            if (!list.length) return;
+            const x0 = at ? at.x : (260 - canvasOffset.x) / zoom;
+            const y0 = at ? at.y : (240 - canvasOffset.y) / zoom;
+            // Шаг сетки — по ширине карточки референса плюс поля.
+            const COLS = 4, STEP_X = 192 + 24, STEP_Y = 192 + 90;
+            const ids = new Set(list.map(r => r.id));
+            const placed = list.map((r, i) => ({ ...r, boardId,
+              x: x0 + (i % COLS) * STEP_X,
+              y: y0 + Math.floor(i / COLS) * STEP_Y }));
+            const byId = new Map(placed.map(r => [r.id, r]));
+            setReferences(references.map(r => ids.has(r.id) ? byId.get(r.id) : r));
+            placed.forEach(r => syncDoc('references', r.id, r));
+            showToast(list.length === 1 ? 'Референс на доске' : `На доску добавлено ${list.length} шт.`);
+          };
+
+          // Окно «взять из галереи»: открыто ли и куда класть выбранное.
+          // Одно состояние на оба места (сцена и доска) — окно всё равно
+          // одно за раз, а два состояния разъехались бы.
+          const [refPicker, setRefPicker] = useState(null);   // {mode:'scene'|'board', sceneId}
+
+          // --- Сцена со всеми её референсами — на доску ---
+          // Смысл жеста: «вот эта сцена, вот что я к ней набрал —
+          // покажи всё вместе». Раньше это делалось по одной карточке
+          // вручную, и на сцене с десятью референсами превращалось
+          // в десять походов в список.
+          const [sceneToBoard, setSceneToBoard] = useState(null);   // id сцены
+          const spreadSceneOnBoard = (sceneId, boardId) => {
+            const scene = scenes.find(s => s.id === sceneId);
+            if (!scene) return;
+            const refs = references.filter(r => r.sceneId === sceneId);
+            // Кладём в левый верхний угол ПУСТОГО места доски, а не
+            // в видимый угол экрана: карточки этой сцены не должны
+            // лечь поверх того, что там уже разложено.
+            const busy = [
+              ...scenes.filter(s => s.id !== sceneId && sceneOnBoard(s, boardId)),
+              ...references.filter(r => r.sceneId !== sceneId && r.boardId === boardId),
+              ...stickies.filter(k => belongsToBoard(k, boardId)),
+              ...docs.filter(d => d.boardId === boardId)
+            ];
+            const x0 = 120;
+            const y0 = busy.length ? Math.max(...busy.map(o => (o.y || 0) + 320)) + 60 : 120;
+            const up = scenes.map(s => s.id === sceneId ? { ...s, boardId, x: x0, y: y0 } : s);
+            setScenes(up);
+            syncDoc('scenes', sceneId, up.find(s => s.id === sceneId));
+            // Референсы — под карточкой сцены, сеткой. Связь со сценой
+            // у них уже есть, поэтому пунктир нарисуется сам.
+            if (refs.length) putRefsOnBoard(refs, boardId, { x: x0, y: y0 + 300 });
+            setActiveBoardId(boardId);
+            setCurrentView('whiteboard');
+            setSceneToBoard(null);
+            showToast(refs.length
+              ? `Сцена #${scene.number} и ${refs.length} референсов на доске`
+              : `Сцена #${scene.number} на доске · референсов к ней пока нет`);
+          };
+
           // Выделение живёт в пределах одной доски: переключились — сбросили.
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
           useEffect(() => { setSelectedWbItems([]); setScenePickerOpen(false); }, [activeBoardId]);
@@ -5743,7 +5949,7 @@
           // place — куда класть: {boardId, x, y}. Задаётся, когда картинку
           // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
-          const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null) => {
+          const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '') => {
               const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
               if (imageFiles.length === 0) return;
 
@@ -5763,10 +5969,10 @@
                   const dupSet = new Set(dups.map(f => normName(f.name)));
                   const kept = imageFiles.filter(f => !dupSet.has(normName(f.name)));
                   if (kept.length === 0) { showToast('Все выбранные картинки уже есть — ничего не загружено'); return; }
-                  return uploadFiles(kept, sceneId, place, locationId);
+                  return uploadFiles(kept, sceneId, place, locationId, folder);
                 }
               }
-              return uploadFiles(imageFiles, sceneId, place, locationId);
+              return uploadFiles(imageFiles, sceneId, place, locationId, folder);
           };
 
           // Сжать файл к нужному размеру. Отдельно от uploadFiles, потому
@@ -5788,14 +5994,17 @@
           // приложение (см. addTagTo).
           const SCOUT_TAG = 'скаут';
 
-          const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null) => {
+          const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null, folder = '') => {
               const cfg = loadCloudCfg();
               const useCloud = !!cfg.provider;
               // Загруженное в объект сразу ложится в папку с его именем
               // и метится тегом «скаут» — искать потом всё равно придётся,
               // а разложить проще один раз при загрузке.
               const loc = locationId ? locations.find(l => l.id === locationId) : null;
-              const locFolder = loc ? String(loc.name || '').trim() : '';
+              // Папка: у объекта — его имя, в галерее — та, что сейчас открыта.
+              // Бросить картинку в открытую папку и найти её потом «где-то
+              // среди всех» — разные вещи; человек ждёт первого.
+              const locFolder = loc ? String(loc.name || '').trim() : String(folder || '').trim();
               showToast(`Оптимизация ${imageFiles.length} изображений...`);
               // В облачном режиме в базу кладём только превью, а оригинал
               // уезжает в облако файлом как есть — незачем портить фотографию
@@ -5973,7 +6182,7 @@
             // Оба чтения — ДО первого await, пока списки ещё живы.
             const files = imagesFrom(dt);
             const url = files.length ? '' : urlFrom(dt);
-            const go = (list) => handleMultiFileUpload(list, opts.sceneId || null, opts.place || null, opts.locationId || null);
+            const go = (list) => handleMultiFileUpload(list, opts.sceneId || null, opts.place || null, opts.locationId || null, opts.folder || '');
             if (files.length) return go(files);
             if (!url) { showToast('В брошенном картинки нет'); return; }
             showToast('Забираю картинку по ссылке...');
@@ -6006,7 +6215,7 @@
               try { files.push(renamedFile(await it.getType(type), pasteName(type))); } catch (e) {}
             }
             if (!files.length) { showToast('В буфере нет картинки — скопируйте её в браузере и попробуйте снова'); return; }
-            return handleMultiFileUpload(files, opts.sceneId || null, opts.place || null, opts.locationId || null);
+            return handleMultiFileUpload(files, opts.sceneId || null, opts.place || null, opts.locationId || null, opts.folder || '');
           };
 
           // Что несёт перетаскивание. Проверяем ДО preventDefault: перехватив
@@ -6017,6 +6226,33 @@
             const types = Array.from((dt && dt.types) || []);
             return types.indexOf('Files') >= 0 || types.indexOf('text/uri-list') >= 0;
           };
+
+          // Ctrl+V в ГАЛЕРЕЕ. Та же механика, что во вкладке «Объекты»,
+          // и намеренно тот же handleMultiFileUpload: вторая ветка
+          // загрузки разъехалась бы с первой при первой же правке.
+          // Картинка ложится в ОТКРЫТУЮ папку — «вставил в папку, а
+          // нашлось где-то среди всех» человек воспринимает как потерю.
+          useEffect(() => {
+            if (READ_ONLY || currentView !== 'gallery') return;
+            const onPaste = (e) => {
+              const files = imagesFrom(e.clipboardData);
+              if (!files.length) return;
+              // В поле ввода не мешаем вставлять ТЕКСТ. Но картинку
+              // забираем себе даже оттуда: положить её в <input>
+              // некуда, и она бы просто пропала.
+              const t = e.target;
+              const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+              if (inField && (e.clipboardData.getData('text/plain') || '').trim()) return;
+              e.preventDefault();
+              handleMultiFileUpload(files, null, null, null, galleryDropFolder());
+            };
+            document.addEventListener('paste', onPaste);
+            return () => document.removeEventListener('paste', onPaste);
+          }, [currentView, activeFolder, references]);
+
+          // Куда кладём брошенное и вставленное в галерее. «Все» и
+          // «Без папки» — это не папки, а фильтры: класть в них нечего.
+          const galleryDropFolder = () => (activeFolder && activeFolder !== '__none__') ? activeFolder : '';
 
           // Ctrl+V на вкладке «Объекты» кладёт картинку в ОТКРЫТЫЙ объект.
           // Слушаем на документе: своего поля у вставки нет, и требовать
@@ -7207,7 +7443,21 @@
                                   )}
                                   <input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)} className="glass-input px-3 py-1.5 rounded-lg text-sm w-full sm:w-auto font-mono text-zinc-300" />
                               </div>
-                              <button onClick={() => setConfirmAction({title: 'Удалить сцену?', message: 'Это действие удалит сцену и отвяжет ее кадры.', onConfirm: () => deleteScene(s.id)})} className="text-xs text-red-400 hover:text-white hover:bg-red-500/20 px-3 py-1.5 rounded-lg transition-colors border border-transparent font-semibold flex items-center gap-1 self-end sm:self-auto"><Icons.Trash /> Удалить сцену</button>
+                              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                                {/* «Вот сцена, вот что я к ней набрал — покажи всё
+                                    вместе». Раньше это делалось по одной карточке
+                                    через список на доске: на сцене с десятью
+                                    референсами — десять походов туда и обратно. */}
+                                <button onClick={() => setSceneToBoard(s.id)}
+                                        title="Выложить эту сцену и все её референсы на доску"
+                                        className="cf-edit-only text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 flex items-center gap-1.5">
+                                  <Icons.Board /> Собрать на доске
+                                  {references.filter(r => r.sceneId === s.id).length > 0 && (
+                                    <span className="cf-meta">· {references.filter(r => r.sceneId === s.id).length}</span>
+                                  )}
+                                </button>
+                                <button onClick={() => setConfirmAction({title: 'Удалить сцену?', message: 'Это действие удалит сцену и отвяжет ее кадры.', onConfirm: () => deleteScene(s.id)})} className="cf-edit-only text-xs text-red-400 hover:text-white hover:bg-red-500/20 px-3 py-1.5 rounded-lg transition-colors border border-transparent font-semibold flex items-center gap-1"><Icons.Trash /> Удалить сцену</button>
+                              </div>
                             </div>
                             <input type="text" value={s.title} onChange={(e) => updateSceneTitle(s.id, e.target.value)} className="font-serif bg-transparent text-2xl md:text-3xl font-bold text-white focus:outline-none w-full placeholder-zinc-600" placeholder="Название объекта / сцены" />
                             
@@ -7410,13 +7660,31 @@
 
                             {/* Связанные референсы */}
                             <div className="space-y-4 pt-4 border-t border-white/10">
-                              <div className="flex justify-between items-center">
+                              <div className="flex flex-wrap justify-between items-center gap-2">
                                 <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block ml-1">Референсы для сцены</label>
-                                <label className="text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
-                                  <span><Icons.Gallery /></span> Загрузить картинки
-                                  <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, s.id)} />
-                                </label>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {/* Путей к референсу ДВА, и второй был нужен давно:
+                                      картинку чаще не «загружают заново», а берут
+                                      из уже собранной галереи. Без этой кнопки
+                                      единственным способом привязать имеющийся
+                                      референс к сцене была доска. */}
+                                  <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
+                                          title="Взять картинку из уже загруженных"
+                                          className="cf-edit-only text-xs text-zinc-300 hover:text-white font-bold bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                    <span><Icons.Gallery /></span> Из галереи
+                                  </button>
+                                  <label className="cf-edit-only text-xs text-indigo-300 hover:text-white font-bold cursor-pointer bg-indigo-600/30 hover:bg-indigo-600/50 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
+                                    <span><Icons.Image /></span> Загрузить картинки
+                                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, s.id)} />
+                                  </label>
+                                </div>
                               </div>
+                              {/* Про оба пути надо сказать прямо: невидимая
+                                  возможность — это возможность, которой нет. */}
+                              <p className="cf-edit-only text-[12px] text-zinc-500 ml-1 leading-relaxed -mt-2">
+                                «Из галереи» — привязать уже загруженное. «Загрузить картинки» — добавить новые файлы.
+                                Кнопка «Собрать на доске» вверху карточки выложит сцену вместе со всеми этими референсами на доску.
+                              </p>
                               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                 {sceneRefs.map(ref => (
                                   <div key={ref.id} className="glass-panel rounded-lg overflow-hidden aspect-square relative group cursor-pointer flex items-center justify-center" onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: ref.id })}>
@@ -7571,12 +7839,28 @@
                             </p>
                           )}
                         </div>
-                        <div className="p-3 shrink-0 cf-edit-only" style={{ borderTop: '1px solid var(--border)' }}>
+                        <div className="p-3 shrink-0 cf-edit-only space-y-2" style={{ borderTop: '1px solid var(--border)' }}>
                           <label className="w-full flex items-center justify-center gap-2 cursor-pointer rounded-lg transition-colors hover:bg-white/5"
                                  style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                             <Icons.Gallery /> Загрузить референсы
-                            <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                            <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null, null, null, galleryDropFolder())} />
                           </label>
+                          {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
+                              там нет вовсе, а картинку из браузера копируют
+                              долгим нажатием. Спрашивать буфер можно только
+                              из обработчика нажатия. */}
+                          <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder() })}
+                                  title="Вставить картинку из буфера обмена"
+                                  className="w-full flex items-center justify-center gap-2 rounded-lg transition-colors hover:bg-white/5"
+                                  style={{ minHeight: 40, background: 'transparent', border: '1px solid var(--border)', fontSize: 12, color: 'var(--muted)' }}>
+                            <Icons.Paste /> Вставить
+                          </button>
+                          {/* Про оба пути надо СКАЗАТЬ: невидимая возможность —
+                              это возможность, которой нет. */}
+                          <p style={{ fontSize: 11, color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                            Картинку можно просто бросить на галерею или вставить — Ctrl+V.
+                            {activeFolder && activeFolder !== '__none__' ? ` Ляжет в папку «${activeFolder}».` : ''}
+                          </p>
                         </div>
                       </div>
                     ) : (
@@ -7586,8 +7870,29 @@
                       </div>
                     )}
 
-                    {/* СЕТКА РЕФЕРЕНСОВ */}
-                    <div className="flex-1 min-w-0 overflow-y-auto">
+                    {/* СЕТКА РЕФЕРЕНСОВ.
+                        Файл можно бросить на ВЕСЬ лист, а не в узкую полоску:
+                        целиться мышью с зажатой кнопкой неудобно, а на планшете
+                        и нечем. Перехватываем только то, что несёт картинку
+                        (dropHasImage) — иначе у полей ввода отнялся бы обычный
+                        перенос текста. */}
+                    <div className={`flex-1 min-w-0 overflow-y-auto transition-shadow ${dragOverGal ? 'ring-2 ring-indigo-400/70 ring-inset' : ''}`}
+                         onDragOver={(e) => {
+                           if (READ_ONLY || !dropHasImage(e.dataTransfer)) return;
+                           e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+                           if (!dragOverGal) setDragOverGal(true);
+                         }}
+                         onDragLeave={(e) => {
+                           // Уход к СВОЕМУ же потомку — не уход: без этой
+                           // проверки подсветка мигает над каждой картинкой.
+                           if (e.currentTarget.contains(e.relatedTarget)) return;
+                           setDragOverGal(false);
+                         }}
+                         onDrop={(e) => {
+                           if (READ_ONLY || !dropHasImage(e.dataTransfer)) return;
+                           e.preventDefault(); setDragOverGal(false);
+                           acceptDropped(e.dataTransfer, { folder: galleryDropFolder() });
+                         }}>
                      <div className="p-4 md:p-6 pb-24 space-y-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex items-baseline gap-3 min-w-0">
@@ -7599,10 +7904,13 @@
                                 <button onClick={() => setSelectedRefIds(allVisibleSelected ? [] : visibleRefs.map(r => r.id))}
                                         className="cf-chip shrink-0">{allVisibleSelected ? 'Снять выделение' : 'Выделить все'}</button>
                               )}
+                              <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder() })}
+                                      title="Вставить картинку из буфера обмена"
+                                      className="cf-chip shrink-0 flex items-center gap-1.5"><Icons.Paste /> Вставить</button>
                               <label className="md:hidden flex items-center gap-2 cursor-pointer rounded-lg px-4 shrink-0"
                                      style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                                   + Загрузить
-                                  <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null)} />
+                                  <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null, null, null, galleryDropFolder())} />
                               </label>
                             </div>
                         </div>
@@ -8960,25 +9268,55 @@
                                 Референсы тут есть всегда: это единственный путь
                                 к уже загруженным картинкам с самой доски. */}
                             {(() => {
+                              // ВАЖНО: этот узкий список — только «последние
+                              // несколько», а не вся галерея. Раньше он молча
+                              // показывал первые ШЕСТЬДЕСЯТ, и на проекте
+                              // в триста референсов выглядело так, будто
+                              // часть картинок пропала: их просто нечем было
+                              // ни найти, ни долистать. Полный список с поиском
+                              // и папками — за кнопкой «Выбрать из галереи».
                               const pool = references.filter(r => r.url && r.boardId !== activeBoardId);
+                              const SHOW = 8;
+                              const head = pool.slice(-SHOW).reverse();   // последние загруженные — сверху
+                              const rest = pool.length - head.length;
                               return (
                                 <React.Fragment>
-                                  <div className="px-2 pt-1 pb-1.5">
+                                  <div className="px-2 pt-1 pb-1.5 flex items-center justify-between gap-2">
                                     <span className="cf-eyebrow">Референсы</span>
+                                    {pool.length > 0 && <span className="cf-meta">{pool.length} свободных</span>}
                                   </div>
                                   {pool.length === 0 ? (
                                     <p className="px-2 pb-2" style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
                                       {references.length ? 'Все референсы уже на этой доске.' : 'Референсов пока нет — загрузите их в «Галерее».'}
                                     </p>
-                                  ) : pool.slice(0, 60).map(r => (
-                                    <button key={r.id} onClick={() => { putRefOnBoard(r); setScenePickerOpen(false); }}
-                                            className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
-                                            style={{ minHeight: 40 }}>
-                                      <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
-                                      <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
-                                      {r.boardId && <span className="cf-meta shrink-0">на другой</span>}
-                                    </button>
-                                  ))}
+                                  ) : (
+                                    <React.Fragment>
+                                      <button onClick={() => { setRefPicker({ mode: 'board' }); setScenePickerOpen(false); }}
+                                              className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
+                                              style={{ minHeight: 40, border: '1px dashed var(--border)', color: 'var(--accent)', marginBottom: 4 }}>
+                                        <span className="shrink-0"><Icons.Gallery /></span>
+                                        <span className="truncate flex-1" style={{ fontSize: 12.5 }}>Выбрать из галереи…</span>
+                                      </button>
+                                      {head.map(r => (
+                                        <button key={r.id} onClick={() => { putRefOnBoard(r); setScenePickerOpen(false); }}
+                                                className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
+                                                style={{ minHeight: 40 }}>
+                                          <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
+                                          <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
+                                          {r.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                                        </button>
+                                      ))}
+                                      {/* Никаких молчаливых обрезаний: сколько
+                                          не показано — сказано прямо. */}
+                                      {rest > 0 && (
+                                        <button onClick={() => { setRefPicker({ mode: 'board' }); setScenePickerOpen(false); }}
+                                                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-white/5 transition-colors"
+                                                style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
+                                          …и ещё {rest} — открыть галерею с поиском
+                                        </button>
+                                      )}
+                                    </React.Fragment>
+                                  )}
                                 </React.Fragment>
                               );
                             })()}
@@ -9972,6 +10310,79 @@
                   </div>
                 </div>
               )}
+
+              {/* Выбор референсов из уже загруженных. Одно окно на два
+                  места: карточку сцены и доску. Список зависит от того,
+                  откуда позвали, — предлагать уже привязанное незачем. */}
+              {refPicker && !READ_ONLY && (() => {
+                const pool = refPicker.mode === 'scene'
+                  ? references.filter(r => r.sceneId !== refPicker.sceneId)
+                  : references.filter(r => r.boardId !== activeBoardId);
+                const sc = refPicker.mode === 'scene' ? scenes.find(x => x.id === refPicker.sceneId) : null;
+                return (
+                  <RefPicker
+                    refs={pool}
+                    bgStyle={bgStyle}
+                    title={refPicker.mode === 'scene' ? `Референсы в сцену #${(sc || {}).number || ''}` : 'Референсы на доску'}
+                    hint={refPicker.mode === 'scene'
+                      ? 'Картинка останется в галерее — сцена просто получит на неё ссылку. Убрать потом можно крестиком на карточке.'
+                      : 'Карточка ляжет на текущую доску. В галерее референс останется на месте.'}
+                    actionLabel={refPicker.mode === 'scene' ? 'Привязать к сцене' : 'Положить на доску'}
+                    onClose={() => setRefPicker(null)}
+                    onPick={(list) => {
+                      if (refPicker.mode === 'scene') {
+                        const ids = new Set(list.map(r => r.id));
+                        const up = references.map(r => ids.has(r.id) ? { ...r, sceneId: refPicker.sceneId } : r);
+                        setReferences(up);
+                        up.filter(r => ids.has(r.id)).forEach(r => syncDoc('references', r.id, r));
+                        showToast(list.length === 1 ? 'Референс привязан к сцене' : `К сцене привязано ${list.length} шт.`);
+                      } else {
+                        putRefsOnBoard(list);
+                      }
+                    }} />
+                );
+              })()}
+
+              {/* На какую доску выкладывать сцену. Спрашиваем, а не кладём
+                  на текущую молча: доска — это текущая работа, и свалить
+                  новую сцену поверх чужой раскладки хуже, чем спросить. */}
+              {sceneToBoard && !READ_ONLY && (() => {
+                const sc = scenes.find(x => x.id === sceneToBoard);
+                if (!sc) return null;
+                const cnt = references.filter(r => r.sceneId === sceneToBoard).length;
+                return (
+                  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[240] p-4"
+                       onClick={(e) => { if (e.target === e.currentTarget) setSceneToBoard(null); }}>
+                    <div className="cf-modal-box glass-panel rounded-lg p-6 max-w-sm w-full relative">
+                      <button onClick={() => setSceneToBoard(null)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                      <h3 className="text-lg font-extrabold text-white mb-1.5 flex items-center gap-2"><Icons.Board /> На какую доску</h3>
+                      <p className="text-[12px] text-zinc-500 leading-relaxed mb-4">
+                        Сцена #{sc.number} {cnt ? `и ${cnt} привязанных к ней референсов лягут` : 'ляжет'} на выбранную доску,
+                        на свободное место снизу. Из галереи и из проекта ничего не пропадёт.
+                      </p>
+                      <div className="space-y-1.5 max-h-[45vh] overflow-y-auto -mx-1 px-1">
+                        {sortedBoards.map(b => (
+                          <button key={b.id} onClick={() => spreadSceneOnBoard(sceneToBoard, b.id)}
+                                  className="w-full text-left px-3 rounded-lg transition-colors hover:bg-white/5 flex items-center justify-between gap-2"
+                                  style={{ minHeight: 44, border: '1px solid var(--border)', background: 'var(--panel-2)' }}>
+                            <span className="truncate text-sm text-zinc-200 font-semibold">{b.title}</span>
+                            {b.id === activeBoardId && <span className="cf-meta shrink-0">открыта</span>}
+                          </button>
+                        ))}
+                        <button onClick={() => {
+                                  const nb = { id: `board-${Date.now()}`, title: `Сцена ${sc.number || ''}`.trim() || `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
+                                  setBoards([...boards, nb]); syncDoc('boards', nb.id, nb);
+                                  spreadSceneOnBoard(sceneToBoard, nb.id);
+                                }}
+                                className="w-full text-left px-3 rounded-lg transition-colors hover:bg-white/5 text-sm font-semibold"
+                                style={{ minHeight: 44, border: '1px dashed var(--border)', color: 'var(--accent)' }}>
+                          + Новая доска «Сцена {sc.number || ''}»
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {showProjectModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
