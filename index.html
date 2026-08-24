@@ -2504,11 +2504,31 @@
           // Firestore не отклоняется, а ждёт связи — по этому счётчику видно,
           // всё ли уже уехало на сервер (можно ли закрывать ноутбук).
           const [pendingWrites, setPendingWrites] = useState(0);
+          // Настоящий счётчик живёт в ref, а состояние догоняет его не чаще
+          // раза в 300 мс. Точка связи в шапке — вещь справочная, ей хватит;
+          // а вот перерисовывать всё приложение на каждую запись и на каждое
+          // подтверждение нельзя: на плохой связи правки уходят пачками
+          // и подтверждаются вразнобой, и это давало десятки лишних
+          // перерисовок в секунду поверх и без того тяжёлого жеста.
+          const pendingRef = useRef(0);
+          const pendingT = useRef(0);
+          const bumpPending = (d) => {
+            pendingRef.current = Math.max(0, pendingRef.current + d);
+            if (pendingT.current) return;
+            pendingT.current = setTimeout(() => {
+              pendingT.current = 0;
+              setPendingWrites(pendingRef.current);
+            }, 300);
+          };
           const trackWrite = (p) => {
-            setPendingWrites(n => n + 1);
-            p.finally(() => setPendingWrites(n => Math.max(0, n - 1)));
+            bumpPending(1);
+            p.finally(() => bumpPending(-1));
             return p;
           };
+          // Пока на доске идёт жест (панорама, щипок, перенос карточки),
+          // тяжёлая местная копия ждёт. Ref, а не состояние: сама отметка
+          // не должна ничего перерисовывать.
+          const boardBusy = useRef(false);
           
           const safeLoad = (key, fallback, isArray = true) => {
             // В файле-снимке данные лежат прямо внутри страницы, а не
@@ -2941,8 +2961,60 @@
           const [brushColor, setBrushColor] = useState('#d97757'); 
           const [brushType, setBrushType] = useState('pen'); 
           const [brushSize, setBrushSize] = useState(4); 
-          const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 }); 
+          const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
           const [zoom, setZoom] = useState(1.0);
+          // --- ГДЕ ДОСКА СЕЙЧАС ---
+          // Панорама и щипок меняют положение доски десятки раз в секунду.
+          // Пока это лежало в состоянии React, КАЖДОЕ такое движение
+          // перерисовывало всё приложение целиком — со списком сцен, всеми
+          // карточками доски и панелями. На хорошей связи это ещё влезало
+          // в кадр, а на плохой уже нет: библиотека облака в это время
+          // переподключается, копается в своей базе на устройстве и
+          // отъедает то самое время. Отсюда и «в онлайне ровно, а на
+          // плохом интернете доска дёргается».
+          //
+          // Теперь во время жеста состояние МОЛЧИТ. Положение живёт здесь,
+          // преобразование пишется прямо в узел, холст перерисовывается
+          // как и раньше — по кадру. Состояние догоняет ОДИН раз, когда
+          // палец оторвали: всё, что считает от него (новые карточки,
+          // подпись «120 %»), продолжает работать без изменений.
+          const viewRef = useRef({ x: 0, y: 0, z: 1 });
+          const viewLive = useRef(false);
+          // Присваивание во время отрисовки — намеренно, как у inkDraw ниже:
+          // пока жеста нет, правда в состоянии; во время жеста — здесь,
+          // и состояние её не перебивает. Поэтому ВСЕ, кто считает
+          // координаты, обязаны смотреть сюда, а не в canvasOffset/zoom, —
+          // иначе во время жеста они возьмут вчерашнее.
+          if (!viewLive.current) {
+            viewRef.current.x = canvasOffset.x;
+            viewRef.current.y = canvasOffset.y;
+            viewRef.current.z = zoom;
+          }
+          const applyView = (x, y, z) => {
+            const v = viewRef.current;
+            v.x = x; v.y = y; if (z !== undefined) v.z = z;
+            viewLive.current = true;
+            boardBusy.current = true;
+            const el = canvasRef.current;
+            if (el) el.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
+            requestStatic();
+          };
+          // Жест кончился — переносим положение в состояние. Один раз.
+          const commitView = () => {
+            if (!viewLive.current) return;
+            viewLive.current = false;
+            boardBusy.current = false;
+            const v = viewRef.current;
+            setCanvasOffset({ x: v.x, y: v.y });
+            setZoom(v.z);
+          };
+          // У колеса мыши и щипка нет «отпускания», после которого можно
+          // было бы записать положение, — поэтому по затишью.
+          const viewCommitT = useRef(0);
+          const commitViewSoon = () => {
+            clearTimeout(viewCommitT.current);
+            viewCommitT.current = setTimeout(commitView, 180);
+          };
           const [isPainting, setIsPainting] = useState(false);
           const [isPanning, setIsPanning] = useState(false);
           const [panStart, setPanStart] = useState({ x: 0, y: 0 });
@@ -3315,7 +3387,7 @@
           // любая прямая, проведённая поверх карточки, превращалась в связь
           // и начинала за ней бегать. Рисование — само по себе.
           const bindAt = (x, y, cards) => {
-            const pad = 8 / Math.max(0.05, zoom);
+            const pad = 8 / Math.max(0.05, viewRef.current.z);
             for (let i = shapesRef.current.length - 1; i >= 0; i--) {
               const q = shapesRef.current[i];
               if (q.ct || isLineKind(q.k)) continue;
@@ -3709,7 +3781,8 @@
             const c = liveCanvasRef.current;
             const r = c ? c.getBoundingClientRect() : { left: 0, top: 0 };
             const sx = cx - r.left, sy = cy - r.top;
-            return { sx, sy, x: (sx - canvasOffset.x) / zoom, y: (sy - canvasOffset.y) / zoom };
+            const v = viewRef.current;
+            return { sx, sy, x: (sx - v.x) / v.z, y: (sy - v.y) / v.z };
           };
           const erasePt = useRef(null);
 
@@ -3785,7 +3858,7 @@
             guides.current = [];
             if (noSnap.current) return { dx: 0, dy: 0 };
             const pool = snapPool.current || [];
-            const tol = SNAP_PX / Math.max(0.05, zoom);
+            const tol = SNAP_PX / Math.max(0.05, viewRef.current.z);
             const mine = {
               x: [box.x0, (box.x0 + box.x1) / 2, box.x1],
               y: [box.y0, (box.y0 + box.y1) / 2, box.y1]
@@ -3822,7 +3895,7 @@
           const snapEdge = (v, vertical, a, b) => {
             if (noSnap.current) return v;
             const pool = snapPool.current || [];
-            const tol = SNAP_PX / Math.max(0.05, zoom);
+            const tol = SNAP_PX / Math.max(0.05, viewRef.current.z);
             let best = null;
             for (const t of pool) {
               const cand = vertical ? [t.x0, (t.x0 + t.x1) / 2, t.x1] : [t.y0, (t.y0 + t.y1) / 2, t.y1];
@@ -3852,7 +3925,7 @@
           });
           // Ищем сверху вниз: выше лежит то, что нарисовано позже.
           const shapeAt = (x, y, inside) => {
-            const pad = 8 / Math.max(0.05, zoom);
+            const pad = 8 / Math.max(0.05, viewRef.current.z);
             for (let i = shapesRef.current.length - 1; i >= 0; i--) {
               const s = shapesRef.current[i];
               // Подпись внутри фигуры сама не выбирается: нажимают по
@@ -3865,7 +3938,7 @@
           // Ручку ловим с запасом под палец: 9 точек на экране — это меньше
           // трети подушечки, и попасть в них мышью можно, а пальцем нет.
           const handleAt = (x, y) => {
-            const tol = 13 / Math.max(0.05, zoom);
+            const tol = 13 / Math.max(0.05, viewRef.current.z);
             for (const id of selShapes) {
               const s = shapesRef.current.find(q => q.id === id);
               if (!s) continue;
@@ -3968,7 +4041,7 @@
             const a = shapeAct.current; if (!a) return;
             let dx = pt.x - a.sx, dy = pt.y - a.sy;
             if (!a.moved) {
-              if (Math.hypot(dx, dy) * zoom < DRAG_START_PX) return;
+              if (Math.hypot(dx, dy) * viewRef.current.z < DRAG_START_PX) return;
               a.moved = true;
               pushUndo(false);
               requestStatic();        // снимаем их с нижнего слоя — дальше ведёт верхний
@@ -4412,7 +4485,8 @@
             const c = inkCanvasRef.current; if (!c) return;
             const { w, h, ctx } = fitInk(c);
             ctx.clearRect(0, 0, w, h);
-            const ox = canvasOffset.x, oy = canvasOffset.y, z = zoom;
+            const vv = viewRef.current;
+            const ox = vv.x, oy = vv.y, z = vv.z;
             ctx.save();
             ctx.translate(ox, oy); ctx.scale(z, z);
             if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
@@ -4444,11 +4518,12 @@
             const c = liveCanvasRef.current; if (!c) return;
             const { w, h, ctx } = fitInk(c);
             ctx.clearRect(0, 0, w, h);
-            const z = zoom;
+            const vv = viewRef.current;
+            const z = vv.z;
             const L = live.current;
             if (L && L.pts.length) {
               ctx.save();
-              ctx.translate(canvasOffset.x, canvasOffset.y); ctx.scale(z, z);
+              ctx.translate(vv.x, vv.y); ctx.scale(z, z);
               if (L.t === 'marker') ctx.globalCompositeOperation = 'screen';
               ctx.globalAlpha = brushAlpha(L.t);
               ctx.fillStyle = L.c;
@@ -4475,7 +4550,7 @@
                 const b = shapeBox(h);
                 ctx.save();
                 ctx.strokeStyle = 'rgba(217,119,87,0.95)'; ctx.lineWidth = 2;
-                ctx.strokeRect(b.x * z + canvasOffset.x - 3, b.y * z + canvasOffset.y - 3, b.w * z + 6, b.h * z + 6);
+                ctx.strokeRect(b.x * z + vv.x - 3, b.y * z + vv.y - 3, b.w * z + 6, b.h * z + 6);
                 ctx.restore();
               }
             }
@@ -4483,7 +4558,7 @@
             // обязаны быть одного размера при любом масштабе, иначе на
             // мелком зуме в них не попасть пальцем.
             if (wbMode === 'select' && selShapes.length) {
-              const toScr = (x, y) => [x * z + canvasOffset.x, y * z + canvasOffset.y];
+              const toScr = (x, y) => [x * z + vv.x, y * z + vv.y];
               ctx.save();
               selShapes.forEach(id => {
                 const s = shapesRef.current.find(q => q.id === id);
@@ -4513,11 +4588,11 @@
               guides.current.forEach(g => {
                 ctx.beginPath();
                 if (g.vertical) {
-                  const x = g.at * z + canvasOffset.x;
-                  ctx.moveTo(x, g.a * z + canvasOffset.y - 20); ctx.lineTo(x, g.b * z + canvasOffset.y + 20);
+                  const x = g.at * z + vv.x;
+                  ctx.moveTo(x, g.a * z + vv.y - 20); ctx.lineTo(x, g.b * z + vv.y + 20);
                 } else {
-                  const y = g.at * z + canvasOffset.y;
-                  ctx.moveTo(g.a * z + canvasOffset.x - 20, y); ctx.lineTo(g.b * z + canvasOffset.x + 20, y);
+                  const y = g.at * z + vv.y;
+                  ctx.moveTo(g.a * z + vv.x - 20, y); ctx.lineTo(g.b * z + vv.x + 20, y);
                 }
                 ctx.stroke();
               });
@@ -4527,8 +4602,8 @@
             // и направляющие: она должна быть одной толщины при любом зуме.
             const od = ocrDraft.current;
             if (od) {
-              const rx = Math.min(od.x0, od.x1) * z + canvasOffset.x;
-              const ry = Math.min(od.y0, od.y1) * z + canvasOffset.y;
+              const rx = Math.min(od.x0, od.x1) * z + vv.x;
+              const ry = Math.min(od.y0, od.y1) * z + vv.y;
               const rw = Math.abs(od.x1 - od.x0) * z, rh = Math.abs(od.y1 - od.y0) * z;
               ctx.save();
               ctx.fillStyle = 'rgba(217,119,87,0.12)'; ctx.fillRect(rx, ry, rw, rh);
@@ -4591,7 +4666,8 @@
             const c = inkCanvasRef.current; if (!c) { requestStatic(); return; }
             const ctx = c.getContext('2d');
             ctx.save();
-            ctx.translate(canvasOffset.x, canvasOffset.y); ctx.scale(zoom, zoom);
+            const v = viewRef.current;
+            ctx.translate(v.x, v.y); ctx.scale(v.z, v.z);
             paintStroke(ctx, s);
             ctx.restore();
           };
@@ -4967,6 +5043,13 @@
               ? `Сцена #${scene.number} и ${refs.length} референсов на доске`
               : `Сцена #${scene.number} на доске · референсов к ней пока нет`);
           };
+
+          // Ушли с доски или сменили её посреди жеста — дописываем положение
+          // в состояние. Без этого viewLive осталось бы поднятым, состояние
+          // старым, и всё, что кладёт карточку «в видимую часть», промахнулось
+          // бы мимо экрана. Жест на площадке обрывается постоянно: чужой
+          // звонок, свёрнутое приложение, палец, уехавший за край.
+          useEffect(() => { commitView(); }, [currentView, activeBoardId]);
 
           // Выделение живёт в пределах одной доски: переключились — сбросили.
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
@@ -5719,7 +5802,24 @@
           useEffect(() => {
             if (!db || !user) return;
             const baseRef = db.collection('artifacts').doc(appId).collection('public').doc('data');
+            // ОТВЕТ, В КОТОРОМ НИЧЕГО НЕ ИЗМЕНИЛОСЬ, — не событие.
+            // Раньше на каждый ответ облака мы отдавали НОВЫЙ массив, даже
+            // когда в нём лежало ровно то же самое. Дальше по цепочке это
+            // значило: перерисовку всего приложения (а это и доска со всеми
+            // карточками) и — через 700 мс — повторную упаковку всего
+            // проекта с картинками в строку для местной копии, потому что
+            // она сравнивает коллекции ПО ССЫЛКЕ на массив.
+            // На хорошей связи такие ответы редки. На плохой библиотека
+            // переподключается снова и снова, и каждое переподключение
+            // приносит содержимое комнаты заново — вот отчего доска
+            // «криво зумится и таскается» именно на плохом интернете,
+            // а в онлайне всё ровно.
+            // `docChanges()` — это и есть «что изменилось с прошлого раза»;
+            // пусто и уже что-то приезжало — значит показывать нечего.
+            const fresh = {};
             const subList = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
+              if (fresh[coll] && snap.docChanges().length === 0) return;
+              fresh[coll] = true;
               const list = []; snap.forEach(d => list.push(d.data()));
               if (snap.empty && !seededRef.current[coll]) {
                 seededRef.current[coll] = true;
@@ -5728,6 +5828,8 @@
               setter(list);
             }, err => console.warn('sync ' + coll, err));
             const subMap = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
+              if (fresh[coll] && snap.docChanges().length === 0) return;
+              fresh[coll] = true;
               const obj = {}; snap.forEach(d => { obj[d.id] = d.data(); });
               if (snap.empty && !seededRef.current[coll]) {
                 seededRef.current[coll] = true;
@@ -5751,7 +5853,11 @@
               // msgBatch считает ОТВЕТЫ облака: первый — это загрузка чата,
               // а не новые сообщения. Пустотой списка это мерить нельзя —
               // в новой комнате самое первое сообщение пришло бы молча.
-              baseRef.collection('messages').onSnapshot(snap => { const list = []; snap.forEach(d => list.push(d.data())); msgBatch.current++; setMessages(list.sort((a,b)=>a.timestamp-b.timestamp)); }, err => console.warn('sync messages', err))
+              baseRef.collection('messages').onSnapshot(snap => {
+                if (fresh.messages && snap.docChanges().length === 0) return;
+                fresh.messages = true;
+                const list = []; snap.forEach(d => list.push(d.data())); msgBatch.current++; setMessages(list.sort((a,b)=>a.timestamp-b.timestamp));
+              }, err => console.warn('sync messages', err))
             ]; return () => unsubs.forEach(u => u());
           }, [user]);
 
@@ -5904,7 +6010,17 @@
               save('cf_boards', boards); save('cf_locations', locations);
             };
             flushLocal.current = doSave;
-            const t = setTimeout(doSave, 700);
+            // Упаковка проекта в строку — это десятки мегабайт на проекте
+            // с фотографиями и сотни миллисекунд занятого главного потока.
+            // Посреди жеста на доске такая пауза читается как рывок, причём
+            // ровно в тот момент, когда человек ведёт пальцем. Ждём, пока
+            // палец оторвут: правка никуда не денется, а уход со страницы
+            // всё равно дописывает немедленно (эффект ниже).
+            const later = () => {
+              if (boardBusy.current) { t = setTimeout(later, 400); return; }
+              doSave();
+            };
+            let t = setTimeout(later, 700);
             return () => clearTimeout(t);
           }, [scenes, storyboard, references, stickies, docs, crew, projectFiles, gearTypes, lightGearTypes, lightSchemes, boards, locations]);
 
@@ -6845,6 +6961,7 @@
               });
               if (!items.length) return;
               buildSnapPool(items.map(i => i.id));
+              boardBusy.current = true;
               dragMoved.current = false;
               dragPos.current = { x: e.clientX, y: e.clientY };
               setDraggingWbItems({ pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, items });
@@ -6924,9 +7041,11 @@
                   });
               }
               dragMoved.current = false; dragPos.current = null;
+              boardBusy.current = false;
               setDraggingWbItems(null);
               setSelectionBox(null);
               setIsPainting(false); setIsPanning(false);
+              commitView();
               requestStatic(); requestLive();
           };
 
@@ -6936,13 +7055,14 @@
           const boardPinchStart = (rect) => {
               const [a, b] = [...boardTouch.current.values()];
               const mx = (a.x + b.x) / 2 - rect.left, my = (a.y + b.y) / 2 - rect.top;
+              const v = viewRef.current;
               pinchRef2.current = {
                   d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
-                  z: zoom, rect,
+                  z: v.z, rect,
                   // Точка ДОСКИ под серединой между пальцами. Держим на месте
                   // её, а не середину экрана: иначе доска уползает из-под рук.
-                  wx: (mx - canvasOffset.x) / zoom,
-                  wy: (my - canvasOffset.y) / zoom
+                  wx: (mx - v.x) / v.z,
+                  wy: (my - v.y) / v.z
               };
           };
           const boardPinchMove = () => {
@@ -6954,8 +7074,7 @@
               // Пределы те же, что у колеса мыши, — иначе щипком можно
               // было бы уехать туда, откуда колесом не вернуться.
               const nz = Math.min(2.0, Math.max(0.3, p.z * (d / p.d)));
-              setZoom(nz);
-              setCanvasOffset({ x: mx - p.wx * nz, y: my - p.wy * nz });
+              applyView(mx - p.wx * nz, my - p.wy * nz, nz);
           };
 
           const handleElementPointerDown = (e, id, type) => {
@@ -8635,21 +8754,31 @@
                         // Замок держим, пока на доске остаётся хоть один палец:
                         // иначе оставшийся продолжил бы прерванный жест и
                         // дорисовал линию от места, где пальцы разошлись.
-                        if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; }
+                        // Пальцы оторвали — переносим положение доски
+                        // в состояние. У щипка своего «отпускания» нет:
+                        // до этой строки подпись масштаба показывала бы
+                        // прежние проценты, а всё, что считает от состояния
+                        // (новая карточка «в видимой части»), клало бы
+                        // её мимо экрана.
+                        if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; commitView(); }
                         e.stopPropagation();
                     }}
                     onPointerCancelCapture={(e) => {
                         if (e.pointerType !== 'touch') return;
                         boardTouch.current.delete(e.pointerId);
-                        if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; }
+                        if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; commitView(); }
                     }}
                     onWheel={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-                        const nz = Math.min(2.0, Math.max(0.3, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
-                        const k = nz / zoom;
-                        setCanvasOffset({ x: mx - (mx - canvasOffset.x) * k, y: my - (my - canvasOffset.y) * k });
-                        setZoom(nz);
+                        const v0 = viewRef.current;
+                        const nz = Math.min(2.0, Math.max(0.3, v0.z * (e.deltaY > 0 ? 0.9 : 1.1)));
+                        const k = nz / v0.z;
+                        // У колеса нет «отпускания», поэтому состояние
+                        // догоняет по затишью — иначе долгая прокрутка
+                        // колеса снова перерисовывала бы всё на каждый щелчок.
+                        applyView(mx - (mx - v0.x) * k, my - (my - v0.y) * k, nz);
+                        commitViewSoon();
                     }}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
@@ -8846,7 +8975,7 @@
                               if (wbMode === 'pan' || (penSeen && fingerPans && e.pointerType === 'touch')) {
                                   e.currentTarget.setPointerCapture(e.pointerId);
                                   setIsPanning(true);
-                                  setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
+                                  setPanStart({ x: e.clientX - viewRef.current.x, y: e.clientY - viewRef.current.y });
                                   return;
                               }
                               // Связь в два нажатия. Тут нет ни точного ведения,
@@ -8903,7 +9032,10 @@
                                 requestLive();
                                 return;
                               }
-                              if (isPanning) { setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }); return; }
+                              // Пишем в узел напрямую, а не в состояние: перерисовка
+                              // всего приложения на каждый шаг пальца и есть то,
+                              // чего мы тут избегаем. Состояние догонит на отпускании.
+                              if (isPanning) { applyView(e.clientX - panStart.x, e.clientY - panStart.y); return; }
                               if (wbMode === 'shape') {
                                 const d = shapeDraft.current;
                                 if (!d) { requestLive(); return; }
@@ -9052,12 +9184,13 @@
                               }
                               live.current = null; erasePt.current = null; penErase.current = false;
                               setIsPainting(false); setIsPanning(false);
+                              commitView();
                               requestLive();
                             }}
                             onPointerCancel={() => {
                               live.current = null; erasePt.current = null; penErase.current = false;
                               shapeDraft.current = null; ocrDraft.current = null; clearGuides();
-                              setIsPainting(false); setIsPanning(false); requestLive();
+                              setIsPainting(false); setIsPanning(false); commitView(); requestLive();
                             }} />
                       </React.Fragment>
 
@@ -9104,7 +9237,7 @@
                         );
                       })()}
 
-                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
+                      <div id="wb-container" ref={canvasRef} style={{ transform: `translate(${viewRef.current.x}px, ${viewRef.current.y}px) scale(${viewRef.current.z})`, transformOrigin: '0 0', position: 'absolute', inset: 0, width: '4000px', height: '4000px', zIndex: 20 }}>
                         
                         {selectionBox && (
                             <div className="absolute border border-indigo-500 bg-indigo-500/20 z-50 pointer-events-none" style={{
