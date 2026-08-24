@@ -679,15 +679,31 @@
         const loadCloudCfg = () => {
           try { return JSON.parse(localStorage.getItem(CLOUD_KEY)) || {}; } catch (e) { return {}; }
         };
-        const saveCloudCfg = (cfg) => {
+        // Ключи живут в ДВУХ местах, и оба обязательны:
+        //   localStorage — рабочая копия. Она читается СИНХРОННО и работает
+        //     без связи; на неё смотрят loadCloudCfg, dropboxAccess и всё
+        //     остальное, что уже написано. Её и оставляем.
+        //   документ комнаты (settings/keys) — общая правда. Ради него всё
+        //     и затевалось: раньше облако приходилось подключать на КАЖДОМ
+        //     устройстве, откуда грузят фотографии, и человек с планшета
+        //     видел «облако не подключено» на проекте, где оно подключено.
+        // Порядок такой: пишем местную копию (она нужна сейчас же), потом
+        // отправляем в комнату. Обратно приезжает через подписку.
+        //
+        // Хук, а не прямой вызов: saveCloudCfg живёт на модульном уровне
+        // (её зовёт и обновление ключа Dropbox раз в четыре часа, вне
+        // всякого React), а отправка в комнату умеет работать только
+        // изнутри приложения, где есть db и appId.
+        window.cfPushKeys = null;
+        const saveCloudCfg = (cfg, share = true) => {
           try { localStorage.setItem(CLOUD_KEY, JSON.stringify(cfg)); } catch (e) {}
+          if (share && window.cfPushKeys) { try { window.cfPushKeys({ cloud: cfg }); } catch (e) {} }
           return cfg;
         };
-        // Настройки живут на УСТРОЙСТВЕ, а не в комнате: это ключи от чужого
-        // Dropbox, и класть их в общую базу, куда пускают любого с кодом
-        // комнаты, нельзя. Обратная сторона — подключать облако надо на
-        // каждом устройстве, откуда загружают фотографии. Смотреть их
-        // при этом может кто угодно: ссылки публичные.
+        // Комната — ЕДИНСТВЕННАЯ граница: кто знает код, тот видит данные.
+        // Значит и ключи из этого документа получает любой, у кого есть код.
+        // Сказано об этом прямо в обоих окнах настройки, и там же стоит
+        // выключатель для тех, кто раздаёт код широко.
 
         // Имя файла в облаке: латиница и цифры, остальное — подчёркиванием.
         // Кириллица в пути ломает заголовок Dropbox-API-Arg и путается
@@ -5086,8 +5102,20 @@
             }
           }, [messages, showChat, clientId]);
 
+          // Общие ли ключи для всей комнаты. По умолчанию ДА — ровно ради
+          // этого всё и сделано: ввёл один раз, работает везде, где открыт
+          // этот проект. Выключатель нужен тем, кто раздаёт код комнаты
+          // широко: тогда ключи остаются только на своём устройстве.
+          const [shareKeys, setShareKeysRaw] = useState(() => {
+            try { return localStorage.getItem('cf_share_keys') !== '0'; } catch (e) { return true; }
+          });
+
           const [geminiKey, setGeminiKeyRaw] = useState(() => localStorage.getItem('cf_gemini_key') || '');
-          const saveGeminiKey = (v) => { setGeminiKeyRaw(v); try { localStorage.setItem('cf_gemini_key', v.trim()); } catch (e) {} };
+          const saveGeminiKey = (v) => {
+            setGeminiKeyRaw(v);
+            try { localStorage.setItem('cf_gemini_key', v.trim()); } catch (e) {}
+            pushKeys({ gemini: v.trim() });
+          };
           const [showGeminiKey, setShowGeminiKey] = useState(true);
 
           // --- Внешнее хранилище фотографий ---
@@ -5095,6 +5123,102 @@
           // ЛИЧНОГО облака, и в общей комнате им не место.
           const [cloudCfg, setCloudCfgRaw] = useState(() => loadCloudCfg());
           const patchCloud = (patch) => setCloudCfgRaw(prev => saveCloudCfg({ ...prev, ...patch }));
+
+          // --- Ключи, привязанные к КОМНАТЕ ---
+          // Что уехало в комнату последним, то и правда. Сравниваем по
+          // времени записи, а не «кто позвал позже»: у планшета, который
+          // неделю пролежал в сумке, местная копия старая, и без метки
+          // времени он затёр бы ею свежие настройки со всей группы.
+          const keysAt = useRef(0);
+          const pushKeysT = useRef(null);
+          const pushKeys = (patch) => {
+            // В режиме просмотра наружу не уходит НИЧЕГО — то же правило,
+            // что у syncDoc: это главная защита ссылки-просмотра.
+            if (READ_ONLY || !db || !user) return;
+            if (!shareKeysRef.current) return;
+            const now = Date.now();
+            keysAt.current = now;
+            const body = { ...patch, savedAt: now, savedBy: userName || '' };
+            // Задержка: ключ вводят по букве, и каждая буква не должна
+            // становиться отдельной записью в облако.
+            clearTimeout(pushKeysT.current);
+            pushKeysT.current = setTimeout(() => {
+              trackWrite(
+                dataRef().collection('settings').doc('keys').set(body, { merge: true })
+                  .catch(err => console.warn('pushKeys', err))
+              );
+            }, 600);
+          };
+          // Читается из pushKeys, которую зовут и из модульного хука —
+          // замыкание там устаревает, а ref всегда свежий.
+          const shareKeysRef = useRef(shareKeys);
+          shareKeysRef.current = shareKeys;
+          const setShareKeys = (on) => {
+            setShareKeysRaw(on);
+            try { localStorage.setItem('cf_share_keys', on ? '1' : '0'); } catch (e) {}
+            shareKeysRef.current = on;
+            // Включили — тут же отправляем то, что уже введено на этом
+            // устройстве: иначе выключатель выглядел бы нерабочим до
+            // следующей правки ключа.
+            if (on) {
+              const cfg = loadCloudCfg();
+              const now = Date.now();
+              keysAt.current = now;
+              if (db && user && !READ_ONLY) {
+                trackWrite(dataRef().collection('settings').doc('keys')
+                  .set({ cloud: cfg, gemini: (localStorage.getItem('cf_gemini_key') || '').trim(), savedAt: now, savedBy: userName || '' }, { merge: true })
+                  .catch(err => console.warn('pushKeys', err)));
+              }
+              showToast('Ключи теперь общие для комнаты');
+            } else {
+              // Выключили — значит ключам в комнате не место. Оставить их
+              // там было бы прямым обманом: выключатель говорит «только
+              // здесь», а ключ по-прежнему достаётся всем, у кого есть код.
+              // Местная копия при этом ЦЕЛА: облако и ИИ на этом устройстве
+              // работают как работали.
+              if (db && user && !READ_ONLY) {
+                trackWrite(dataRef().collection('settings').doc('keys').delete()
+                  .catch(err => console.warn('clearKeys', err)));
+              }
+              showToast('Ключи стёрты из комнаты и остались только на этом устройстве. На других устройствах их придётся ввести заново');
+            }
+          };
+
+          // Модульный хук: обновление ключа Dropbox раз в четыре часа и
+          // возврат из окна разрешения зовут saveCloudCfg вне React.
+          useEffect(() => {
+            window.cfPushKeys = (patch) => pushKeys(patch);
+            return () => { window.cfPushKeys = null; };
+          });
+
+          // Приезд ключей из комнаты. В режиме просмотра НЕ подписываемся
+          // вовсе: ссылка-просмотр не должна выдавать ключи от чужого
+          // Dropbox тому, кому дали посмотреть картинки.
+          useEffect(() => {
+            if (READ_ONLY || !db || !user || !shareKeys) return;
+            const un = db.collection('artifacts').doc(appId).collection('public').doc('data')
+              .collection('settings').doc('keys')
+              .onSnapshot(doc => {
+                if (!doc.exists) return;
+                const d = doc.data() || {};
+                const at = Number(d.savedAt || 0);
+                // Своё же эхо не применяем: оно вернётся тем же временем.
+                if (at <= keysAt.current) return;
+                keysAt.current = at;
+                if (typeof d.gemini === 'string' && d.gemini !== (localStorage.getItem('cf_gemini_key') || '')) {
+                  setGeminiKeyRaw(d.gemini);
+                  try { localStorage.setItem('cf_gemini_key', d.gemini); } catch (e) {}
+                }
+                if (d.cloud && typeof d.cloud === 'object') {
+                  // share=false: обратно в комнату это отправлять незачем,
+                  // оно оттуда и приехало — иначе два устройства гоняли бы
+                  // одну запись по кругу.
+                  saveCloudCfg(d.cloud, false);
+                  setCloudCfgRaw(d.cloud);
+                }
+              }, err => console.warn('sync keys', err));
+            return () => un();
+          }, [user, shareKeys]);
           const [showCloudModal, setShowCloudModal] = useState(false);
           // Объяснение режима просмотра. Живёт даже когда READ_ONLY —
           // это единственное окно, которое там вообще открывается.
@@ -10005,7 +10129,17 @@
                     <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
                       <p>Обычно фотографии лежат внутри самого проекта. Это удобно, пока их немного: примерно после сотни проект становится тяжёлым и начинает медленно открываться.</p>
                       <p>Можно хранить их в своём облаке. Тогда в проекте останется только маленькое превью — галерея и доска будут открываться быстро и без интернета, а полный размер подтянется, когда откроете фотографию на весь экран.</p>
-                      <p className="text-[12px] text-zinc-500">Настройка запоминается на этом устройстве. На другом устройстве, откуда вы тоже загружаете фото, её нужно повторить. Смотреть фотографии сможет вся группа — для этого ничего настраивать не надо.</p>
+                      {/* Раньше тут стояло «настройка запоминается на этом
+                          устройстве, на другом её надо повторить» — и это
+                          было главной причиной, по которой с планшета
+                          облако выглядело неподключённым. Теперь настройка
+                          живёт в комнате. */}
+                      <p className="text-[12px] text-zinc-500">
+                        {shareKeys
+                          ? 'Настройка запоминается в комнате: подключили один раз — работает на всех устройствах, где открыт этот проект, и у всей группы. Кто знает код комнаты, тот получает и доступ к этой папке в облаке — выключить общий доступ можно в меню «Проект».'
+                          : 'Сейчас настройка хранится только на этом устройстве (общие ключи выключены в меню «Проект»). На другом устройстве, откуда вы тоже загружаете фото, её придётся повторить.'}
+                        {' '}Смотреть фотографии сможет вся группа — для этого ничего настраивать не надо.
+                      </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mb-5">
@@ -10397,7 +10531,32 @@
                           <button type="button" onClick={() => setShowGeminiKey(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-white/5 transition-colors">{showGeminiKey ? "Скрыть" : "Показать"}</button>
                         </div>
                         <p className="text-[11px] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
+                          <p className="text-[11px] mt-1 ml-1" style={{ color: shareKeys ? 'var(--accent)' : 'var(--muted-2)' }}>
+                            {shareKeys
+                              ? 'Ключ запоминается в комнате — вводить его на планшете и телефоне заново не нужно.'
+                              : 'Ключ хранится только на этом устройстве.'}
+                          </p>
                       </div>
+
+                      {/* Выключатель общий на ОБА ключа — и на ИИ, и на
+                          облако: разделять их значило бы завести две настройки
+                          там, где человек думает одну мысль («мои ключи для
+                          этого проекта»). По умолчанию включён — ради этого
+                          всё и делалось. */}
+                      <label className="flex items-start justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
+                             style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-zinc-200">Ключи общие для комнаты</span>
+                          <span className="block text-[11px] text-zinc-500 leading-relaxed mt-0.5">
+                            Ключ ИИ и подключённое хранилище фотографий запоминаются вместе с проектом:
+                            ввели один раз — работает на всех ваших устройствах и у всей группы.
+                            Обратная сторона — кто знает код комнаты, тот получает и эти ключи.
+                            Раздаёте код широко? Выключите, и они останутся только здесь.
+                          </span>
+                        </span>
+                        <input type="checkbox" checked={shareKeys} onChange={(e) => setShareKeys(e.target.checked)}
+                               className="shrink-0 mt-0.5" style={{ width: 20, height: 20, accentColor: 'var(--accent)' }} />
+                      </label>
 
                       <button onClick={() => { setShowProjectModal(false); setShowCloudModal(true); }}
                               className="w-full flex items-center justify-between gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-white/5 mb-2 text-left"
