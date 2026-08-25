@@ -7594,77 +7594,23 @@
             bumpInk(); scheduleInkSave('shapes');
             showToast('Связь создана · двигайте карточки, линия идёт следом');
           };
-          // ШАБЛОН «СХЕМА СВЕТА» — раскладывается ПРЯМО НА ЭТОЙ ДОСКЕ.
-          // Первая версия уводила в «Экспликации», в векторный редактор схем:
-          // человек нажимал шаблон пустого холста и оказывался в другой части
-          // приложения, а доска так и оставалась пустой. Это была ошибка —
-          // шаблон доски обязан заполнить доску.
-          // Кладём заготовку из обычных фигур: контур площадки, камера
-          // с углом обзора и два прибора с лучами. Всё это — те же фигуры,
-          // что рисуются руками, поэтому их можно двигать, тянуть за уголки,
-          // перекрашивать и удалять, а «Отменить» снимает раскладку целиком.
-          const layLightPlan = () => {
+          // СХЕМЫ СВЕТА ЖИВУТ В «ДОСКАХ». Это тот же графический редактор,
+          // что был в «Экспликациях», — со своими приборами, конусами
+          // и камерой; никакой замены ему из обычных фигур не будет.
+          // Переехал он потому, что схема света — это ровно такой же
+          // холст, как доска: странно было держать один холст в одном
+          // разделе, а другой в другом. Записи схем остались общими,
+          // и то же самое видно у объекта и в списке экспликаций.
+          const newSchemeHere = () => {
             if (READ_ONLY) return;
-            // Кладём туда, куда человек сейчас смотрит, а не в начало холста:
-            // иначе схема появляется за краем экрана и выглядит как «ничего
-            // не произошло».
-            const bx = (140 - canvasOffset.x) / zoom;
-            const by = (110 - canvasOffset.y) / zoom;
-            let n = 0;
-            const mk = (k, x, y, w, h, extra) => Object.assign(
-              makeShape(k, x, y),
-              // Собственный id: makeShape берёт время, а десять фигур
-              // заводятся в одну миллисекунду.
-              { id: `sh-${Date.now().toString(36)}-${n++}`, w, h, ro: 0, sw: 2, op: 1 },
-              extra || {});
-            const GREY = '#6f6b63', ACC = '#d97757', WARM = '#facc15';
             const sc = scenes.find(x => x.id === activeSceneId);
-
-            // Геометрия читается только когда всё сходится на объекте:
-            // камера снизу смотрит вверх, приборы по краям бьют в центр,
-            // угол обзора накрывает то же место. Без объекта посередине
-            // конус камеры упирался в приборы и читался как третий луч.
-            const room = mk('rect', bx, by + 30, 460, 280, { sc: GREY, sd: 'dashed', bg: 'transparent' });
-            const obj  = mk('ellipse', bx + 205, by + 150, 50, 50, { sc: GREY, sd: 'dashed', bg: 'transparent', sw: 1.5 });
-            const cam  = mk('rect', bx + 195, by + 262, 70, 40, { sc: ACC, bg: 'transparent' });
-            const l1   = mk('ellipse', bx + 40, by + 60, 44, 44, { sc: WARM, bg: 'transparent' });
-            const l2   = mk('ellipse', bx + 376, by + 60, 44, 44, { sc: WARM, bg: 'transparent' });
-            const list = [
-              mk('text', bx, by, 460, 22, { tx: `СХЕМА СВЕТА${sc ? ' · СЦ ' + sc.number : ''}`, fz: 16, ta: 'left', sc: '#a6a39a' }),
-              room,
-              obj,
-              mk('text', bx + 196, by + 206, 70, 18, { tx: 'объект', fz: 12, ta: 'center', sc: GREY }),
-              cam,
-              // Подпись ВНУТРИ фигуры (поле ct) едет вместе с ней:
-              // отдельный текст пришлось бы двигать вторым движением.
-              mk('text', 0, 0, 0, 0, { ct: cam.id, tx: 'КАМЕРА', fz: 12, ta: 'center', sc: ACC }),
-              // Угол обзора — две линии от передних углов камеры мимо
-              // краёв объекта.
-              mk('line', bx + 200, by + 262, -52, -142, { sc: ACC, sd: 'dashed', sw: 1.5 }),
-              mk('line', bx + 260, by + 262, 52, -142, { sc: ACC, sd: 'dashed', sw: 1.5 }),
-              l1,
-              mk('arrow', bx + 84, by + 96, 128, 72, { sc: WARM, sd: 'dashed', sw: 1.5, a1: 'none', a2: 'arrow' }),
-              mk('text', bx + 6, by + 110, 100, 20, { tx: 'рисующий', fz: 13, ta: 'left', sc: WARM }),
-              l2,
-              mk('arrow', bx + 376, by + 96, -128, 72, { sc: WARM, sd: 'dashed', sw: 1.5, a1: 'none', a2: 'arrow' }),
-              mk('text', bx + 360, by + 110, 100, 20, { tx: 'контровой', fz: 13, ta: 'left', sc: WARM }),
-            ];
-
-            pushUndo(false);
-            shapesRef.current = shapesRef.current.concat(list);
-            bumpInk(); scheduleInkSave('shapes');
-            setWbMode('select');
-
-            // Доску, у которой ещё нет своего имени, называем по делу:
-            // «Доска 3» через неделю не говорит ничего. Название, данное
-            // человеком, не трогаем.
-            const b = sortedBoards.find(x => x.id === activeBoardId);
-            if (b && /^Доска \d+$/.test(String(b.title || '').trim())) {
-              const title = `Схема света${sc ? ' · сц ' + sc.number : ''}`;
-              const up = boards.map(x => x.id === b.id ? { ...x, title } : x);
-              setBoards(up); syncDoc('boards', b.id, up.find(x => x.id === b.id));
-            }
-            showToast('Схема разложена — двигайте приборы, остальное дорисуйте кистью');
+            const nS = { id: `lsch-${Date.now()}`, title: sc ? `Схема света · сц ${sc.number}` : 'Схема света', elements: [], drawData: '' };
+            setLightSchemes([...lightSchemes, nS]); syncDoc('lightSchemes', nS.id, nS);
+            // Сразу привязываем к открытой сцене: за схемой почти всегда
+            // приходят от сцены, и второй заход «выбрать её в списке»
+            // человек просто не делает.
+            if (sc) updateScene(sc.id, 'lightSchemeId', nS.id);
+            setDrawingSchemeId(nS.id);
           };
 
           // Выбор объекта в режиме «Связь». Ходов ровно два: первый объект,
@@ -9907,6 +9853,65 @@
                               className="shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
 
+                      {/* СХЕМЫ СВЕТА — здесь же, вкладками рядом с досками.
+                          Схема — такой же холст, как доска, и держать один
+                          холст в «Досках», а другой в «Экспликациях» значило
+                          заставлять человека помнить, где что лежит.
+                          Открываются они в своём редакторе поверх экрана;
+                          закрыл — вернулся на доску. Записи те же самые:
+                          схема, выбранная у сцены или у объекта, — вот эта. */}
+                      <span className="shrink-0" style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px 9px' }} />
+                      {lightSchemes.map(sch => (
+                        <button key={sch.id} onClick={() => setDrawingSchemeId(sch.id)}
+                                onDoubleClick={() => {
+                                  const t = prompt('Название схемы', sch.title);
+                                  if (t && t.trim()) { const up = lightSchemes.map(x => x.id === sch.id ? { ...x, title: t.trim() } : x); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(x => x.id === sch.id)); }
+                                }}
+                                title={`${sch.title} · открыть редактор схемы. Двойной клик — переименовать`}
+                                className="shrink-0 flex items-center gap-1.5 transition-colors hover:bg-white/5"
+                                style={{ padding: '9px 12px', borderRadius: '8px 8px 0 0', minHeight: 40,
+                                         color: 'var(--muted-2)', fontSize: 12.5 }}>
+                          <span style={{ color: 'var(--warn)', display: 'flex' }}><Icons.Lightbulb /></span>
+                          <span className="truncate" style={{ maxWidth: 160 }}>{sch.title}</span>
+                          {/* Удаление здесь же: заводить схему в «Досках»,
+                              а удалять уходить в «Экспликации» — ровно та
+                              разбежка, из-за которой человек и не помнит,
+                              где что лежит. Запись общая, поэтому исчезает
+                              она везде, и об этом сказано прямо. */}
+                          <span onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmAction({ title: 'Удалить схему света?',
+                                    message: `«${sch.title}» исчезнет и отвяжется от всех сцен и объектов, где выбрана. Отменить нельзя.`,
+                                    onConfirm: () => {
+                                      setLightSchemes(lightSchemes.filter(x => x.id !== sch.id));
+                                      deleteNetDoc('lightSchemes', sch.id);
+                                      if (activeSchemeId === sch.id) setActiveSchemeId(null);
+                                      if (drawingSchemeId === sch.id) setDrawingSchemeId(null);
+                                      // Ссылки на удалённую схему чистим сами:
+                                      // иначе у сцены осталась бы кнопка,
+                                      // открывающая пустоту.
+                                      scenes.filter(s => s.lightSchemeId === sch.id).forEach(s => {
+                                        const up = { ...s, lightSchemeId: null }; syncDoc('scenes', s.id, up);
+                                      });
+                                      setScenes(prev => prev.map(s => s.lightSchemeId === sch.id ? { ...s, lightSchemeId: null } : s));
+                                      locations.filter(l => l.lightSchemeId === sch.id).forEach(l => {
+                                        const up = { ...l, lightSchemeId: '' }; syncDoc('locations', l.id, up);
+                                      });
+                                      setLocations(prev => prev.map(l => l.lightSchemeId === sch.id ? { ...l, lightSchemeId: '' } : l));
+                                      showToast('Схема удалена');
+                                    } });
+                                }}
+                                title="Удалить схему"
+                                className="cf-edit-only shrink-0"
+                                style={{ color: 'var(--muted-2)', fontSize: 13, lineHeight: 1, marginLeft: 2 }}>✕</span>
+                        </button>
+                      ))}
+                      <button onClick={newSchemeHere} title="Новая схема света"
+                              className="cf-edit-only shrink-0 flex items-center gap-1 justify-center transition-colors hover:bg-white/5"
+                              style={{ minHeight: 40, marginBottom: 2, padding: '0 10px', borderRadius: 8, border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 11.5 }}>
+                        <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> схема
+                      </button>
+
                       {/* ДЕЙСТВИЯ С ДОСКОЙ — здесь, а не в панели инструментов
                           слева: девятнадцать кнопок в одну колонку не влезали
                           по высоте и молча срезались снизу. Слева рисуют,
@@ -10741,7 +10746,7 @@
                             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.02em' }}>Пустой холст — начните с шаблона</div>
                             <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6 }}>или перетащите сюда кадры из галереи — они лягут стопкой</div>
                             <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))' }}>
-                              <button onClick={layLightPlan} className="cf-tpl text-left">
+                              <button onClick={newSchemeHere} className="cf-tpl text-left">
                                 <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
                                   <rect x="60" y="26" width="40" height="20" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
                                   <path d="M30 14 L52 30 M30 14 l14 2 M30 14 l2 13" stroke="var(--warn)" strokeWidth="1.5" />
@@ -10750,7 +10755,7 @@
                                   <rect x="128" y="54" width="10" height="8" rx="1" stroke="var(--accent)" strokeWidth="1.5" />
                                 </svg>
                                 <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>Схема света</div>
-                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>разложит на этой доске: площадку, камеру с углом обзора и два прибора с лучами</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>план площадки: приборы с конусами, камера с углом обзора</div>
                               </button>
 
                               <button onClick={() => setRefPicker({ mode: 'board' })} className="cf-tpl text-left">
@@ -10764,25 +10769,30 @@
                                 <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>свободная сетка под референсы из галереи</div>
                               </button>
 
-                              <div className="cf-tpl text-left" style={{ cursor: 'default' }}>
+                              {/* Карточка кликается ЦЕЛИКОМ. Раньше обработчик
+                                  висел только на строке с названием, и нажатие
+                                  почти в любое место карточки не делало ничего:
+                                  выглядело как сломанная кнопка. Чипы пропорции
+                                  внутри — отдельные нажатия, они всплытие гасят. */}
+                              <div className="cf-tpl text-left"
+                                   onClick={() => { if (activeSceneId) spreadSceneOnBoard(activeSceneId, activeBoardId); else showToast('Сначала выберите сцену на экране «Сцены»'); }}>
                                 <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
                                   <rect x="10" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
                                   <rect x="59" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
                                   <rect x="108" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
                                   <path d="M52 31 h7 M101 31 h7" stroke="var(--accent)" strokeWidth="1.5" />
                                 </svg>
-                                <button onClick={() => { if (activeSceneId) setSceneToBoard(activeSceneId); else showToast('Сначала выберите сцену'); }}
-                                        className="text-left w-full" style={{ fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>
                                   Раскадровка{(() => { const sc = scenes.find(x => x.id === activeSceneId); return sc ? ` · сц ${sc.number}` : ''; })()}
-                                </button>
-                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>лента кадров сцены · пропорция:</div>
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>кадры и референсы сцены лентой на эту доску · пропорция:</div>
                                 {/* Пропорция кадра — общая для проекта: её же
                                     берут превью раскадровки на экране сцены,
                                     чтобы раскадровка обещала тот кадр, который
                                     в итоге снимут. */}
                                 <div className="flex gap-1 mt-1.5">
                                   {SHOT_RATIOS.map(([label, val]) => (
-                                    <button key={label} onClick={() => setProjectRatio(val)}
+                                    <button key={label} onClick={(e) => { e.stopPropagation(); setProjectRatio(val); }}
                                             title={`Пропорция кадра ${label} для всего проекта`}
                                             style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, padding: '3px 7px', borderRadius: 5, fontWeight: 600,
                                                      background: projectRatio === val ? 'var(--accent)' : 'transparent',
@@ -12141,7 +12151,10 @@
                   }} />
               )}
               
-              {drawingSchemeId && currentView === 'docs' && lightSchemes.find(s=>s.id === drawingSchemeId) && (
+              {/* Редактор схемы больше НЕ привязан к разделу «Экспликации».
+                  Он и так открывается поверх всего экрана, а привязка
+                  означала ровно одно: с «Досок» схему было не открыть. */}
+              {drawingSchemeId && lightSchemes.find(s=>s.id === drawingSchemeId) && (
                   <LightSchemeEditor scheme={lightSchemes.find(s=>s.id === drawingSchemeId)} onClose={() => setDrawingSchemeId(null)} onSave={(id, els, draw, preview) => {
                       const up = lightSchemes.map(s=>s.id===id?{...s, elements: els, drawData: draw, preview: preview}:s);
                       setLightSchemes(up); syncDoc('lightSchemes', id, up.find(s=>s.id===id));
