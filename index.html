@@ -4936,7 +4936,23 @@
           };
           const requestStatic = () => requestInk(true);
           const requestLive = () => requestInk(false);
-          const bumpInk = () => requestStatic();
+          // Есть ли на доске хоть что-то нарисованное. Нужно ровно одному
+          // месту — подсказке с шаблонами на пустом холсте: она обязана
+          // уйти, как только на доске появились линии или фигуры.
+          // Сами штрихи живут в ref и перерисовки не вызывают (иначе доска
+          // тормозила бы на каждом движении пальца), поэтому флаг держим
+          // отдельно и трогаем ТОЛЬКО когда он реально меняется: React
+          // на такой setState с прежним значением перерисовку не делает.
+          const [boardInked, setBoardInked] = useState(false);
+          const syncInked = () => {
+            const has = (shapesRef.current || []).length > 0
+                     || (strokesRef.current || []).length > 0
+                     || !!legacyCv.current;
+            setBoardInked(prev => prev === has ? prev : has);
+          };
+          // bumpInk зовётся на конце штриха и на правках фигур, а не на
+          // каждом движении, — здесь это безопасно.
+          const bumpInk = () => { requestStatic(); syncInked(); };
 
           // Готовый штрих дописываем в нижний слой поверх нарисованного,
           // без полной перерисовки: обычный случай — «провёл линию».
@@ -7578,6 +7594,79 @@
             bumpInk(); scheduleInkSave('shapes');
             showToast('Связь создана · двигайте карточки, линия идёт следом');
           };
+          // ШАБЛОН «СХЕМА СВЕТА» — раскладывается ПРЯМО НА ЭТОЙ ДОСКЕ.
+          // Первая версия уводила в «Экспликации», в векторный редактор схем:
+          // человек нажимал шаблон пустого холста и оказывался в другой части
+          // приложения, а доска так и оставалась пустой. Это была ошибка —
+          // шаблон доски обязан заполнить доску.
+          // Кладём заготовку из обычных фигур: контур площадки, камера
+          // с углом обзора и два прибора с лучами. Всё это — те же фигуры,
+          // что рисуются руками, поэтому их можно двигать, тянуть за уголки,
+          // перекрашивать и удалять, а «Отменить» снимает раскладку целиком.
+          const layLightPlan = () => {
+            if (READ_ONLY) return;
+            // Кладём туда, куда человек сейчас смотрит, а не в начало холста:
+            // иначе схема появляется за краем экрана и выглядит как «ничего
+            // не произошло».
+            const bx = (140 - canvasOffset.x) / zoom;
+            const by = (110 - canvasOffset.y) / zoom;
+            let n = 0;
+            const mk = (k, x, y, w, h, extra) => Object.assign(
+              makeShape(k, x, y),
+              // Собственный id: makeShape берёт время, а десять фигур
+              // заводятся в одну миллисекунду.
+              { id: `sh-${Date.now().toString(36)}-${n++}`, w, h, ro: 0, sw: 2, op: 1 },
+              extra || {});
+            const GREY = '#6f6b63', ACC = '#d97757', WARM = '#facc15';
+            const sc = scenes.find(x => x.id === activeSceneId);
+
+            // Геометрия читается только когда всё сходится на объекте:
+            // камера снизу смотрит вверх, приборы по краям бьют в центр,
+            // угол обзора накрывает то же место. Без объекта посередине
+            // конус камеры упирался в приборы и читался как третий луч.
+            const room = mk('rect', bx, by + 30, 460, 280, { sc: GREY, sd: 'dashed', bg: 'transparent' });
+            const obj  = mk('ellipse', bx + 205, by + 150, 50, 50, { sc: GREY, sd: 'dashed', bg: 'transparent', sw: 1.5 });
+            const cam  = mk('rect', bx + 195, by + 262, 70, 40, { sc: ACC, bg: 'transparent' });
+            const l1   = mk('ellipse', bx + 40, by + 60, 44, 44, { sc: WARM, bg: 'transparent' });
+            const l2   = mk('ellipse', bx + 376, by + 60, 44, 44, { sc: WARM, bg: 'transparent' });
+            const list = [
+              mk('text', bx, by, 460, 22, { tx: `СХЕМА СВЕТА${sc ? ' · СЦ ' + sc.number : ''}`, fz: 16, ta: 'left', sc: '#a6a39a' }),
+              room,
+              obj,
+              mk('text', bx + 196, by + 206, 70, 18, { tx: 'объект', fz: 12, ta: 'center', sc: GREY }),
+              cam,
+              // Подпись ВНУТРИ фигуры (поле ct) едет вместе с ней:
+              // отдельный текст пришлось бы двигать вторым движением.
+              mk('text', 0, 0, 0, 0, { ct: cam.id, tx: 'КАМЕРА', fz: 12, ta: 'center', sc: ACC }),
+              // Угол обзора — две линии от передних углов камеры мимо
+              // краёв объекта.
+              mk('line', bx + 200, by + 262, -52, -142, { sc: ACC, sd: 'dashed', sw: 1.5 }),
+              mk('line', bx + 260, by + 262, 52, -142, { sc: ACC, sd: 'dashed', sw: 1.5 }),
+              l1,
+              mk('arrow', bx + 84, by + 96, 128, 72, { sc: WARM, sd: 'dashed', sw: 1.5, a1: 'none', a2: 'arrow' }),
+              mk('text', bx + 6, by + 110, 100, 20, { tx: 'рисующий', fz: 13, ta: 'left', sc: WARM }),
+              l2,
+              mk('arrow', bx + 376, by + 96, -128, 72, { sc: WARM, sd: 'dashed', sw: 1.5, a1: 'none', a2: 'arrow' }),
+              mk('text', bx + 360, by + 110, 100, 20, { tx: 'контровой', fz: 13, ta: 'left', sc: WARM }),
+            ];
+
+            pushUndo(false);
+            shapesRef.current = shapesRef.current.concat(list);
+            bumpInk(); scheduleInkSave('shapes');
+            setWbMode('select');
+
+            // Доску, у которой ещё нет своего имени, называем по делу:
+            // «Доска 3» через неделю не говорит ничего. Название, данное
+            // человеком, не трогаем.
+            const b = sortedBoards.find(x => x.id === activeBoardId);
+            if (b && /^Доска \d+$/.test(String(b.title || '').trim())) {
+              const title = `Схема света${sc ? ' · сц ' + sc.number : ''}`;
+              const up = boards.map(x => x.id === b.id ? { ...x, title } : x);
+              setBoards(up); syncDoc('boards', b.id, up.find(x => x.id === b.id));
+            }
+            showToast('Схема разложена — двигайте приборы, остальное дорисуйте кистью');
+          };
+
           // Выбор объекта в режиме «Связь». Ходов ровно два: первый объект,
           // второй объект. Зовётся и с холста (фигуры, надписи), и прямо
           // с карточки: выделенная карточка лежит ВЫШЕ холста, и нажатие по
@@ -10639,7 +10728,8 @@
                           настоящих вопроса: как поставить свет, как собрать
                           настроение и как разложить кадры сцены.
                           Уходит, как только взяли инструмент. */}
-                      {wbMode === 'select' && !READ_ONLY && boardScenes.length === 0 && boardDocs.length === 0
+                      {wbMode === 'select' && !READ_ONLY && !boardInked
+                        && boardScenes.length === 0 && boardDocs.length === 0
                         && !stickies.some(st => belongsToBoard(st, activeBoardId))
                         && !references.some(r => r.boardId === activeBoardId) && (
                         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none" style={{ paddingLeft: 70 }}>
@@ -10651,14 +10741,7 @@
                             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.02em' }}>Пустой холст — начните с шаблона</div>
                             <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6 }}>или перетащите сюда кадры из галереи — они лягут стопкой</div>
                             <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))' }}>
-                              <button onClick={() => {
-                                        const sc = scenes.find(x => x.id === activeSceneId);
-                                        const nS = { id: `lsch-${Date.now()}`, title: sc ? `Схема света · сц ${sc.number}` : 'Схема света', elements: [], drawData: '' };
-                                        setLightSchemes([...lightSchemes, nS]); syncDoc('lightSchemes', nS.id, nS);
-                                        if (sc) updateScene(sc.id, 'lightSchemeId', nS.id);
-                                        setActiveSchemeId(nS.id); setActiveDocId(null); setCurrentView('docs');
-                                      }}
-                                      className="cf-tpl text-left">
+                              <button onClick={layLightPlan} className="cf-tpl text-left">
                                 <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
                                   <rect x="60" y="26" width="40" height="20" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
                                   <path d="M30 14 L52 30 M30 14 l14 2 M30 14 l2 13" stroke="var(--warn)" strokeWidth="1.5" />
@@ -10667,7 +10750,7 @@
                                   <rect x="128" y="54" width="10" height="8" rx="1" stroke="var(--accent)" strokeWidth="1.5" />
                                 </svg>
                                 <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>Схема света</div>
-                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>план площадки, приборы с конусами, камера с углом обзора</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>разложит на этой доске: площадку, камеру с углом обзора и два прибора с лучами</div>
                               </button>
 
                               <button onClick={() => setRefPicker({ mode: 'board' })} className="cf-tpl text-left">
