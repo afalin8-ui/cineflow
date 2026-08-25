@@ -7774,10 +7774,19 @@
           const [refsExpanded, setRefsExpanded] = useState(false);
           const [shotsExpanded, setShotsExpanded] = useState(false);
           useEffect(() => {
-            const esc = (e) => { if (e.key === 'Escape') { setRefsExpanded(false); setShotsExpanded(false); } };
+            // Esc сворачивает развороты, а заодно и правую панель — но ТОЛЬКО
+            // когда она лежит поверх содержимого. Стоящую рядом панель
+            // держат открытой намеренно, и закрывать её случайным Esc
+            // значило бы отнимать то, что человек только что поставил.
+            const esc = (e) => {
+              if (e.key !== 'Escape') return;
+              setRefsExpanded(false);
+              setShotsExpanded(false);
+              if (!panelSideBySide) setScenePanel(null);
+            };
             window.addEventListener('keydown', esc);
             return () => window.removeEventListener('keydown', esc);
-          }, []);
+          }, [panelSideBySide]);
           // Меню сцены «···»: туда убраны «Удалить» и «PDF» — они занимали
           // место в шапке карточки, а нажимают их редко.
           const [sceneMenu, setSceneMenu] = useState(false);
