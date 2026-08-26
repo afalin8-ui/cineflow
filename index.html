@@ -122,6 +122,7 @@
           --header-h: 42px;
           --panel-strip: 40px;    /* свёрнутая боковая панель */
           --tool-rail: 44px;      /* панель инструментов доски */
+          --tabbar-h: 56px;       /* нижняя навигация телефона */
 
           /* ДВА ШРИФТА, ОБА СИСТЕМНЫЕ. На macOS и iPad -apple-system даёт
              SF Pro — ту самую гельветику, — на остальных падаем в Helvetica
@@ -289,6 +290,38 @@
         .cf-tool.off { color: var(--border); cursor: not-allowed; }
         .cf-tool.off:hover { background: transparent; color: var(--border); }
         .cf-tool-sep { display: block; width: 24px; height: 1px; background: var(--border); margin: 3px 0; flex-shrink: 0; }
+
+        /* ---------- ТЕЛЕФОН ----------
+           Телефон — прибор ПЛОЩАДКИ, а не уменьшенный планшет. Строка
+           иконок в шапке там нечитаема и не попадаема пальцем, поэтому
+           навигация уезжает вниз, в таб-бар: большой палец достаёт до него,
+           не перехватывая телефон. Наведения на телефоне не существует —
+           все состояния только нажатием. */
+        .cf-tabbar { display: flex; flex-shrink: 0; background: var(--panel-2); border-top: 1px solid var(--border);
+                     padding: 6px 6px calc(4px + env(safe-area-inset-bottom, 0px)); }
+        .cf-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                  gap: 3px; min-height: 46px; color: var(--muted-2); }
+        .cf-tab span { font-size: 10px; }
+        .cf-tab.on { color: var(--accent); }
+        .cf-tab.on span { font-weight: 600; }
+        /* Фильтр-пилюля: 30 точек в высоту плюс поля — палец попадает. */
+        .cf-pill { flex-shrink: 0; white-space: nowrap; font-size: 12px; padding: 8px 14px; min-height: 36px;
+                   border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+        .cf-pill.on { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+        /* Лента до самых краёв экрана: обрезанная по полям она читается
+           как «здесь всё», и вбок никто не листает. */
+        .cf-bleed { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
+        /* Шторка снизу — вместо правой панели-вкладок: на телефоне панель
+           сбоку съела бы весь экран. Высота по видимой части (dvh):
+           панели браузера то появляются, то исчезают. */
+        .cf-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 260;
+                    background: var(--card); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0;
+                    max-height: 80vh; max-height: 80dvh; overflow-y: auto; overscroll-behavior: contain;
+                    box-shadow: 0 -12px 40px rgba(0,0,0,.5); padding-bottom: env(safe-area-inset-bottom, 0px); }
+        .cf-sheet-grip { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 0; }
+        /* Плитка вместо вкладки правой панели */
+        .cf-tile { display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 10px;
+                   padding: 11px 12px; font-size: 12.5px; color: var(--text-2); min-height: 44px; text-align: left; }
         /* карточка шаблона на пустой доске */
         .cf-tpl { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; transition: border-color .12s; }
         .cf-tpl:hover { border-color: var(--accent); }
@@ -312,7 +345,9 @@
            tailwind-классы (inset-y-0, h-full) и не зависит от того,
            в каком порядке браузер собрал таблицы стилей. */
         @media (max-width: 767px) {
-          .cf-chat-drawer.cf-chat-drawer { top: var(--header-h); height: auto; }
+          /* Чат не должен накрывать нижнюю навигацию: иначе, открыв его,
+             из чата уже не выйти нажатием по вкладке. */
+          .cf-chat-drawer.cf-chat-drawer { top: var(--header-h); height: auto; bottom: var(--tabbar-h); }
         }
 
         /* ---------- всплывающие окна ---------- */
@@ -7792,6 +7827,44 @@
           // экране панель стоит РЯДОМ (места хватает обоим и ничего не
           // прячется), на узком — по-прежнему поверх, там её открывают
           // на минуту и сразу закрывают.
+          // --- ТЕЛЕФОН ---
+          // Порог 700 точек. Ниже него это уже не «узкий планшет», а другой
+          // прибор: навигация внизу, панели шторками, ленты до краёв.
+          const [isPhone, setIsPhone] = useState(
+            () => typeof window !== 'undefined' && window.innerWidth < 700);
+          useEffect(() => {
+            if (!window.matchMedia) return;
+            const mq = window.matchMedia('(max-width: 699px)');
+            const on = () => setIsPhone(mq.matches);
+            on();
+            if (mq.addEventListener) { mq.addEventListener('change', on); return () => mq.removeEventListener('change', on); }
+            mq.addListener(on); return () => mq.removeListener(on);
+          }, []);
+          // На телефоне «Сцены» — это два экрана: список и карточка.
+          // Одновременно они не помещаются, и притворяться, что помещаются,
+          // значит сделать нечитаемым и то и другое.
+          const [phoneSceneOpen, setPhoneSceneOpen] = useState(false);
+          // Что открыто шторкой снизу: техника, свет, солнце, экспликация,
+          // «Ещё» с остальными модулями.
+          const [phoneSheet, setPhoneSheet] = useState(null);
+          // Фильтр списка сцен пилюлями. По умолчанию — ближайшая смена:
+          // на площадке спрашивают «что сегодня», а не «что вообще есть».
+          const [phoneFilter, setPhoneFilter] = useState('shift');
+          // Текст сцены на телефоне свёрнут до нескольких строк: иначе
+          // он занимает весь экран и до раскадровки не долистать.
+          const [phoneTextOpen, setPhoneTextOpen] = useState(false);
+          useEffect(() => { setPhoneTextOpen(false); }, [activeSceneId]);
+          // Смены — это уникальные даты сцен по порядку. Отдельного поля
+          // «номер смены» нет и заводить его не будем: дата у сцены уже есть,
+          // а две записи одного и того же разъезжаются.
+          const shiftDates = useMemo(
+            () => [...new Set(scenes.filter(s => s.date).map(s => s.date))].sort(), [scenes]);
+          const nearestShift = useMemo(() => {
+            if (!shiftDates.length) return null;
+            const today = new Date().toISOString().slice(0, 10);
+            return shiftDates.find(d => d >= today) || shiftDates[shiftDates.length - 1];
+          }, [shiftDates]);
+
           const [panelSideBySide, setPanelSideBySide] = useState(
             () => typeof window !== 'undefined' && window.innerWidth >= 1200);
           useEffect(() => {
@@ -7837,6 +7910,99 @@
           const [gearCatalogOpen, setGearCatalogOpen] = useState(false);
           const [lightCatalogOpen, setLightCatalogOpen] = useState(false);
 
+          // ЕДИНЫЙ СПИСОК ТЕХНИКИ (и такой же — света).
+          // Плитки с чипами ушли: на площадке нужен список
+          // «что везём и сколько», а не сетка карточек, где
+          // цифра теряется. Строка = позиция: название можно
+          // править прямо здесь, −/+ меняют количество в ЭТОЙ
+          // сцене, ✕ убирает её из сцены (в каталоге остаётся).
+          // Ниже — «весь каталог»: оттуда позицию добавляют
+          // в сцену и оттуда же удаляют из каталога совсем.
+          const gearPanel = (s, isLight) => {
+            const field = isLight ? 'lightGear' : 'gear';
+            const types = (isLight ? lightGearTypes : gearTypes) || (isLight ? DEFAULT_LIGHT_GEAR : DEFAULT_GEAR);
+            const setTypes = isLight ? setLightGearTypes : setGearTypes;
+            const coll = isLight ? 'lightGearTypes' : 'gearTypes';
+            const catOpen = isLight ? lightCatalogOpen : gearCatalogOpen;
+            const setCatOpen = isLight ? setLightCatalogOpen : setGearCatalogOpen;
+            const typed = isLight ? newLightGearName : newGearName;
+            const setTyped = isLight ? setNewLightGearName : setNewGearName;
+            const counts = (s && s[field]) || {};
+            const all = Object.entries(types);
+            const mine = all.filter(([k]) => (counts[k] || 0) > 0);
+            const rest = all.filter(([k]) => !(counts[k] > 0));
+            const rename = (k, label) => {
+              const item = { ...(types[k] || {}), label };
+              setTypes({ ...types, [k]: item }); syncDoc(coll, k, item);
+            };
+            const addPosition = () => {
+              const name = String(typed || '').trim();
+              if (!name) return;
+              const key = name.toLowerCase().replace(/\s+/g, '_');
+              if (!types[key]) { const item = { label: name }; setTypes({ ...types, [key]: item }); syncDoc(coll, key, item); }
+              updateSceneNested(s.id, field, key, 1);
+              setTyped('');
+            };
+            // На телефоне этот список открывается шторкой, и нажимают его
+            // пальцем, а не мышью: 24 точки там — промах через раз.
+            const sz = isPhone ? 38 : 24;
+            const stepBtn = { width: sz, height: sz, border: '1px solid var(--border)', borderRadius: isPhone ? 8 : 5, color: 'var(--muted)', flexShrink: 0, fontSize: isPhone ? 17 : 13 };
+            return (
+              <div className="px-4 pb-4 pt-1">
+                {mine.length === 0 && (
+                  <p style={{ fontSize: 12, color: 'var(--muted-2)', lineHeight: 1.6 }}>
+                    В этой сцене {isLight ? 'приборов' : 'техники'} пока нет. Впишите позицию ниже или возьмите из каталога.
+                  </p>
+                )}
+                {mine.map(([k, item]) => (
+                  <div key={k} className="flex items-center gap-1.5 mt-2" style={isPhone ? { minHeight: 44 } : null}>
+                    <input value={item.label} onChange={(e) => rename(k, e.target.value)}
+                           className="flex-1 min-w-0 bg-transparent focus:outline-none"
+                           style={{ fontSize: isPhone ? 14 : 12.5, color: 'var(--text-2)', padding: 0 }} />
+                    <button onClick={() => updateSceneNested(s.id, field, k, -1)} title="Меньше на одну"
+                            className="flex items-center justify-center" style={stepBtn}>−</button>
+                    <span className="text-center shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', minWidth: 26 }}>×{counts[k]}</span>
+                    <button onClick={() => updateSceneNested(s.id, field, k, 1)} title="Больше на одну"
+                            className="flex items-center justify-center" style={stepBtn}>+</button>
+                    <button onClick={() => updateSceneNested(s.id, field, k, -(counts[k] || 0))}
+                            title="Убрать позицию из сцены — в каталоге останется"
+                            className="flex items-center justify-center shrink-0"
+                            style={{ width: sz, height: sz, borderRadius: isPhone ? 8 : 5, color: 'var(--muted-2)', fontSize: isPhone ? 14 : 11 }}>✕</button>
+                  </div>
+                ))}
+                <div className="flex gap-1.5 mt-3">
+                  <input type="text" value={typed} onChange={(e) => setTyped(e.target.value)}
+                         onKeyDown={(e) => { if (e.key === 'Enter') addPosition(); }}
+                         placeholder={isLight ? 'Новый прибор…' : 'Новая позиция…'}
+                         className="glass-input flex-1 min-w-0 rounded-lg px-2.5" style={{ minHeight: isPhone ? 44 : 32, fontSize: isPhone ? 14 : 12 }} />
+                  <button onClick={addPosition} className="shrink-0 rounded-lg px-3 font-semibold"
+                          style={{ minHeight: isPhone ? 44 : 32, fontSize: isPhone ? 14 : 12, background: 'var(--accent)', color: 'var(--bg)' }}>+ {isLight ? 'прибор' : 'техника'}</button>
+                </div>
+                <button onClick={() => setCatOpen(!catOpen)} className="mt-3 cf-meta"
+                        style={{ color: 'var(--accent)' }}>{catOpen ? 'скрыть каталог ⤡' : `весь каталог · ${rest.length} ⤢`}</button>
+                {catOpen && (
+                  <div className="mt-2" style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+                    {rest.length === 0 && <p className="cf-meta">Всё из каталога уже в сцене.</p>}
+                    {rest.map(([k, item]) => (
+                      <div key={k} className="flex items-center gap-1.5 mt-1.5">
+                        <span className="flex-1 min-w-0 truncate" style={{ fontSize: 12.5, color: 'var(--muted)' }}>{item.label}</span>
+                        <button onClick={() => updateSceneNested(s.id, field, k, 1)} title="Добавить в эту сцену"
+                                className="flex items-center justify-center" style={stepBtn}>+</button>
+                        <button onClick={() => setConfirmAction({
+                                  title: isLight ? 'Удалить прибор из каталога?' : 'Удалить позицию из каталога?',
+                                  message: 'Позиция исчезнет из каталога всего проекта. В сценах, где она уже стоит, останется.',
+                                  onConfirm: () => { const up = { ...types }; delete up[k]; setTypes(up); deleteNetDoc(coll, k); } })}
+                                title="Удалить из каталога совсем"
+                                className="flex items-center justify-center shrink-0"
+                                style={{ width: 24, height: 24, borderRadius: 5, color: 'var(--danger)', fontSize: 11 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          };
+
           // Бейдж «ИНТ·Д» из заголовка сцены. Отдельного поля под это нет
           // и заводить его не будем: заголовок сцены и так пишется по
           // стандарту «ИНТ. КАБИНЕТ — ДЕНЬ», надо только прочитать.
@@ -7846,6 +8012,86 @@
             const when = /НОЧ|ВЕЧЕР|ЗАКАТ|СУМЕРК/.test(t) ? 'Н' : (/ДЕНЬ|УТР|РАССВЕТ/.test(t) ? 'Д' : '');
             return [where, when].filter(Boolean).join('·');
           };
+
+          // Содержимое шторок телефона. Собирается здесь, а не в экране
+          // сцены: сама шторка висит поверх всего приложения, и тащить
+          // её разметку через возврат экрана было бы куда запутаннее.
+          // Списки техники и света — те же самые, что в правой панели
+          // на планшете: одно место правки, никакого второго вида.
+          const phoneSheetBody = (() => {
+            if (!isPhone || !phoneSheet || phoneSheet === 'more') return null;
+            const s = scenes.find(x => x.id === activeSceneId) || sortedScenes[0];
+            if (!s) return null;
+            const loc = locations.find(l => (l.sceneIds || []).includes(s.id));
+            const c = loc ? parseCoords(loc.coords) : null;
+            if (phoneSheet === 'gear') return gearPanel(s, false);
+            if (phoneSheet === 'light') return gearPanel(s, true);
+            if (phoneSheet === 'expl') return (
+              <div className="px-4 pb-5 pt-1">
+                <textarea value={s.content || ''} onChange={(e) => updateScene(s.id, 'content', e.target.value)}
+                          className="w-full glass-input rounded-lg p-3"
+                          style={{ fontSize: 14, lineHeight: 1.6, minHeight: 180, resize: 'vertical' }}
+                          placeholder="Настроение, контраст, характер камеры, точка зрения — как эта сцена должна выглядеть." />
+                <button onClick={() => enhanceSceneWithAI(s.id, s.content, s.title, s.script)} disabled={isAILoading}
+                        className="cf-edit-only mt-2 flex items-center gap-1.5 rounded-lg px-4 font-semibold"
+                        style={{ minHeight: 44, fontSize: 13, background: 'var(--raised)', color: 'var(--text-2)' }}>
+                  <Icons.Bot /> {isAILoading ? 'Думаю…' : 'Расширить с ИИ'}
+                </button>
+              </div>
+            );
+            // Солнце и объект — одной шторкой: на площадке это один вопрос
+            // «где мы и сколько осталось света».
+            return (
+              <div className="px-4 pb-5 pt-1">
+                {!loc ? (
+                  <p style={{ fontSize: 13, color: 'var(--muted-2)', lineHeight: 1.6 }}>
+                    Сцена не привязана к объекту. Привязка живёт на экране «Объекты».
+                  </p>
+                ) : (
+                  <React.Fragment>
+                    <button onClick={() => { setPhoneSheet(null); setActiveLocationId(loc.id); setCurrentView('locations'); }}
+                            className="w-full flex items-center gap-2.5 rounded-lg px-3 mb-3"
+                            style={{ minHeight: 46, background: 'var(--raised)', fontSize: 14, color: 'var(--text)' }}>
+                      <Icons.Place /> {loc.name || 'Без названия'}
+                      <span className="ml-auto" style={{ color: 'var(--accent)', fontSize: 13 }}>открыть →</span>
+                    </button>
+                    {!c ? (
+                      <p style={{ fontSize: 13, color: 'var(--muted-2)', lineHeight: 1.6 }}>
+                        У объекта нет координат — впишите их там, и здесь появится солнце на день смены.
+                      </p>
+                    ) : (() => {
+                      const now = new Date();
+                      const p = sunPosition(c.lat, c.lon, now);
+                      const t = sunTimes(c.lat, c.lon, s.date || now.toISOString().slice(0, 10));
+                      const rad = p.az * Math.PI / 180, R = 40;
+                      const sx = 60 + R * Math.sin(rad), sy = 60 - R * Math.cos(rad);
+                      return (
+                        <div className="flex gap-3.5 items-center">
+                          <svg width="110" height="110" viewBox="0 0 120 120" className="shrink-0">
+                            <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
+                            <text x="60" y="16" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)">С</text>
+                            <text x="60" y="112" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">Ю</text>
+                            <text x="10" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">З</text>
+                            <text x="110" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">В</text>
+                            {p.alt > 0 && <path d={`M60 60 L${sx.toFixed(1)} ${sy.toFixed(1)}`} stroke="var(--warn)" strokeWidth="2" />}
+                            {p.alt > 0 && <circle cx={sx.toFixed(1)} cy={sy.toFixed(1)} r="5" fill="var(--warn)" />}
+                            <circle cx="60" cy="60" r="3" fill="var(--accent)" />
+                          </svg>
+                          <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--text-2)' }}>
+                            {sunWords(p)}
+                            {t && !t.sun.polar && t.sun.set && (
+                              <React.Fragment><br />Закат <b style={{ fontFamily: 'var(--font-mono)' }}>{hhmm(t.sun.set)}</b>
+                              {t.golden.set && <React.Fragment>, золотой час с <b style={{ fontFamily: 'var(--font-mono)' }}>{hhmm(t.golden.set)}</b></React.Fragment>}.</React.Fragment>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </React.Fragment>
+                )}
+              </div>
+            );
+          })();
 
           // Режим экрана сцены. Запись в localStorage — только в try:
           // место на устройстве кончается, и тогда setItem бросает
@@ -8041,7 +8287,57 @@
               )}
 
               <div className="flex flex-col flex-1 min-w-0">
-                {/* ШАПКА — ЕДИНСТВЕННАЯ НАВИГАЦИЯ.
+                {/* ШАПКА ТЕЛЕФОНА — не навигация, а заголовок места.
+                    Навигация уехала вниз, в таб-бар: строка иконок 14px
+                    в шапке телефона нечитаема и не попадаема пальцем.
+                    Здесь остаётся то, что отвечает на «где я»: название
+                    модуля со счётчиком, точка связи и поиск. На карточке
+                    сцены вместо этого — «‹ Сцены», режимы и «···». */}
+                {isPhone ? (
+                  <header className="flex items-center shrink-0 z-40 gap-2"
+                          style={{ padding: '10px 16px 8px', background: 'var(--bg)' }}>
+                    {currentView === 'notion' && phoneSceneOpen ? (
+                      <React.Fragment>
+                        <button onClick={() => setPhoneSceneOpen(false)}
+                                style={{ color: 'var(--accent)', fontSize: 15, minHeight: 30, paddingRight: 6 }}>‹ Сцены</button>
+                        <span className="cf-seg ml-auto">
+                          {[['creative', 'Творч'], ['shoot', 'Съёмка'], ['present', 'Презент']].map(([id, label]) => (
+                            <button key={id} onClick={() => setSceneMode(id)}
+                                    className={sceneMode === id ? 'on' : ''}
+                                    style={{ fontSize: 10.5, padding: '3px 8px' }}>{label}</button>
+                          ))}
+                        </span>
+                        <button onClick={() => setPhoneSheet('more')} title="Ещё"
+                                className="shrink-0 flex items-center justify-center"
+                                style={{ width: 28, height: 24, border: '1px solid var(--border)', borderRadius: 7, color: 'var(--muted-2)', fontSize: 13, letterSpacing: 1 }}>···</button>
+                      </React.Fragment>
+                    ) : (
+                      <React.Fragment>
+                        <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.02em' }}>
+                          {(navItems.find(t => t.id === currentView) || {}).label || 'CineFlow'}
+                        </span>
+                        <span className="cf-meta" style={{ marginTop: 3 }}>
+                          {currentView === 'notion' ? scenes.length
+                            : currentView === 'gallery' ? references.length
+                            : currentView === 'locations' ? locations.length
+                            : currentView === 'whiteboard' ? sortedBoards.length : ''}
+                        </span>
+                        <button onClick={kickSyncNow} title={syncTitle + ' · нажмите, чтобы обновить связь'}
+                                className="shrink-0 ml-auto flex items-center justify-center -m-2 p-2"
+                                style={{ opacity: kicking ? 0.4 : 1 }}>
+                          <span className="rounded-full block" style={{ width: 7, height: 7, background: syncDot }}></span>
+                        </button>
+                        <button onClick={() => setShowSearch(true)} title="Поиск по всему проекту"
+                                className="shrink-0 flex items-center justify-center"
+                                style={{ width: 30, height: 30, border: '1px solid var(--border)', borderRadius: 8, color: 'var(--muted)' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        </button>
+                      </React.Fragment>
+                    )}
+                  </header>
+                ) : (
+                <React.Fragment>
+                {/* ШАПКА — ЕДИНСТВЕННАЯ НАВИГАЦИЯ (планшет и компьютер).
                     Раньше их было две: рельс с модулями слева и список
                     сущностей рядом с ним. Теперь модули живут здесь строкой
                     иконок, а слева остаётся только список сцен / папок /
@@ -8150,10 +8446,12 @@
                     </div>
                   )}
                 </header>
+                </React.Fragment>
+                )}
 
               <div className="flex flex-1 overflow-hidden relative z-10">
                 <div className="flex-1 overflow-hidden relative">
-                  
+
                   {/* ЭКРАН «СЦЕНА».
                       Три колонки: список сцен (сворачивается в полоску) ·
                       рабочая область · правая панель вкладками. Что именно
@@ -8209,96 +8507,6 @@
                       const dropFrame = (id) => setConfirmAction({ title: 'Удалить кадр?', message: 'Отменить действие невозможно.',
                         onConfirm: () => { setStoryboard(storyboard.filter(f => f.id !== id)); deleteNetDoc('storyboard', id); } });
 
-                      // ЕДИНЫЙ СПИСОК ТЕХНИКИ (и такой же — света).
-                      // Плитки с чипами ушли: на площадке нужен список
-                      // «что везём и сколько», а не сетка карточек, где
-                      // цифра теряется. Строка = позиция: название можно
-                      // править прямо здесь, −/+ меняют количество в ЭТОЙ
-                      // сцене, ✕ убирает её из сцены (в каталоге остаётся).
-                      // Ниже — «весь каталог»: оттуда позицию добавляют
-                      // в сцену и оттуда же удаляют из каталога совсем.
-                      const gearPanel = (isLight) => {
-                        const field = isLight ? 'lightGear' : 'gear';
-                        const types = (isLight ? lightGearTypes : gearTypes) || (isLight ? DEFAULT_LIGHT_GEAR : DEFAULT_GEAR);
-                        const setTypes = isLight ? setLightGearTypes : setGearTypes;
-                        const coll = isLight ? 'lightGearTypes' : 'gearTypes';
-                        const catOpen = isLight ? lightCatalogOpen : gearCatalogOpen;
-                        const setCatOpen = isLight ? setLightCatalogOpen : setGearCatalogOpen;
-                        const typed = isLight ? newLightGearName : newGearName;
-                        const setTyped = isLight ? setNewLightGearName : setNewGearName;
-                        const counts = (s && s[field]) || {};
-                        const all = Object.entries(types);
-                        const mine = all.filter(([k]) => (counts[k] || 0) > 0);
-                        const rest = all.filter(([k]) => !(counts[k] > 0));
-                        const rename = (k, label) => {
-                          const item = { ...(types[k] || {}), label };
-                          setTypes({ ...types, [k]: item }); syncDoc(coll, k, item);
-                        };
-                        const addPosition = () => {
-                          const name = String(typed || '').trim();
-                          if (!name) return;
-                          const key = name.toLowerCase().replace(/\s+/g, '_');
-                          if (!types[key]) { const item = { label: name }; setTypes({ ...types, [key]: item }); syncDoc(coll, key, item); }
-                          updateSceneNested(s.id, field, key, 1);
-                          setTyped('');
-                        };
-                        const stepBtn = { width: 24, height: 24, border: '1px solid var(--border)', borderRadius: 5, color: 'var(--muted)', flexShrink: 0 };
-                        return (
-                          <div className="px-4 pb-4 pt-1">
-                            {mine.length === 0 && (
-                              <p style={{ fontSize: 12, color: 'var(--muted-2)', lineHeight: 1.6 }}>
-                                В этой сцене {isLight ? 'приборов' : 'техники'} пока нет. Впишите позицию ниже или возьмите из каталога.
-                              </p>
-                            )}
-                            {mine.map(([k, item]) => (
-                              <div key={k} className="flex items-center gap-1.5 mt-2">
-                                <input value={item.label} onChange={(e) => rename(k, e.target.value)}
-                                       className="flex-1 min-w-0 bg-transparent focus:outline-none"
-                                       style={{ fontSize: 12.5, color: 'var(--text-2)', padding: 0 }} />
-                                <button onClick={() => updateSceneNested(s.id, field, k, -1)} title="Меньше на одну"
-                                        className="flex items-center justify-center" style={stepBtn}>−</button>
-                                <span className="text-center shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', minWidth: 26 }}>×{counts[k]}</span>
-                                <button onClick={() => updateSceneNested(s.id, field, k, 1)} title="Больше на одну"
-                                        className="flex items-center justify-center" style={stepBtn}>+</button>
-                                <button onClick={() => updateSceneNested(s.id, field, k, -(counts[k] || 0))}
-                                        title="Убрать позицию из сцены — в каталоге останется"
-                                        className="flex items-center justify-center shrink-0"
-                                        style={{ width: 24, height: 24, borderRadius: 5, color: 'var(--muted-2)', fontSize: 11 }}>✕</button>
-                              </div>
-                            ))}
-                            <div className="flex gap-1.5 mt-3">
-                              <input type="text" value={typed} onChange={(e) => setTyped(e.target.value)}
-                                     onKeyDown={(e) => { if (e.key === 'Enter') addPosition(); }}
-                                     placeholder={isLight ? 'Новый прибор…' : 'Новая позиция…'}
-                                     className="glass-input flex-1 min-w-0 rounded-lg px-2.5 text-xs" style={{ minHeight: 32 }} />
-                              <button onClick={addPosition} className="shrink-0 rounded-lg px-3 text-xs font-semibold"
-                                      style={{ minHeight: 32, background: 'var(--accent)', color: 'var(--bg)' }}>+ {isLight ? 'прибор' : 'техника'}</button>
-                            </div>
-                            <button onClick={() => setCatOpen(!catOpen)} className="mt-3 cf-meta"
-                                    style={{ color: 'var(--accent)' }}>{catOpen ? 'скрыть каталог ⤡' : `весь каталог · ${rest.length} ⤢`}</button>
-                            {catOpen && (
-                              <div className="mt-2" style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
-                                {rest.length === 0 && <p className="cf-meta">Всё из каталога уже в сцене.</p>}
-                                {rest.map(([k, item]) => (
-                                  <div key={k} className="flex items-center gap-1.5 mt-1.5">
-                                    <span className="flex-1 min-w-0 truncate" style={{ fontSize: 12.5, color: 'var(--muted)' }}>{item.label}</span>
-                                    <button onClick={() => updateSceneNested(s.id, field, k, 1)} title="Добавить в эту сцену"
-                                            className="flex items-center justify-center" style={stepBtn}>+</button>
-                                    <button onClick={() => setConfirmAction({
-                                              title: isLight ? 'Удалить прибор из каталога?' : 'Удалить позицию из каталога?',
-                                              message: 'Позиция исчезнет из каталога всего проекта. В сценах, где она уже стоит, останется.',
-                                              onConfirm: () => { const up = { ...types }; delete up[k]; setTypes(up); deleteNetDoc(coll, k); } })}
-                                            title="Удалить из каталога совсем"
-                                            className="flex items-center justify-center shrink-0"
-                                            style={{ width: 24, height: 24, borderRadius: 5, color: 'var(--danger)', fontSize: 11 }}>✕</button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      };
-
                       // ЧИПЫ СВЯЗЕЙ. Один и тот же чип сцены/объекта/доски
                       // ведёт в одно и то же место откуда угодно — это и была
                       // главная боль: связи между модулями существовали
@@ -8324,6 +8532,327 @@
                         </div>
                       );
 
+
+                      // ================= ТЕЛЕФОН =================
+                      // Отдельная раскладка, а не сжатая настольная. Телефон
+                      // берут на площадку: там смотрят одним глазом, держат
+                      // одной рукой и нажимают, не целясь. Поэтому здесь нет
+                      // ни трёх колонок, ни панели сбоку, ни наведения —
+                      // один вертикальный свиток и цели от 44 точек.
+                      if (isPhone) {
+                        // --- СПИСОК СЦЕН ---
+                        if (!phoneSceneOpen) {
+                          const shiftNo = nearestShift ? shiftDates.indexOf(nearestShift) + 1 : 0;
+                          const pills = [
+                            nearestShift ? { id: 'shift', label: `Смена ${shiftNo}` } : null,
+                            { id: 'all', label: 'Все' },
+                            { id: 'todo', label: 'Не готовы' },
+                            { id: 'nat', label: 'НАТ' },
+                            { id: 'int', label: 'ИНТ' }
+                          ].filter(Boolean);
+                          const keep = (sc) => {
+                            if (phoneFilter === 'all') return true;
+                            if (phoneFilter === 'shift') return nearestShift ? sc.date === nearestShift : true;
+                            // «Не готова» — это сцена, к которой ещё нечего
+                            // показать: ни разбора, ни единого кадра.
+                            if (phoneFilter === 'todo') return !(sc.content || '').trim() && !storyboard.some(f => f.sceneId === sc.id);
+                            if (phoneFilter === 'nat') return sceneBadge(sc).startsWith('НАТ');
+                            if (phoneFilter === 'int') return sceneBadge(sc).startsWith('ИНТ');
+                            return true;
+                          };
+                          const shown = sortedScenes.filter(keep);
+                          // Секции по объектам: на площадке думают местами,
+                          // а не номерами — «сегодня мы на аэродроме».
+                          const groups = [];
+                          shown.forEach(sc => {
+                            const l = locations.find(x => (x.sceneIds || []).includes(sc.id));
+                            const key = l ? l.name : 'Без объекта';
+                            const g = groups.find(x => x.key === key);
+                            if (g) g.items.push(sc); else groups.push({ key, items: [sc] });
+                          });
+                          return (
+                            <div className="flex flex-col w-full min-w-0">
+                              <div className="flex gap-1.5 px-4 pb-2.5 overflow-x-auto hide-scrollbar shrink-0">
+                                {pills.map(p => (
+                                  <button key={p.id} onClick={() => setPhoneFilter(p.id)}
+                                          className={`cf-pill ${phoneFilter === p.id ? 'on' : ''}`}>{p.label}</button>
+                                ))}
+                              </div>
+                              <div className="flex-1 min-h-0 overflow-y-auto">
+                                {shown.length === 0 && (
+                                  <p className="px-4 py-6 text-center" style={{ fontSize: 13, color: 'var(--muted-2)', lineHeight: 1.7 }}>
+                                    По этому фильтру сцен нет.<br />Нажмите «Все», чтобы увидеть весь список.
+                                  </p>
+                                )}
+                                {groups.map(g => (
+                                  <React.Fragment key={g.key}>
+                                    <div className="px-4 pt-2.5 pb-1 cf-meta" style={{ letterSpacing: '.1em', textTransform: 'uppercase' }}>{g.key}</div>
+                                    {g.items.map(sc => {
+                                      const on = sc.id === (s && s.id);
+                                      const cover = references.find(r => r.sceneId === sc.id && r.url)
+                                                 || storyboard.find(f => f.sceneId === sc.id && f.image);
+                                      const cnt = storyboard.filter(f => f.sceneId === sc.id).length;
+                                      const l = locations.find(x => (x.sceneIds || []).includes(sc.id));
+                                      const badge = sceneBadge(sc);
+                                      return (
+                                        <button key={sc.id}
+                                                onClick={() => { setActiveSceneId(sc.id); setPhoneSceneOpen(true); }}
+                                                className="w-full flex items-center gap-2.5 text-left"
+                                                style={{ padding: '11px 16px', minHeight: 52,
+                                                         borderBottom: '1px solid var(--line)',
+                                                         background: on ? 'var(--card)' : 'transparent',
+                                                         borderLeft: on ? '3px solid var(--accent)' : '3px solid transparent' }}>
+                                          <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, width: 36, fontWeight: on ? 600 : 400, color: on ? 'var(--accent)' : 'var(--muted)' }}>#{sc.number}</span>
+                                          {cover && <img src={cover.url || cover.image} draggable="false" className="shrink-0" style={{ width: 52, height: 34, objectFit: 'cover', borderRadius: 5 }} />}
+                                          <span className="flex-1 min-w-0">
+                                            <span className="block truncate" style={{ fontSize: 14, fontWeight: on ? 600 : 400, color: 'var(--text)' }}>{sc.title || 'Без названия'}</span>
+                                            {on && (cnt || l) && (
+                                              <span className="block truncate cf-meta" style={{ marginTop: 2 }}>
+                                                {cnt ? `${cnt} кадр.` : ''}{cnt && l ? ' · ' : ''}{l ? l.name : ''}
+                                              </span>
+                                            )}
+                                          </span>
+                                          {badge && <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: on ? 'var(--warn)' : 'var(--muted-2)', border: '1px solid var(--line)', borderRadius: 4, padding: '2px 5px' }}>{badge}</span>}
+                                        </button>
+                                      );
+                                    })}
+                                  </React.Fragment>
+                                ))}
+                                <div className="p-4">
+                                  <button onClick={() => { const num = nextSceneNumber(); const newS = { id: `sc-${Date.now()}`, number: num, title: 'НОВАЯ СЦЕНА', content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); setActiveSceneId(newS.id); setPhoneSceneOpen(true); }}
+                                          className="cf-edit-only w-full text-center rounded-lg"
+                                          style={{ border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 13, minHeight: 46 }}>+ сцена</button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        if (!s) {
+                          return (
+                            <main className="flex-1 min-w-0 flex items-center justify-center p-8 text-center">
+                              <p style={{ fontSize: 13, color: 'var(--muted-2)', lineHeight: 1.7 }}>Сцена не выбрана.</p>
+                            </main>
+                          );
+                        }
+
+                        // --- РЕЖИМ «СЪЁМКА» НА ТЕЛЕФОНЕ ---
+                        // Главный экран площадки. Текущий кадр развёрнут
+                        // и с большой кнопкой на всю ширину; снятое гаснет
+                        // и зачёркивается; очередь приглушена. Смотреть
+                        // на это будут между дублями, одним взглядом.
+                        if (sceneMode === 'shoot') {
+                          const doneCount = frames.filter(f => f.shot).length;
+                          const current = frames.find(f => !f.shot);
+                          return (
+                            <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 20px' }}>
+                              <div className="flex items-baseline gap-2.5 flex-wrap pb-1">
+                                <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.02em' }}>Съёмка</span>
+                                <span className="cf-meta">СЦ {s.number}{s.date ? ' · ' + formatDateDisplay(s.date) : ''}</span>
+                                {locCoords && s.date && (() => {
+                                  const t = sunTimes(locCoords.lat, locCoords.lon, s.date);
+                                  if (!t || t.sun.polar || !t.sun.set) return null;
+                                  return <span className="ml-auto" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--warn)' }}>свет до {hhmm(t.sun.set)}</span>;
+                                })()}
+                              </div>
+                              <div className="cf-meta pb-2">снято {doneCount} из {frames.length}</div>
+                              <div className="grid gap-2">
+                                {frames.length === 0 && (
+                                  <p style={{ fontSize: 13, color: 'var(--muted-2)', lineHeight: 1.7 }}>
+                                    В сцене нет кадров. Заведите их в режиме «Творч» — здесь они станут чек-листом смены.
+                                  </p>
+                                )}
+                                {frames.map(f => {
+                                  const isCurrent = current && f.id === current.id;
+                                  if (isCurrent) return (
+                                    <div key={f.id} style={{ ...cardBox, padding: 12, borderLeft: '3px solid var(--accent)' }}>
+                                      <div className="flex gap-2 items-baseline flex-wrap">
+                                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{f.frameNum} · сейчас</span>
+                                        {f.lens && <span className="cf-meta">{f.lens}</span>}
+                                      </div>
+                                      <div style={{ fontSize: 15, color: 'var(--text)', marginTop: 5, lineHeight: 1.4 }}>{f.description || 'без описания'}</div>
+                                      {gearLine(s.lightGear, lightGearTypes) && (
+                                        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>свет: {gearLine(s.lightGear, lightGearTypes)}</div>
+                                      )}
+                                      {/* Кнопка во всю ширину: на площадке
+                                          в перчатке целятся плохо, а промах
+                                          по «снято» стоит дубля. */}
+                                      <button onClick={() => patchFrame(f.id, { shot: true })}
+                                              className="cf-edit-only w-full rounded-lg mt-2.5"
+                                              style={{ minHeight: 46, background: 'var(--accent)', color: 'var(--bg)', fontSize: 14, fontWeight: 700 }}>
+                                        Снят ✓
+                                      </button>
+                                    </div>
+                                  );
+                                  return (
+                                    <div key={f.id} className="flex items-center gap-2.5"
+                                         style={{ ...cardBox, padding: 10, opacity: f.shot ? 1 : .8,
+                                                  borderLeft: `3px solid ${f.shot ? 'var(--ok)' : 'var(--border)'}` }}>
+                                      <div className="shrink-0" style={{ width: 110, opacity: f.shot ? .5 : 1 }}>{frameThumb(f)}</div>
+                                      <div className="flex-1 min-w-0">
+                                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: f.shot ? 'var(--ok)' : 'var(--text-2)' }}>{f.frameNum}{f.shot ? ' ✓' : ''}</div>
+                                        <div className="truncate" style={{ fontSize: 12, marginTop: 2, color: f.shot ? 'var(--muted-2)' : 'var(--muted)', textDecoration: f.shot ? 'line-through' : 'none' }}>{f.description || 'без описания'}</div>
+                                      </div>
+                                      {f.shot && (
+                                        <button onClick={() => patchFrame(f.id, { shot: false })} title="Снять отметку"
+                                                className="cf-edit-only shrink-0 flex items-center justify-center"
+                                                style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--ok)', color: 'var(--bg)', fontSize: 18, fontWeight: 700 }}>✓</button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </main>
+                          );
+                        }
+
+                        // --- РЕЖИМ «ПРЕЗЕНТАЦИЯ» НА ТЕЛЕФОНЕ ---
+                        if (sceneMode === 'present') {
+                          const shots = frames.filter(f => f.image);
+                          return (
+                            <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 24px' }}>
+                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', letterSpacing: '.12em' }}>СЦЕНА {s.number}</div>
+                              <h1 style={{ fontSize: 24, margin: '4px 0 0' }}>{s.title || 'Без названия'}</h1>
+                              {(s.content || '').trim() && (
+                                <p style={{ fontSize: 14.5, lineHeight: 1.6, color: 'var(--text-2)', margin: '10px 0 0', whiteSpace: 'pre-line' }}>{s.content}</p>
+                              )}
+                              {(shots.length ? shots : sceneRefs).map((f, i) => (
+                                <img key={f.id} src={f.image || f.url} draggable="false"
+                                     style={{ width: '100%', borderRadius: 10, display: 'block', marginTop: i === 0 ? 14 : 10,
+                                              aspectRatio: shots.length ? SHOT_RATIO : 'auto', objectFit: shots.length ? 'cover' : 'contain' }} />
+                              ))}
+                              <div className="cf-meta" style={{ marginTop: 14 }}>
+                                {frames.length} кадр. · {sceneRefs.length} референс.{loc ? ' · ' + loc.name : ''}
+                              </div>
+                            </main>
+                          );
+                        }
+
+                        // --- РЕЖИМЫ «ТВОРЧ» И «СКАУТИНГ» НА ТЕЛЕФОНЕ ---
+                        // Один вертикальный свиток. Всё, что на планшете
+                        // стоит рядом, здесь идёт друг за другом, а ленты
+                        // уходят до самых краёв экрана: обрезанная по полям
+                        // лента читается как «здесь всё», и вбок никто
+                        // не листает.
+                        const scoutPhotos = loc ? references.filter(r => r.locationId === loc.id) : [];
+                        const strip = sceneMode === 'scout' ? scoutPhotos : sceneRefs;
+                        const stripLabel = sceneMode === 'scout' ? 'фото со скаутинга' : 'референсы';
+                        return (
+                          <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 24px' }}>
+                            <div className="flex items-baseline gap-2">
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>СЦ {s.number}</span>
+                              <span className="cf-meta">{sceneBadge(s) || '—'}{s.date ? ' · ' + formatDateDisplay(s.date) : ''}</span>
+                            </div>
+                            <input type="text" value={s.title} onChange={(e) => updateSceneTitle(s.id, e.target.value)}
+                                   className="w-full bg-transparent focus:outline-none"
+                                   style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)', marginTop: 3 }}
+                                   placeholder="Название сцены" />
+
+                            <div className="flex gap-2 mt-3 overflow-x-auto cf-bleed" style={{ paddingBottom: 2 }}>
+                              {strip.map(r => (
+                                <img key={r.id} src={r.url} draggable="false"
+                                     onClick={() => setLightboxData({ scope: strip.map(x => x.id), scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
+                                     style={{ width: 230, height: 130, objectFit: 'cover', borderRadius: 9, flexShrink: 0 }} />
+                              ))}
+                              <label className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1"
+                                     style={{ width: 130, height: 130, border: '1px dashed var(--border)', borderRadius: 9, color: 'var(--muted-2)', fontSize: 12, boxSizing: 'border-box' }}>
+                                <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
+                                {sceneMode === 'scout' ? 'фото' : 'картинки'}
+                                <input type="file" multiple accept="image/*"
+                                       {...(sceneMode === 'scout' ? { capture: 'environment' } : {})}
+                                       className="hidden"
+                                       onChange={(e) => handleMultiFileUpload(e.target.files, sceneMode === 'scout' ? null : s.id, null, sceneMode === 'scout' && loc ? loc.id : null)} />
+                              </label>
+                            </div>
+                            <div className="cf-meta" style={{ marginTop: 6 }}>
+                              {stripLabel} · {strip.length}
+                              {sceneMode !== 'scout' && (
+                                <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
+                                        className="cf-edit-only" style={{ color: 'var(--accent)', marginLeft: 6 }}>+ из галереи</button>
+                              )}
+                            </div>
+
+                            {/* Текст сцены свёрнут: развёрнутый он занимает
+                                весь экран, и до раскадровки не долистать. */}
+                            <div style={{ ...cardBox, padding: '13px 14px', marginTop: 14 }}>
+                              <div className="flex items-baseline">
+                                <span style={{ fontSize: 10.5, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Текст сцены</span>
+                                <span className="ml-auto cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>
+                              </div>
+                              {phoneTextOpen ? (
+                                <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
+                                          className="w-full bg-transparent focus:outline-none"
+                                          style={{ fontSize: 14, lineHeight: 1.6, color: '#e3e0d7', marginTop: 8, resize: 'vertical', minHeight: 220, border: 'none', padding: 0 }}
+                                          placeholder="Текст сцены из сценария." />
+                              ) : (
+                                <p style={{ fontSize: 14, lineHeight: 1.6, color: '#e3e0d7', margin: '8px 0 0', whiteSpace: 'pre-line',
+                                            display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                  {(s.script || '').trim() || 'Текст сцены из сценария. Загрузить весь сценарий разом — «Ещё» → «Агент КПП».'}
+                                </p>
+                              )}
+                              <button onClick={() => setPhoneTextOpen(v => !v)}
+                                      style={{ fontSize: 12.5, color: 'var(--accent)', marginTop: 6, minHeight: 32 }}>
+                                {phoneTextOpen ? 'свернуть ↑' : 'развернуть →'}
+                              </button>
+                            </div>
+
+                            <div className="flex items-center mt-4">
+                              <span style={{ fontSize: 10.5, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Раскадровка · {frames.length}</span>
+                              <button onClick={addFrame} className="cf-edit-only ml-auto" style={{ fontSize: 12.5, color: 'var(--accent)', minHeight: 32 }}>+ кадр</button>
+                            </div>
+                            <div className="flex gap-2 mt-2 overflow-x-auto cf-bleed" style={{ paddingBottom: 4 }}>
+                              {frames.map(f => (
+                                <div key={f.id} className="shrink-0" style={{ width: 210, ...cardBox, padding: 7 }}>
+                                  {f.image ? (
+                                    <img src={f.image} draggable="false" style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                                  ) : (
+                                    <button onClick={() => setDrawingFrameId(f.id)} className="cf-edit-only flex items-center justify-center w-full"
+                                            style={{ aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 6, color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase', boxSizing: 'border-box' }}>скетч</button>
+                                  )}
+                                  <div className="flex justify-between gap-2" style={{ marginTop: 6 }}>
+                                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text)' }}>{f.frameNum}</span>
+                                    <span className="truncate" style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--muted-2)' }}>{f.lens || ''}</span>
+                                  </div>
+                                  <input type="text" value={f.description || ''} onChange={(e) => patchFrame(f.id, { description: e.target.value })}
+                                         placeholder="что в кадре" className="w-full bg-transparent focus:outline-none"
+                                         style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3 }} />
+                                </div>
+                              ))}
+                              <button onClick={addFrame} className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1"
+                                      style={{ width: 130, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', fontSize: 12, boxSizing: 'border-box' }}>
+                                <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>кадр
+                              </button>
+                            </div>
+
+                            {/* ЧЕТЫРЕ ПЛИТКИ вместо панели-вкладок: каждая
+                                открывает шторку снизу. Панель сбоку на
+                                телефоне съела бы весь экран. */}
+                            <div className="grid gap-2 mt-3.5" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                              <button onClick={() => setPhoneSheet('gear')} className="cf-tile">
+                                <span style={{ display: 'flex', color: 'var(--accent)' }}><Icons.Video /></span>
+                                Техника{Object.keys(s.gear || {}).length ? ` · ${Object.keys(s.gear).length}` : ''}
+                              </button>
+                              <button onClick={() => setPhoneSheet('light')} className="cf-tile">
+                                <span style={{ display: 'flex', color: 'var(--warn)' }}><Icons.Lightbulb /></span>
+                                Свет{Object.keys(s.lightGear || {}).length ? ` · ${Object.keys(s.lightGear).length}` : ''}
+                              </button>
+                              <button onClick={() => setPhoneSheet('sun')} className="cf-tile">
+                                <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Place /></span>
+                                <span className="truncate">{loc ? loc.name : 'Объект'}</span>
+                              </button>
+                              <button onClick={() => setPhoneSheet('expl')} className="cf-tile">
+                                <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Pen /></span>
+                                Экспликация
+                              </button>
+                            </div>
+
+                            <button onClick={() => setSceneToBoard(s.id)} className="cf-edit-only w-full rounded-lg mt-2.5"
+                                    style={{ minHeight: 46, border: '1px solid var(--border)', color: 'var(--text-2)', fontSize: 13 }}>
+                              Собрать сцену на доске
+                            </button>
+                          </main>
+                        );
+                      }
                       // ---------- ЛЕВАЯ КОЛОНКА: СПИСОК СЦЕН ----------
                       // Одна строка на сцену: номер · превью · название ·
                       // бейдж. Раньше строка была двухэтажной и КАПСОМ —
@@ -8899,10 +9428,10 @@
                                 </div>
                               )}
 
-                              {scenePanel === 'gear' && gearPanel(false)}
+                              {scenePanel === 'gear' && gearPanel(s, false)}
                               {scenePanel === 'light' && (
                                 <div>
-                                  {gearPanel(true)}
+                                  {gearPanel(s, true)}
                                   <div className="px-4 pb-4">
                                     <span style={eyebrow}>Схема света</span>
                                     <div className="flex gap-2 mt-2">
@@ -11387,7 +11916,12 @@
 
                 {/* ЧАТ КОМАНДЫ */}
                 {showChat && <div className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-sm" onClick={() => setShowChat(false)}></div>}
-                <div className={`cf-chat-drawer fixed inset-y-0 right-0 z-50 md:relative md:z-10 glass-panel flex flex-col h-full transition-transform duration-300 ease-out md:shadow-none md:border-l border-white/10 ${showChat ? 'translate-x-0 w-[85%] sm:w-80' : 'translate-x-full md:translate-x-0 w-0 border-none'}`}>
+                {/* overflow-hidden у ЗАКРЫТОГО чата обязателен: ширина
+                    становится нулевой, но внутренние поля и крестик,
+                    прижатый к правому краю, всё равно занимают место —
+                    и краешек крестика торчал на экране телефона рядом
+                    с шапкой, притворяясь чужой кнопкой. */}
+                <div className={`cf-chat-drawer fixed inset-y-0 right-0 z-50 md:relative md:z-10 glass-panel flex flex-col h-full transition-transform duration-300 ease-out md:shadow-none md:border-l border-white/10 ${showChat ? 'translate-x-0 w-[85%] sm:w-80' : 'translate-x-full md:translate-x-0 w-0 border-none overflow-hidden'}`}>
                   
                   <div className="p-5 border-b border-white/10 space-y-4 bg-white/5 relative">
                     <button onClick={() => setShowChat(false)} className="md:hidden absolute top-4 right-4 w-8 h-8 flex items-center justify-center glass-panel rounded-full text-zinc-400 font-bold">✕</button>
@@ -11435,7 +11969,109 @@
                   </div>
                 </div>
               </div>
+
+              {/* ТАБ-БАР ТЕЛЕФОНА. Пять вкладок — предел, за которым подписи
+                  перестают читаться: четыре главных модуля площадки и «Ещё»
+                  для остального. Стоит в потоке, а не поверх содержимого:
+                  плавающая панель на телефоне закрывает последнюю строку
+                  списка, и до неё не долистать. */}
+              {isPhone && (
+                <nav className="cf-tabbar z-40">
+                  {[
+                    { id: 'notion', label: 'Сцены', icon: <Icons.Scene /> },
+                    { id: 'gallery', label: 'Галерея', icon: <Icons.Gallery /> },
+                    { id: 'locations', label: 'Объекты', icon: <Icons.Place /> }
+                  ].map(t => (
+                    <button key={t.id} onClick={() => {
+                              // Нажатие по вкладке, на которой уже стоишь,
+                              // возвращает к списку — так работает любой
+                              // телефон, и объяснять это не нужно.
+                              if (currentView === t.id && t.id === 'notion') setPhoneSceneOpen(false);
+                              setCurrentView(t.id); setShowChat(false); setPhoneSheet(null);
+                            }}
+                            className={`cf-tab ${currentView === t.id && !showChat ? 'on' : ''}`}>
+                      {t.icon}<span>{t.label}</span>
+                    </button>
+                  ))}
+                  <button onClick={toggleChat} className={`cf-tab relative cf-edit-only ${showChat ? 'on' : ''}`}>
+                    <Icons.Chat /><span>Чат</span>
+                    {unreadCount > 0 && (
+                      <span className="absolute flex items-center justify-center font-bold rounded-full"
+                            style={{ top: 0, right: '24%', minWidth: 14, height: 14, padding: '0 3px', fontSize: 9, background: 'var(--accent)', color: 'var(--bg)' }}>{unreadCount}</span>
+                    )}
+                  </button>
+                  <button onClick={() => setPhoneSheet(phoneSheet === 'more' ? null : 'more')}
+                          className={`cf-tab ${phoneSheet === 'more' ? 'on' : ''}`}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                    <span>Ещё</span>
+                  </button>
+                </nav>
+              )}
               </div>
+
+              {/* ШТОРКА СНИЗУ — вместо правой панели-вкладок и меню «···».
+                  На телефоне панель сбоку съела бы весь экран, а выпадающее
+                  меню у верхнего края не достаётся большим пальцем. */}
+              {isPhone && phoneSheet && (
+                <React.Fragment>
+                  <div className="fixed inset-0 z-[255]" style={{ background: 'rgba(0,0,0,.5)' }} onClick={() => setPhoneSheet(null)} />
+                  <div className="cf-sheet">
+                    <div className="cf-sheet-grip" />
+                    <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
+                      <span style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>
+                        {phoneSheet === 'more' ? 'Ещё' : phoneSheet === 'gear' ? 'Камера и техника'
+                          : phoneSheet === 'light' ? 'Свет' : phoneSheet === 'sun' ? 'Объект и солнце' : 'Экспликация и замысел'}
+                      </span>
+                      <button onClick={() => setPhoneSheet(null)} className="ml-auto flex items-center justify-center"
+                              style={{ width: 44, height: 44, border: '1px solid var(--border)', borderRadius: 10, color: 'var(--muted-2)', fontSize: 14 }}>✕</button>
+                    </div>
+                    {phoneSheet === 'more' && (
+                      <div className="px-3 pb-4">
+                        {navItems.filter(t => !['notion', 'gallery', 'locations'].includes(t.id)).map(t => (
+                          <button key={t.id} onClick={() => { setCurrentView(t.id); setPhoneSheet(null); setShowChat(false); }}
+                                  className="w-full flex items-center gap-3 px-3 rounded-lg transition-colors"
+                                  style={{ minHeight: 48, fontSize: 14, color: currentView === t.id ? 'var(--accent)' : 'var(--text-2)' }}>
+                            {t.icon}{t.label}
+                          </button>
+                        ))}
+                        {!READ_ONLY && (
+                          <React.Fragment>
+                            <div style={{ borderTop: '1px solid var(--line)', margin: '6px 3px' }} />
+                            {currentView === 'notion' && (
+                              <React.Fragment>
+                                <span className="cf-meta block px-3 pt-1 pb-1.5">Режим экрана сцены</span>
+                                {SCENE_MODES.map(m => (
+                                  <button key={m.id} onClick={() => { setSceneMode(m.id); setPhoneSheet(null); }}
+                                          className="w-full flex items-center gap-3 px-3 rounded-lg"
+                                          style={{ minHeight: 44, fontSize: 14, color: sceneMode === m.id ? 'var(--accent)' : 'var(--text-2)' }}>
+                                    {sceneMode === m.id ? '●' : '○'} {m.label}
+                                  </button>
+                                ))}
+                                <div style={{ borderTop: '1px solid var(--line)', margin: '6px 3px' }} />
+                              </React.Fragment>
+                            )}
+                            <button onClick={() => { setPhoneSheet(null); setShowProjectModal(true); }}
+                                    className="w-full flex items-center gap-3 px-3 rounded-lg" style={{ minHeight: 48, fontSize: 14, color: 'var(--text-2)' }}>
+                              <Icons.Folder /> Проект
+                            </button>
+                            <button onClick={() => { setPhoneSheet(null); setShowShareModal(true); }}
+                                    className="w-full flex items-center gap-3 px-3 rounded-lg" style={{ minHeight: 48, fontSize: 14, color: 'var(--text-2)' }}>
+                              <Icons.Link /> Доступ
+                            </button>
+                            <button onClick={() => { setPhoneSheet(null); setShowAgentModal(true); }}
+                                    className="w-full flex items-center gap-3 px-3 rounded-lg" style={{ minHeight: 48, fontSize: 14, color: 'var(--text-2)' }}>
+                              <Icons.Bot /> Агент КПП
+                            </button>
+                          </React.Fragment>
+                        )}
+                      </div>
+                    )}
+                    {/* Содержимое остальных шторок собирает экран сцены —
+                        там же, где живут списки техники и света. */}
+                    {phoneSheet !== 'more' && phoneSheetBody}
+                  </div>
+                </React.Fragment>
+              )}
 
               {/* РУКОПИСЬ С ДОСКИ, РАСШИФРОВАННАЯ В ТЕКСТ.
                   Показываем ДО того, как положить в гайд: почерк есть почерк,
