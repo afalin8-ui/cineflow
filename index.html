@@ -1252,8 +1252,26 @@
         const blobToDataUrl = (blob) => new Promise((res, rej) => {
           const r = new FileReader(); r.onerror = rej; r.onloadend = () => res(r.result); r.readAsDataURL(blob);
         });
-        const dropboxThumb = async (cfg, path) => {
-          const token = await dropboxAccess(cfg);
+        // Ширина картинки прямо из заголовка data:-строки. Декодировать
+        // всю фотографию ради двух чисел незачем, а из base64 хватает
+        // первых полутора килобайт: наши превью пересобраны канвой, EXIF
+        // в них нет, и SOF стоит в самом начале.
+        const dataUrlJpegSize = (dataUrl) => {
+          try {
+            const str = String(dataUrl || '');
+            if (!/^data:image\/jpe?g/i.test(str)) return null;
+            const i = str.indexOf(',');
+            if (i < 0) return null;
+            let head = str.slice(i + 1, i + 1 + 2048);
+            head = head.slice(0, head.length - head.length % 4);
+            const bin = atob(head);
+            const buf = new Uint8Array(bin.length);
+            for (let k = 0; k < bin.length; k++) buf[k] = bin.charCodeAt(k);
+            return jpegSizeOf(buf.buffer);
+          } catch (e) { return null; }
+        };
+        const dropboxThumb = async (cfg, path, ready) => {
+          const token = ready || await dropboxAccess(cfg);
           const res = await cloudFetch('https://content.dropboxapi.com/2/files/get_thumbnail_v2', {
             method: 'POST',
             headers: { Authorization: 'Bearer ' + token,
@@ -3422,43 +3440,86 @@
           // Выкачать под печать копии покрупнее. Не ответило облако, нет
           // связи, нет ключа — молча остаёмся на превью: отчёт должен
           // собираться всегда, пусть и мягче.
+          //
+          // Три вещи, на которых держится скорость, и все три ничего не
+          // отнимают у качества:
+          //   1. тянем ПАРАЛЛЕЛЬНО. Время уходит не на байты, а на череду
+          //      обращений к облаку: по одной шесть десятков фотографий
+          //      ждут своей очереди по кругу;
+          //   2. НЕ тянем то, чьё превью и так крупное (см. PRINT_MIN_PX);
+          //   3. ПОМНИМ уже вытянутое до перезагрузки: второй экспорт того
+          //      же объекта не должен качать то же самое заново.
+          const PRINT_PARALLEL = 5;
+          // Превью шире этого печатать уже не мешает: 1280 px на пол-листа
+          // A4 — это ~370 dpi, лучше, чем нужно печати. Новые фотографии
+          // кладутся именно такими, и для них облако не нужно вовсе.
+          const PRINT_MIN_PX = 1100;
+          const printCache = useRef(new Map());
           const preparePrintPhotos = async (refs) => {
             const cfg = loadCloudCfg();
-            const need = refs.filter(r => r.full || (r.cloud || {}).path);
-            if (!cfg.provider || !need.length) return {};
-            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-              showToast('Связи нет — отчёт соберу из превью'); return {};
-            }
             const out = {};
-            let bad = 0, streak = 0;
-            for (let i = 0; i < need.length; i++) {
-              const r = need[i];
-              // Облако не отвечает подряд — дальше не спрашиваем. У каждой
-              // попытки свои повторы с паузой, и на шести десятках фотографий
-              // упрямство стоило бы минут ожидания там, где ответ уже ясен.
-              if (streak >= 3) { bad += need.length - i; break; }
-              showToast(`Фотографии из облака: ${i + 1} из ${need.length}…`);
+            const need = [];
+            refs.forEach(r => {
+              const had = printCache.current.get(r.id);
+              if (had) { out[r.id] = had; return; }
+              if (!r.full && !(r.cloud || {}).path) return;
+              const sz = dataUrlJpegSize(r.url);
+              if (sz && Math.max(sz.w, sz.h) >= PRINT_MIN_PX) return;
+              need.push(r);
+            });
+            if (!cfg.provider || !need.length) return out;
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+              showToast('Связи нет — отчёт соберу из превью'); return out;
+            }
+            // Ключ Dropbox спрашиваем ОДИН раз: пять одновременных запросов
+            // за ним подняли бы пять обновлений ключа сразу.
+            let token = '';
+            if (cfg.provider === 'dropbox') {
+              try { token = await dropboxAccess(cfg); } catch (e) { token = ''; }
+            }
+            const keep = (id, url) => {
+              printCache.current.set(id, url);
+              // Кэш не должен расти без края: держим последние две сотни.
+              if (printCache.current.size > 200) {
+                printCache.current.delete(printCache.current.keys().next().value);
+              }
+              out[id] = url;
+            };
+            const one = async (r) => {
               try {
                 const cl = r.cloud || {};
-                let blob = null;
                 // У Dropbox есть готовая копия нужного размера — это дёшево.
-                if (cl.provider === 'dropbox' && cl.path && cfg.provider === 'dropbox') {
-                  blob = await dropboxThumb(cfg, cl.path);
+                if (cl.provider === 'dropbox' && cl.path && token) {
+                  const blob = await dropboxThumb(cfg, cl.path, token);
+                  if (blob) { keep(r.id, await blobToDataUrl(blob)); return true; }
                 }
-                if (blob) { out[r.id] = await blobToDataUrl(blob); streak = 0; continue; }
                 // У остальных облаков готовой копии не спросишь — тянем файл
                 // и уменьшаем у себя. Дороже по трафику, зато работает везде.
                 const direct = await cloudDirectUrl(r);
-                if (!direct || direct === r.url) { bad++; streak++; continue; }
+                if (!direct || direct === r.url) return false;
                 const res = await fetch(direct);
-                if (!res.ok) { bad++; streak++; continue; }
+                if (!res.ok) return false;
                 const raw = await blobToDataUrl(await res.blob());
-                out[r.id] = await new Promise(done => compressImage(raw, PRINT_PX, PRINT_PX, done, 0.85));
-                streak = 0;
-              } catch (e) { console.warn('Печать: копия из облака не пришла', e); bad++; streak++; }
-            }
+                keep(r.id, await new Promise(done => compressImage(raw, PRINT_PX, PRINT_PX, done, 0.85)));
+                return true;
+              } catch (e) { console.warn('Печать: копия из облака не пришла', e); return false; }
+            };
+            let done = 0, bad = 0, streak = 0, next = 0;
+            const worker = async () => {
+              while (next < need.length) {
+                // Облако не отвечает подряд — дальше не спрашиваем. У каждой
+                // попытки свои повторы с паузой, и на шести десятках
+                // фотографий упрямство стоило бы минут ожидания там, где
+                // ответ уже ясен.
+                if (streak >= PRINT_PARALLEL) { bad += need.length - next; next = need.length; break; }
+                const r = need[next++];
+                if (await one(r)) streak = 0; else { bad++; streak++; }
+                showToast(`Фотографии из облака: ${++done} из ${need.length}…`);
+              }
+            };
+            await Promise.all(Array.from({ length: Math.min(PRINT_PARALLEL, need.length) }, worker));
             if (bad) showToast(`Облако отдало ${need.length - bad} из ${need.length} — остальные из превью`);
-            else if (need.length) showToast(`Готово: ${need.length} фото из облака`);
+            else showToast(`Готово: ${need.length} фото из облака`);
             return out;
           };
 
