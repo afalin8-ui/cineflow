@@ -3414,7 +3414,7 @@
                   <p style={{fontSize: '9pt', color: '#777', margin: '0 0 3pt'}}>Смены у сцен нет — солнце на сегодня.</p>
                 )}
                 {row('Схема света', sch ? sch.title : '')}
-                {l.description && <p style={{fontSize: '11pt', margin: '6pt 0 8pt', whiteSpace: 'pre-wrap', lineHeight: 1.5}}>{l.description}</p>}
+                {l.description && <p style={{fontSize: '11pt', margin: '6pt 0 8pt', whiteSpace: 'pre-wrap', lineHeight: 1.5}}><b>Комментарий:</b> {l.description}</p>}
                 {notes.length > 0 && (
                   <div style={{margin: '6pt 0 8pt'}}>
                     <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Заметки с выезда:</b></p>
@@ -10457,10 +10457,19 @@
                                          placeholder="генератор · ближайшая сеть в 2 км"
                                          className="flex-1 min-w-0 bg-transparent focus:outline-none" style={{ fontSize: 12.5, color: 'var(--text-2)' }} />
                                 </div>
-                                <textarea value={l.description || ''} onChange={(e) => updateLocation(l.id, 'description', e.target.value)}
-                                          placeholder="строчка-комментарий: грунтовка до обрыва, техника только до шлагбаума"
-                                          className="w-full bg-transparent focus:outline-none resize-none mt-1.5"
-                                          style={{ fontSize: 11.5, color: 'var(--muted-2)', fontStyle: 'italic', lineHeight: 1.5, minHeight: 34 }} />
+                                {/* Была одна длинная подсказка серым, да ещё
+                                    с двоеточием внутри («строчка-комментарий:
+                                    грунтовка до обрыва…»). Она читалась как УЖЕ
+                                    заполненное поле: непонятно, это чей-то текст
+                                    или подсказка, и надо ли её стирать. Теперь
+                                    как у «Питания» — слева подпись, справа
+                                    пустое поле, и ничего стирать не надо. */}
+                                <div className="flex gap-2 items-baseline mt-2">
+                                  <span className="shrink-0" style={{ fontSize: 12.5, color: 'var(--muted-2)', width: 88 }}>Комментарий</span>
+                                  <textarea value={l.description || ''} onChange={(e) => updateLocation(l.id, 'description', e.target.value)}
+                                            className="flex-1 min-w-0 bg-transparent focus:outline-none resize-none"
+                                            style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5, minHeight: 34 }} />
+                                </div>
 
                                 {lightSchemes.length > 0 && (
                                   <div className="flex gap-2 mt-3">
