@@ -398,6 +398,13 @@
             #print-area, #print-area * { visibility: visible !important; }
             #print-area img { max-width: 100%; }
             .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
+            /* Объект НЕЛЬЗЯ держать на одной странице: у него бывает шесть
+               десятков фотографий, и «не разрывать» на блоке выше страницы
+               означает, что лишнее просто пропадает — отчёт уходит обрезанным
+               и на глаз это заметно не сразу. Разрывать нельзя только сами
+               карточки фотографий, отсюда .print-keep */
+            .print-loc { border-bottom: 1px solid #ccc; padding: 12px 0; }
+            .print-keep { page-break-inside: avoid; }
         }
     </style>
 </head>
@@ -3305,6 +3312,13 @@
                    color: #111; background: #fff; margin: 0; padding: 18px; }
             img { max-width: 100%; }
             .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
+            /* Объект НЕЛЬЗЯ держать на одной странице: у него бывает шесть
+               десятков фотографий, и «не разрывать» на блоке выше страницы
+               означает, что лишнее просто пропадает — отчёт уходит обрезанным
+               и на глаз это заметно не сразу. Разрывать нельзя только сами
+               карточки фотографий, отсюда .print-keep */
+            .print-loc { border-bottom: 1px solid #ccc; padding: 12px 0; }
+            .print-keep { page-break-inside: avoid; }
             .cf-hint { background: #fff4e5; border: 1px solid #f0c992; color: #6b4a12;
                        border-radius: 8px; padding: 10px 12px; margin: 0 0 16px;
                        font-size: 13px; line-height: 1.5; }
@@ -3359,6 +3373,68 @@
               try { printWin.current = window.open('', '_blank'); } catch (e) { printWin.current = null; }
             }
             setPrintMode(mode); setPrintRequested(true);
+          };
+
+          // ОБЪЕКТ НА ПЕЧАТЬ — ОДИН блок и для отчёта по всем объектам,
+          // и для выгрузки одного. Две вёрстки разъехались бы при первой же
+          // правке, а заметил бы это тот, кому отчёт уже уехал.
+          // solo — выгрузка одного объекта: заголовок даёт страница, а
+          // фотографии идут крупнее, ради них её и открывают.
+          const locationPrintBlock = (l, solo) => {
+            const photos = locationPhotos(l.id);
+            const linked = sortedScenes.filter(sc => (l.sceneIds || []).includes(sc.id));
+            const notes = stickies.filter(st => st.locationId === l.id && (st.text || '').trim());
+            const sch = lightSchemes.find(x => x.id === l.lightSchemeId);
+            const c = parseCoords(l.coords);
+            // Дни смены, а если их нет — сегодняшний: на скауте солнце нужно
+            // именно сейчас, и пустая строка вместо него бесполезна.
+            const dates = [...new Set(linked.filter(sc => sc.date).map(sc => sc.date))].sort();
+            const days = c ? (dates.length ? dates : [new Date().toISOString().slice(0, 10)]) : [];
+            const row = (label, value) => value
+              ? <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>{label}:</b> {value}</p> : null;
+            const sunLine = days.map(dt => {
+              const t = sunTimes(c.lat, c.lon, dt);
+              if (!t) return null;
+              const when = t.sun.polar === 'day' ? 'не садится'
+                : t.sun.polar === 'night' ? 'не встаёт'
+                : `${hhmm(t.sun.rise)} — ${hhmm(t.sun.set)}`;
+              const gold = (!t.sun.polar && !t.golden.polar)
+                ? ` · золотой час до ${hhmm(t.golden.rise)} и с ${hhmm(t.golden.set)}` : '';
+              return `${formatDateDisplay(dt)}: ${when}${gold}`;
+            }).filter(Boolean).join(' · ');
+            return (
+              <div className={solo ? '' : 'print-loc'} style={{marginBottom: solo ? 0 : '18pt'}}>
+                {!solo && <h2 style={{fontSize: '15pt', fontWeight: 800, margin: '0 0 4pt'}}>{l.name || 'Без названия'}</h2>}
+                {row('Адрес', l.address)}
+                {row('Координаты', l.coords)}
+                {row('Питание', l.power)}
+                {row('Сцены', linked.length ? linked.map(sc => `#${sc.number} ${sc.title || ''}`.trim()).join(' · ') : '')}
+                {row('Солнце', sunLine)}
+                {!dates.length && sunLine && (
+                  <p style={{fontSize: '9pt', color: '#777', margin: '0 0 3pt'}}>Смены у сцен нет — солнце на сегодня.</p>
+                )}
+                {row('Схема света', sch ? sch.title : '')}
+                {l.description && <p style={{fontSize: '11pt', margin: '6pt 0 8pt', whiteSpace: 'pre-wrap', lineHeight: 1.5}}>{l.description}</p>}
+                {notes.length > 0 && (
+                  <div style={{margin: '6pt 0 8pt'}}>
+                    <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Заметки с выезда:</b></p>
+                    <ul style={{margin: 0, paddingLeft: '14pt', fontSize: '10.5pt', lineHeight: 1.5}}>
+                      {notes.map(st => <li key={st.id} className="print-keep" style={{whiteSpace: 'pre-wrap'}}>{st.text}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {photos.length > 0 && (
+                  <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt', marginTop: '6pt'}}>
+                    {photos.map(ph => (
+                      <div key={ph.id} className="print-keep" style={{width: solo ? '48%' : '31%', fontSize: '9pt'}}>
+                        <img src={ph.url} style={{width: '100%', border: '1px solid #ccc'}} />
+                        {ph.label && <div style={{marginTop: '2pt'}}>{ph.label}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
           };
 
           // Сводка техники по всему проекту. Считаем максимум за одну сцену:
@@ -7961,6 +8037,8 @@
           };
           // Какую сцену печатать по «···» → «Экспорт сцены в PDF».
           const [printScene, setPrintScene] = useState(null);
+          // Какой объект печатать по «···» → «Экспорт объекта в PDF».
+          const [printLocation, setPrintLocation] = useState(null);
 
           // Пропорция кадра проекта. Запись в localStorage — только в try:
           // место на устройстве кончается, и тогда setItem бросает исключение.
@@ -10212,7 +10290,12 @@
                                         style={{ width: 26, height: 22, border: '1px solid var(--border)', borderRadius: 6, color: 'var(--muted-2)', fontSize: 13, letterSpacing: 1 }}>···</button>
                                 {locMenu && (
                                   <div className="cf-menu cf-menu-left">
-                                    <button onClick={() => { setLocMenu(false); requestPrint('locations'); }}><Icons.Print /> Отчёт по объектам (PDF)</button>
+                                    {/* «···» у объекта отдаёт ЭТОТ объект, отчёт по
+                                        всем живёт кнопкой в списке слева. Раньше
+                                        оба места печатали одно и то же — все
+                                        объекты в куче, и выгрузить один было
+                                        нечем. Две кнопки — два разных ответа. */}
+                                    <button onClick={() => { setLocMenu(false); setPrintLocation(l.id); requestPrint('location'); }}><Icons.Print /> Экспорт объекта в PDF</button>
                                     <hr />
                                     <button onClick={() => { setLocMenu(false); deleteLocation(l.id); }} style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить объект</button>
                                   </div>
@@ -13130,61 +13213,31 @@
                       Отчёт со скаутинга · CineFlow · {new Date().toLocaleDateString('ru-RU')} · объектов: {sortedLocations.length}
                     </p>
                     {!sortedLocations.length && <p style={{fontSize: '11pt', color: '#777'}}>Объектов в проекте нет.</p>}
-                    {sortedLocations.map(l => {
-                      const photos = locationPhotos(l.id);
-                      const linked = sortedScenes.filter(s => (l.sceneIds || []).includes(s.id));
-                      return (
-                        <div key={l.id} className="print-scene" style={{marginBottom: '18pt'}}>
-                          <h2 style={{fontSize: '15pt', fontWeight: 800, margin: '0 0 4pt'}}>{l.name || 'Без названия'}</h2>
-                          {l.address && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Адрес:</b> {l.address}</p>}
-                          {l.coords && <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Координаты:</b> {l.coords}</p>}
-                          {linked.length > 0 && (
-                            <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}>
-                              <b>Сцены:</b> {linked.map(s => `#${s.number} ${s.title || ''}`.trim()).join(' · ')}
-                            </p>
-                          )}
-                          {(() => {
-                            // Восход и закат по дням съёмки — то, ради чего
-                            // отчёт со скаута и возят с собой.
-                            const c = parseCoords(l.coords);
-                            if (!c) return null;
-                            const dates = [...new Set(linked.filter(s => s.date).map(s => s.date))].sort();
-                            if (!dates.length) return null;
-                            return (
-                              <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}>
-                                <b>Солнце:</b>{' '}
-                                {dates.map(dt => {
-                                  const t = sunTimes(c.lat, c.lon, dt);
-                                  if (!t) return null;
-                                  const when = t.sun.polar === 'day' ? 'не садится'
-                                    : t.sun.polar === 'night' ? 'не встаёт'
-                                    : `${hhmm(t.sun.rise)} — ${hhmm(t.sun.set)}`;
-                                  return `${formatDateDisplay(dt)}: ${when}`;
-                                }).filter(Boolean).join(' · ')}
-                              </p>
-                            );
-                          })()}
-                          {(() => {
-                            const sch = lightSchemes.find(s => s.id === l.lightSchemeId);
-                            if (!sch) return null;
-                            return <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>Схема света:</b> {sch.title}</p>;
-                          })()}
-                          {l.description && <p style={{fontSize: '11pt', margin: '6pt 0 8pt', whiteSpace: 'pre-wrap', lineHeight: 1.5}}>{l.description}</p>}
-                          {photos.length > 0 && (
-                            <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt'}}>
-                              {photos.map(p => (
-                                <div key={p.id} style={{width: '31%', fontSize: '9pt'}}>
-                                  <img src={p.url} style={{width: '100%', border: '1px solid #ccc'}} />
-                                  {p.label && <div style={{marginTop: '2pt'}}>{p.label}</div>}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {sortedLocations.map(l => (
+                      <React.Fragment key={l.id}>{locationPrintBlock(l, false)}</React.Fragment>
+                    ))}
                   </div>
                 )}
+
+                {/* ОДИН ОБЪЕКТ В PDF — по «···» на его карточке. Раньше и
+                    оттуда печатался отчёт по ВСЕМ объектам: чтобы отдать
+                    локейшн-менеджеру один двор, приходилось выгружать весь
+                    скаут. Та же мысль, что у «Экспорта сцены в PDF». */}
+                {printMode === 'location' && (() => {
+                  const l = locations.find(x => x.id === printLocation);
+                  if (!l) return null;
+                  const num = sortedLocations.findIndex(x => x.id === l.id) + 1;
+                  return (
+                    <div>
+                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{l.name || 'Без названия'}</h1>
+                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>
+                        ОБ {String(num).padStart(2, '0')} · отчёт со скаутинга · CineFlow · {new Date().toLocaleDateString('ru-RU')}
+                        {locationPhotos(l.id).length ? ` · фото: ${locationPhotos(l.id).length}` : ''}
+                      </p>
+                      {locationPrintBlock(l, true)}
+                    </div>
+                  );
+                })()}
 
                 {/* ОДНА СЦЕНА В PDF — по «···» на карточке сцены.
                     Раньше печатался только весь проект целиком: чтобы отдать
