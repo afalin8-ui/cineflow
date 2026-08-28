@@ -328,7 +328,16 @@
         .cf-tools::-webkit-scrollbar { width: 0; height: 0; }
 
         /* выпадающее меню «···» */
+        /* Меню прижато к ПРАВОМУ краю своей кнопки и потому годится только
+           для кнопки у правого края экрана. У «···» сцены и объекта кнопка
+           стоит СЛЕВА, у номера (см. «Экран сцены»), и меню шириной 190
+           уезжало за левый край: на телефоне на 57 точек, а на планшете его
+           срезала прокручиваемая середина. Строки при этом не нажимались
+           вовсе. Такому меню нужен .cf-menu-left — оно раскрывается вправо.
+           Заводя новое меню, смотри, у какого края стоит его кнопка. */
+        .cf-menu-left { left: 0; right: auto; }
         .cf-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; min-width: 190px; padding: 4px;
+                   max-width: calc(100vw - 16px);
                    background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.5); }
         .cf-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
                           padding: 8px 10px; border-radius: 7px; font-size: 12.5px; color: var(--text-2); min-height: 34px; }
@@ -9130,7 +9139,7 @@
                                       className="flex items-center justify-center transition-colors hover:bg-white/5"
                                       style={{ width: 26, height: 22, border: '1px solid var(--border)', borderRadius: 6, color: 'var(--muted-2)', fontSize: 13, letterSpacing: 1 }}>···</button>
                               {sceneMenu && (
-                                <div className="cf-menu">
+                                <div className="cf-menu cf-menu-left">
                                   <button onClick={() => { setSceneMenu(false); setSceneToBoard(s.id); }}><Icons.Board /> Собрать на доске</button>
                                   <button onClick={() => { setSceneMenu(false); setPrintScene(s.id); requestPrint('scene'); }}><Icons.Print /> Экспорт сцены в PDF</button>
                                   <hr />
@@ -10202,7 +10211,7 @@
                                         className="flex items-center justify-center transition-colors hover:bg-white/5"
                                         style={{ width: 26, height: 22, border: '1px solid var(--border)', borderRadius: 6, color: 'var(--muted-2)', fontSize: 13, letterSpacing: 1 }}>···</button>
                                 {locMenu && (
-                                  <div className="cf-menu">
+                                  <div className="cf-menu cf-menu-left">
                                     <button onClick={() => { setLocMenu(false); requestPrint('locations'); }}><Icons.Print /> Отчёт по объектам (PDF)</button>
                                     <hr />
                                     <button onClick={() => { setLocMenu(false); deleteLocation(l.id); }} style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить объект</button>
