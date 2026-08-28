@@ -431,6 +431,7 @@
             Print: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
             Tag: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>,
             Image: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+            Camera: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/></svg>,
             Lightbulb: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>,
             Square: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>,
             Circle: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>,
@@ -2675,6 +2676,135 @@
                   ))}
                 </div>, document.body)}
             </span>
+          );
+        };
+
+        // ОТКУДА ВЗЯТЬ ФОТО — СПРАШИВАЕМ, А НЕ РЕШАЕМ ЗА ЧЕЛОВЕКА.
+        // У кнопки «+ фото» стоял capture="environment", и телефон уходил
+        // ПРЯМО В КАМЕРУ, минуя всякий выбор. На выезде это верно, а в
+        // остальное время нужные кадры уже лежат в телефоне: их снимали
+        // штатной камерой (она лучше), присылали в мессенджере, скачивали
+        // с карт. Добраться до них было НЕЧЕМ — кнопка вела в одно место.
+        //
+        // Путей ТРИ, и различаются они атрибутами поля, а не подписью:
+        //   камера     — accept="image/*" плюс capture, браузер открывает съёмку
+        //   фотоплёнка — accept="image/*" без capture
+        //   файлы      — ПЕРЕЧИСЛЕНИЕ РАСШИРЕНИЙ вместо image/*
+        // Третье — не придирка. Safari открывает «Файлы» сразу только
+        // тогда, когда из accept НЕ следует, что нужна картинка из
+        // фотоплёнки: с image/* он всегда показывает свой список из трёх
+        // пунктов, и кнопка «Файлы» вела бы ровно туда же, куда
+        // «Фотоплёнка», — то есть врала бы. Расширения Safari при этом
+        // толком не фильтрует, поэтому нефотографию отсекает уже
+        // handleMultiFileUpload — и говорит об этом вслух.
+        const PHOTO_SOURCES = [
+          { key: 'cam',  label: 'Снять камерой', hint: 'откроется камера',
+            accept: 'image/*', capture: 'environment' },
+          { key: 'lib',  label: 'Фотоплёнка',    hint: 'снимки на устройстве',
+            accept: 'image/*' },
+          { key: 'file', label: 'Файлы',         hint: 'загрузки, облака, флешка',
+            accept: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff' }
+        ];
+        const PHOTO_SOURCE_ICON = { cam: Icons.Camera, lib: Icons.Image, file: Icons.Folder };
+
+        // Плитка «+ фото» со списком источников. Своё состояние живёт
+        // ВНУТРИ — как у TagInput: открытие меню не должно перерисовывать
+        // всю ленту объектов.
+        const PhotoSourcePicker = ({ onFiles, className, style, children }) => {
+          // Что открыто и КАК показывать: на телефоне шторкой снизу
+          // (до верха экрана большой палец не достаёт), на широком
+          // экране — списком у самой кнопки.
+          const [menu, setMenu] = useState(null);
+          const btnRef = useRef(null);
+          const inputs = useRef({});
+
+          const openMenu = () => {
+            const phone = !!(window.matchMedia && window.matchMedia('(max-width: 699px)').matches);
+            let at = null;
+            if (!phone && btnRef.current) {
+              const r = btnRef.current.getBoundingClientRect();
+              const w = 240, h = 8 + PHOTO_SOURCES.length * 46;
+              // У нижнего края экрана разворачиваем список вверх — иначе
+              // он уедет за пределы окна и станет невидим, как когда-то
+              // подсказки тегов.
+              const вверх = r.bottom + h > window.innerHeight - 8;
+              at = { width: w,
+                     left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)),
+                     top: вверх ? Math.max(8, Math.round(r.top - h - 4)) : Math.round(r.bottom + 4) };
+            }
+            setMenu({ phone, at });
+          };
+
+          // Выбор файла браузер разрешает ТОЛЬКО из обработчика нажатия,
+          // поэтому click() зовём прямо здесь и синхронно. Отложенный
+          // через таймер вызов iPad считает всплывающим окном и молча
+          // отклоняет — то же правило, что у окна печати.
+          const pick = (key) => {
+            const el = inputs.current[key];
+            setMenu(null);
+            // Сброс перед открытием: без него повторный выбор ТОГО ЖЕ
+            // файла не даёт события change, и кнопка выглядит нерабочей.
+            if (el) { el.value = ''; el.click(); }
+          };
+
+          const row = (s, phone) => {
+            const Ico = PHOTO_SOURCE_ICON[s.key];
+            return (
+              <button key={s.key} type="button" onClick={() => pick(s.key)}
+                      style={{ minHeight: phone ? 54 : 44, display: 'flex', alignItems: 'center', gap: 10,
+                               width: '100%', textAlign: 'left', padding: phone ? '11px 12px' : '7px 10px',
+                               borderRadius: phone ? 10 : 7, color: 'var(--text-2)', cursor: 'pointer',
+                               // Подложка обязана отличаться от самой шторки: на
+                               // одинаковом фоне строки читаются как текст, а не
+                               // как кнопки, и человек не понимает, что нажимать.
+                               background: phone ? 'var(--raised)' : 'transparent' }}>
+                <span style={{ color: 'var(--accent)', display: 'flex', flexShrink: 0 }}><Ico /></span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: phone ? 14 : 12.5, color: 'var(--text)' }}>{s.label}</span>
+                  <span style={{ display: 'block', fontSize: phone ? 11.5 : 10.5, color: 'var(--muted-2)' }}>{s.hint}</span>
+                </span>
+              </button>
+            );
+          };
+
+          return (
+            <React.Fragment>
+              <button ref={btnRef} type="button" onClick={openMenu} className={className} style={style}>
+                {children}
+              </button>
+              {PHOTO_SOURCES.map(s => (
+                <input key={s.key} ref={el => { inputs.current[s.key] = el; }}
+                       type="file" multiple accept={s.accept}
+                       {...(s.capture ? { capture: s.capture } : {})}
+                       className="hidden"
+                       onChange={(e) => onFiles(e.target.files)} />
+              ))}
+              {menu && ReactDOM.createPortal(
+                menu.phone ? (
+                  <React.Fragment>
+                    <div className="fixed inset-0" style={{ zIndex: 300, background: 'rgba(0,0,0,.5)' }}
+                         onClick={() => setMenu(null)} />
+                    <div className="cf-sheet" style={{ zIndex: 301 }}>
+                      <div className="cf-sheet-grip" />
+                      <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
+                        <span style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>Откуда взять фото</span>
+                        <button onClick={() => setMenu(null)} className="ml-auto flex items-center justify-center"
+                                style={{ width: 44, height: 44, border: '1px solid var(--border)', borderRadius: 10, color: 'var(--muted-2)', fontSize: 14 }}>✕</button>
+                      </div>
+                      <div className="px-3 pb-4 flex flex-col gap-2">{PHOTO_SOURCES.map(s => row(s, true))}</div>
+                    </div>
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment>
+                    <div className="fixed inset-0" style={{ zIndex: 300 }} onClick={() => setMenu(null)} />
+                    <div style={{ position: 'fixed', zIndex: 301, left: menu.at.left, top: menu.at.top, width: menu.at.width,
+                                  background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10,
+                                  boxShadow: '0 12px 32px rgba(0,0,0,.5)', padding: 4 }}>
+                      {PHOTO_SOURCES.map(s => row(s, false))}
+                    </div>
+                  </React.Fragment>
+                ), document.body)}
+            </React.Fragment>
           );
         };
 
@@ -6519,8 +6649,15 @@
           // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
           const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '') => {
-              const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-              if (imageFiles.length === 0) return;
+              const picked = Array.from(files);
+              const imageFiles = picked.filter(f => f.type.startsWith('image/'));
+              // Через «Файлы» браузер показывает и то, что картинкой не
+              // является (расширения Safari толком не фильтрует). Молча
+              // ничего не делать нельзя: человек выбрал файл и ждёт его.
+              if (imageFiles.length === 0) {
+                if (picked.length) showToast('Это не картинка — выберите фотографию');
+                return;
+              }
 
               const existing = new Set(references.map(r => normName(r.label)));
               const dups = imageFiles.filter(f => existing.has(normName(f.name)));
@@ -8754,15 +8891,12 @@
                                      onClick={() => setLightboxData({ scope: strip.map(x => x.id), scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                      style={{ width: 230, height: 130, objectFit: 'cover', borderRadius: 9, flexShrink: 0 }} />
                               ))}
-                              <label className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1"
+                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, sceneMode === 'scout' ? null : s.id, null, sceneMode === 'scout' && loc ? loc.id : null)}
+                                     className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1"
                                      style={{ width: 130, height: 130, border: '1px dashed var(--border)', borderRadius: 9, color: 'var(--muted-2)', fontSize: 12, boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
                                 {sceneMode === 'scout' ? 'фото' : 'картинки'}
-                                <input type="file" multiple accept="image/*"
-                                       {...(sceneMode === 'scout' ? { capture: 'environment' } : {})}
-                                       className="hidden"
-                                       onChange={(e) => handleMultiFileUpload(e.target.files, sceneMode === 'scout' ? null : s.id, null, sceneMode === 'scout' && loc ? loc.id : null)} />
-                              </label>
+                              </PhotoSourcePicker>
                             </div>
                             <div className="cf-meta" style={{ marginTop: 6 }}>
                               {stripLabel} · {strip.length}
@@ -9009,14 +9143,13 @@
                               </div>
                             ))}
                             {loc ? (
-                              <label className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5 cursor-pointer"
+                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, loc.id)}
+                                     className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
                                      style={{ width: 180, height: 200, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
                                 <span style={{ fontSize: 12 }}>фото с точки</span>
-                                <span style={{ fontSize: 10, color: 'var(--border)' }}>камера планшета</span>
-                                <input type="file" multiple accept="image/*" capture="environment" className="hidden"
-                                       onChange={(e) => handleMultiFileUpload(e.target.files, null, null, loc.id)} />
-                              </label>
+                                <span style={{ fontSize: 10, color: 'var(--border)' }}>камера · плёнка · файлы</span>
+                              </PhotoSourcePicker>
                             ) : (
                               <div className="shrink-0 flex items-center justify-center text-center px-4"
                                    style={{ width: 260, height: 200, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', fontSize: 11.5, lineHeight: 1.6, boxSizing: 'border-box' }}>
@@ -10048,13 +10181,17 @@
                                   </div>
                                 </div>
                               ))}
-                              <label className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5 cursor-pointer"
+                              {/* Спрашиваем, откуда взять фото: камера · фотоплёнка ·
+                                  файлы. Раньше кнопка уводила прямо в камеру, и
+                                  снимок, уже лежащий в телефоне, положить сюда
+                                  было нечем. */}
+                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
+                                     className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
                                      style={{ width: 160, height: 190, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
                                 <span style={{ fontSize: 11.5 }}>фото со скаутинга</span>
-                                <input type="file" multiple accept="image/*" capture="environment" className="hidden"
-                                       onChange={(e) => handleMultiFileUpload(e.target.files, null, null, l.id)} />
-                              </label>
+                                <span style={{ fontSize: 10, color: 'var(--border)' }}>камера · плёнка · файлы</span>
+                              </PhotoSourcePicker>
                               {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
                                   там нет вовсе, а картинку из браузера копируют
                                   долгим нажатием. Спрашивать буфер можно только
