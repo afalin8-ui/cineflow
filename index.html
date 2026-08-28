@@ -1249,6 +1249,26 @@
         // вытянет. У Dropbox для этого есть готовый метод, он отдаёт 2048 px
         // за пару сотен килобайт.
         const PRINT_PX = 2048;
+        // Ширина, с которой фотография ложится на лист. Считаем от неё, а не
+        // от «длинной стороны»: на странице у фотографии фиксированная
+        // ШИРИНА, и портрет с альбомом обязаны прийти к ней одинаково —
+        // иначе портретный кадр печатается заметно мягче соседа.
+        // 1100 px на 81 мм — это ~345 dpi, с запасом над печатным стандартом.
+        const PRINT_W = 1100;
+        const fitPrintWidth = (dataUrl, w) => new Promise((done) => {
+          const img = new Image();
+          img.onerror = () => done(dataUrl);
+          img.onload = () => {
+            if (img.width <= w) { done(dataUrl); return; }
+            const c = document.createElement('canvas');
+            c.width = w; c.height = Math.max(1, Math.round(img.height * w / img.width));
+            const g = c.getContext('2d');
+            g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+            g.drawImage(img, 0, 0, c.width, c.height);
+            done(c.toDataURL('image/jpeg', 0.82));
+          };
+          img.src = dataUrl;
+        });
         const blobToDataUrl = (blob) => new Promise((res, rej) => {
           const r = new FileReader(); r.onerror = rej; r.onloadend = () => res(r.result); r.readAsDataURL(blob);
         });
@@ -1270,13 +1290,13 @@
             return jpegSizeOf(buf.buffer);
           } catch (e) { return null; }
         };
-        const dropboxThumb = async (cfg, path, ready) => {
+        const dropboxThumb = async (cfg, path, ready, size) => {
           const token = ready || await dropboxAccess(cfg);
           const res = await cloudFetch('https://content.dropboxapi.com/2/files/get_thumbnail_v2', {
             method: 'POST',
             headers: { Authorization: 'Bearer ' + token,
                        'Dropbox-API-Arg': asciiJSON({ resource: { '.tag': 'path', path },
-                                                      format: 'jpeg', size: 'w2048h1536', mode: 'fitone_bestfit' }) }
+                                                      format: 'jpeg', size: size || 'w2048h1536', mode: 'fitone_bestfit' }) }
           });
           if (!res.ok) await cloudErr(res, 'Dropbox не отдал копию для печати');
           return res.blob();
@@ -3490,8 +3510,15 @@
                 const cl = r.cloud || {};
                 // У Dropbox есть готовая копия нужного размера — это дёшево.
                 if (cl.provider === 'dropbox' && cl.path && token) {
-                  const blob = await dropboxThumb(cfg, cl.path, token);
-                  if (blob) { keep(r.id, await blobToDataUrl(blob)); return true; }
+                  // Размер просим ПО ОРИЕНТАЦИИ. У Dropbox размеры фиксированы:
+                  // альбомный кадр в рамку 1024×768 ложится ровно нужной
+                  // ширины, а портрет в ней встаёт боком и выходит всего
+                  // 768 точек в ширину — мягко. Портрету поэтому просим
+                  // рамку вдвое больше и ужимаем у себя.
+                  const sz = dataUrlJpegSize(r.url);
+                  const box = (sz && sz.h > sz.w) ? 'w2048h1536' : 'w1024h768';
+                  const blob = await dropboxThumb(cfg, cl.path, token, box);
+                  if (blob) { keep(r.id, await fitPrintWidth(await blobToDataUrl(blob), PRINT_W)); return true; }
                 }
                 // У остальных облаков готовой копии не спросишь — тянем файл
                 // и уменьшаем у себя. Дороже по трафику, зато работает везде.
@@ -3500,7 +3527,8 @@
                 const res = await fetch(direct);
                 if (!res.ok) return false;
                 const raw = await blobToDataUrl(await res.blob());
-                keep(r.id, await new Promise(done => compressImage(raw, PRINT_PX, PRINT_PX, done, 0.85)));
+                const small = await new Promise(done => compressImage(raw, PRINT_PX, PRINT_PX, done, 0.85));
+                keep(r.id, await fitPrintWidth(small, PRINT_W));
                 return true;
               } catch (e) { console.warn('Печать: копия из облака не пришла', e); return false; }
             };
