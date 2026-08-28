@@ -2706,11 +2706,23 @@
             accept: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff' }
         ];
         const PHOTO_SOURCE_ICON = { cam: Icons.Camera, lib: Icons.Image, file: Icons.Folder };
+        // СПРАШИВАЕМ ТОЛЬКО ТАМ, ГДЕ ЕСТЬ ИЗ ЧЕГО ВЫБИРАТЬ. У компьютера
+        // нет ни фотоплёнки, ни камеры в том смысле, в каком они есть
+        // у телефона: все три пути ведут в одно и то же окно выбора
+        // файла, и список посреди дороги был бы лишним нажатием на
+        // каждую загрузку — а референсы грузят пачками. Поэтому на
+        // мыши открываем окно сразу, как было всегда.
+        //
+        // Считаем именно КАСАНИЕ, а не отсутствие мыши: iPad с клавиатурой
+        // и трекпадом отвечает `(hover: hover)`, и по наведению мы отняли
+        // бы выбор ровно у главного устройства.
+        const TOUCH_DEVICE = (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
+                          || (typeof window !== 'undefined' && 'ontouchstart' in window);
 
         // Плитка «+ фото» со списком источников. Своё состояние живёт
         // ВНУТРИ — как у TagInput: открытие меню не должно перерисовывать
         // всю ленту объектов.
-        const PhotoSourcePicker = ({ onFiles, className, style, children }) => {
+        const PhotoSourcePicker = ({ onFiles, className, style, children, hint, title, multiple = true, cardTap }) => {
           // Что открыто и КАК показывать: на телефоне шторкой снизу
           // (до верха экрана большой палец не достаёт), на широком
           // экране — списком у самой кнопки.
@@ -2718,7 +2730,25 @@
           const btnRef = useRef(null);
           const inputs = useRef({});
 
-          const openMenu = () => {
+          // Выбор файла браузер разрешает ТОЛЬКО из обработчика нажатия,
+          // поэтому click() зовём прямо здесь и синхронно. Отложенный
+          // через таймер вызов iPad считает всплывающим окном и молча
+          // отклоняет — то же правило, что у окна печати.
+          const pick = (key) => {
+            const el = inputs.current[key];
+            setMenu(null);
+            // Сброс перед открытием: без него повторный выбор ТОГО ЖЕ
+            // файла не даёт события change, и кнопка выглядит нерабочей.
+            if (el) { el.value = ''; el.click(); }
+          };
+
+          const openMenu = (e) => {
+            // Нажатие, которое зовёт доска сама (кнопка занимает всю карточку,
+            // и настоящий click достаётся карточке), браузер не считает
+            // жестом человека — окно выбора файла по нему не откроется.
+            // Поэтому в таком случае ВСЕГДА показываем список: настоящее
+            // нажатие по строке и откроет окно.
+            if (!TOUCH_DEVICE && e && e.isTrusted !== false) { pick('lib'); return; }
             const phone = !!(window.matchMedia && window.matchMedia('(max-width: 699px)').matches);
             let at = null;
             if (!phone && btnRef.current) {
@@ -2733,18 +2763,6 @@
                      top: вверх ? Math.max(8, Math.round(r.top - h - 4)) : Math.round(r.bottom + 4) };
             }
             setMenu({ phone, at });
-          };
-
-          // Выбор файла браузер разрешает ТОЛЬКО из обработчика нажатия,
-          // поэтому click() зовём прямо здесь и синхронно. Отложенный
-          // через таймер вызов iPad считает всплывающим окном и молча
-          // отклоняет — то же правило, что у окна печати.
-          const pick = (key) => {
-            const el = inputs.current[key];
-            setMenu(null);
-            // Сброс перед открытием: без него повторный выбор ТОГО ЖЕ
-            // файла не даёт события change, и кнопка выглядит нерабочей.
-            if (el) { el.value = ''; el.click(); }
           };
 
           const row = (s, phone) => {
@@ -2767,14 +2785,30 @@
             );
           };
 
+          // Меню лежит в ОТДЕЛЬНОМ слое (портал в body), но React ведёт его
+          // события по дереву КОМПОНЕНТОВ, а не по разметке: нажатие по строке
+          // прилетало карточке доски, та забирала указатель себе — и до самой
+          // строки доходил только pointerdown, а click доставался карточке.
+          // Меню обязано глушить всё указательное у себя.
+          const stop = {
+            onPointerDown: (e) => e.stopPropagation(),
+            onPointerMove: (e) => e.stopPropagation(),
+            onPointerUp: (e) => e.stopPropagation(),
+            onClick: (e) => e.stopPropagation()
+          };
+
           return (
             <React.Fragment>
-              <button ref={btnRef} type="button" onClick={openMenu} className={className} style={style}>
+              <button ref={btnRef} type="button" onClick={openMenu} className={className} style={style} title={title}
+                      {...(cardTap ? { 'data-card-tap': '1' } : {})}>
                 {children}
+                {/* Подпись только там, где выбор и правда есть: на мыши
+                    она обещала бы камеру, которой нет. */}
+                {hint && TOUCH_DEVICE && <span style={{ fontSize: 10, color: 'var(--border)' }}>{hint}</span>}
               </button>
               {PHOTO_SOURCES.map(s => (
                 <input key={s.key} ref={el => { inputs.current[s.key] = el; }}
-                       type="file" multiple accept={s.accept}
+                       type="file" multiple={multiple} accept={s.accept}
                        {...(s.capture ? { capture: s.capture } : {})}
                        className="hidden"
                        onChange={(e) => onFiles(e.target.files)} />
@@ -2783,8 +2817,8 @@
                 menu.phone ? (
                   <React.Fragment>
                     <div className="fixed inset-0" style={{ zIndex: 300, background: 'rgba(0,0,0,.5)' }}
-                         onClick={() => setMenu(null)} />
-                    <div className="cf-sheet" style={{ zIndex: 301 }}>
+                         {...stop} onClick={(e) => { e.stopPropagation(); setMenu(null); }} />
+                    <div className="cf-sheet" style={{ zIndex: 301 }} {...stop}>
                       <div className="cf-sheet-grip" />
                       <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
                         <span style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>Откуда взять фото</span>
@@ -2796,8 +2830,9 @@
                   </React.Fragment>
                 ) : (
                   <React.Fragment>
-                    <div className="fixed inset-0" style={{ zIndex: 300 }} onClick={() => setMenu(null)} />
-                    <div style={{ position: 'fixed', zIndex: 301, left: menu.at.left, top: menu.at.top, width: menu.at.width,
+                    <div className="fixed inset-0" style={{ zIndex: 300 }}
+                         {...stop} onClick={(e) => { e.stopPropagation(); setMenu(null); }} />
+                    <div {...stop} style={{ position: 'fixed', zIndex: 301, left: menu.at.left, top: menu.at.top, width: menu.at.width,
                                   background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10,
                                   boxShadow: '0 12px 32px rgba(0,0,0,.5)', padding: 4 }}>
                       {PHOTO_SOURCES.map(s => row(s, false))}
@@ -7546,8 +7581,11 @@
           const handleElementPointerDown = (e, id, type) => {
               if (wbMode === 'link') { e.stopPropagation(); pickLink(id); return; }
               if (wbMode !== 'select') return;
-              if (['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName) || e.target.closest('.node-handle')) return;
+              const wholeCardBtn = e.target.closest('[data-card-tap]');
+              if ((['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName) && !wholeCardBtn)
+                  || e.target.closest('.node-handle')) return;
               e.stopPropagation();
+              tapToTrigger.current = wholeCardBtn || null;
               // Двойное нажатие по тексту карточки — правка. Считаем его сами,
               // а не полагаемся на dblclick: пальцем и пером браузер сообщает
               // о нём не всегда, а планшет у нас основное устройство.
@@ -7587,6 +7625,14 @@
           const editCardRef = useRef(null);
           const lastCardTap = useRef({ id: null, key: null, t: 0 });
           const tapToEdit = useRef(null);
+          // То же самое, но для кнопки, которая ЗАНИМАЕТ ВСЮ карточку
+          // (пустая карточка референса с «Загрузить»). Обычные кнопки
+          // карточки — корзина, крестик — из жеста исключены, иначе
+          // карточка ездила бы при попытке нажать. А эта кнопка и есть
+          // вся карточка: исключив её, мы отняли бы у карточки
+          // перетаскивание. Поэтому жест начинается как обычно, а
+          // нажатие срабатывает на отпускании, если палец не поехал.
+          const tapToTrigger = useRef(null);
           // Фокус ставим РУКАМИ, а не через autoFocus: поле появляется после
           // жеста, во время которого фокус успевает уехать на что-то другое.
           useEffect(() => {
@@ -8940,8 +8986,21 @@
                                   {f.image ? (
                                     <img src={f.image} draggable="false" style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', borderRadius: 6, display: 'block' }} />
                                   ) : (
-                                    <button onClick={() => setDrawingFrameId(f.id)} className="cf-edit-only flex items-center justify-center w-full"
-                                            style={{ aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 6, color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase', boxSizing: 'border-box' }}>скетч</button>
+                                    /* Пустой кадр на телефоне предлагал ОДИН путь — «скетч»,
+                                       и положить в раскадровку снимок с телефона было нечем
+                                       вовсе. На планшете половинки две, и здесь их две. */
+                                    <div className="flex w-full" style={{ aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 6, boxSizing: 'border-box', overflow: 'hidden' }}>
+                                      <PhotoSourcePicker multiple={false}
+                                              onFiles={(fs) => { const file = fs[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }}
+                                              className="cf-edit-only flex-1 flex flex-col items-center justify-center gap-1"
+                                              style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase' }}>
+                                        <Icons.Image />фото
+                                      </PhotoSourcePicker>
+                                      <button onClick={() => setDrawingFrameId(f.id)} className="cf-edit-only flex-1 flex flex-col items-center justify-center gap-1"
+                                              style={{ color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase' }}>
+                                        <Icons.Pen />скетч
+                                      </button>
+                                    </div>
                                   )}
                                   <div className="flex justify-between gap-2" style={{ marginTop: 6 }}>
                                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text)' }}>{f.frameNum}</span>
@@ -9144,11 +9203,11 @@
                             ))}
                             {loc ? (
                               <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, loc.id)}
+                                     hint="камера · плёнка · файлы"
                                      className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
                                      style={{ width: 180, height: 200, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
                                 <span style={{ fontSize: 12 }}>фото с точки</span>
-                                <span style={{ fontSize: 10, color: 'var(--border)' }}>камера · плёнка · файлы</span>
                               </PhotoSourcePicker>
                             ) : (
                               <div className="shrink-0 flex items-center justify-center text-center px-4"
@@ -9319,11 +9378,11 @@
                                               style={{ top: 6, right: 6, width: 24, height: 24, borderRadius: 6, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 11 }}>✕</button>
                                     </div>
                                   ))}
-                                  <label className="cf-edit-only shrink-0 flex items-center justify-center cursor-pointer"
+                                  <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, s.id)}
+                                         className="cf-edit-only shrink-0 flex flex-col items-center justify-center"
                                          style={{ width: 110, height: 118, border: '1px dashed var(--border)', borderRadius: 8, color: 'var(--muted-2)', fontSize: 18, boxSizing: 'border-box' }}
                                          title="Загрузить картинки в сцену">+
-                                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, s.id)} />
-                                  </label>
+                                  </PhotoSourcePicker>
                                   <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
                                           title="Взять картинку из уже загруженных"
                                           className="cf-edit-only shrink-0 flex items-center justify-center text-center px-2"
@@ -9383,11 +9442,14 @@
                                       <img src={f.image} style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', display: 'block' }} draggable="false" />
                                     ) : (
                                       <div className="flex" style={{ width: '100%', aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 7, boxSizing: 'border-box' }}>
-                                        <label className="flex-1 flex flex-col items-center justify-center cursor-pointer cf-edit-only" style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)' }}>
+                                        {/* Кадр раскадровки чаще всего рисуют на бумаге —
+                                            значит, его СНИМАЮТ. Отсюда тот же выбор
+                                            источника, что и у фотографий. */}
+                                        <PhotoSourcePicker multiple={false}
+                                                onFiles={(fs) => { const file = fs[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }}
+                                                className="flex-1 flex flex-col items-center justify-center cf-edit-only" style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)' }}>
                                           <Icons.Image /><span style={{ fontSize: 10, marginTop: 2 }}>файл</span>
-                                          <input type="file" accept="image/*" className="hidden"
-                                                 onChange={(e) => { const file = e.target.files[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }} />
-                                        </label>
+                                        </PhotoSourcePicker>
                                         <button onClick={() => setDrawingFrameId(f.id)} className="flex-1 flex flex-col items-center justify-center cf-edit-only" style={{ color: 'var(--muted-2)' }}>
                                           <Icons.Pen /><span style={{ fontSize: 10, marginTop: 2 }}>скетч</span>
                                         </button>
@@ -9716,11 +9778,11 @@
                           )}
                         </div>
                         <div className="p-3 shrink-0 cf-edit-only space-y-2" style={{ borderTop: '1px solid var(--border)' }}>
-                          <label className="w-full flex items-center justify-center gap-2 cursor-pointer rounded-lg transition-colors hover:bg-white/5"
+                          <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
+                                 className="w-full flex items-center justify-center gap-2 rounded-lg transition-colors hover:bg-white/5"
                                  style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                             <Icons.Gallery /> Загрузить референсы
-                            <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null, null, null, galleryDropFolder())} />
-                          </label>
+                          </PhotoSourcePicker>
                           {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
                               там нет вовсе, а картинку из браузера копируют
                               долгим нажатием. Спрашивать буфер можно только
@@ -9783,11 +9845,11 @@
                               <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder() })}
                                       title="Вставить картинку из буфера обмена"
                                       className="cf-chip shrink-0 flex items-center gap-1.5"><Icons.Paste /> Вставить</button>
-                              <label className="md:hidden flex items-center gap-2 cursor-pointer rounded-lg px-4 shrink-0"
+                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
+                                     className="md:hidden flex items-center gap-2 rounded-lg px-4 shrink-0"
                                      style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                                   + Загрузить
-                                  <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => handleMultiFileUpload(e.target.files, null, null, null, galleryDropFolder())} />
-                              </label>
+                              </PhotoSourcePicker>
                             </div>
                         </div>
 
@@ -10186,11 +10248,11 @@
                                   снимок, уже лежащий в телефоне, положить сюда
                                   было нечем. */}
                               <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
+                                     hint="камера · плёнка · файлы"
                                      className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
                                      style={{ width: 160, height: 190, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
                                 <span style={{ fontSize: 11.5 }}>фото со скаутинга</span>
-                                <span style={{ fontSize: 10, color: 'var(--border)' }}>камера · плёнка · файлы</span>
                               </PhotoSourcePicker>
                               {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
                                   там нет вовсе, а картинку из браузера копируют
@@ -10809,6 +10871,14 @@
                             const t = tapToEdit.current; tapToEdit.current = null;
                             if (!dragMoved.current) { setSelectedWbItems([t.id]); setEditCard({ id: t.id, key: t.key }); }
                         }
+                        // Кнопка во всю карточку: нажали и отпустили, не сдвинув, —
+                        // значит просили её, а не переезд. Само нажатие до неё
+                        // не доходит: карточка забрала указатель себе, и click
+                        // достаётся карточке.
+                        if (tapToTrigger.current) {
+                            const el = tapToTrigger.current; tapToTrigger.current = null;
+                            if (!dragMoved.current) el.click();
+                        }
                         handleDragUp(e);
                         handleResizeUp(e);
                         handleStickyResizeUp(e);
@@ -11211,11 +11281,12 @@
                                     <img src={ref.url} onLoad={(e) => noteRefRatio(ref, e.target)}
                                          className="w-full h-full object-contain pointer-events-none relative z-[1]" draggable="false" />
                                 </React.Fragment>) : (
-                                    <label style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 cursor-pointer w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
+                                    /* Заполняем именно эту карточку, а не создаём рядом новую */
+                                    <PhotoSourcePicker multiple={false} cardTap
+                                        onFiles={(fs) => { const f = fs[0]; if (f) fillRefImage(ref.id, f); }}
+                                        style={{pointerEvents: 'auto'}} className="text-xs font-bold text-zinc-500 hover:text-indigo-400 w-full h-full flex flex-col items-center justify-center transition-colors hover:bg-white/5">
                                     <span className="mb-1"><Icons.Gallery/></span><span>Загрузить</span>
-                                    {/* Заполняем именно эту карточку, а не создаём рядом новую */}
-                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files[0]; if (f) fillRefImage(ref.id, f); e.target.value = ''; }} />
-                                    </label>
+                                    </PhotoSourcePicker>
                                 )}
                                 </div>
                                 {cardField(ref.id, 'label', ref.label,
