@@ -35,6 +35,8 @@ static REAL Hair() {
 
 // ---- размеры и раскладка -------------------------------------------------
 static int g_profileIdx = 0;
+static int g_pageIdx = -1;          // -1 — основная страница набора
+static std::map<UINT32, int> g_ptr;  // указатель -> номер кнопки
 static int g_pad = 0, g_gap = 0, g_hdr = 0, g_ftr = 0;
 static RECT g_rcHeader{}, g_rcSettings{}, g_rcHide{};
 static SIZE g_size{};
@@ -42,12 +44,20 @@ static bool g_vertical = true;
 static bool g_needAdmin = false;
 
 int  PanelProfile() { return g_profileIdx; }
+int  PanelPage()    { return g_pageIdx; }
 Profile* CurProfile() {
     if (g_cfg.profiles.empty()) return nullptr;
     if (g_profileIdx < 0 || g_profileIdx >= (int)g_cfg.profiles.size()) g_profileIdx = 0;
     return &g_cfg.profiles[g_profileIdx];
 }
 void PanelSetNeedAdmin(bool v) { if (g_needAdmin != v) { g_needAdmin = v; PanelRedraw(); } }
+
+std::vector<Btn>* CurBtns() {
+    Profile* p = CurProfile();
+    if (!p) return nullptr;
+    if (g_pageIdx < 0 || g_pageIdx >= (int)p->pages.size()) return &p->btns;
+    return &p->pages[g_pageIdx].btns;
+}
 
 static RECT MonitorRect() {
     HMONITOR mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
@@ -113,8 +123,8 @@ static int g_fitRows = 0;      // сколько кнопок влезает п�
 static double g_realMM = 0;    // размер кнопки после подгонки
 
 static void PlaceContent(int winAlong) {
-    Profile* p = CurProfile();
-    int n = p ? (int)p->btns.size() : 0;
+    std::vector<Btn>* list = CurBtns();
+    int n = list ? (int)list->size() : 0;
     int free_ = winAlong - g_along;
     if (free_ < 0) free_ = 0;
     int off = (g_cfg.align == A_START) ? 0 : (g_cfg.align == A_END) ? free_ : free_ / 2;
@@ -123,11 +133,11 @@ static void PlaceContent(int winAlong) {
     g_rcHeader = g_vertical ? RECT{g_pad, a0, g_across - g_pad, a0 + g_hdr}
                             : RECT{a0, g_pad, a0 + g_hdr, g_across - g_pad};
     int base = a0 + g_hdr + g_gap;
-    if (p) for (int i = 0; i < n; i++) {
+    if (list) for (int i = 0; i < n; i++) {
         int col = g_used > 0 ? i / g_used : 0, row = g_used > 0 ? i % g_used : 0;
         int a = base + row * (g_btnPx + g_gap);
         int c = g_pad + col * (g_btnPx + g_gap);
-        p->btns[i].rc = g_vertical ? RECT{c, a, c + g_btnPx, a + g_btnPx}
+        (*list)[i].rc = g_vertical ? RECT{c, a, c + g_btnPx, a + g_btnPx}
                                    : RECT{a, c, a + g_btnPx, c + g_btnPx};
     }
     int fa0 = off + g_along - g_pad - g_ftr, fa1 = off + g_along - g_pad;
@@ -146,7 +156,13 @@ void PanelLayout() {
     struct Done { bool* f; ~Done() { *f = false; } } done{&busy};
 
     Profile* p = CurProfile();
-    int n = p ? (int)p->btns.size() : 0;
+    // Размер полоски держим по самой длинной странице набора: иначе при
+    // переходе к осям кнопки уезжали бы под пальцем.
+    int n = 0;
+    if (p) {
+        n = (int)p->btns.size();
+        for (auto& pg : p->pages) if ((int)pg.btns.size() > n) n = (int)pg.btns.size();
+    }
     RECT wa = WorkArea();
     g_vertical = (g_cfg.edge == E_LEFT || g_cfg.edge == E_RIGHT);
     int spanAll = g_vertical ? (wa.bottom - wa.top) : (wa.right - wa.left);
@@ -403,8 +419,8 @@ void PanelRedraw() {
     {
         Graphics g(mem);
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        Profile* p = CurProfile();
-        if (p) for (auto& b : p->btns) {
+        std::vector<Btn>* list = CurBtns();
+        if (list) for (auto& b : *list) {
             RECT r = b.rc;
             RectF rf((REAL)r.left, (REAL)r.top, (REAL)(r.right - r.left), (REAL)(r.bottom - r.top));
             if (b.armed)        ButtonFace(g, rf, C_ARM,    Color(255, 230, 178,  84), Color(255, 236, 190, 110), rad);
@@ -426,12 +442,15 @@ void PanelRedraw() {
 
     {
         Profile* p = CurProfile();
-        if (p) {
+        std::vector<Btn>* list = CurBtns();
+        if (p && list) {
             std::wstring title = p->name;
+            if (g_pageIdx >= 0 && g_pageIdx < (int)p->pages.size())
+                title = L"‹ " + p->pages[g_pageIdx].name;   // «‹» — нажми, чтобы вернуться
             if (g_needAdmin) title += L"  (!)";
             DrawLabel(mem, title, g_rcHeader, RGBof(g_needAdmin ? C_WARN : C_MUTED),
                       (int)(g_btnPx * 0.22), false);
-            for (auto& b : p->btns) {
+            for (auto& b : *list) {
                 bool dark = b.armed || b.latched;
                 RECT tr = b.rc;
                 InflateRect(&tr, -(int)(g_btnPx * 0.08), -(int)(g_btnPx * 0.06));
@@ -550,6 +569,7 @@ void PanelShow(bool show) {
         if (g_main) SetTimer(g_main, TIMER_TICK, 30, nullptr);
     } else {
         ReleaseEverything();          // с залипшим Shift панель прятать нельзя
+        g_pageIdx = -1;               // и открытой страницей осей тоже
         AppBarRemove();
         ShowWindow(g_panel, SW_HIDE);
     }
@@ -557,22 +577,42 @@ void PanelShow(bool show) {
     Log(show ? L"панель показана" : L"панель убрана");
 }
 
+void PanelSetPage(const std::wstring& name) {
+    Profile* p = CurProfile();
+    if (!p) return;
+    int want = -1;
+    for (int i = 0; i < (int)p->pages.size(); i++)
+        if (p->pages[i].name == name) { want = i; break; }
+    if (want == g_pageIdx) return;
+
+    // Пальцы, которые сейчас на кнопках, отпускаем сами: после смены списка
+    // их номера указывали бы уже на другие кнопки.
+    std::vector<Btn>* old = CurBtns();
+    if (old) for (auto& kv : g_ptr)
+        if (kv.second >= 0 && kv.second < (int)old->size()) BtnRelease((*old)[kv.second]);
+    g_ptr.clear();
+
+    g_pageIdx = want;
+    PanelLayout();
+}
+
 void PanelSetProfile(int idx) {
     if (idx < 0 || idx >= (int)g_cfg.profiles.size() || idx == g_profileIdx) return;
     ReleaseEverything();
     g_profileIdx = idx;
+    g_pageIdx    = -1;
     Log(L"набор кнопок: %s", g_cfg.profiles[idx].name.c_str());
     if (PanelVisible()) PanelLayout();
 }
 
 // ---- касания -------------------------------------------------------------
-static std::map<UINT32, int> g_ptr;      // указатель -> номер кнопки
+
 static const int SYS_HEADER = -3, SYS_SETTINGS = -1, SYS_HIDE = -2;
 
 static int HitTest(POINT pt) {
-    Profile* p = CurProfile();
-    if (p) for (int i = 0; i < (int)p->btns.size(); i++)
-        if (PtInRect(&p->btns[i].rc, pt)) return i;
+    std::vector<Btn>* list = CurBtns();
+    if (list) for (int i = 0; i < (int)list->size(); i++)
+        if (PtInRect(&(*list)[i].rc, pt)) return i;
     if (PtInRect(&g_rcSettings, pt)) return SYS_SETTINGS;
     if (PtInRect(&g_rcHide, pt))     return SYS_HIDE;
     if (PtInRect(&g_rcHeader, pt))   return SYS_HEADER;
@@ -614,9 +654,9 @@ static void OnDown(UINT32 id, POINT client) {
     if (g_main) SetTimer(g_main, TIMER_TICK, 30, nullptr);
     g_ptr[id] = idx;
     if (idx >= 0) {
-        Profile* p = CurProfile();
-        if (p && idx < (int)p->btns.size()) {
-            BtnPress(p->btns[idx]);
+        std::vector<Btn>* list = CurBtns();
+        if (list && idx < (int)list->size()) {
+            BtnPress((*list)[idx]);
             PanelRedraw();
         }
     }
@@ -628,15 +668,26 @@ static void OnUp(UINT32 id, POINT client) {
     int idx = it->second;
     g_ptr.erase(it);
     if (idx >= 0) {
-        Profile* p = CurProfile();
-        if (p && idx < (int)p->btns.size()) BtnRelease(p->btns[idx]);
+        std::vector<Btn>* list = CurBtns();
+        std::wstring go;
+        if (list && idx < (int)list->size()) {
+            Btn& b = (*list)[idx];
+            BtnRelease(b);
+            go = b.page;       // копия ДО перехода: список сейчас сменится
+        }
+        // Страницу переключаем на отпускании, а не на нажатии: пока палец
+        // держит кнопку, её место в списке должно оставаться прежним.
+        if (!go.empty()) PanelSetPage(go == L"-" ? L"" : go);
         PanelRedraw();
         return;
     }
     if (HitTest(client) != idx) return;      // палец уехал с кнопки — не считаем
     if (idx == SYS_HIDE)     PanelShow(false);
     else if (idx == SYS_SETTINGS) SettingsOpen();
-    else if (idx == SYS_HEADER)   ProfileMenu();
+    else if (idx == SYS_HEADER) {
+        if (g_pageIdx >= 0) PanelSetPage(L"");   // «‹» в шапке — назад к основной
+        else ProfileMenu();
+    }
 }
 
 // ---- окна ----------------------------------------------------------------
@@ -787,8 +838,8 @@ void PanelTick() {
     }
     DWORD now = GetTickCount();
     bool redraw = false;
-    Profile* p = CurProfile();
-    if (p) for (auto& b : p->btns) {
+    std::vector<Btn>* list = CurBtns();
+    if (list) for (auto& b : *list) {
         bool wasArmed = b.armed;
         BtnTick(b, now, cur, onPanel);
         if (wasArmed != b.armed) redraw = true;

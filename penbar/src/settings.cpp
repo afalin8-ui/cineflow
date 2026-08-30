@@ -11,7 +11,11 @@ static HWND g_wnd = nullptr, g_tabs = nullptr;
 static HFONT g_font = nullptr, g_fontB = nullptr;
 static double g_sc = 1.0;
 static int  g_tab = 0;
-static int  g_prof = 0, g_btn = 0;
+// Слева одним списком идут наборы и их страницы: страница — тот же список
+// кнопок, и редактировать её удобнее тем же самым редактором, а не вторым.
+struct Row { int prof; int page; };      // page = -1 — основная страница набора
+static std::vector<Row> g_rows;
+static int  g_row = 0, g_btn = 0;
 static bool g_capturing = false;
 static bool g_fill = false;          // идёт заполнение полей — не реагируем на события
 static HHOOK g_kbHook = nullptr;
@@ -22,7 +26,8 @@ enum {
     // вкладка «Кнопки»
     ID_PROFS = 100, ID_PROF_ADD, ID_PROF_DEL, ID_PROF_NAME, ID_PROF_MATCH, ID_PROF_DETECT,
     ID_BTNS, ID_BTN_ADD, ID_BTN_DEL, ID_BTN_UP, ID_BTN_DOWN,
-    ID_LABEL, ID_KEYS, ID_CAPTURE, ID_MOUSE, ID_MODE, ID_REPEAT,
+    ID_LABEL, ID_KEYS, ID_CAPTURE, ID_MOUSE, ID_MODE, ID_REPEAT, ID_PAGE,
+    ID_PAGE_ADD,
     // вкладка «Вид»
     ID_EDGE = 200, ID_ALIGN, ID_MM, ID_MM_MINUS, ID_MM_PLUS, ID_OPACITY,
     ID_PUSH, ID_SWIPE, ID_HANDLE, ID_AUTOSTART, ID_SHOWSTART,
@@ -36,14 +41,28 @@ struct Ctl { HWND h; int tab; };
 static std::vector<Ctl> g_ctls;
 
 static int  S(double v) { return (int)(v * g_sc + 0.5); }
+
+static Row CurRow() {
+    if (g_row < 0 || g_row >= (int)g_rows.size()) return Row{0, -1};
+    return g_rows[g_row];
+}
 static Profile* Prof() {
-    if (g_prof < 0 || g_prof >= (int)g_cfg.profiles.size()) return nullptr;
-    return &g_cfg.profiles[g_prof];
+    Row r = CurRow();
+    if (r.prof < 0 || r.prof >= (int)g_cfg.profiles.size()) return nullptr;
+    return &g_cfg.profiles[r.prof];
+}
+static bool RowIsPage() { return CurRow().page >= 0; }
+static std::vector<Btn>* BtnList() {
+    Profile* p = Prof();
+    if (!p) return nullptr;
+    Row r = CurRow();
+    if (r.page < 0 || r.page >= (int)p->pages.size()) return &p->btns;
+    return &p->pages[r.page].btns;
 }
 static Btn* CurBtn() {
-    Profile* p = Prof();
-    if (!p || g_btn < 0 || g_btn >= (int)p->btns.size()) return nullptr;
-    return &p->btns[g_btn];
+    std::vector<Btn>* l = BtnList();
+    if (!l || g_btn < 0 || g_btn >= (int)l->size()) return nullptr;
+    return &(*l)[g_btn];
 }
 
 static HWND Add(const wchar_t* cls, const wchar_t* text, DWORD style,
@@ -67,8 +86,8 @@ static void FillButtonList() {
     g_fill = true;
     HWND lb = C(ID_BTNS);
     SendMessageW(lb, LB_RESETCONTENT, 0, 0);
-    Profile* p = Prof();
-    if (p) for (auto& b : p->btns) {
+    std::vector<Btn>* list = BtnList();
+    if (list) for (auto& b : *list) {
         std::wstring s = b.label;
         for (auto& ch : s) if (ch == L'\n') ch = L' ';
         s += L"   —   ";
@@ -81,6 +100,8 @@ static void FillButtonList() {
         if (b.mode == M_HOLD)  s += L" (держать)";
         if (b.mode == M_LATCH) s += L" (залипает)";
         if (b.repeat)          s += L" (повтор)";
+        if (b.page == L"-")    s += L" → назад";
+        else if (!b.page.empty()) s += L" → " + b.page;
         SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)s.c_str());
     }
     SendMessageW(lb, LB_SETCURSEL, g_btn, 0);
@@ -90,25 +111,58 @@ static void FillButtonList() {
 static void FillButtonFields() {
     g_fill = true;
     Btn* b = CurBtn();
+    Profile* p = Prof();
     SetWindowTextW(C(ID_LABEL), b ? b->label.c_str() : L"");
     SetWindowTextW(C(ID_KEYS),  b ? b->keys.c_str()  : L"");
     SendMessageW(C(ID_MOUSE), CB_SETCURSEL, b ? b->mouse : 0, 0);
     SendMessageW(C(ID_MODE),  CB_SETCURSEL, b ? b->mode  : 0, 0);
     SendMessageW(C(ID_REPEAT), BM_SETCHECK, (b && b->repeat) ? BST_CHECKED : BST_UNCHECKED, 0);
-    for (int id = ID_LABEL; id <= ID_REPEAT; id++) EnableWindow(C(id), b != nullptr);
+
+    // «Открывает»: список страниц этого набора
+    HWND cb = C(ID_PAGE);
+    SendMessageW(cb, CB_RESETCONTENT, 0, 0);
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)L"— ничего");
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)L"‹ вернуться назад");
+    if (p) for (auto& pg : p->pages)
+        SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)pg.name.c_str());
+    int sel = 0;
+    if (b && b->page == L"-") sel = 1;
+    else if (b && !b->page.empty() && p) {
+        for (int i = 0; i < (int)p->pages.size(); i++)
+            if (p->pages[i].name == b->page) { sel = i + 2; break; }
+    }
+    SendMessageW(cb, CB_SETCURSEL, sel, 0);
+
+    for (int id = ID_LABEL; id <= ID_PAGE; id++) EnableWindow(C(id), b != nullptr);
     g_fill = false;
 }
 
 static void FillProfileList() {
     g_fill = true;
+    g_rows.clear();
     HWND lb = C(ID_PROFS);
     SendMessageW(lb, LB_RESETCONTENT, 0, 0);
-    for (auto& p : g_cfg.profiles)
-        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)p.name.c_str());
-    SendMessageW(lb, LB_SETCURSEL, g_prof, 0);
+    for (int i = 0; i < (int)g_cfg.profiles.size(); i++) {
+        g_rows.push_back(Row{i, -1});
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)g_cfg.profiles[i].name.c_str());
+        for (int j = 0; j < (int)g_cfg.profiles[i].pages.size(); j++) {
+            g_rows.push_back(Row{i, j});
+            std::wstring t = L"      › " + g_cfg.profiles[i].pages[j].name;
+            SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)t.c_str());
+        }
+    }
+    if (g_row >= (int)g_rows.size()) g_row = (int)g_rows.size() - 1;
+    if (g_row < 0) g_row = 0;
+    SendMessageW(lb, LB_SETCURSEL, g_row, 0);
+
     Profile* p = Prof();
-    SetWindowTextW(C(ID_PROF_NAME),  p ? p->name.c_str()  : L"");
-    SetWindowTextW(C(ID_PROF_MATCH), p ? p->match.c_str() : L"");
+    Row r = CurRow();
+    bool page = RowIsPage();
+    std::wstring name = !p ? L"" : (page ? p->pages[r.page].name : p->name);
+    SetWindowTextW(C(ID_PROF_NAME),  name.c_str());
+    SetWindowTextW(C(ID_PROF_MATCH), (p && !page) ? p->match.c_str() : L"");
+    EnableWindow(C(ID_PROF_MATCH),  p && !page);
+    EnableWindow(C(ID_PROF_DETECT), p && !page);
     g_fill = false;
     FillButtonList();
     FillButtonFields();
@@ -234,7 +288,7 @@ static void OnCommand(int id, int code) {
     switch (id) {
         case ID_PROFS:
             if (code == LBN_SELCHANGE) {
-                g_prof = (int)SendMessageW(C(ID_PROFS), LB_GETCURSEL, 0, 0);
+                g_row = (int)SendMessageW(C(ID_PROFS), LB_GETCURSEL, 0, 0);
                 g_btn = 0;
                 FillProfileList();
             }
@@ -246,74 +300,126 @@ static void OnCommand(int id, int code) {
             }
             return;
         case ID_PROF_NAME:
-            if (code == EN_CHANGE && p) { p->name = GetText(ID_PROF_NAME); FillProfileList(); ApplyLive(); }
+            if (code == EN_CHANGE && p) {
+                std::wstring nn = GetText(ID_PROF_NAME);
+                if (RowIsPage()) {
+                    // Кнопки, которые вели на эту страницу, должны вести на неё
+                    // и после переименования — иначе они перестанут открываться.
+                    std::wstring old = p->pages[CurRow().page].name;
+                    p->pages[CurRow().page].name = nn;
+                    for (auto& x : p->btns) if (x.page == old) x.page = nn;
+                    for (auto& pg : p->pages)
+                        for (auto& x : pg.btns) if (x.page == old) x.page = nn;
+                } else p->name = nn;
+                int keep = g_row;
+                FillProfileList();
+                g_row = keep;
+                ApplyLive();
+            }
             return;
         case ID_PROF_MATCH:
-            if (code == EN_CHANGE && p) p->match = GetText(ID_PROF_MATCH);
+            if (code == EN_CHANGE && p && !RowIsPage()) p->match = GetText(ID_PROF_MATCH);
             return;
         case ID_PROF_DETECT: {
-            // имя программы, которая была впереди до открытия настроек
             extern std::wstring SettingsPrevExe();
             std::wstring exe = SettingsPrevExe();
-            if (!exe.empty() && p) { p->match = exe; SetWindowTextW(C(ID_PROF_MATCH), exe.c_str()); }
+            if (!exe.empty() && p && !RowIsPage()) {
+                p->match = exe;
+                SetWindowTextW(C(ID_PROF_MATCH), exe.c_str());
+            }
             return;
         }
         case ID_PROF_ADD: {
             Profile np;
             np.name = L"Новый набор";
-            g_cfg.profiles.insert(g_cfg.profiles.begin() + (p ? g_prof + 1 : 0), np);
-            g_prof = p ? g_prof + 1 : 0;
+            int at = p ? CurRow().prof + 1 : 0;
+            g_cfg.profiles.insert(g_cfg.profiles.begin() + at, np);
             g_btn = 0;
+            FillProfileList();
+            for (int i = 0; i < (int)g_rows.size(); i++)
+                if (g_rows[i].prof == at && g_rows[i].page == -1) { g_row = i; break; }
             FillProfileList();
             return;
         }
-        case ID_PROF_DEL:
-            if (p && g_cfg.profiles.size() > 1 &&
-                MessageBoxW(g_wnd, (L"Удалить набор «" + p->name + L"»?").c_str(),
-                            L"Пульт", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                g_cfg.profiles.erase(g_cfg.profiles.begin() + g_prof);
-                if (g_prof >= (int)g_cfg.profiles.size()) g_prof = (int)g_cfg.profiles.size() - 1;
-                g_btn = 0;
-                FillProfileList();
-                ApplyLive();
-            }
+        case ID_PAGE_ADD: {
+            if (!p) return;
+            Page pg;
+            wchar_t nm[64];
+            swprintf(nm, 64, L"Страница %d", (int)p->pages.size() + 1);
+            pg.name = nm;
+            p->pages.push_back(pg);
+            g_btn = 0;
+            FillProfileList();
+            for (int i = 0; i < (int)g_rows.size(); i++)
+                if (g_rows[i].prof == CurRow().prof &&
+                    g_rows[i].page == (int)p->pages.size() - 1) { g_row = i; break; }
+            FillProfileList();
             return;
-        case ID_BTN_ADD:
-            if (p) {
-                Btn nb;
-                nb.label = L"Новая";
-                p->btns.insert(p->btns.begin() + (p->btns.empty() ? 0 : g_btn + 1), nb);
-                if (!p->btns.empty() && p->btns.size() > 1) g_btn++;
-                FillButtonList();
-                FillButtonFields();
-                ApplyLive();
+        }
+        case ID_PROF_DEL: {
+            if (!p) return;
+            if (RowIsPage()) {
+                std::wstring nm = p->pages[CurRow().page].name;
+                if (MessageBoxW(g_wnd, (L"Удалить страницу «" + nm + L"»?").c_str(),
+                                L"Пульт", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+                p->pages.erase(p->pages.begin() + CurRow().page);
+                for (auto& x : p->btns) if (x.page == nm) x.page.clear();
+                for (auto& pg : p->pages)
+                    for (auto& x : pg.btns) if (x.page == nm) x.page.clear();
+            } else {
+                if (g_cfg.profiles.size() <= 1) return;
+                if (MessageBoxW(g_wnd, (L"Удалить набор «" + p->name + L"»?").c_str(),
+                                L"Пульт", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+                g_cfg.profiles.erase(g_cfg.profiles.begin() + CurRow().prof);
             }
+            if (g_row > 0) g_row--;
+            g_btn = 0;
+            FillProfileList();
+            ApplyLive();
             return;
-        case ID_BTN_DEL:
-            if (p && b) {
-                p->btns.erase(p->btns.begin() + g_btn);
-                if (g_btn >= (int)p->btns.size()) g_btn = (int)p->btns.size() - 1;
-                FillButtonList();
-                FillButtonFields();
-                ApplyLive();
-            }
+        }
+        case ID_BTN_ADD: {
+            std::vector<Btn>* list = BtnList();
+            if (!list) return;
+            Btn nb;
+            nb.label = L"Новая";
+            list->insert(list->begin() + (list->empty() ? 0 : g_btn + 1), nb);
+            if (list->size() > 1) g_btn++;
+            FillButtonList();
+            FillButtonFields();
+            ApplyLive();
             return;
-        case ID_BTN_UP:
-            if (p && b && g_btn > 0) {
-                std::swap(p->btns[g_btn], p->btns[g_btn - 1]);
+        }
+        case ID_BTN_DEL: {
+            std::vector<Btn>* list = BtnList();
+            if (!list || !b) return;
+            list->erase(list->begin() + g_btn);
+            if (g_btn >= (int)list->size()) g_btn = (int)list->size() - 1;
+            FillButtonList();
+            FillButtonFields();
+            ApplyLive();
+            return;
+        }
+        case ID_BTN_UP: {
+            std::vector<Btn>* list = BtnList();
+            if (list && b && g_btn > 0) {
+                std::swap((*list)[g_btn], (*list)[g_btn - 1]);
                 g_btn--;
                 FillButtonList();
                 ApplyLive();
             }
             return;
-        case ID_BTN_DOWN:
-            if (p && b && g_btn + 1 < (int)p->btns.size()) {
-                std::swap(p->btns[g_btn], p->btns[g_btn + 1]);
+        }
+        case ID_BTN_DOWN: {
+            std::vector<Btn>* list = BtnList();
+            if (list && b && g_btn + 1 < (int)list->size()) {
+                std::swap((*list)[g_btn], (*list)[g_btn + 1]);
                 g_btn++;
                 FillButtonList();
                 ApplyLive();
             }
             return;
+        }
         case ID_LABEL:
             if (code == EN_CHANGE && b) { b->label = GetText(ID_LABEL); FillButtonList(); ApplyLive(); }
             return;
@@ -339,6 +445,15 @@ static void OnCommand(int id, int code) {
             return;
         case ID_REPEAT:
             if (b) { b->repeat = SendMessageW(C(ID_REPEAT), BM_GETCHECK, 0, 0) == BST_CHECKED; FillButtonList(); }
+            return;
+        case ID_PAGE:
+            if (code == CBN_SELCHANGE && b && p) {
+                int sel = (int)SendMessageW(C(ID_PAGE), CB_GETCURSEL, 0, 0);
+                if (sel <= 0)      b->page.clear();
+                else if (sel == 1) b->page = L"-";
+                else if (sel - 2 < (int)p->pages.size()) b->page = p->pages[sel - 2].name;
+                FillButtonList();
+            }
             return;
 
         case ID_EDGE:
@@ -423,7 +538,7 @@ static void OnCommand(int id, int code) {
                             L"Пульт", MB_YESNO | MB_ICONWARNING) == IDYES) {
                 ConfigDefaults();
                 ConfigSave();
-                g_prof = g_btn = 0;
+                g_row = g_btn = 0;
                 FillProfileList();
                 FillView();
                 ApplyLive();
@@ -487,10 +602,10 @@ static LRESULT CALLBACK SetProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DPICHANGED: {
             // Масштаб сменился — пересобираем окно целиком. Так надёжнее, чем
             // пересчитывать полсотни полей по одному, а случается это редко.
-            int tab = g_tab, prof = g_prof, btn = g_btn;
+            int tab = g_tab, row = g_row, btn = g_btn;
             DestroyWindow(hwnd);
             SettingsOpen();
-            g_prof = prof; g_btn = btn;
+            g_row = row; g_btn = btn;
             FillProfileList();
             if (g_tabs) SendMessageW(g_tabs, TCM_SETCURSEL, tab, 0);
             ShowTab(tab);
@@ -586,21 +701,22 @@ void SettingsOpen() {
 
     // ---- вкладка «Кнопки» ----
     Add(L"STATIC", L"Наборы кнопок", WS_VISIBLE, 14, T, 200, 22, -1, 0);
-    Add(L"LISTBOX", L"", LBS, 14, T + 26, 200, 300, ID_PROFS, 0);
-    Add(L"BUTTON", L"+ набор", WS_VISIBLE, 14, T + 332, 96, 34, ID_PROF_ADD, 0);
-    Add(L"BUTTON", L"Удалить",  WS_VISIBLE, 118, T + 332, 96, 34, ID_PROF_DEL, 0);
-    Add(L"STATIC", L"Название", WS_VISIBLE, 14, T + 376, 200, 20, -1, 0);
-    Add(L"EDIT", L"", EDS | WS_VISIBLE, 14, T + 398, 200, 30, ID_PROF_NAME, 0);
-    Add(L"STATIC", L"Программа (exe, через ;)", WS_VISIBLE, 14, T + 434, 200, 20, -1, 0);
-    Add(L"EDIT", L"", EDS | WS_VISIBLE, 14, T + 456, 200, 30, ID_PROF_MATCH, 0);
-    Add(L"BUTTON", L"Взять из активной", WS_VISIBLE, 14, T + 492, 200, 32, ID_PROF_DETECT, 0);
+    Add(L"LISTBOX", L"", LBS, 14, T + 26, 200, 250, ID_PROFS, 0);
+    Add(L"BUTTON", L"+ набор",    WS_VISIBLE, 14,  T + 282, 96, 34, ID_PROF_ADD, 0);
+    Add(L"BUTTON", L"+ страница", WS_VISIBLE, 118, T + 282, 96, 34, ID_PAGE_ADD, 0);
+    Add(L"BUTTON", L"Удалить выбранное", WS_VISIBLE, 14, T + 320, 200, 34, ID_PROF_DEL, 0);
+    Add(L"STATIC", L"Название", WS_VISIBLE, 14, T + 360, 200, 20, -1, 0);
+    Add(L"EDIT", L"", EDS | WS_VISIBLE, 14, T + 382, 200, 30, ID_PROF_NAME, 0);
+    Add(L"STATIC", L"Программа (exe, через ;)", WS_VISIBLE, 14, T + 418, 200, 20, -1, 0);
+    Add(L"EDIT", L"", EDS | WS_VISIBLE, 14, T + 440, 200, 30, ID_PROF_MATCH, 0);
+    Add(L"BUTTON", L"Взять из активной", WS_VISIBLE, 14, T + 476, 200, 32, ID_PROF_DETECT, 0);
 
     Add(L"STATIC", L"Кнопки набора (сверху вниз)", WS_VISIBLE, 230, T, 380, 22, -1, 0);
-    Add(L"LISTBOX", L"", LBS, 230, T + 26, 380, 380, ID_BTNS, 0);
-    Add(L"BUTTON", L"+ кнопка", WS_VISIBLE, 230, T + 412, 92, 34, ID_BTN_ADD, 0);
-    Add(L"BUTTON", L"Удалить", WS_VISIBLE, 328, T + 412, 92, 34, ID_BTN_DEL, 0);
-    Add(L"BUTTON", L"↑ выше",  WS_VISIBLE, 426, T + 412, 88, 34, ID_BTN_UP, 0);
-    Add(L"BUTTON", L"↓ ниже",  WS_VISIBLE, 520, T + 412, 90, 34, ID_BTN_DOWN, 0);
+    Add(L"LISTBOX", L"", LBS, 230, T + 26, 380, 336, ID_BTNS, 0);
+    Add(L"BUTTON", L"+ кнопка", WS_VISIBLE, 230, T + 368, 92, 34, ID_BTN_ADD, 0);
+    Add(L"BUTTON", L"Удалить", WS_VISIBLE, 328, T + 368, 92, 34, ID_BTN_DEL, 0);
+    Add(L"BUTTON", L"↑ выше",  WS_VISIBLE, 426, T + 368, 88, 34, ID_BTN_UP, 0);
+    Add(L"BUTTON", L"↓ ниже",  WS_VISIBLE, 520, T + 368, 90, 34, ID_BTN_DOWN, 0);
 
     Add(L"STATIC", L"Подпись (длинная сама встанет в две строки)",
         WS_VISIBLE, 626, T, 260, 40, -1, 0);
@@ -609,17 +725,20 @@ void SettingsOpen() {
     Add(L"EDIT", L"", EDS | WS_VISIBLE, 626, T + 106, 260, 30, ID_KEYS, 0);
     Add(L"BUTTON", L"Захватить с клавиатуры", WS_VISIBLE, 626, T + 142, 260, 34, ID_CAPTURE, 0);
     Add(L"STATIC", L"Например: ctrl+z, shift, space, f12, num1, [", WS_VISIBLE, 626, T + 180, 260, 40, -1, 0);
-    Add(L"STATIC", L"Кнопка мыши", WS_VISIBLE, 626, T + 226, 260, 20, -1, 0);
-    Add(L"COMBOBOX", L"", WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 626, T + 248, 260, 200, ID_MOUSE, 0);
-    Add(L"STATIC", L"Как нажимать", WS_VISIBLE, 626, T + 290, 260, 20, -1, 0);
-    Add(L"COMBOBOX", L"", WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 626, T + 312, 260, 200, ID_MODE, 0);
-    Add(L"BUTTON", L"Повторять, пока нажата", WS_VISIBLE | BS_AUTOCHECKBOX, 626, T + 356, 260, 30, ID_REPEAT, 0);
+    Add(L"STATIC", L"Кнопка мыши", WS_VISIBLE, 626, T + 222, 260, 20, -1, 0);
+    Add(L"COMBOBOX", L"", WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 626, T + 244, 260, 200, ID_MOUSE, 0);
+    Add(L"STATIC", L"Как нажимать", WS_VISIBLE, 626, T + 284, 260, 20, -1, 0);
+    Add(L"COMBOBOX", L"", WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 626, T + 306, 260, 200, ID_MODE, 0);
+    Add(L"BUTTON", L"Повторять, пока нажата", WS_VISIBLE | BS_AUTOCHECKBOX, 626, T + 346, 260, 30, ID_REPEAT, 0);
+    Add(L"STATIC", L"Открывает страницу", WS_VISIBLE, 626, T + 382, 260, 20, -1, 0);
+    Add(L"COMBOBOX", L"", WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 626, T + 404, 260, 200, ID_PAGE, 0);
     Add(L"STATIC",
-        L"«Разовое» — нажать и отпустить.\n"
-        L"«Держать» — пока палец на кнопке (WASD).\n"
-        L"«Залипает» — до второго нажатия: Shift, или средняя кнопка мыши, чтобы "
-        L"нажать и вести пером.",
-        WS_VISIBLE, 626, T + 392, 260, 110, -1, 0);
+        L"«Разовое» — нажать и отпустить.   «Держать» — пока палец на кнопке (WASD).\n"
+        L"«Залипает» — до второго нажатия: Shift или средняя кнопка мыши, чтобы нажать "
+        L"и вести пером.\n"
+        L"«Открывает страницу» — после нажатия полоска покажет другой ряд кнопок; так "
+        L"в Blender сделан выбор оси после G, R и S.",
+        WS_VISIBLE, 230, T + 410, 380, 126, -1, 0);
 
     const wchar_t* mice[] = {L"нет", L"левая", L"правая", L"средняя", L"колесо вверх", L"колесо вниз"};
     for (auto m : mice) SendMessageW(C(ID_MOUSE), CB_ADDSTRING, 0, (LPARAM)m);

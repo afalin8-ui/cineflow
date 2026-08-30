@@ -31,6 +31,7 @@ struct Btn {
     int   mouse  = PB_NONE;      // кнопка мыши или колесо
     int   mode   = M_TAP;        // разовое / держать / залипает
     bool  repeat = false;        // повтор при удержании
+    std::wstring page;           // после нажатия открыть страницу; "-" = вернуться
     std::vector<WORD> vks;       // разобранное сочетание (считается один раз)
 
     // состояние во время работы (в файл не пишется)
@@ -41,10 +42,21 @@ struct Btn {
     RECT  rc{};                  // место кнопки в окне панели
 };
 
+// Страница — второй ряд кнопок внутри набора. Заведена ради Blender: там
+// после G, R и S выбирают ось, и класть на полоску все девять сочетаний
+// (сдвиг по X, по Y, по Z, поворот по X…) значит забить её одними осями.
+// Кнопка «Сдвиг» сама открывает страницу с осями — ровно как в Blender,
+// где после G нажимают X.
+struct Page {
+    std::wstring name;
+    std::vector<Btn> btns;
+};
+
 struct Profile {
     std::wstring name;           // "DaVinci Resolve"
     std::wstring match;          // "resolve.exe;fusion.exe" — пусто = общий
-    std::vector<Btn> btns;
+    std::vector<Btn> btns;       // основная страница
+    std::vector<Page> pages;     // дополнительные страницы
 };
 
 struct Config {
@@ -103,6 +115,9 @@ void PanelSetNeedAdmin(bool v);
 void PanelFit(int& fitRows, double& realMM);   // сколько кнопок влезает и какого размера вышли
 int  PanelProfile();
 Profile* CurProfile();
+std::vector<Btn>* CurBtns();            // кнопки текущей страницы
+int  PanelPage();                       // -1 = основная страница
+void PanelSetPage(const std::wstring& name);
 
 // ---- окружение -----------------------------------------------------------
 double ScreenDPI();                     // физических точек на дюйм экрана

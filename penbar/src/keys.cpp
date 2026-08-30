@@ -299,18 +299,28 @@ void BtnTick(Btn& b, DWORD now, const POINT& cur, bool cursorOnPanel) {
 }
 
 bool AnyHeld() {
-    for (auto& p : g_cfg.profiles)
+    for (auto& p : g_cfg.profiles) {
         for (auto& b : p.btns)
             if (b.latched || b.down || b.armed) return true;
+        for (auto& pg : p.pages)
+            for (auto& b : pg.btns)
+                if (b.latched || b.down || b.armed) return true;
+    }
     return !g_heldVk.empty() || g_heldMouse[1] || g_heldMouse[2] || g_heldMouse[3];
 }
 
+static void ReleaseList(std::vector<Btn>& list) {
+    for (auto& b : list) {
+        if ((b.latched || b.down) && !b.armed) ApplyUp(b);
+        b.latched = b.down = b.armed = false;
+    }
+}
+
 void ReleaseEverything() {
-    for (auto& p : g_cfg.profiles)
-        for (auto& b : p.btns) {
-            if ((b.latched || b.down) && !b.armed) ApplyUp(b);
-            b.latched = b.down = b.armed = false;
-        }
+    for (auto& p : g_cfg.profiles) {
+        ReleaseList(p.btns);
+        for (auto& pg : p.pages) ReleaseList(pg.btns);
+    }
     for (int i = 1; i <= 3; i++)
         if (g_heldMouse[i]) SendMouseBtn(i == 1 ? PB_LEFT : i == 2 ? PB_RIGHT : PB_MID, false);
     std::vector<WORD> left = g_heldVk;

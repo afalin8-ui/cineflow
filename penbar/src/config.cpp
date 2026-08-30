@@ -8,13 +8,14 @@ Config g_cfg;
 // на пере. У пера одна нажимаемая кнопка, поэтому средняя и правая кнопки
 // мыши, Shift/Ctrl/Alt и «нажал и веду» — здесь.
 static Btn B(const wchar_t* label, const wchar_t* keys, int mode = M_TAP,
-             int mouse = PB_NONE, bool repeat = false) {
+             int mouse = PB_NONE, bool repeat = false, const wchar_t* page = nullptr) {
     Btn b;
     b.label  = label;
     b.keys   = keys ? keys : L"";
     b.mode   = mode;
     b.mouse  = mouse;
     b.repeat = repeat;
+    b.page   = page ? page : L"";
     return b;
 }
 
@@ -42,6 +43,8 @@ void ConfigDefaults() {
         g_cfg.profiles.push_back(p);
     }
     {   // ---- Blender ----
+        // Сдвиг, поворот и масштаб открывают вторую страницу с осями: в самом
+        // Blender после G нажимают X, и панель повторяет тот же порядок.
         Profile p;
         p.name  = L"Blender";
         p.match = L"blender.exe";
@@ -53,12 +56,29 @@ void ConfigDefaults() {
             B(L"Shift",      L"shift", M_LATCH),
             B(L"Ctrl",       L"ctrl",  M_LATCH),
             B(L"Alt",        L"alt",   M_LATCH),
-            B(L"G сдвиг",   L"g"),
-            B(L"R поворот", L"r"),
-            B(L"S масштаб", L"s"),
+            B(L"Сдвиг G",    L"g",     M_TAP, PB_NONE, false, L"Оси"),
+            B(L"Поворот R",  L"r",     M_TAP, PB_NONE, false, L"Оси"),
+            B(L"Масштаб S",  L"s",     M_TAP, PB_NONE, false, L"Оси"),
             B(L"Tab",        L"tab"),
             B(L"Отмена",     L"ctrl+z"),
         };
+        Page ax;
+        ax.name = L"Оси";
+        ax.btns = {
+            B(L"Сдвиг G",    L"g"),
+            B(L"Поворот R",  L"r"),
+            B(L"Масштаб S",  L"s"),
+            B(L"X",          L"x"),
+            B(L"Y",          L"y"),
+            B(L"Z",          L"z"),
+            B(L"кроме X",    L"shift+x"),
+            B(L"кроме Y",    L"shift+y"),
+            B(L"кроме Z",    L"shift+z"),
+            B(L"Ввод",       L"enter", M_TAP, PB_NONE, false, L"-"),
+            B(L"Esc",        L"esc",   M_TAP, PB_NONE, false, L"-"),
+            B(L"‹ Назад",    nullptr,  M_TAP, PB_NONE, false, L"-"),
+        };
+        p.pages.push_back(ax);
         g_cfg.profiles.push_back(p);
     }
     {   // ---- Unreal Engine ----
@@ -142,8 +162,11 @@ void ConfigDefaults() {
         g_cfg.profiles.push_back(p);
     }
 
-    for (auto& p : g_cfg.profiles)
+    for (auto& p : g_cfg.profiles) {
         for (auto& b : p.btns) BtnCompile(b);
+        for (auto& pg : p.pages)
+            for (auto& b : pg.btns) BtnCompile(b);
+    }
 }
 
 // ---- чтение и запись -----------------------------------------------------
@@ -155,6 +178,37 @@ static const wchar_t* MOUSE_NAMES[] = {L"", L"left", L"right", L"middle", L"whee
 static int NameIdx(const std::wstring& s, const wchar_t* const* names, int n, int def) {
     for (int i = 0; i < n; i++) if (s == names[i]) return i;
     return def;
+}
+
+static JPtr BtnsToJson(const std::vector<Btn>& btns) {
+    JPtr arr = JVal::mkArr();
+    for (auto& b : btns) {
+        JPtr jb = JVal::mkObj();
+        jb->set(L"label", b.label);
+        if (!b.keys.empty())    jb->set(L"keys",  b.keys);
+        if (b.mouse != PB_NONE) jb->set(L"mouse", std::wstring(MOUSE_NAMES[b.mouse]));
+        jb->set(L"mode", std::wstring(MODE_NAMES[b.mode % 3]));
+        if (b.repeat)           jb->set(L"repeat", true);
+        if (!b.page.empty())    jb->set(L"page", b.page);
+        arr->add(jb);
+    }
+    return arr;
+}
+
+static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
+    if (!arr || arr->type != JVal::ARR) return;
+    for (auto& jb : arr->arr) {
+        if (!jb || jb->type != JVal::OBJ) continue;
+        Btn b;
+        b.label  = jb->gets(L"label", L"?");
+        b.keys   = jb->gets(L"keys", L"");
+        b.page   = jb->gets(L"page", L"");
+        b.mouse  = NameIdx(jb->gets(L"mouse", L""), MOUSE_NAMES, 6, PB_NONE);
+        b.mode   = NameIdx(jb->gets(L"mode", L"tap"), MODE_NAMES, 3, M_TAP);
+        b.repeat = jb->getb(L"repeat", false);
+        BtnCompile(b);
+        out.push_back(b);
+    }
 }
 
 bool ConfigSave() {
@@ -175,17 +229,17 @@ bool ConfigSave() {
         JPtr jp = JVal::mkObj();
         jp->set(L"name",  p.name);
         jp->set(L"match", p.match);
-        JPtr btns = JVal::mkArr();
-        for (auto& b : p.btns) {
-            JPtr jb = JVal::mkObj();
-            jb->set(L"label", b.label);
-            if (!b.keys.empty())    jb->set(L"keys",  b.keys);
-            if (b.mouse != PB_NONE) jb->set(L"mouse", std::wstring(MOUSE_NAMES[b.mouse]));
-            jb->set(L"mode", std::wstring(MODE_NAMES[b.mode % 3]));
-            if (b.repeat)           jb->set(L"repeat", true);
-            btns->add(jb);
+        jp->set(L"buttons", BtnsToJson(p.btns));
+        if (!p.pages.empty()) {
+            JPtr pages = JVal::mkArr();
+            for (auto& pg : p.pages) {
+                JPtr jg = JVal::mkObj();
+                jg->set(L"name", pg.name);
+                jg->set(L"buttons", BtnsToJson(pg.btns));
+                pages->add(jg);
+            }
+            jp->set(L"pages", pages);
         }
-        jp->set(L"buttons", btns);
         profs->add(jp);
     }
     root->set(L"profiles", profs);
@@ -245,18 +299,15 @@ bool ConfigLoad() {
             Profile p;
             p.name  = jp->gets(L"name", L"Набор");
             p.match = jp->gets(L"match", L"");
-            const JVal* btns = jp->get(L"buttons");
-            if (btns && btns->type == JVal::ARR) {
-                for (auto& jb : btns->arr) {
-                    if (!jb || jb->type != JVal::OBJ) continue;
-                    Btn b;
-                    b.label  = jb->gets(L"label", L"?");
-                    b.keys   = jb->gets(L"keys", L"");
-                    b.mouse  = NameIdx(jb->gets(L"mouse", L""), MOUSE_NAMES, 6, PB_NONE);
-                    b.mode   = NameIdx(jb->gets(L"mode", L"tap"), MODE_NAMES, 3, M_TAP);
-                    b.repeat = jb->getb(L"repeat", false);
-                    BtnCompile(b);
-                    p.btns.push_back(b);
+            JsonToBtns(jp->get(L"buttons"), p.btns);
+            const JVal* pages = jp->get(L"pages");
+            if (pages && pages->type == JVal::ARR) {
+                for (auto& jg : pages->arr) {
+                    if (!jg || jg->type != JVal::OBJ) continue;
+                    Page pg;
+                    pg.name = jg->gets(L"name", L"Страница");
+                    JsonToBtns(jg->get(L"buttons"), pg.btns);
+                    p.pages.push_back(pg);
                 }
             }
             c.profiles.push_back(p);
