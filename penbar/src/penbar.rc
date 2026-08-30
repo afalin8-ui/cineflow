@@ -1,0 +1,3 @@
+#include "resource.h"
+IDI_APP ICON "../penbar.ico"
+1 24 "../penbar.manifest"
