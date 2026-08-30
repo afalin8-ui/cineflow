@@ -165,7 +165,14 @@ static std::wstring DiagText() {
     t += L"Плотность экрана: " + NumW(ScreenDPI()) + L" точек на дюйм (";
     t += g_cfg.screenDPI > 40 ? L"задано вручную" : L"определено само";
     t += L")\r\n";
-    t += L"Кнопка: " + NumW(g_cfg.buttonMM, 1) + L" мм = " + NumW(MM2PX(g_cfg.buttonMM)) + L" точек\r\n";
+    int fitRows = 0; double realMM = 0;
+    PanelFit(fitRows, realMM);
+    t += L"Кнопка: " + NumW(g_cfg.buttonMM, 1) + L" мм = " + NumW(MM2PX(g_cfg.buttonMM)) + L" точек";
+    if (realMM > 0 && realMM < g_cfg.buttonMM - 0.05)
+        t += L"  (не влезали, ужаты до " + NumW(realMM, 1) + L" мм)";
+    t += L"\r\n";
+    if (fitRows > 0)
+        t += L"По высоте края помещается кнопок: " + NumW(fitRows) + L"\r\n";
     t += L"Перо: ";   t += (dig & NID_INTEGRATED_PEN)   ? L"есть" : L"нет";
     t += L", сенсор: "; t += (dig & NID_INTEGRATED_TOUCH) ? L"есть" : L"нет";
     t += L", до " + NumW(GetSystemMetrics(SM_MAXIMUMTOUCHES)) + L" касаний\r\n";
@@ -477,6 +484,18 @@ static LRESULT CALLBACK SetProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_DPICHANGED: {
+            // Масштаб сменился — пересобираем окно целиком. Так надёжнее, чем
+            // пересчитывать полсотни полей по одному, а случается это редко.
+            int tab = g_tab, prof = g_prof, btn = g_btn;
+            DestroyWindow(hwnd);
+            SettingsOpen();
+            g_prof = prof; g_btn = btn;
+            FillProfileList();
+            if (g_tabs) SendMessageW(g_tabs, TCM_SETCURSEL, tab, 0);
+            ShowTab(tab);
+            return 0;
+        }
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
@@ -522,11 +541,7 @@ void SettingsOpen() {
     MONITORINFO mi{sizeof(MONITORINFO)};
     GetMonitorInfoW(mon, &mi);
     int wa_w = mi.rcWork.right - mi.rcWork.left, wa_h = mi.rcWork.bottom - mi.rcWork.top;
-    UINT dpi = 96;
-    if (HMODULE u = GetModuleHandleW(L"user32.dll")) {
-        typedef UINT (WINAPI *F)(HWND);
-        if (auto f = (F)GetProcAddress(u, "GetDpiForWindow")) dpi = f(GetDesktopWindow());
-    }
+    UINT dpi = MonitorDPI();
     if (dpi < 96) dpi = 96;
     g_sc = dpi / 96.0;
     const int BASE_W = 900, BASE_H = 600;
@@ -536,9 +551,10 @@ void SettingsOpen() {
     if (g_sc < 0.8)  g_sc = 0.8;
 
     LOGFONTW lf{};
-    lf.lfHeight = -S(15);
-    lf.lfWeight = FW_NORMAL;
-    wcscpy(lf.lfFaceName, L"Segoe UI");
+    lf.lfHeight  = -S(15);
+    lf.lfWeight  = FW_NORMAL;
+    lf.lfQuality = CLEARTYPE_QUALITY;      // обычное окно, прозрачности нет
+    wcscpy(lf.lfFaceName, UiFace());
     g_font = CreateFontIndirectW(&lf);
     lf.lfWeight = FW_BOLD;
     g_fontB = CreateFontIndirectW(&lf);

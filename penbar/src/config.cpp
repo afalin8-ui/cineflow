@@ -32,8 +32,6 @@ void ConfigDefaults() {
             B(L"J",            L"j"),
             B(L"K",            L"k"),
             B(L"L",            L"l"),
-            B(L"Вход I",      L"i"),
-            B(L"Выход O",     L"o"),
             B(L"Стрелка A",   L"a"),
             B(L"Лезвие B",    L"b"),
             B(L"Отмена",       L"ctrl+z"),
@@ -60,8 +58,6 @@ void ConfigDefaults() {
             B(L"S масштаб", L"s"),
             B(L"Tab",        L"tab"),
             B(L"Отмена",     L"ctrl+z"),
-            B(L"Вид спер.", L"num1"),
-            B(L"Вид сверху",L"num7"),
         };
         g_cfg.profiles.push_back(p);
     }
@@ -81,8 +77,6 @@ void ConfigDefaults() {
             B(L"Фокус F",     L"f"),
             B(L"Отмена",       L"ctrl+z"),
             B(L"Сохр.",        L"ctrl+s"),
-            B(L"Удал.",        L"delete"),
-            B(L"Вид G",       L"g"),
             B(L"ПКМ",          nullptr,  M_TAP,   PB_RIGHT),
         };
         g_cfg.profiles.push_back(p);
@@ -102,8 +96,6 @@ void ConfigDefaults() {
             B(L"Ластик E",      L"e"),
             B(L"Меньше [",      L"[", M_TAP, PB_NONE, true),
             B(L"Больше ]",      L"]", M_TAP, PB_NONE, true),
-            B(L"Цвета X",       L"x"),
-            B(L"Вписать",        L"ctrl+0"),
             B(L"Сохр.",          L"ctrl+s"),
             B(L"ПКМ",            nullptr,  M_TAP, PB_RIGHT),
         };
@@ -124,8 +116,6 @@ void ConfigDefaults() {
             B(L"Ластик E",      L"e"),
             B(L"Меньше [",      L"[", M_TAP, PB_NONE, true),
             B(L"Больше ]",      L"]", M_TAP, PB_NONE, true),
-            B(L"Зеркало M",     L"m"),
-            B(L"Сброс вида",    L"5"),
             B(L"Сохр.",          L"ctrl+s"),
             B(L"ПКМ",            nullptr,  M_TAP, PB_RIGHT),
         };
@@ -146,8 +136,6 @@ void ConfigDefaults() {
             B(L"Alt",      L"alt",   M_LATCH),
             B(L"Tab",      L"tab"),
             B(L"Esc",      L"esc"),
-            B(L"Ввод",     L"enter"),
-            B(L"Удал.",    L"delete"),
             B(L"ПКМ",      nullptr, M_TAP,   PB_RIGHT),
             B(L"СКМ",      nullptr, M_LATCH, PB_MID),
         };

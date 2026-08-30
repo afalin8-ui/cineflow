@@ -14,8 +14,8 @@ def rr(px, py, x, y, w, h, r):
     cy = min(max(py, y + r), y + h - r)
     return math.hypot(px - cx, py - cy) - r
 
-def render(n):
-    ss = 4                                   # сглаживание простым усреднением
+def render(n, ss=4):
+    """ss — сглаживание простым усреднением; для крупных размеров хватает 2"""
     buf = [[(0, 0, 0, 0)] * n for _ in range(n)]
     for iy in range(n):
         for ix in range(n):
@@ -58,14 +58,34 @@ def dib(buf, n):
     mask = bytes(stride * n)
     return hdr + bytes(px) + mask
 
-sizes = [16, 24, 32, 48, 64]
-imgs = [dib(render(n), n) for n in sizes]
-out = struct.pack('<HHH', 0, 1, len(sizes))
-off = 6 + 16 * len(sizes)
-for n, img in zip(sizes, imgs):
+def png(buf, n):
+    """крупные размеры кладём в значок сжатыми: 256x256 в сыром виде — 256 КБ"""
+    import zlib
+    raw = b''
+    for y in range(n):
+        raw += b'\x00' + b''.join(bytes(buf[y][x]) for x in range(n))
+    def chunk(tag, data):
+        return (struct.pack('>I', len(data)) + tag + data +
+                struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF))
+    return (b'\x89PNG\r\n\x1a\n' +
+            chunk(b'IHDR', struct.pack('>IIBBBBB', n, n, 8, 6, 0, 0, 0)) +
+            chunk(b'IDAT', zlib.compress(raw, 9)) +
+            chunk(b'IEND', b''))
+
+# Мелкие — обычными картинками, крупные — сжатыми. Крупные нужны затем, что
+# в проводнике у значка «Крупные значки» это 256 точек, и без них Windows
+# растягивает 64-точечный — видно мыло.
+small = [16, 24, 32, 48, 64]
+big   = [128, 256]
+imgs  = [(n, dib(render(n), n)) for n in small]
+imgs += [(n, png(render(n, 2), n)) for n in big]
+
+out = struct.pack('<HHH', 0, 1, len(imgs))
+off = 6 + 16 * len(imgs)
+for n, img in imgs:
     out += struct.pack('<BBBBHHII', n & 0xFF, n & 0xFF, 0, 0, 1, 32, len(img), off)
     off += len(img)
-for img in imgs:
+for n, img in imgs:
     out += img
 open('penbar.ico', 'wb').write(out)
-print('penbar.ico', len(out), 'байт')
+print('penbar.ico', len(out), 'байт,', len(imgs), 'размеров')

@@ -161,9 +161,41 @@ static bool EdidSize(int wantW, int wantH, int& mmW, int& pxW) {
     return found;
 }
 
+// Масштаб интерфейса Windows на главном экране (96 = 100%). Спрашиваем
+// у монитора, а не у системы: системное значение меняется только после
+// перезахода, а масштаб крутят на ходу.
+UINT MonitorDPI() {
+    HMONITOR mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    if (HMODULE sh = LoadLibraryW(L"shcore.dll")) {
+        typedef HRESULT (WINAPI *F)(HMONITOR, int, UINT*, UINT*);
+        if (auto f = (F)GetProcAddress(sh, "GetDpiForMonitor")) {
+            UINT dx = 0, dy = 0;
+            if (SUCCEEDED(f(mon, 0 /*MDT_EFFECTIVE_DPI*/, &dx, &dy)) && dx >= 72) {
+                FreeLibrary(sh);
+                return dx;
+            }
+        }
+        FreeLibrary(sh);
+    }
+    UINT dpi = 96;
+    HDC dc = GetDC(nullptr);
+    if (dc) { dpi = GetDeviceCaps(dc, LOGPIXELSX); ReleaseDC(nullptr, dc); }
+    return dpi < 72 ? 96 : dpi;
+}
+
+static double g_dpiCache = 0;
+
+// Разрешение экрана и масштаб меняются на ходу: подключили монитор, повернули
+// планшет, покрутили масштаб. Всё, что считалось от плотности, надо считать
+// заново, иначе кнопки останутся размером от прошлого экрана.
+void ScreenDPIReset() {
+    g_dpiCache = 0;
+    Log(L"плотность экрана пересчитывается заново");
+}
+
 double ScreenDPI() {
     if (g_cfg.screenDPI > 40) return g_cfg.screenDPI;
-    static double cached = 0;
+    double& cached = g_dpiCache;
     if (cached > 0) return cached;
 
     HMONITOR mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
@@ -180,10 +212,7 @@ double ScreenDPI() {
     if (cached < 80 || cached > 500) {
         // Прикидка: у планшетов Windows ставит масштаб «на глаз», и настоящая
         // плотность обычно процентов на 18 выше объявленной.
-        UINT dpi = 96;
-        HDC dc = GetDC(nullptr);
-        if (dc) { dpi = GetDeviceCaps(dc, LOGPIXELSX); ReleaseDC(nullptr, dc); }
-        cached = dpi * 1.18;
+        cached = MonitorDPI() * 1.18;
         if (cached < 96) cached = 96;
         Log(L"размер экрана определить не удалось, берём %.0f точек на дюйм", cached);
     }

@@ -100,11 +100,15 @@ void PanelSetProfile(int idx);
 void PanelTick();                       // повтор нажатий и ожидание пера
 void PanelHelpersUpdate();              // переставить язычок и полосу вызова
 void PanelSetNeedAdmin(bool v);
+void PanelFit(int& fitRows, double& realMM);   // сколько кнопок влезает и какого размера вышли
 int  PanelProfile();
 Profile* CurProfile();
 
 // ---- окружение -----------------------------------------------------------
 double ScreenDPI();                     // физических точек на дюйм экрана
+void   ScreenDPIReset();                // экран сменился — считать заново
+UINT   MonitorDPI();                    // масштаб интерфейса Windows (96 = 100%)
+const wchar_t* UiFace();                // шрифт интерфейса (Segoe UI Variable, если есть)
 int    MM2PX(double mm);
 bool   IsElevated();
 bool   ForegroundIsElevated();

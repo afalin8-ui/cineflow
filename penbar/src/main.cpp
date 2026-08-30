@@ -124,6 +124,8 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_DISPLAYCHANGE:
+        case WM_DPICHANGED:
+            ScreenDPIReset();
             PanelLayout();
             PanelHelpersUpdate();
             return 0;

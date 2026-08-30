@@ -21,10 +21,21 @@ static const Color C_TEXT    (255, 240, 238, 230);
 static const Color C_TEXT_DK (255,  26,  25,  24);
 static const Color C_MUTED   (255, 166, 163, 154);
 static const Color C_WARN    (255, 200,  90,  75);
+static const Color C_BTN_TOP (255,  56,  54,  51);   // верх кнопки чуть светлее
+static const Color C_BTN_EDGE(255,  62,  59,  55);   // кромка кнопки
+
+// На плотном экране волосяная линия в одну точку почти не видна: при 227
+// точках на дюйм это 0,11 мм. Толщину линий считаем от размера кнопки, чтобы
+// рамка читалась одинаково и на обычном экране, и на плотном.
+static int g_btnPx = 0;
+static REAL Hair() {
+    REAL v = (REAL)(g_btnPx / 52.0);
+    return v < 1.0f ? 1.0f : v;
+}
 
 // ---- размеры и раскладка -------------------------------------------------
 static int g_profileIdx = 0;
-static int g_btnPx = 0, g_pad = 0, g_gap = 0, g_hdr = 0, g_ftr = 0;
+static int g_pad = 0, g_gap = 0, g_hdr = 0, g_ftr = 0;
 static RECT g_rcHeader{}, g_rcSettings{}, g_rcHide{};
 static SIZE g_size{};
 static bool g_vertical = true;
@@ -98,6 +109,8 @@ static void AppBarSet(RECT r) {
 // Считаем в двух осях: «вдоль» края и «поперёк». Так одна формула годится
 // и для полоски слева, и для полоски снизу.
 static int g_along = 0, g_across = 0, g_cols = 1, g_used = 0;
+static int g_fitRows = 0;      // сколько кнопок влезает по высоте края
+static double g_realMM = 0;    // размер кнопки после подгонки
 
 static void PlaceContent(int winAlong) {
     Profile* p = CurProfile();
@@ -152,13 +165,17 @@ void PanelLayout() {
         rows = (avail + g_gap) / (g_btnPx + g_gap);
         if (rows < 1) rows = 1;
         g_cols = n > 0 ? (n + rows - 1) / rows : 1;
-        if (g_cols <= 1 || mm <= 8.0) break;
-        mm -= 0.5;
+        // Ужимаем кнопку не глубже 10 мм: под палец это уже мало, лучше
+        // второй ряд. Ниже — сколько кнопок вообще влезает по высоте.
+        if (g_cols <= 1 || mm <= 10.0) break;
+        mm -= 0.25;
     }
     if (g_cols < 1) g_cols = 1;
     if (g_cols > 3) g_cols = 3;
     g_used = n > 0 ? (n + g_cols - 1) / g_cols : 0;
     if (g_used > rows) g_used = rows;
+    g_fitRows = rows;
+    g_realMM  = mm;
 
     g_along  = 2 * g_pad + g_hdr + g_gap + (g_used > 0 ? g_used * g_btnPx + (g_used - 1) * g_gap + g_gap : 0) + g_ftr;
     g_across = 2 * g_pad + g_cols * g_btnPx + (g_cols - 1) * g_gap;
@@ -194,6 +211,31 @@ void PanelLayout() {
 }
 
 // ---- рисование -----------------------------------------------------------
+static void RoundPath(GraphicsPath& path, RectF r, REAL rad) {
+    REAL d = rad * 2;
+    if (d > r.Width)  d = r.Width;
+    if (d > r.Height) d = r.Height;
+    if (d < 1) d = 1;
+    path.AddArc(r.X, r.Y, d, d, 180, 90);
+    path.AddArc(r.GetRight() - d, r.Y, d, d, 270, 90);
+    path.AddArc(r.GetRight() - d, r.GetBottom() - d, d, d, 0, 90);
+    path.AddArc(r.X, r.GetBottom() - d, d, d, 90, 90);
+    path.CloseFigure();
+}
+
+// Кнопка: очень слабый вертикальный переход и светлая кромка. На плотном
+// экране это единственное, что отличает «кнопку» от «пятна краски»: плоская
+// заливка читается как дырка в панели, а не как клавиша под пальцем.
+static void ButtonFace(Graphics& g, RectF r, const Color& base, const Color& top,
+                       const Color& edge, REAL rad) {
+    GraphicsPath path;
+    RoundPath(path, r, rad);
+    LinearGradientBrush lg(RectF(r.X, r.Y - 1, r.Width, r.Height + 2), top, base, LinearGradientModeVertical);
+    g.FillPath(&lg, &path);
+    Pen pen(edge, Hair());
+    g.DrawPath(&pen, &path);
+}
+
 static void RoundRect_(Graphics& g, const Color& fill, RectF r, REAL rad, const Color* border = nullptr) {
     GraphicsPath path;
     REAL d = rad * 2;
@@ -208,7 +250,7 @@ static void RoundRect_(Graphics& g, const Color& fill, RectF r, REAL rad, const 
     SolidBrush b(fill);
     g.FillPath(&b, &path);
     if (border) {
-        Pen pen(*border, 1.0f);
+        Pen pen(*border, Hair());
         g.DrawPath(&pen, &path);
     }
 }
@@ -217,13 +259,41 @@ static void RoundRect_(Graphics& g, const Color& fill, RectF r, REAL rad, const 
 // GDI+ кладёт буквы с нулевой непрозрачностью, и подписи исчезают целиком —
 // проверено, панель выходила с пустыми кнопками. Непрозрачность ниже берётся
 // от подложки, поэтому способ рисования текста уже не важен.
+// На Windows 11 есть Segoe UI Variable — тот же рисунок, но нарисованный
+// под мелкие размеры: на плотном экране разница видна сразу. Если шрифта нет
+// (Windows 10 и старше), берём обычный Segoe UI.
+static int CALLBACK FontProbe(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM lp) {
+    *(bool*)lp = true;
+    return 0;
+}
+
+const wchar_t* UiFace() {
+    static const wchar_t* face = nullptr;
+    if (!face) {
+        bool found = false;
+        LOGFONTW q{};
+        q.lfCharSet = DEFAULT_CHARSET;
+        wcscpy(q.lfFaceName, L"Segoe UI Variable Text");
+        HDC dc = GetDC(nullptr);
+        if (dc) {
+            EnumFontFamiliesExW(dc, &q, FontProbe, (LPARAM)&found, 0);
+            ReleaseDC(nullptr, dc);
+        }
+        face = found ? L"Segoe UI Variable Text" : L"Segoe UI";
+        Log(L"шрифт панели: %s", face);
+    }
+    return face;
+}
+
 static HFONT MakeFont(int px, bool bold) {
     LOGFONTW lf{};
     lf.lfHeight  = -px;
     lf.lfWeight  = bold ? FW_SEMIBOLD : FW_NORMAL;
+    // Не ClearType: панель полупрозрачная, и подпиксельные каёмки на просвет
+    // читались бы цветной бахромой. При такой плотности разницы всё равно нет.
     lf.lfQuality = ANTIALIASED_QUALITY;
     lf.lfCharSet = DEFAULT_CHARSET;
-    wcscpy(lf.lfFaceName, L"Segoe UI");
+    wcscpy(lf.lfFaceName, UiFace());
     return CreateFontIndirectW(&lf);
 }
 
@@ -318,7 +388,8 @@ void PanelRedraw() {
     {
         Graphics g(mem);
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        RoundRect_(g, C_BG, RectF(0.5f, 0.5f, (REAL)w - 1, (REAL)h - 1), rad + 2, &C_BORDER);
+        REAL hw = Hair();
+        RoundRect_(g, C_BG, RectF(hw / 2, hw / 2, (REAL)w - hw, (REAL)h - hw), rad + 2, &C_BORDER);
     }
 
     // Непрозрачность берём ТОЛЬКО от подложки: всё нарисованное поверх остаётся
@@ -334,17 +405,21 @@ void PanelRedraw() {
         g.SetSmoothingMode(SmoothingModeAntiAlias);
         Profile* p = CurProfile();
         if (p) for (auto& b : p->btns) {
-            Color fill = b.armed ? C_ARM : (b.latched ? C_LATCH : (b.down ? C_BTN_DN : C_BTN));
             RECT r = b.rc;
-            RoundRect_(g, fill, RectF((REAL)r.left, (REAL)r.top,
-                                      (REAL)(r.right - r.left), (REAL)(r.bottom - r.top)), rad);
+            RectF rf((REAL)r.left, (REAL)r.top, (REAL)(r.right - r.left), (REAL)(r.bottom - r.top));
+            if (b.armed)        ButtonFace(g, rf, C_ARM,    Color(255, 230, 178,  84), Color(255, 236, 190, 110), rad);
+            else if (b.latched) ButtonFace(g, rf, C_LATCH,  Color(255, 228, 133, 101), Color(255, 236, 148, 116), rad);
+            else if (b.down)    ButtonFace(g, rf, C_BTN_DN, C_BTN_DN,                  Color(255,  92,  88,  82), rad);
+            else                ButtonFace(g, rf, C_BTN,    C_BTN_TOP,                 C_BTN_EDGE, rad);
         }
-        RoundRect_(g, C_BTN, RectF((REAL)g_rcSettings.left, (REAL)g_rcSettings.top,
-                                   (REAL)(g_rcSettings.right - g_rcSettings.left),
-                                   (REAL)(g_rcSettings.bottom - g_rcSettings.top)), rad);
-        RoundRect_(g, C_BTN, RectF((REAL)g_rcHide.left, (REAL)g_rcHide.top,
-                                   (REAL)(g_rcHide.right - g_rcHide.left),
-                                   (REAL)(g_rcHide.bottom - g_rcHide.top)), rad);
+        RectF sf((REAL)g_rcSettings.left, (REAL)g_rcSettings.top,
+                 (REAL)(g_rcSettings.right - g_rcSettings.left),
+                 (REAL)(g_rcSettings.bottom - g_rcSettings.top));
+        RectF hf((REAL)g_rcHide.left, (REAL)g_rcHide.top,
+                 (REAL)(g_rcHide.right - g_rcHide.left),
+                 (REAL)(g_rcHide.bottom - g_rcHide.top));
+        ButtonFace(g, sf, C_BTN, C_BTN_TOP, C_BTN_EDGE, rad);
+        ButtonFace(g, hf, C_BTN, C_BTN_TOP, C_BTN_EDGE, rad);
         DrawGear(g, g_rcSettings, C_MUTED);
         DrawCross(g, g_rcHide, C_MUTED);
     }
@@ -355,13 +430,13 @@ void PanelRedraw() {
             std::wstring title = p->name;
             if (g_needAdmin) title += L"  (!)";
             DrawLabel(mem, title, g_rcHeader, RGBof(g_needAdmin ? C_WARN : C_MUTED),
-                      (int)(g_btnPx * 0.20), false);
+                      (int)(g_btnPx * 0.22), false);
             for (auto& b : p->btns) {
                 bool dark = b.armed || b.latched;
                 RECT tr = b.rc;
                 InflateRect(&tr, -(int)(g_btnPx * 0.08), -(int)(g_btnPx * 0.06));
                 DrawLabel(mem, b.label, tr, RGBof(dark ? C_TEXT_DK : C_TEXT),
-                          (int)(g_btnPx * 0.27), dark || b.down);
+                          (int)(g_btnPx * 0.30), dark || b.down);
             }
         }
     }
@@ -588,6 +663,8 @@ static LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_DISPLAYCHANGE:
+        case WM_DPICHANGED:
+            ScreenDPIReset();
             PanelLayout();
             PlaceHelpers();
             return 0;
@@ -720,3 +797,5 @@ void PanelTick() {
 }
 
 void PanelHelpersUpdate() { PlaceHelpers(); }
+
+void PanelFit(int& fitRows, double& realMM) { fitRows = g_fitRows; realMM = g_realMM; }
