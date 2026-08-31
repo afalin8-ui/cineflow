@@ -2403,6 +2403,10 @@
 
             const SHAPE_MODES = ['rect', 'circle', 'triangle', 'diamond', 'star', 'arrow', 'text'];
             const handlePointerDown = (e) => {
+                // Инструменты у гостя спрятаны, но холст остаётся под пальцем:
+                // без этой проверки по нему можно было бы рисовать и таскать
+                // приборы. Смотреть схему — да, перекладывать — нет.
+                if (READ_ONLY) return;
                 if (mode === 'select' || SHAPE_MODES.includes(mode)) {
                     if (e.target.closest('.scheme-el')) return;
                     if (SHAPE_MODES.includes(mode)) {
@@ -2458,7 +2462,7 @@
                     <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 p-4 glass-panel border-b-0 shrink-0">
                         <div className="flex flex-wrap items-center gap-y-2 gap-x-4">
                             <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Интерактивная Схема Света</span>
-                            <div className="flex flex-wrap gap-1 bg-black/50 p-1 rounded-lg">
+                            <div className="cf-edit-only flex flex-wrap gap-1 bg-black/50 p-1 rounded-lg">
                                 <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pointer/></button>
                                 <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pen/></button>
                                 <button onClick={() => setMode('erase')} className={`px-2 py-1 text-xs rounded ${mode==='erase'?'bg-zinc-700 text-white':'text-zinc-400'}`}><Icons.Eraser/></button>
@@ -2471,7 +2475,7 @@
                                 <button onClick={() => setMode('arrow')} title="Стрелка (направление луча)" className={`px-2 py-1 text-xs rounded ${mode==='arrow'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.BeamArrow/></button>
                                 <button onClick={() => setMode('text')} title="Текст" className={`px-2 py-1 text-xs rounded ${mode==='text'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.TextIcon/></button>
                             </div>
-                            <div className="flex gap-1">
+                            <div className="cf-edit-only flex gap-1">
                                 {['#facc15', '#60a5fa', '#f87171', '#34d399', '#ffffff'].map(c => (
                                     <button key={c} onClick={() => {setBrushColor(c); if(selectedId) updateSelected({color: c});}} style={{background: c}} className={`w-5 h-5 rounded-full border-2 ${brushColor === c ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />
                                 ))}
@@ -2509,7 +2513,7 @@
                                     if (el.label) { pctx.font = '22px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
                                 });
                                 onSave(scheme.id, elements, canvasRef.current.toDataURL('image/png'), pc.toDataURL('image/jpeg', 0.85));
-                            }} className="px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить схему</button>
+                            }} className="cf-edit-only px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить схему</button>
                             <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Закрыть</button>
                         </div>
                     </div>
@@ -2553,7 +2557,7 @@
                                     <label className="text-[11px] text-zinc-400">Высота</label>
                                     <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).h} onChange={e=>updateSelected({h: Number(e.target.value)})} className="w-full accent-indigo-500" />
                                 </div>
-                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
+                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="cf-edit-only mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
                             </div>
                         )}
                     </div>
@@ -2620,7 +2624,7 @@
                   <button onClick={onClose} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                   <h3 className="text-lg font-extrabold text-white mb-1 flex items-center gap-2"><Icons.Gallery /> {title}</h3>
                   {hint && <p className="text-[12px] text-zinc-500 leading-relaxed mb-3">{hint}</p>}
-                  <input type="text" value={q} onChange={e => setQ(e.target.value)}
+                  <input data-ro-ok type="text" value={q} onChange={e => setQ(e.target.value)}
                          placeholder="Поиск по подписи и тегам..."
                          className="glass-input w-full rounded-lg px-3 py-2.5 text-sm" />
                   {folders.length > 0 && (
@@ -2970,7 +2974,7 @@
                    style={{ background: 'var(--card)', border: '1px solid var(--border)', boxShadow: '0 24px 64px rgba(0,0,0,.6)' }}>
                 <div className="flex items-center gap-2.5 px-4" style={{ borderBottom: '1px solid var(--line)' }}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted-2)" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                  <input ref={inputRef} type="text" value={q} onChange={e => setQ(e.target.value)}
+                  <input ref={inputRef} data-ro-ok type="text" value={q} onChange={e => setQ(e.target.value)}
                          onKeyDown={e => {
                            if (e.key === 'Escape') onClose();
                            if (e.key === 'Enter' && hits.length) { hits[0].go(); onClose(); }
@@ -3194,7 +3198,22 @@
           const [toast, setToast] = useState(null);
           const [isAILoading, setIsAILoading] = useState(false);
           
-          const [confirmAction, setConfirmAction] = useState(null); 
+          // ВСЕ «Удалить …?» проходят через эту дверь, и в режиме просмотра
+          // она заперта. Кнопки правки помечаются `cf-edit-only` и не видны,
+          // но пометить ЗАБЫВАЮТ — так из просмотра однажды удалили доску:
+          // крестик на вкладке пометки не имел, и гость сносил доску себе
+          // с экрана. В облако при этом не уходило ничего (syncDoc и
+          // deleteNetDoc выходят по READ_ONLY), но человек видел, как чужой
+          // проект разваливается у него на глазах, и не понимал, цел ли он.
+          // Поэтому забытая кнопка теперь не срабатывает, а объясняется.
+          // Молчать нельзя: нажатие без ответа читается как «сломалось».
+          // `allowRO: true` — для того немногого, что гостю ПОЛОЖЕНО: чинить
+          // свою же местную копию базы проект не меняет.
+          const [confirmAction, _setConfirmAction] = useState(null);
+          const setConfirmAction = (a) => {
+            if (READ_ONLY && a && !a.allowRO) { showToast('Режим просмотра — менять проект нельзя'); return; }
+            _setConfirmAction(a);
+          };
           const [drawingFrameId, setDrawingFrameId] = useState(null);
           const [lightboxData, setLightboxData] = useState(null);
           const [showAgentModal, setShowAgentModal] = useState(false);
@@ -3291,6 +3310,7 @@
           const undoTimer = useRef(null);
           const [undoBin, setUndoBin] = useState(null);
           const deleteRefs = (list) => {
+            if (READ_ONLY) return;
             const items = (list || []).filter(Boolean);
             if (!items.length) return;
             const ids = items.map(r => r.id);
@@ -3651,6 +3671,7 @@
           // казалось, что «теги не сохраняются и поиск не работает».
           // Теперь тег принимается и по Enter, и по запятой, и при уходе фокуса.
           const addTagTo = (ref, value) => {
+            if (READ_ONLY) return;
             const raw = String(value || '').trim().toLowerCase().replace(/,+$/, '').trim();
             if (!raw) return;
             const current = ref.tags || [];
@@ -3660,6 +3681,7 @@
             syncDoc('references', ref.id, up.find(r => r.id === ref.id));
           };
           const removeTagFrom = (ref, tag) => {
+            if (READ_ONLY) return;
             const up = references.map(r => r.id === ref.id
               ? { ...r, tags: (r.tags || []).filter(t => t !== tag) } : r);
             setReferences(up);
@@ -3677,6 +3699,7 @@
           // и без интернета крутить было бы нечего. Поэтому, если оригинал
           // лежит в облаке, готовим превью прямо сейчас — один раз.
           const setRefPano = async (ref, value) => {
+            if (READ_ONLY) return;
             const up = references.map(r => r.id === ref.id ? { ...r, pano: !!value } : r);
             setReferences(up);
             syncDoc('references', ref.id, up.find(r => r.id === ref.id));
@@ -5745,6 +5768,7 @@
 
           // Положить уже загруженный референс на обычную доску карточкой.
           const putRefOnBoard = (ref) => {
+            if (READ_ONLY) return;
             const placed = { ...ref, boardId: activeBoardId,
               x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
               y: (240 - canvasOffset.y) / zoom + Math.random() * 60 };
@@ -5785,6 +5809,7 @@
           // в десять походов в список.
           const [sceneToBoard, setSceneToBoard] = useState(null);   // id сцены
           const spreadSceneOnBoard = (sceneId, boardId) => {
+            if (READ_ONLY) return;
             const scene = scenes.find(s => s.id === sceneId);
             if (!scene) return;
             const refs = references.filter(r => r.sceneId === sceneId);
@@ -5829,6 +5854,22 @@
           const canvasRef = useRef(null);
 
           const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
+
+          // В режиме просмотра поля не нажимаются мышью, но табуляцией до них
+          // добраться можно — и печатать. Наружу ничего не уйдёт, а вот текст
+          // сцены у гостя на экране изменился бы. Ловим сам ввод (он же
+          // покрывает вставку и перенос текста мышью). Поля поиска помечены
+          // `data-ro-ok`: искать в чужом проекте — это чтение.
+          useEffect(() => {
+            if (!READ_ONLY) return;
+            const stop = (e) => {
+              const t = e.target;
+              if (!t || t.closest('[data-ro-ok]')) return;
+              if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) e.preventDefault();
+            };
+            document.addEventListener('beforeinput', stop, true);
+            return () => document.removeEventListener('beforeinput', stop, true);
+          }, []);
 
           // Сбой внутри библиотеки Firestore (см. cfCloudCrash в шапке файла).
           // Сам он не чинится и не проходит: пока страницу не перезагрузят,
@@ -6836,7 +6877,12 @@
             trackWrite(dataRef().collection(coll).doc(id).delete().catch(err => console.warn('deleteNetDoc', err)));
           };
 
-          const updateScene = (id, field, val) => { const up = scenes.map(s => s.id === id ? { ...s, [field]: val } : s); setScenes(up); const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t); };
+          const updateScene = (id, field, val) => {
+            if (READ_ONLY) return;
+            const up = scenes.map(s => s.id === id ? { ...s, [field]: val } : s);
+            setScenes(up);
+            const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t);
+          };
 
           // --- Номер сцены ---
           // Номер — строка, а не счётчик: в съёмочных планах живут и «12А»,
@@ -6844,6 +6890,7 @@
           // Пробелы срезаем: невидимый хвост ломал бы и сортировку,
           // и проверку на повтор.
           const updateSceneNumber = (id, raw) => {
+            if (READ_ONLY) return;
             const scene = scenes.find(s => s.id === id);
             if (!scene) return;
             const oldNum = String(scene.number || '');
@@ -6881,6 +6928,12 @@
           // номер. Разбираем ТОЛЬКО начало строки и только цифровой токен,
           // чтобы «СЦЕНА У ОКНА» не трогалась.
           const updateSceneTitle = (id, raw) => {
+            // Правка проекта в режиме просмотра запрещена НА ВХОДЕ,
+            // а не только спрятанной кнопкой: пометить кнопку
+            // `cf-edit-only` забывают, и тогда гость по ссылке менял
+            // проект у себя на экране — в облако не уходило ничего,
+            // но выглядело это как «я сломал чужой проект».
+            if (READ_ONLY) return;
             const scene = scenes.find(s => s.id === id);
             if (!scene) return;
             const title = String(raw);
@@ -6942,6 +6995,7 @@
           };
 
           const updateSceneNested = (id, parentField, childKey, inc) => {
+            if (READ_ONLY) return;
             const up = scenes.map(s => {
               if (s.id === id) {
                 const g = s[parentField] || {}; const v = Math.max(0, (g[childKey] || 0) + inc);
@@ -6959,6 +7013,9 @@
           // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
           const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '') => {
+            // Загрузка фотографий — самая заметная правка проекта:
+            // бросок файла на доску идёт сюда мимо кнопок.
+            if (READ_ONLY) return;
               const picked = Array.from(files);
               const imageFiles = picked.filter(f => f.type.startsWith('image/'));
               // Через «Файлы» браузер показывает и то, что картинкой не
@@ -7312,6 +7369,7 @@
           });
 
           const addProjectFile = async (f) => {
+            if (READ_ONLY) return;
             const cfg = loadCloudCfg();
             const useCloud = !!cfg.provider;
             if (f.size > (useCloud ? FILE_CLOUD_MAX : FILE_LOCAL_MAX)) {
@@ -7415,6 +7473,7 @@
             setActiveLocationId(loc.id);
           };
           const updateLocation = (id, field, val) => {
+            if (READ_ONLY) return;
             // Переименовали объект — папка его фотографий едет следом.
             // Иначе они остались бы лежать под старым именем, и человек
             // искал бы их там, где их уже нет по смыслу.
@@ -7490,6 +7549,7 @@
           };
 
           const deleteLocation = (id) => {
+            if (READ_ONLY) return;
             const loc = locations.find(l => l.id === id);
             if (!loc) return;
             const photos = locationPhotos(id);
@@ -7867,6 +7927,13 @@
           };
 
           const handleElementPointerDown = (e, id, type) => {
+              // Гость двигать карточки не должен: расстановка на доске —
+              // это и есть та работа, которую ему показывают. Положения
+              // в облако и так не уходят (syncDoc выходит по READ_ONLY),
+              // но у себя на экране он растащил бы доску и решил, что
+              // сломал её. Выходим БЕЗ stopPropagation: панорама доски
+              // ловится ниже по всплытию и обязана работать и в просмотре.
+              if (READ_ONLY) return;
               if (wbMode === 'link') { e.stopPropagation(); pickLink(id); return; }
               if (wbMode !== 'select') return;
               const wholeCardBtn = e.target.closest('[data-card-tap]');
@@ -8054,6 +8121,7 @@
             setDocs(up); syncDoc('docs', id, up.find(d => d.id === id));
           };
           const putDocOnBoard = (id) => {
+            if (READ_ONLY) return;
             patchDoc(id, { boardId: activeBoardId,
               x: (300 - canvasOffset.x) / zoom + Math.random() * 60,
               y: (200 - canvasOffset.y) / zoom + Math.random() * 60 });
@@ -8144,6 +8212,7 @@
           // и документа: сама карточка никуда не девается, меняется
           // только поле sceneId.
           const setItemScene = (id, type, sceneId) => {
+            if (READ_ONLY) return;
             pushUndo(false, [{ coll: type === 'sticky' ? 'stickies' : (type === 'doc' ? 'docs' : 'references'), id }]);
             if (type === 'sticky') {
               const up = stickies.map(s => s.id === id ? { ...s, sceneId } : s);
@@ -8230,6 +8299,7 @@
           // сущность: одна и та же бумажка, видная и на экране сцены,
           // и на холсте. Два списка заметок разошлись бы за неделю.
           const addSceneNote = () => {
+            if (READ_ONLY) return;
             if (!activeSceneId) return;
             const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, sceneId: activeSceneId, text: '',
                          x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
@@ -8441,17 +8511,17 @@
                            className="flex-1 min-w-0 bg-transparent focus:outline-none"
                            style={{ fontSize: isPhone ? 14 : 12.5, color: 'var(--text-2)', padding: 0 }} />
                     <button onClick={() => updateSceneNested(s.id, field, k, -1)} title="Меньше на одну"
-                            className="flex items-center justify-center" style={stepBtn}>−</button>
+                            className="cf-edit-only flex items-center justify-center" style={stepBtn}>−</button>
                     <span className="text-center shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', minWidth: 26 }}>×{counts[k]}</span>
                     <button onClick={() => updateSceneNested(s.id, field, k, 1)} title="Больше на одну"
-                            className="flex items-center justify-center" style={stepBtn}>+</button>
+                            className="cf-edit-only flex items-center justify-center" style={stepBtn}>+</button>
                     <button onClick={() => updateSceneNested(s.id, field, k, -(counts[k] || 0))}
                             title="Убрать позицию из сцены — в каталоге останется"
-                            className="flex items-center justify-center shrink-0"
+                            className="cf-edit-only flex items-center justify-center shrink-0"
                             style={{ width: sz, height: sz, borderRadius: isPhone ? 8 : 5, color: 'var(--muted-2)', fontSize: isPhone ? 14 : 11 }}>✕</button>
                   </div>
                 ))}
-                <div className="flex gap-1.5 mt-3">
+                <div className="cf-edit-only flex gap-1.5 mt-3">
                   <input type="text" value={typed} onChange={(e) => setTyped(e.target.value)}
                          onKeyDown={(e) => { if (e.key === 'Enter') addPosition(); }}
                          placeholder={isLight ? 'Новый прибор…' : 'Новая позиция…'}
@@ -8459,7 +8529,7 @@
                   <button onClick={addPosition} className="shrink-0 rounded-lg px-3 font-semibold"
                           style={{ minHeight: isPhone ? 44 : 32, fontSize: isPhone ? 14 : 12, background: 'var(--accent)', color: 'var(--bg)' }}>+ {isLight ? 'прибор' : 'техника'}</button>
                 </div>
-                <button onClick={() => setCatOpen(!catOpen)} className="mt-3 cf-meta"
+                <button onClick={() => setCatOpen(!catOpen)} className="cf-edit-only mt-3 cf-meta"
                         style={{ color: 'var(--accent)' }}>{catOpen ? 'скрыть каталог ⤡' : `весь каталог · ${rest.length} ⤢`}</button>
                 {catOpen && (
                   <div className="mt-2" style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
@@ -8737,6 +8807,7 @@
                     Перезагрузить
                   </button>
                   <button onClick={() => setConfirmAction({
+                            allowRO: true,
                             title: 'Починить местную копию базы?',
                             message: 'Копия базы на этом устройстве будет стёрта, и всё перечитается из облака. Правки, которые не успели уехать в облако, пропадут. Обычной перезагрузки чаще всего достаточно — это на случай, если сбой повторяется.',
                             onConfirm: repairCloudCache })}
@@ -9429,10 +9500,10 @@
                                       style={{ width: 26, height: 22, border: '1px solid var(--border)', borderRadius: 6, color: 'var(--muted-2)', fontSize: 13, letterSpacing: 1 }}>···</button>
                               {sceneMenu && (
                                 <div className="cf-menu cf-menu-left">
-                                  <button onClick={() => { setSceneMenu(false); setSceneToBoard(s.id); }}><Icons.Board /> Собрать на доске</button>
+                                  <button className="cf-edit-only" onClick={() => { setSceneMenu(false); setSceneToBoard(s.id); }}><Icons.Board /> Собрать на доске</button>
                                   <button onClick={() => { setSceneMenu(false); setPrintScene(s.id); requestPrint('scene'); }}><Icons.Print /> Экспорт сцены в PDF</button>
-                                  <hr />
-                                  <button onClick={() => { setSceneMenu(false); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => deleteScene(s.id) }); }}
+                                  <hr className="cf-edit-only" />
+                                  <button className="cf-edit-only" onClick={() => { setSceneMenu(false); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => deleteScene(s.id) }); }}
                                           style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить сцену</button>
                                 </div>
                               )}
@@ -10052,7 +10123,7 @@
                               «воздух», «тревога». Словарь не фиксируем —
                               подсказки берутся из уже введённых тегов. */}
                           <div className="px-3 pt-3 pb-1.5">
-                            <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
+                            <input data-ro-ok type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
                                    placeholder="пыль, воздух, тревога…" list="cf-tag-hints"
                                    className="glass-input w-full rounded-lg px-2.5" style={{ minHeight: 32, fontSize: 12 }} />
                             <datalist id="cf-tag-hints">{tagCounts.map(([t]) => <option key={t} value={t} />)}</datalist>
@@ -10508,7 +10579,7 @@
                                         нечем. Две кнопки — два разных ответа. */}
                                     <button onClick={() => { setLocMenu(false); setPrintLocation(l.id); requestPrint('location', () => preparePrintPhotos(locationPhotos(l.id))); }}><Icons.Print /> Экспорт объекта в PDF</button>
                                     <hr />
-                                    <button onClick={() => { setLocMenu(false); deleteLocation(l.id); }} style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить объект</button>
+                                    <button className="cf-edit-only" onClick={() => { setLocMenu(false); deleteLocation(l.id); }} style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить объект</button>
                                   </div>
                                 )}
                               </div>
@@ -10808,6 +10879,9 @@
                         return (
                           <button key={b.id} onClick={() => setActiveBoardId(b.id)}
                                   onDoubleClick={() => {
+                                    // Правка спрятана в двойное нажатие, а не в кнопку,
+                                    // поэтому cf-edit-only её не закрывает — проверяем сами.
+                                    if (READ_ONLY) return;
                                     const t = prompt('Название доски', b.title);
                                     if (t && t.trim()) { const up = boards.map(x => x.id === b.id ? { ...x, title: t.trim() } : x); setBoards(up); syncDoc('boards', b.id, up.find(x => x.id === b.id)); }
                                   }}
@@ -10818,7 +10892,11 @@
                                            borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
                                            color: on ? 'var(--text)' : 'var(--muted-2)', fontSize: 12.5 }}>
                             {b.title}
-                            {on && sortedBoards.length > 1 && (
+                            {/* Крестик виден только тому, кто может править:
+                                у гостя по ссылке доска исчезала с экрана —
+                                в облаке она оставалась цела, но выглядело
+                                это как «я сломал чужой проект». */}
+                            {on && !READ_ONLY && sortedBoards.length > 1 && (
                               <span onClick={(e) => {
                                       e.stopPropagation();
                                       setConfirmAction({ title: 'Удалить доску?', message: `«${b.title}» и всё, что на ней нарисовано и разложено.`, onConfirm: () => {
@@ -10861,7 +10939,7 @@
                                 setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
                               }}
                               title="Новая доска · двойной клик по вкладке — переименовать"
-                              className="shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
+                              className="cf-edit-only shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 8, border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 16 }}>+</button>
 
                       {/* СХЕМЫ СВЕТА — здесь же, вкладками рядом с досками.
@@ -10875,6 +10953,7 @@
                       {lightSchemes.map(sch => (
                         <button key={sch.id} onClick={() => setDrawingSchemeId(sch.id)}
                                 onDoubleClick={() => {
+                                  if (READ_ONLY) return;
                                   const t = prompt('Название схемы', sch.title);
                                   if (t && t.trim()) { const up = lightSchemes.map(x => x.id === sch.id ? { ...x, title: t.trim() } : x); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(x => x.id === sch.id)); }
                                 }}
@@ -11575,12 +11654,12 @@
                                 {cardField(ref.id, 'label', ref.label,
                                   (v) => { const up = references.map(r => r.id === ref.id ? { ...r, label: v } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); },
                                   { placeholder: 'Подпись...', className: 'w-full bg-transparent text-[11px] text-center font-bold text-zinc-300 focus:outline-none mt-2 placeholder-zinc-600' })}
-                                <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: ref.id, type: 'ref' }); }} title="Потяните к любой карточке — получится связь. К сцене — референс привяжется к ней" className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
+                                <div className="cf-edit-only" onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: ref.id, type: 'ref' }); }} title="Потяните к любой карточке — получится связь. К сцене — референс привяжется к ней" className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
                                 <div
                                     onPointerDown={(e) => { e.stopPropagation(); setResizingRef({ id: ref.id, pointerId: e.pointerId, startX: e.clientX, startW: refW(ref) }); e.currentTarget.setPointerCapture(e.pointerId); }}
                                     onDoubleClick={(e) => { e.stopPropagation(); const up = references.map(r => r.id === ref.id ? { ...r, w: REF_W } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }}
                                     title="Потяните, чтобы изменить размер. Двойной клик — вернуть исходный"
-                                    className={`node-handle absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize z-30 flex items-center justify-center transition-colors ${(resizingRef && resizingRef.id === ref.id) || selectedWbItems.includes(ref.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                    className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize z-30 flex items-center justify-center transition-colors ${(resizingRef && resizingRef.id === ref.id) || selectedWbItems.includes(ref.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                                     style={{pointerEvents: 'auto', touchAction: 'none'}}>
                                     <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#f0eee6" strokeWidth="1.6" strokeLinecap="round"><path d="M9 2 2 9"/><path d="M9 6.5 6.5 9"/></svg>
                                 </div>
@@ -12358,20 +12437,20 @@
                                             : { color: 'var(--muted-2)' }}>
                                     <Icons.Board />
                                   </button>
-                                  {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>)}
+                                  {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className="cf-edit-only absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>)}
                                 </div>
                               ))}
-                              <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
+                              <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-white/10 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
                           </div>
                           <div className="pt-4 border-t border-white/10">
                               <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Схемы Света</span>
                               {lightSchemes.map(sch => (
                                 <div key={sch.id} className="group relative mb-2">
                                   <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
-                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
+                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className="cf-edit-only absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
                                 </div>
                               ))}
-                              <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                              <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
                           </div>
                         </div>
                       </div>
@@ -12387,7 +12466,7 @@
                             <div className="space-y-4 border-t border-white/10 pt-6">
                               <div className="flex justify-between items-center px-1">
                                 <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
-                                <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
+                                <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="cf-edit-only text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
                               </div>
                               <div className="glass-panel rounded-lg overflow-x-auto border border-white/5">
                                 <table className="w-full min-w-[500px] text-left text-sm border-collapse">
@@ -12398,7 +12477,7 @@
                                         <td className="p-2"><input type="text" value={c.name} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,name:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-white focus:outline-none font-bold placeholder-zinc-600" placeholder="ФИО" /></td>
                                         <td className="p-2"><input type="text" value={c.role} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,role:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-zinc-400 font-medium focus:outline-none placeholder-zinc-600" placeholder="Роль" /></td>
                                         <td className="p-2"><input type="text" value={c.phone} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,phone:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 font-mono font-medium focus:outline-none placeholder-zinc-600" placeholder="+7..." /></td>
-                                        <td className="p-2 text-center"><button onClick={() => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); }} className="w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
+                                        <td className="p-2 text-center"><button onClick={() => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); }} className="cf-edit-only w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -12416,7 +12495,7 @@
                             <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative">
                                 <div className="flex justify-between items-center gap-4">
                                     <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
-                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
+                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="cf-edit-only bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
                                 </div>
                                 <div className="w-full aspect-video bg-black/70 rounded-lg border border-white/10 flex items-center justify-center overflow-hidden">
                                     {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
@@ -12476,7 +12555,7 @@
                         </div>
                         <div className="space-y-4 pt-6 border-t border-white/10">
                           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Файлы и документы проекта</span>
-                          <div className="border border-dashed border-white/20 hover:border-indigo-500/50 rounded-lg p-6 text-center bg-black/30 hover:bg-indigo-500/10 transition-all group">
+                          <div className="cf-edit-only border border-dashed border-white/20 hover:border-indigo-500/50 rounded-lg p-6 text-center bg-black/30 hover:bg-indigo-500/10 transition-all group">
                             <label className="text-xs font-bold text-zinc-400 group-hover:text-indigo-300 cursor-pointer block w-full h-full flex flex-col items-center gap-2">
                               <span className="opacity-60 group-hover:opacity-100 transition-opacity"><Icons.Folder/></span>
                               <span>Загрузить КПП или доки</span>
@@ -12500,7 +12579,7 @@
                                     <button onClick={() => sendFileToCloud(file)} title={`Отправить в ${CLOUD_NAMES[cloudCfg.provider]}`}
                                       className="cf-edit-only w-10 flex items-center justify-center text-zinc-500 hover:text-indigo-300 rounded-lg bg-black/50 hover:bg-white/10 transition-colors border border-white/5"><Icons.Cloud/></button>
                                   )}
-                                  <button onClick={() => setConfirmAction({title:'Удалить файл?', message: '', onConfirm:()=>{ setProjectFiles(projectFiles.filter(f=>f.id!==file.id)); deleteNetDoc('projectFiles', file.id); }})} className="w-10 flex items-center justify-center text-zinc-500 hover:text-red-400 font-bold rounded-lg bg-black/50 hover:bg-white/10 transition-colors text-xs border border-white/5"><Icons.Trash/></button>
+                                  <button onClick={() => setConfirmAction({title:'Удалить файл?', message: '', onConfirm:()=>{ setProjectFiles(projectFiles.filter(f=>f.id!==file.id)); deleteNetDoc('projectFiles', file.id); }})} className="cf-edit-only w-10 flex items-center justify-center text-zinc-500 hover:text-red-400 font-bold rounded-lg bg-black/50 hover:bg-white/10 transition-colors text-xs border border-white/5"><Icons.Trash/></button>
                                 </div>
                               </div>
                             ))}
