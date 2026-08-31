@@ -3220,6 +3220,8 @@
           // по кнопке: он длиной со страницу, и раскрытый у всех сцен разом
           // документ пришлось бы прокручивать метрами. {id сцены: true}
           const [openScript, setOpenScript] = useState({});
+          // Какой гайд развёрнут целиком в «Экспликациях». {id гайда: true}
+          const [docOpen, setDocOpen] = useState({});
           // Развёрнут ли выбор «что печатать» в «Экспликациях».
           const [printPanelOpen, setPrintPanelOpen] = useState(false);
           const [toast, setToast] = useState(null);
@@ -12524,7 +12526,53 @@
                         return (
                           <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-white/10">
                             <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
-                            <textarea value={activeDoc.content} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="w-full flex-1 glass-input rounded-lg p-6 text-sm md:text-base min-h-[300px] lg:min-h-0 transition-shadow leading-relaxed resize-none font-medium border border-white/10" placeholder="Содержание документа..." />
+                            {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем
+                                дочитать: текст в полторы тысячи знаков — это
+                                тысяча точек по высоте, а поле было 460, и вторая
+                                половина пряталась во ВНУТРЕННЮЮ прокрутку.
+                                В режиме просмотра она не работала вовсе
+                                (у полей `pointer-events: none`), то есть гость
+                                видел ровно первый экран гайда и всё. На телефоне
+                                помещалась пятая часть.
+                                Теперь текст разворачивается — тем же жестом, что
+                                и текст сцены из сценария: свёрнутый показывает
+                                начало, «развернуть» отдаёт его целиком, и дальше
+                                прокручивается сама панель, как страница. */}
+                            {(() => {
+                              const open = !!docOpen[activeDoc.id];
+                              const body = activeDoc.content || '';
+                              // Длинный ли он — считаем по строкам и знакам, а не
+                              // по высоте: замерять DOM ради подписи на кнопке
+                              // значит перерисовывать экран на каждую букву.
+                              const long = body.length > 700 || body.split('\n').length > 12;
+                              return (
+                                <div className={`flex flex-col ${open ? 'shrink-0' : ''}`}
+                                     style={open ? null : { flex: '1 1 0%', minHeight: 0 }}>
+                                  {READ_ONLY ? (
+                                    // Гостю поле ввода не нужно вовсе, а неподвижное
+                                    // поле с обрезанным текстом — это тупик: прокрутить
+                                    // его нельзя. Обычный текст течёт вместе со страницей.
+                                    <div className="w-full glass-input rounded-lg p-6 text-sm md:text-base leading-relaxed font-medium border border-white/10 overflow-y-auto"
+                                         style={open ? { whiteSpace: 'pre-wrap', flexShrink: 0 } : { whiteSpace: 'pre-wrap', maxHeight: 420 }}>
+                                      {body || 'Гайд пока пустой'}
+                                    </div>
+                                  ) : (
+                                    <textarea value={body}
+                                              ref={el => { if (el && open) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
+                                              onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }}
+                                              className={`w-full glass-input rounded-lg p-6 text-sm md:text-base transition-shadow leading-relaxed resize-none font-medium border border-white/10 ${open ? '' : 'flex-1 min-h-[300px] lg:min-h-0'}`}
+                                              style={open ? { overflow: 'hidden', flexShrink: 0 } : null}
+                                              placeholder="Содержание документа..." />
+                                  )}
+                                  {long && (
+                                    <button onClick={() => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] }))}
+                                            className="self-start mt-2 cf-chip shrink-0">
+                                      {open ? 'свернуть ⤡' : 'развернуть ⤢'}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             
                             <div className="space-y-4 border-t border-white/10 pt-6">
                               <div className="flex justify-between items-center px-1">
