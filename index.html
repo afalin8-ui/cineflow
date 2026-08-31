@@ -8874,8 +8874,16 @@
                             : currentView === 'locations' ? locations.length
                             : currentView === 'whiteboard' ? sortedBoards.length : ''}
                         </span>
+                        {READ_ONLY && (
+                          <button onClick={() => setShowViewInfo(true)} title="Почему нельзя ничего менять"
+                                  className="cf-meta shrink-0 ml-auto flex items-center gap-1"
+                                  style={{ color: 'var(--accent)', border: '1px solid var(--accent-line)',
+                                           borderRadius: 8, padding: '3px 8px', minHeight: 26 }}>
+                            Просмотр <span style={{ opacity: .7 }}>?</span>
+                          </button>
+                        )}
                         <button onClick={kickSyncNow} title={syncTitle + ' · нажмите, чтобы обновить связь'}
-                                className="shrink-0 ml-auto flex items-center justify-center -m-2 p-2"
+                                className={`shrink-0 flex items-center justify-center -m-2 p-2 ${READ_ONLY ? '' : 'ml-auto'}`}
                                 style={{ opacity: kicking ? 0.4 : 1 }}>
                           <span className="rounded-full block" style={{ width: 7, height: 7, background: syncDot }}></span>
                         </button>
