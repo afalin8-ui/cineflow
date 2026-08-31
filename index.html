@@ -6669,11 +6669,24 @@
             // `docChanges()` — это и есть «что изменилось с прошлого раза»;
             // пусто и уже что-то приезжало — значит показывать нечего.
             const fresh = {};
+            // ЗАСЕВАТЬ МОЖНО ТОЛЬКО ПЕРВЫЙ ОТВЕТ ОБЛАКА. Пустая коллекция
+            // на первом ответе — это новая комната, её заполняем тем, что
+            // лежит на устройстве. Пустая ПОТОМ — это удаление, которое
+            // человек только что сделал руками.
+            // Разницы не делали, и оттого не удалялась ПОСЛЕДНЯЯ запись:
+            // стёр единственную схему света — облако прислало пустой список,
+            // приложение сочло комнату новой и залило схему обратно из
+            // памяти (`seed` замкнут на значение при подписке, зависимость
+            // у эффекта одна — `user`). Со стороны это выглядит как
+            // «удаление не работает»: окно подтвердили, схема мигнула
+            // и вернулась. То же самое было с последней сценой, доской,
+            // объектом, документом и референсом.
             const subList = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
               if (fresh[coll] && snap.docChanges().length === 0) return;
+              const first = !fresh[coll];
               fresh[coll] = true;
               const list = []; snap.forEach(d => list.push(d.data()));
-              if (snap.empty && !seededRef.current[coll]) {
+              if (snap.empty && first && !seededRef.current[coll]) {
                 seededRef.current[coll] = true;
                 if (seed && seed.length) { seed.forEach(item => syncDoc(coll, item.id, item)); return; }
               }
@@ -6681,13 +6694,16 @@
             }, err => console.warn('sync ' + coll, err));
             const subMap = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
               if (fresh[coll] && snap.docChanges().length === 0) return;
+              const first = !fresh[coll];
               fresh[coll] = true;
               const obj = {}; snap.forEach(d => { obj[d.id] = d.data(); });
-              if (snap.empty && !seededRef.current[coll]) {
+              if (snap.empty && first && !seededRef.current[coll]) {
                 seededRef.current[coll] = true;
                 if (seed && Object.keys(seed).length) { Object.entries(seed).forEach(([k, v]) => syncDoc(coll, k, v)); return; }
               }
-              if (Object.keys(obj).length) setter(obj);
+              // Пустой каталог после первого ответа — это тоже удаление:
+              // раньше сюда не доходили, и последнюю позицию было не убрать.
+              if (!first || Object.keys(obj).length) setter(obj);
             }, err => console.warn('sync ' + coll, err));
             const unsubs = [
               subList('scenes', setScenes, scenes),
