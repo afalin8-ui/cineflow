@@ -3176,7 +3176,21 @@
           const [showShareModal, setShowShareModal] = useState(false);
           const [showChat, setShowChat] = useState(false); 
           const [chatInput, setChatInput] = useState('');
-          const [tableSubView, setTableSubView] = useState('grouped');
+          // КПП: какой из двух видов открыт — «По сменам» или «Все сцены».
+          // Помним между запусками: рабочий вид у оператора один, второй
+          // открывают изредка, и переключать его каждое утро незачем.
+          const [tableSubView, setTableSubView] = useState(() => {
+            try { return localStorage.getItem('cf_kpp_view') === 'scenes' ? 'scenes' : 'grouped'; } catch (e) { return 'grouped'; }
+          });
+          // Любая запись в localStorage — только внутри try: место на
+          // устройстве кончается, и тогда setItem бросает исключение.
+          useEffect(() => { try { localStorage.setItem('cf_kpp_view', tableSubView); } catch (e) {} }, [tableSubView]);
+          // Текст сцены из сценария в виде «Все сцены» разворачивается ТОЛЬКО
+          // по кнопке: он длиной со страницу, и раскрытый у всех сцен разом
+          // документ пришлось бы прокручивать метрами. {id сцены: true}
+          const [openScript, setOpenScript] = useState({});
+          // Развёрнут ли выбор «что печатать» в «Экспликациях».
+          const [printPanelOpen, setPrintPanelOpen] = useState(false);
           const [toast, setToast] = useState(null);
           const [isAILoading, setIsAILoading] = useState(false);
           
@@ -7625,6 +7639,16 @@
             showToast('Создан чистый проект');
           };
 
+          // Склонение существительного после числа: plur(2, 'сцена', 'сцены',
+          // 'сцен') → «сцены». «1 сцен» и «4 сцен» в шапке смены читаются
+          // опечаткой, а КПП показывают всей группе.
+          const plur = (n, one, few, many) => {
+            const a = Math.abs(n) % 100, b = a % 10;
+            if (a > 10 && a < 20) return many;
+            if (b > 1 && b < 5) return few;
+            if (b === 1) return one;
+            return many;
+          };
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
 
           // --- Групповое перетаскивание на Whiteboard ---
@@ -8194,7 +8218,6 @@
             { id: 'whiteboard', label: 'Доски',        icon: <Icons.Board /> },
             { id: 'gallery',    label: 'Галерея',      icon: <Icons.Gallery /> },
             { id: 'locations',  label: 'Объекты',      icon: <Icons.Place /> },
-            { id: 'master',     label: 'Документ',     icon: <Icons.Master /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
             { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
           ].filter(t => {
@@ -10774,43 +10797,6 @@
                     })()}
                   </div>
 
-                  {/* МАСТЕР-ДОК. Собирается только когда открыт: он показывает
-                      разом ВСЕ сцены со всеми кадрами, и держать это в памяти
-                      постоянно незачем — своего состояния у него нет. */}
-                  <div className={`h-full w-full overflow-y-auto ${currentView === 'master' ? 'block' : 'hidden'}`}>
-                    <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6 pb-24">
-                      {currentView === 'master' && sortedScenes.map(s => {
-                        const sceneFrames = storyboard.filter(f => f.sceneId === s.id);
-                        return (
-                          <div key={s.id} className="glass-panel p-6 md:p-8 rounded-lg space-y-5">
-                            <div className="flex justify-between items-center border-b border-white/10 pb-4 relative z-10">
-                              <span className="font-mono text-white font-extrabold text-sm md:text-lg">СЦЕНА #{s.number} | {s.title}</span>
-                              <span className="text-[11px] md:text-xs text-zinc-400 font-mono bg-black/50 px-3 py-1 rounded-lg border border-white/10 font-semibold">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
-                            </div>
-                            <p className="text-sm text-zinc-300 bg-black/30 p-4 rounded-lg border border-white/5 leading-relaxed relative z-10 font-medium">{s.content || 'Описание отсутствует'}</p>
-                            
-                            {sceneFrames.length > 0 && (
-                              <div className="space-y-3 pt-3 relative z-10">
-                                <span className="text-[11px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest block ml-1">Раскадровка / План смены:</span>
-                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-                                  {sceneFrames.map(frame => (
-                                    <div key={frame.id} className="bg-black/40 rounded-lg border border-white/10 p-2.5 flex flex-col space-y-2">
-                                      {frame.image && (<div className="aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/5"><img src={frame.image} className="w-full h-full object-cover pointer-events-none" draggable="false" /></div>)}
-                                      <div className="text-[11px] md:text-xs leading-tight flex flex-col space-y-1.5 p-1">
-                                        <span className="font-mono text-indigo-400 font-bold bg-indigo-500/10 self-start px-2 py-0.5 rounded-md">{frame.frameNum}</span>
-                                        <span className="text-zinc-400 font-medium line-clamp-4">{frame.description || '...'}</span>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
                   {/* ИНТЕРАКТИВНАЯ ДОСКА (WHITEBOARD) */}
                   <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'flex flex-col' : 'hidden'}`}>
 
@@ -12168,93 +12154,190 @@
                     </div>
                   </div>
 
-                  {/* ТАБЛИЦА СМЕН И КПП */}
+                  {/* КПП — ОДИН документ, два вида.
+                      Рядом жила вкладка «Документ» с теми же сценами, только
+                      другим порядком: два экрана про одно и то же, и человек
+                      каждый раз выбирал, в каком из них искать. Теперь это
+                      два ВИДА одного КПП: «По сменам» — что снимаем в этот
+                      день и чем, «Все сцены» — тот самый документ
+                      с экспликацией, раскадровкой и текстом из сценария.
+                      Прежний «Общий список» убран не потерей, а переносом:
+                      номер и дата правятся прямо в строке смены — перенумеровать
+                      смену подряд надо уметь, не заходя в каждую карточку.
+                      Содержимое собирается ТОЛЬКО когда экран открыт: в виде
+                      «Все сцены» лежат картинки всех кадров проекта, и держать
+                      их в памяти круглосуточно незачем. */}
                   <div className={`h-full w-full overflow-y-auto ${currentView === 'table' ? 'block' : 'hidden'}`}>
                     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 pb-24">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-white/10 pb-5 gap-4">
-                        <h2 className="text-xl font-bold text-white flex items-center gap-2"><Icons.Table/> Таблица Планирования и Смен</h2>
+                        <div className="flex items-baseline gap-3 flex-wrap">
+                          <h2 className="text-xl font-bold text-white flex items-center gap-2"><Icons.Table/> КПП</h2>
+                          <span className="text-[11px] font-mono text-zinc-500">
+                            {(() => { const sh = new Set(scenes.map(s => s.date).filter(Boolean)).size;
+                              return `${scenes.length} ${plur(scenes.length, 'сцена', 'сцены', 'сцен')} · ${sh} ${plur(sh, 'смена', 'смены', 'смен')}`; })()}
+                          </span>
+                        </div>
                         <div className="flex glass-panel p-1.5 rounded-lg border border-white/5">
-                          <button onClick={() => setTableSubView('list')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'list' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Общий список</button>
-                          <button onClick={() => setTableSubView('grouped')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Группировка по сменам</button>
+                          <button onClick={() => setTableSubView('grouped')} title="Что снимаем в этот день и чем"
+                                  className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>По сменам</button>
+                          <button onClick={() => setTableSubView('scenes')} title="Полный документ: экспликация, раскадровка, текст сцены"
+                                  className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'scenes' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Все сцены</button>
                         </div>
                       </div>
 
-                      {tableSubView === 'list' ? (
-                        <div className="glass-panel rounded-lg overflow-x-auto border border-white/10">
-                          <table className="w-full min-w-[700px] text-left border-collapse text-sm">
-                            <thead><tr className="bg-white/5 border-b border-white/10 text-zinc-400 uppercase tracking-widest text-[11px] font-bold"><th className="p-5 w-20 text-center">Сцена</th><th className="p-5 w-44">Дата съемки</th><th className="p-5 w-1/3">Объект / Заголовок</th><th className="p-5">Камерный сетап</th></tr></thead>
-                            <tbody className="divide-y divide-white/5 text-zinc-200">
-                              {sortedScenes.map(s => (
-                                <tr key={s.id} className="hover:bg-white/5 transition-colors">
-                                  <td className="p-5 font-mono text-center bg-black/30">
-                                    {/* Номер правится и отсюда: удобнее перенумеровать
-                                        всю смену подряд, чем ходить по карточкам */}
-                                    <input type="text" value={s.number || ''} onChange={(e) => updateSceneNumber(s.id, e.target.value)}
-                                           placeholder="—" maxLength="12" title="Номер сцены"
-                                           className={`bg-transparent w-16 text-center font-mono font-extrabold focus:outline-none border-b transition-colors placeholder-zinc-600 ${duplicateNumbers[String(s.number || '').trim()] ? 'text-amber-300 border-amber-500/50' : 'text-indigo-400 border-transparent hover:border-white/20 focus:border-indigo-400'}`} />
-                                  </td>
-                                  <td className="p-5"><input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)} className="glass-input rounded-lg px-3 py-1.5 font-mono transition-colors text-xs" /></td>
-                                  <td className="p-5 font-bold">{s.title}</td>
-                                  <td className="p-5">
-                                    <div className="flex flex-wrap gap-2">
-                                      {Object.entries(gearTypes || DEFAULT_GEAR).map(([key, item]) => {
-                                        const count = (s.gear && s.gear[key]) || 0;
-                                        if (count === 0) return null;
-                                        return (
-                                          <div key={key} className="flex items-center space-x-2 bg-black/50 px-2.5 py-1.5 rounded-lg border border-white/5">
-                                            <span className="text-[11px] text-indigo-400"><Icons.Video/></span>
-                                            <span className="text-xs text-zinc-300 font-medium">{item.label}:</span>
-                                            <span className="font-mono text-xs font-bold text-white">{count}</span>
+                      {currentView === 'table' && sortedScenes.length === 0 && (
+                        <div className="glass-panel rounded-lg border border-white/10 p-10 text-center text-sm text-zinc-500 leading-relaxed">
+                          Сцен пока нет.<br />Заведите первую в разделе «Сцены» — или загрузите КПП и сценарий целиком через «···» → «Агент КПП».
+                        </div>
+                      )}
+
+                      {currentView === 'table' && sortedScenes.length > 0 && (tableSubView === 'scenes' ? (
+                        /* ВСЕ СЦЕНЫ — бывшая вкладка «Документ». Всё, что там
+                           было (номер, название, дата, экспликация, раскадровка),
+                           плюс текст сцены из сценария по кнопке. */
+                        <div className="max-w-4xl mx-auto space-y-6">
+                          {sortedScenes.map(s => {
+                            const sceneFrames = storyboard.filter(f => f.sceneId === s.id);
+                            const hasScript = !!(s.script || '').trim();
+                            const scriptOpen = !!openScript[s.id];
+                            return (
+                              <div key={s.id} className="glass-panel p-6 md:p-8 rounded-lg space-y-5">
+                                <div className="flex justify-between items-center border-b border-white/10 pb-4 relative z-10 gap-3">
+                                  <span className="font-mono text-white font-extrabold text-sm md:text-lg">СЦЕНА #{s.number} | {s.title}</span>
+                                  <span className="text-[11px] md:text-xs text-zinc-400 font-mono bg-black/50 px-3 py-1 rounded-lg border border-white/10 font-semibold shrink-0">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
+                                </div>
+                                <p className="text-sm text-zinc-300 bg-black/30 p-4 rounded-lg border border-white/5 leading-relaxed relative z-10 font-medium" style={{ whiteSpace: 'pre-wrap' }}>{s.content || 'Описание отсутствует'}</p>
+
+                                {/* Текст из сценария — по кнопке: он длиной со
+                                    страницу и раскрытый у всех сцен разом
+                                    превратил бы документ в рулон. */}
+                                {hasScript && (
+                                  <div className="relative z-10">
+                                    <button onClick={() => setOpenScript(prev => ({ ...prev, [s.id]: !prev[s.id] }))}
+                                            className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2.5 rounded-lg transition-colors">
+                                      <Icons.Docs/> <span>{scriptOpen ? 'Скрыть текст сцены' : 'Текст сцены из сценария'}</span>
+                                      <span className="text-zinc-500">{scriptOpen ? '▲' : '▼'}</span>
+                                    </button>
+                                    {scriptOpen && (
+                                      <p className="mt-3 text-sm text-zinc-300 bg-black/40 p-5 rounded-lg border border-white/5 leading-relaxed font-medium" style={{ whiteSpace: 'pre-wrap' }}>{s.script}</p>
+                                    )}
+                                  </div>
+                                )}
+
+                                {sceneFrames.length > 0 && (
+                                  <div className="space-y-3 pt-3 relative z-10">
+                                    <span className="text-[11px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest block ml-1">Раскадровка / План смены:</span>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+                                      {sceneFrames.map(frame => (
+                                        <div key={frame.id} className="bg-black/40 rounded-lg border border-white/10 p-2.5 flex flex-col space-y-2">
+                                          {/* Кадр стоит в пропорции проекта: раскадровка
+                                              в 16:9 при анаморфе обещает не тот кадр. */}
+                                          {frame.image && (<div className="bg-black/60 rounded-lg overflow-hidden border border-white/5"><img src={frame.image} style={{ width: '100%', aspectRatio: projectRatio, objectFit: 'cover', display: 'block' }} className="pointer-events-none" draggable="false" /></div>)}
+                                          <div className="text-[11px] md:text-xs leading-tight flex flex-col space-y-1.5 p-1">
+                                            <span className="font-mono text-indigo-400 font-bold bg-indigo-500/10 self-start px-2 py-0.5 rounded-md">{frame.frameNum}</span>
+                                            <span className="text-zinc-400 font-medium line-clamp-4">{frame.description || '...'}</span>
                                           </div>
-                                        );
-                                      })}
+                                        </div>
+                                      ))}
                                     </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (() => {
+                        /* ПО СМЕНАМ — то же, что и было, плюс правка номера
+                           и даты в строке и техника со светом по каждой сцене:
+                           на площадке спрашивают «чем снимаем эту сцену»,
+                           а не «сколько всего камер на смене». */
                         const grouped = {}; sortedScenes.forEach(s => { const dk = s.date || ''; if (!grouped[dk]) grouped[dk] = []; grouped[dk].push(s); });
                         const sortedDates = Object.keys(grouped).sort((a, b) => { if (!a) return 1; if (!b) return -1; return new Date(a) - new Date(b); });
+                        const sumOf = (list, field) => { const acc = {}; list.forEach(s => { const m = s[field] || {}; Object.keys(m).forEach(k => { if (m[k] > 0) acc[k] = (acc[k] || 0) + m[k]; }); }); return acc; };
+                        const totalChips = (sum, types, cls) => Object.entries(sum).map(([key, qty]) => {
+                          const item = (types || {})[key] || { label: key };
+                          return (<span key={key} className={`text-xs px-3 py-1 rounded-lg font-mono font-semibold flex items-center space-x-2 ${cls.chip}`}>
+                                    <span>{item.label}</span>
+                                    <span className={`font-extrabold text-white px-1.5 py-0.5 rounded-md ${cls.num}`}>{qty}</span>
+                                  </span>);
+                        });
                         return (
                           <div className="space-y-8">
                             {sortedDates.map(dateKey => {
-                              const dayScenes = grouped[dateKey]; const summary = {}; Object.keys(gearTypes || DEFAULT_GEAR).forEach(k => { summary[k] = 0; });
-                              dayScenes.forEach(s => { const gear = s.gear || {}; Object.keys(gear).forEach(k => { if (summary[k] !== undefined) summary[k] += (gear[k] || 0); else summary[k] = (gear[k] || 0); }); });
-                              const hasSummary = Object.values(summary).some(v => v > 0);
+                              const dayScenes = grouped[dateKey];
+                              const camSum = sumOf(dayScenes, 'gear'), lightSum = sumOf(dayScenes, 'lightGear');
                               return (
                                 <div key={dateKey || 'unassigned'} className="glass-panel rounded-lg overflow-hidden border-t border-white/10">
                                   <div className="bg-white/5 px-6 py-4 border-b border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
                                     <div className="flex items-center space-x-4">
                                       <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `СМЕНА: ${formatDateDisplay(dateKey)}` : 'СЦЕНЫ ВНЕ СМЕН'}</span>
                                       <span className="text-zinc-600">|</span>
-                                      <span className="text-xs font-bold text-zinc-300 bg-black/50 px-3 py-1 rounded-full border border-white/10">{dayScenes.length} сцен</span>
+                                      <span className="text-xs font-bold text-zinc-300 bg-black/50 px-3 py-1 rounded-full border border-white/10">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
                                     </div>
-                                    {hasSummary && (<div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-2">Итого техника:</span>{Object.entries(summary).map(([key, totalQty]) => { if (totalQty === 0) return null; const item = (gearTypes || DEFAULT_GEAR)[key] || { label: key }; return (<span key={key} className="bg-indigo-950/60 text-indigo-200 text-xs px-3 py-1 rounded-lg font-mono font-semibold flex items-center space-x-2"><span className="text-indigo-400"><Icons.Video/></span><span>{item.label}</span><span className="font-extrabold text-white bg-indigo-600 px-1.5 py-0.5 rounded-md">{totalQty}</span></span>); })}</div>)}
+                                    <div className="flex flex-col gap-2 md:items-end">
+                                      {Object.keys(camSum).length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-1">Итого техника:</span>
+                                          {totalChips(camSum, gearTypes || DEFAULT_GEAR, { chip: 'bg-indigo-950/60 text-indigo-200', num: 'bg-indigo-600' })}
+                                        </div>
+                                      )}
+                                      {Object.keys(lightSum).length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-[11px] text-zinc-400 uppercase font-bold tracking-wider mr-1">Итого свет:</span>
+                                          {totalChips(lightSum, lightGearTypes || DEFAULT_LIGHT_GEAR, { chip: 'bg-amber-950/60 text-amber-200', num: 'bg-amber-700' })}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="divide-y divide-white/5">
-                                    {dayScenes.map(s => (
-                                      <div key={s.id} className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white/5 transition-colors">
-                                        <div className="flex items-start space-x-4 flex-1">
-                                          <span className="font-mono text-indigo-400 font-black text-sm shrink-0 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg mt-0.5">#{s.number}</span>
-                                          <div className="space-y-1.5">
-                                            <h4 className="text-sm font-bold text-white tracking-wide">{s.title || 'Без названия'}</h4>
-                                            <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || '...'}</p>
+                                    {dayScenes.map(s => {
+                                      const cam = gearLine(s.gear, gearTypes || DEFAULT_GEAR);
+                                      const lig = gearLine(s.lightGear, lightGearTypes || DEFAULT_LIGHT_GEAR);
+                                      return (
+                                        <div key={s.id} className="p-5 flex flex-col md:flex-row md:items-start justify-between gap-4 hover:bg-white/5 transition-colors">
+                                          <div className="flex items-start space-x-4 flex-1 min-w-0">
+                                            {/* Номер правится прямо здесь: перенумеровать
+                                                смену подряд удобнее, чем ходить по карточкам.
+                                                Только через updateSceneNumber — он же
+                                                переносит номера кадров раскадровки.
+                                                cf-edit-only тут НЕЛЬЗЯ: он прячет элемент
+                                                целиком, а в режиме просмотра номер сцены —
+                                                как раз то, ради чего ссылку открывают.
+                                                Править его там и так не дадут: у READ_ONLY
+                                                все поля становятся pointer-events: none. */}
+                                            <input type="text" value={s.number || ''} onChange={(e) => updateSceneNumber(s.id, e.target.value)}
+                                                   placeholder="—" maxLength="12" title="Номер сцены — правится прямо здесь"
+                                                   className={`shrink-0 mt-0.5 w-16 text-center font-mono font-black text-sm bg-black/40 px-2 py-2 rounded-lg border transition-colors focus:outline-none placeholder-zinc-600 ${duplicateNumbers[String(s.number || '').trim()] ? 'text-amber-300 border-amber-500/50' : 'text-indigo-400 border-white/10 hover:border-white/25 focus:border-indigo-400'}`} />
+                                            <div className="space-y-1.5 min-w-0">
+                                              <h4 className="text-sm font-bold text-white tracking-wide">{s.title || 'Без названия'}</h4>
+                                              <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || '...'}</p>
+                                              {(cam || lig) && (
+                                                <div className="flex flex-col gap-1 pt-1">
+                                                  {cam && (<span className="text-[11px] font-mono text-zinc-400 leading-relaxed"><span className="text-indigo-400 font-bold uppercase">камера: </span>{cam}</span>)}
+                                                  {lig && (<span className="text-[11px] font-mono text-zinc-400 leading-relaxed"><span className="text-amber-400 font-bold uppercase">свет: </span>{lig}</span>)}
+                                                </div>
+                                              )}
+                                            </div>
                                           </div>
+                                          {/* Дата — она же смена: поменял дату, и сцена
+                                              уехала в другую группу. Это и есть перенос
+                                              сцены на другой день. */}
+                                          <input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)}
+                                                 title="Дата смены — перенести сцену на другой день"
+                                                 className="glass-input rounded-lg px-3 py-2 font-mono text-xs shrink-0 md:mt-0.5" />
                                         </div>
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
                         );
-                      })()}
+                      })())}
                     </div>
                   </div>
+
 
                   {/* ЭКСПЛИКАЦИИ И ДОКУМЕНТЫ */}
                   <div className={`h-full w-full ${currentView === 'docs' ? 'block' : 'hidden'}`}>
@@ -12353,9 +12436,19 @@
 
                       {/* Правая колонка: Файлы */}
                       <div className="w-full lg:w-80 glass-panel p-6 rounded-lg shrink-0 space-y-8 relative border-t border-white/10">
+                        {/* Печать — самая редкая работа на этом экране, поэтому
+                            она свёрнута в один подпункт: раскрыл — и выбрал,
+                            что печатать. Четыре кнопки в развёрнутом виде
+                            занимали верх панели каждый день ради того, чем
+                            пользуются раз в неделю. */}
                         <div className="space-y-3">
-                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Экспорт / Печать</span>
-                          {(() => {
+                          <button onClick={() => setPrintPanelOpen(v => !v)}
+                                  title="Выбрать, что печатать"
+                                  className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-lg glass-panel border border-white/10 hover:bg-white/10 transition-colors">
+                            <span className="flex items-center gap-2 text-[11px] font-bold text-zinc-300 uppercase tracking-widest"><Icons.Print/> Печать и экспорт</span>
+                            <span className="text-zinc-500 text-[11px] font-bold">{printPanelOpen ? '▲' : '▼'}</span>
+                          </button>
+                          {printPanelOpen && (() => {
                             const openDoc = docs.find(d => d.id === activeDocId);
                             const openScheme = lightSchemes.find(s => s.id === activeSchemeId);
                             const btn = "w-full py-3 rounded-lg text-sm font-bold tracking-wide transition-all flex items-center justify-center gap-2 border";
