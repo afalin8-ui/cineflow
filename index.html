@@ -508,12 +508,39 @@
         //     но все правки заблокированы и в облако ничего не уходит;
         //  2) файл-снимок: копия приложения со вшитыми данными
         //     (window.__CF_SNAPSHOT__), облако не подключается вообще.
-        // scope: 'gallery' | 'board' | 'all' — что показывать.
+        // scope — какие СТРАНИЦЫ показывать, через запятую.
         const CF_SNAPSHOT = (typeof window !== 'undefined' && window.__CF_SNAPSHOT__) || null;
         const CF_VIEW_SCOPE = CF_SNAPSHOT
           ? (CF_SNAPSHOT.scope || 'all')
           : (new URLSearchParams(location.search).get('view') || '');
         const READ_ONLY = !!CF_SNAPSHOT || !!CF_VIEW_SCOPE;
+
+        // Ссылка-просмотр открывает СТРАНИЦЫ, а не «всё или ничего».
+        // Умели ровно три случая — галерея, доска, весь проект, — и позвать
+        // посмотреть ОДНИ объекты (то, ради чего чаще всего и зовут: «вот
+        // куда едем») было нечем: `?view=locations` проваливался в ветку
+        // «показать всё». Теперь в `?view=` лежит список страниц через
+        // запятую. Старые ссылки продолжают работать: `gallery`, `board`
+        // и `all` разбираются как прежде, а их уже разослали.
+        const CF_ALL_VIEWS = ['notion', 'whiteboard', 'gallery', 'locations', 'table', 'docs'];
+        const CF_VIEW_ALIAS = {
+          all: '*',            gallery: 'gallery',   board: 'whiteboard',
+          boards: 'whiteboard', whiteboard: 'whiteboard',
+          scenes: 'notion',    notion: 'notion',     locations: 'locations',
+          table: 'table',      kpp: 'table',         docs: 'docs'
+        };
+        const CF_VIEWS = (() => {
+          if (!CF_VIEW_SCOPE) return CF_ALL_VIEWS;
+          const out = [];
+          String(CF_VIEW_SCOPE).split(',').forEach(part => {
+            const id = CF_VIEW_ALIAS[part.trim().toLowerCase()];
+            if (id === '*') CF_ALL_VIEWS.forEach(v => { if (out.indexOf(v) < 0) out.push(v); });
+            else if (id && out.indexOf(id) < 0) out.push(id);
+          });
+          // Ссылка с опечаткой не должна открывать пустой экран без единой
+          // вкладки: непонятное слово читаем как «весь проект».
+          return out.length ? out : CF_ALL_VIEWS;
+        })();
         if (READ_ONLY) document.body.classList.add('cf-readonly');
 
         // --- Комната проекта ---
@@ -3169,7 +3196,7 @@
           const msgBatch = useRef(0);
 
           const [currentView, setCurrentView] = useState(
-            CF_VIEW_SCOPE === 'gallery' ? 'gallery' : (CF_VIEW_SCOPE === 'board' ? 'whiteboard' : 'notion')
+            READ_ONLY ? CF_VIEWS[0] : 'notion'
           ); 
           const [activeSceneId, setActiveSceneId] = useState('scene-1');
           const [activeDocId, setActiveDocId] = useState('doc-1');
@@ -4734,6 +4761,7 @@
           // «создай текст» и «положи внутрь».
           const openText = (s) => {
             if (READ_ONLY) return;
+            if (READ_ONLY) return;
             let target = s;
             if (!isText(s)) {
               const has = shapesRef.current.find(q => q.ct === s.id);
@@ -4805,6 +4833,7 @@
             bumpInk(); scheduleInkSave('shapes');
           };
           const shapeStartAct = (kind, ids, pt, extra) => {
+            if (READ_ONLY) return;
             if (kind === 'size' && extra && (extra.h === 'p1' || extra.h === 'p2')) {
               const s = shapesRef.current.find(q => q.id === ids[0]);
               if (s && isLineKind(s.k) && (s.b1 || s.b2)) freezeArrow(s, extra.h);
@@ -4903,6 +4932,7 @@
             return { x: x0 + Math.cos(a) * l, y: y0 + Math.sin(a) * l };
           };
           const deleteShapes = (ids) => {
+            if (READ_ONLY) return;
             const kill = new Set(ids && ids.length ? ids : selShapes);
             if (!kill.size) return;
             pushUndo(false);
@@ -4926,6 +4956,7 @@
           // одной строкой, поэтому дробные индексы из ТЗ здесь решали бы
           // задачу, которой у нас нет.
           const orderShapes = (dir) => {
+            if (READ_ONLY) return;
             if (!selShapes.length) return;
             pushUndo(false);
             const sel = new Set(selShapes);
@@ -5225,6 +5256,7 @@
             return Array.from(set);
           };
           const groupShapes = () => {
+            if (READ_ONLY) return;
             const ids = expandGroups(selShapes).filter(id => { const s = findShape(id); return s && !s.ct; });
             if (ids.length < 2) return;
             pushUndo(false);
@@ -5235,6 +5267,7 @@
             bumpInk(); scheduleInkSave('shapes');
           };
           const ungroupShapes = () => {
+            if (READ_ONLY) return;
             const ids = expandGroups(selShapes);
             if (!ids.some(id => { const s = findShape(id); return s && s.g; })) return;
             pushUndo(false);
@@ -5717,6 +5750,7 @@
             cards: like.cards ? grabCards(like.cards) : undefined
           });
           const undoStroke = () => {
+            if (READ_ONLY) return;
             if (!undoStack.current.length) return;
             const snap = undoStack.current.pop();
             redoStack.current.push(snapNow(snap));
@@ -5724,6 +5758,7 @@
             applyInkSnap(snap);
           };
           const redoStroke = () => {
+            if (READ_ONLY) return;
             if (!redoStack.current.length) return;
             const snap = redoStack.current.pop();
             undoStack.current.push(snapNow(snap));
@@ -5736,6 +5771,11 @@
           useEffect(() => {
             const onKey = (e) => {
               if (currentView !== 'whiteboard') return;
+              // Клавиатура — отдельная дверь на доску, и она была открыта:
+              // в просмотре Ctrl+Z откатывал чужую доску на шаг назад,
+              // Delete стирал фигуры, Ctrl+G их группировал. Кнопок для
+              // этого у гостя нет, а клавиши работали.
+              if (READ_ONLY) return;
               const t = e.target.tagName;
               if (t === 'INPUT' || t === 'TEXTAREA' || e.target.isContentEditable) return;
               const k = e.key.toLowerCase();
@@ -7612,6 +7652,18 @@
                 data.cf_geartypes = gearTypes; data.cf_lightgeartypes = lightGearTypes;
                 data.cf_lightschemes = lightSchemes;
               }
+              if (scope === 'locations') {
+                data.cf_locations = locations;
+                // Фотографии объекта — обычные референсы с locationId. Берём
+                // ТОЛЬКО их: вся галерея утяжелила бы файл в разы, а на экране
+                // объекта её всё равно не видно.
+                data.cf_references = references.filter(r => r.locationId);
+                // Сцены нужны не ради них самих: на карточке объекта стоят
+                // чипы сцен, а солнце считается по датам их смен.
+                data.cf_scenes = scenes;
+                data.cf_lightschemes = lightSchemes;
+                data.cf_stickies = [];
+              }
               if (scope === 'gallery') { data.cf_scenes = []; data.cf_stickies = []; }
 
               const payload = { scope, room: appId, madeAt: new Date().toISOString(), data };
@@ -7796,6 +7848,11 @@
           // стоит»: карточки живут в разметке, фигуры на холсте, но для
           // человека это одно выделение и тянуться должно вместе.
           const beginBoardDrag = (e, cardIds, shapeIds) => {
+              // Доска в просмотре — картинка, а не рабочее место.
+              // Инструменты у гостя спрятаны, но фигуры лежат на ХОЛСТЕ,
+              // и до них жест доходит мимо кнопок: стрелку схемы можно
+              // было утащить в сторону и решить, что сломал чужую доску.
+              if (READ_ONLY) return;
               const items = [];
               cardIds.forEach(sId => {
                   const sc = scenes.find(x => x.id === sId); if (sc) return items.push({ id: sId, type: 'scene', ox: sc.x, oy: sc.y, bx: sc.x, by: sc.y, w: 288, h: 150 });
@@ -8266,6 +8323,7 @@
 
           // Цвет ложится на все выделенные заметки разом — как в Excalidraw.
           const paintStickies = (id, color) => {
+            if (READ_ONLY) return;
               const ids = selectedWbItems.includes(id) ? selectedWbItems : [id];
               const up = stickies.map(s => ids.includes(s.id) ? { ...s, color } : s);
               setStickies(up);
@@ -8290,10 +8348,7 @@
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
             { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
           ].filter(t => {
-            if (!READ_ONLY || CF_VIEW_SCOPE === 'all') return true;
-            if (CF_VIEW_SCOPE === 'gallery') return t.id === 'gallery';
-            if (CF_VIEW_SCOPE === 'board') return t.id === 'whiteboard';
-            return true;
+            return CF_VIEWS.indexOf(t.id) >= 0;
           });
           // Заметка сцены — это стикер на доске сцены, а не отдельная
           // сущность: одна и та же бумажка, видная и на экране сцены,
@@ -12662,11 +12717,13 @@
                   списка, и до неё не долистать. */}
               {isPhone && (
                 <nav className="cf-tabbar z-40">
+                  {/* По ссылке на одну страницу в таб-баре не должно быть
+                      кнопок в никуда: они уводили бы на пустой экран. */}
                   {[
                     { id: 'notion', label: 'Сцены', icon: <Icons.Scene /> },
                     { id: 'gallery', label: 'Галерея', icon: <Icons.Gallery /> },
                     { id: 'locations', label: 'Объекты', icon: <Icons.Place /> }
-                  ].map(t => (
+                  ].filter(t => CF_VIEWS.indexOf(t.id) >= 0).map(t => (
                     <button key={t.id} onClick={() => {
                               // Нажатие по вкладке, на которой уже стоишь,
                               // возвращает к списку — так работает любой
@@ -13161,12 +13218,19 @@
                         Ссылка показывает живые данные — вы правите, человек видит обновления.
                         Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
                       </p>
+                      {/* Ссылка на ОТДЕЛЬНУЮ страницу, а не «весь проект или
+                          ничего». Умели три случая, и позвать посмотреть одни
+                          объекты — «вот куда едем» — было нечем. Названия здесь
+                          те же, что у страниц в шапке: человек ищет ссылку
+                          по тому слову, которое видит на экране. */}
                       <div className="flex flex-col gap-2 mb-5">
-                        {[['gallery', 'Только референсы'], ['board', 'Только доска'], ['all', 'Весь проект']].map(([scope, label]) => {
+                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Доска'],
+                          ['scenes', 'Сцены'], ['table', 'КПП'], ['docs', 'Экспликации'],
+                          ['all', 'Весь проект']].map(([scope, label]) => {
                           const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
                           return (
                             <div key={scope} className="flex items-center gap-2">
-                              <span className="text-xs text-zinc-300 w-40 shrink-0">{label}</span>
+                              <span className="text-xs text-zinc-300 w-32 shrink-0">{label}</span>
                               <button onClick={() => {
                                         navigator.clipboard.writeText(link)
                                           .then(() => showToast('Ссылка «' + label.toLowerCase() + '» скопирована'))
@@ -13177,6 +13241,10 @@
                           );
                         })}
                       </div>
+                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-5 -mt-3">
+                        Нужны две страницы разом — впишите их в адрес через запятую:
+                        <span className="font-mono"> ?view=locations,gallery</span>
+                      </p>
 
                       <h4 className="text-sm font-bold text-white mb-1.5">Файл-снимок</h4>
                       <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
@@ -13185,7 +13253,7 @@
                         Файл тяжёлый, в нём лежат сами картинки.
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {[['gallery', 'Референсы'], ['board', 'Доска'], ['all', 'Весь проект']].map(([scope, label]) => (
+                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Доска'], ['all', 'Весь проект']].map(([scope, label]) => (
                           <button key={scope} onClick={() => exportSnapshot(scope)} disabled={snapshotBusy}
                                   className="cf-chip shrink-0">
                             {snapshotBusy ? 'Собираю…' : 'Скачать · ' + label}
