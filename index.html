@@ -4584,6 +4584,10 @@
           // подписка тут же присылает прежнее содержимое, и рисунок пропадал
           // с экрана. Здесь помним, что отказ только что был.
           const inkRollbackRef = useRef(null);
+          // Доска, рисунок которой человек вернул «Спасением». Облако по ней
+          // до перезагрузки не слушаем: там лежит та самая испорченная копия,
+          // ради которой спасение и понадобилось.
+          const inkPinnedRef = useRef(null);
           const legacyCv = useRef(null);       // старый растровый рисунок, если он есть
           const legacyUrl = useRef(null);
           const legacyDirty = useRef(false);
@@ -5800,22 +5804,31 @@
             const found = [];
             let local = [];
             try { local = JSON.parse(localStorage.getItem('cf_ink_' + activeBoardId) || '[]') || []; } catch (e) {}
+            local = [...byId(local).values()];
             if (local.length) found.push({ key: 'local', where: 'На этом устройстве', n: local.length, strokes: local });
             if (db && user) {
               const col = dataRef().collection('canvas');
               const ids = [strokesDocId(activeBoardId)];
               for (let i = 2; i <= 40; i++) ids.push(strokesDocId(activeBoardId) + '~' + i);
               const docs = await Promise.all(ids.map(id => col.doc(id).get().catch(() => null)));
-              let cloud = [], parts = 0;
+              // Части писались в РАЗНОЕ время и повторяют друг друга. Складывать
+              // их подряд нельзя: получалось число вчетверо больше настоящего,
+              // и выглядело оно ошибкой. Считаем только РАЗНЫЕ штрихи.
+              let parts = 0, rawCount = 0; const seen = new Map();
               docs.forEach(d => {
                 if (!d || !d.exists) return;
+                let list = [];
+                try { list = JSON.parse((d.data() || {}).strokes || '[]') || []; } catch (e) { return; }
+                if (!list.length) return;
                 parts++;
-                try { cloud = cloud.concat(JSON.parse((d.data() || {}).strokes || '[]') || []); } catch (e) {}
+                list.forEach(x => { if (!x || !x.id) return; rawCount++; if (!seen.has(x.id)) seen.set(x.id, x); });
               });
-              if (cloud.length) found.push({ key: 'cloud', where: `В облаке · частей ${parts}`, n: cloud.length, strokes: cloud });
+              const cloud = [...seen.values()];
+              if (cloud.length) found.push({ key: 'cloud', where: `В облаке · частей ${parts}`,
+                                             n: cloud.length, dup: rawCount - cloud.length, strokes: cloud });
               if (cloud.length && local.length) {
                 const m = byId(local);
-                cloud.forEach(s => { if (s && s.id && !m.has(s.id)) m.set(s.id, s); });
+                cloud.forEach(x => { if (x && x.id && !m.has(x.id)) m.set(x.id, x); });
                 const both = [...m.values()];
                 if (both.length > Math.max(cloud.length, local.length)) {
                   found.push({ key: 'both', where: 'Всё вместе (устройство + облако)', n: both.length, strokes: both });
@@ -5840,13 +5853,36 @@
               showToast(`Скачал ${item.n} штрихов файлом. Вернуть — «Импортировать из JSON».`);
             } catch (e) { showToast('Не удалось скачать файл: ' + e.message); }
           };
+          // Наводим доску на рисунок. Без этого «положил 1200 штрихов» ничего
+          // не меняло на экране: доска могла стоять в другом углу холста
+          // 4000×4000, и человек видел ровно ту же пустоту, что и до нажатия.
+          const showWholeBoard = () => {
+            const b = boardBounds(); const host = liveCanvasRef.current;
+            if (!b || !host) return;
+            const vw = host.clientWidth, vh = host.clientHeight;
+            if (!vw || !vh) return;
+            const z = Math.max(0.3, Math.min(1, Math.min(vw / b.w, vh / b.h)));
+            applyView(vw / 2 - (b.x + b.w / 2) * z, vh / 2 - (b.y + b.h / 2) * z, z);
+            commitView();
+          };
           const putRescued = (item) => {
+            if (READ_ONLY) return;
             strokesRef.current = item.strokes;
+            // В ОБЛАКО НЕ ОТПРАВЛЯЕМ. Документ больше 1 МБ сервер не берёт,
+            // а отвергнутую запись он ОТКАТЫВАЕТ — и подписка тут же вернула
+            // бы на доску ту самую испорченную копию, ради которой спасение
+            // и понадобилось. Сначала рисунок должен оказаться у человека:
+            // на доске, на устройстве и файлом.
+            let saved = false;
+            try { localStorage.setItem('cf_ink_' + activeBoardId, packInk(item.strokes)); saved = true; } catch (e) {}
+            inkPinnedRef.current = activeBoardId;
             bumpInk();
-            const saved = saveStrokes(activeBoardId, item.strokes);
             setRescue(null);
+            setShowProjectModal(false);      // иначе окно закрывает доску, и кажется, что ничего не произошло
+            setCurrentView('whiteboard');
+            setTimeout(showWholeBoard, 60);  // холст доски успевает появиться
             showToast(saved
-              ? `Положил на доску ${item.n} штрихов. Сразу скачайте файлом.`
+              ? `Положил на доску ${item.n} штрихов. Сразу скачайте файлом — в облако он не уехал.`
               : `Положил ${item.n} штрихов на доску, но на устройстве НЕ СОХРАНИЛОСЬ — кончилось место. Скачайте файлом сейчас же.`);
           };
 
@@ -7150,6 +7186,7 @@
               // документа, и принять его значило бы стереть рисунок.
               const rb = inkRollbackRef.current;
               if (rb && rb.board === activeBoardId && Date.now() - rb.at < 5000) { inkRollbackRef.current = null; return; }
+              if (inkPinnedRef.current === activeBoardId) return;
               if (doc.data().lastDrawBy === user.uid) return;
               try { strokesRef.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) { strokesRef.current = []; }
               bumpInk();
@@ -13937,6 +13974,7 @@
                                    style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
                                 <span className="text-xs" style={{ color: 'var(--text-2)' }}>
                                   {item.where}: <b style={{ color: 'var(--text)' }}>{item.n}</b> штрихов
+                                  {item.dup ? <span className="text-zinc-500"> · повторов {item.dup} не считал</span> : null}
                                 </span>
                                 <span className="flex items-center gap-1.5 shrink-0">
                                   <button onClick={() => downloadRescued(item)} className="cf-chip shrink-0" title="Скачать файлом — оттуда рисунок уже не потеряется">⬇ Файлом</button>
