@@ -5779,96 +5779,27 @@
           // Добавляя штриху новое поле, впиши его и сюда: `jn` (стыки
           // разрезанной линии) один раз уже терялся при записи, и после
           // перезагрузки длинная линия схлопывалась на каждом стыке.
-          // КООРДИНАТЫ ОКРУГЛЯЕМ ПРИ ЗАПИСИ. Точки приходят из событий
-          // указателя с полной точностью double, и JSON пишет её целиком:
-          // «1234.5678901234567» — 57 байт на точку. Предел документа
-          // Firestore 1 МБ, то есть рисунок ломался уже на 18 тысячах точек,
-          // а это полдня работы на одной доске. Десятой доли пикселя
-          // на штрихе не видно ни при каком увеличении, а весит точка
-          // после округления 21 байт — втрое меньше.
-          const r1 = (v) => Math.round(v * 10) / 10;
-          const inkForWrite = (s) => {
-            const o = { id: s.id, t: s.t, c: s.c, w: s.w,
-                        p: (s.p || []).map(q => [r1(q[0]), r1(q[1]), Math.round(q[2] * 100) / 100]) };
+          const packInk = (list) => JSON.stringify(list.map(s => {
+            const o = { id: s.id, t: s.t, c: s.c, w: s.w, p: s.p };
             if (s.jn) o.jn = s.jn;
             return o;
-          };
-          // Один проход и для целого списка, и для нарезки на части.
-          const splitInk = (list, max) => {
-            const out = []; let cur = [], size = 2;
-            (list || []).forEach(s => {
-              const str = JSON.stringify(inkForWrite(s));
-              if (cur.length && size + str.length + 1 > max) { out.push('[' + cur.join(',') + ']'); cur = []; size = 2; }
-              cur.push(str); size += str.length + 1;
-            });
-            out.push('[' + cur.join(',') + ']');
-            return out;
-          };
-          const packInk = (list) => splitInk(list, Infinity)[0];
-          // Рисунок БОЛЬШЕ ОДНОГО ДОКУМЕНТА раскладывается по частям.
-          // Предел документа — 1 МБ; берём с запасом на служебные поля.
-          // Первая часть лежит под прежним именем, поэтому старые записи
-          // читаются как читались, а число частей написано в ней самой.
-          const INK_DOC_MAX = 700000;
-          const inkPartId = (boardId, i) => strokesDocId(boardId) + (i > 0 ? '~' + (i + 1) : '');
-          // Сколько частей записали в прошлый раз — лишние надо убрать,
-          // иначе стёртые линии вернулись бы из хвоста при следующем чтении.
-          const inkParts = useRef({});
-          const inkReadTok = useRef(0);
-          // Отпечаток каждой записанной части. Рисуют В КОНЕЦ, поэтому
-          // меняется обычно последняя часть, а остальные те же самые.
-          // Без этого каждый штрих переписывал бы весь рисунок целиком —
-          // на большой доске это десятки мегабайт в сеть каждые 400 мс.
-          const inkHash = useRef({});
-          const inkLocalWarned = useRef(false);
-          const strHash = (s) => {
-            let h = 5381;
-            for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-            return h + ':' + s.length;
-          };
+          }));
           const saveStrokes = (boardId, list) => {
             if (READ_ONLY) return;
             const json = packInk(list);
             try {
               if (list.length) localStorage.setItem('cf_ink_' + boardId, json);
               else localStorage.removeItem('cf_ink_' + boardId);
-            } catch (err) {
-              // Место на устройстве кончилось. Раньше об этом не говорили
-              // вовсе, и человек считал, что рисунок сохранён, хотя местная
-              // копия замерла на старой. Один раз за сеанс — как у бэкапа.
-              if (!inkLocalWarned.current) {
-                inkLocalWarned.current = true;
-                showToast('На устройстве кончилось место — рисунок держится в облаке. Не работайте без сети надолго.');
-              }
-            }
+            } catch (err) {}
             if (!db || !user) return;
-            const col = dataRef().collection('canvas');
-            const parts = splitInk(list, INK_DOC_MAX);
-            const was = inkParts.current[boardId] || 1;
-            const oldH = inkHash.current[boardId] || [];
-            const newH = parts.map(strHash);
-            parts.forEach((chunk, i) => {
-              // Часть не изменилась — не трогаем её вовсе. Первую пишем
-              // ещё и когда изменилось ЧИСЛО частей: в ней их счётчик.
-              if (newH[i] === oldH[i] && !(i === 0 && parts.length !== was)) return;
-              const body = i === 0
-                ? { strokes: chunk, parts: parts.length, lastDrawBy: user.uid }
-                : { strokes: chunk, lastDrawBy: user.uid };
-              trackWrite(
-                col.doc(inkPartId(boardId, i)).set(body)
-                  .catch(err => {
-                    console.warn('saveStrokes', err);
-                    showToast('⚠️ Рисунок не сохранился в облако. Он цел на этом устройстве — не чистите данные браузера.');
-                  })
-              );
-            });
-            inkHash.current[boardId] = newH;
-            // Хвост прошлой записи убираем: иначе стёртые линии вернулись бы
-            // из лишней части при следующем чтении.
-            for (let i = parts.length; i < was; i++) {
-              trackWrite(col.doc(inkPartId(boardId, i)).delete().catch(() => {}));
-            }
-            inkParts.current[boardId] = parts.length;
+            trackWrite(
+              dataRef().collection('canvas').doc(strokesDocId(boardId))
+                .set({ strokes: json, lastDrawBy: user.uid })
+                .catch(err => {
+                  console.warn('saveStrokes', err);
+                  showToast('⚠️ Рисунок не сохранился в облако — слишком много линий');
+                })
+            );
           };
 
           // Запись откладываем и, уходя с доски, ДОПИСЫВАЕМ — иначе последний
@@ -7134,51 +7065,10 @@
               loadLegacy(doc.data().dataUrl || null);
               bumpInk();
             }, err => console.warn('sync canvas', err));
-            // Рисунок может лежать НЕ В ОДНОМ документе: в первом написано,
-            // сколько всего частей. Старые записи поля `parts` не имеют —
-            // читаются как одна часть, ровно как раньше.
-            // ПЕРВЫЙ ответ по доске принимаем, даже если писали его мы сами.
-            // Правило «свою запись пропускаем» нужно, чтобы эхо не затирало
-            // рисунок, который человек ведёт прямо сейчас. Но при открытии
-            // доски вести ещё нечего, а на этом же устройстве uid тот же —
-            // и рисунок, целый в облаке, не поднимался вовсе, если местная
-            // копия пропала (её съедает переполнение localStorage).
-            // Берём ТОТ, ГДЕ ШТРИХОВ БОЛЬШЕ: облако отстало — остаётся
-            // местный и уедет следующей записью; местный пуст — приходит
-            // облачный. Потерять работу нельзя ни в ту, ни в другую сторону.
-            let inkFirst = true;
-            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(async doc => {
+            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(doc => {
               if (!doc.exists) return;
-              const d = doc.data() || {};
-              const mine = d.lastDrawBy === user.uid;
-              if (mine && !inkFirst) return;
-              let all = [];
-              try { all = JSON.parse(d.strokes || '[]') || []; } catch (err) { all = []; }
-              const n = Number(d.parts) || 1;
-              if (n > 1) {
-                // Пока читаем хвост, может прийти ответ поновее — тогда этот
-                // бросаем: иначе на доску лёг бы наполовину устаревший рисунок.
-                const my = ++inkReadTok.current;
-                for (let i = 1; i < n; i++) {
-                  const part = await col.doc(inkPartId(activeBoardId, i)).get().catch(() => null);
-                  if (inkReadTok.current !== my) return;
-                  if (part && part.exists) {
-                    try { all = all.concat(JSON.parse((part.data() || {}).strokes || '[]') || []); } catch (err) {}
-                  }
-                }
-              }
-              inkParts.current[activeBoardId] = n;
-              if (mine && inkFirst) {
-                inkFirst = false;
-                // Своя же запись при открытии доски: берём её, только если
-                // в ней больше штрихов, чем лежит на устройстве.
-                if (all.length <= (strokesRef.current || []).length) return;
-              }
-              inkFirst = false;
-              // Рисунок приехал со стороны — наши отпечатки к нему не относятся,
-              // иначе следующая запись сочла бы части неизменными и промолчала.
-              inkHash.current[activeBoardId] = null;
-              strokesRef.current = all;
+              if (doc.data().lastDrawBy === user.uid) return;
+              try { strokesRef.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) { strokesRef.current = []; }
               bumpInk();
             }, err => console.warn('sync ink', err));
             const unFig = col.doc(shapesDocId(activeBoardId)).onSnapshot(doc => {
@@ -11408,9 +11298,6 @@
                                         try { localStorage.removeItem('cf_canvas_draw_' + b.id); localStorage.removeItem('cf_ink_' + b.id); localStorage.removeItem('cf_shapes_' + b.id); } catch (err) {}
                                         deleteNetDoc('canvas', canvasDocId(b.id));
                                         deleteNetDoc('canvas', strokesDocId(b.id));
-                                        // Рисунок мог лежать частями — убираем и хвост,
-                                        // иначе он всплыл бы у доски с тем же id.
-                                        for (let i = 1; i < 24; i++) deleteNetDoc('canvas', inkPartId(b.id, i));
                                         deleteNetDoc('canvas', shapesDocId(b.id));
                                         setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
                                         showToast('Доска удалена · референсы остались в галерее');
