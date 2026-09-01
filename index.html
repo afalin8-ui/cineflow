@@ -4580,6 +4580,10 @@
           const inkCanvasRef = useRef(null);   // готовые штрихи + старый растр
           const liveCanvasRef = useRef(null);  // текущий штрих и кольцо кисти
           const strokesRef = useRef([]);       // векторные штрихи открытой доски
+          // Сервер не принимает документ больше 1 МБ и ОТКАТЫВАЕТ такую запись:
+          // подписка тут же присылает прежнее содержимое, и рисунок пропадал
+          // с экрана. Здесь помним, что отказ только что был.
+          const inkRollbackRef = useRef(null);
           const legacyCv = useRef(null);       // старый растровый рисунок, если он есть
           const legacyUrl = useRef(null);
           const legacyDirty = useRef(false);
@@ -5820,30 +5824,60 @@
             }
             setRescue({ busy: false, found });
           };
+          // ФАЙЛ — единственное место, откуда рисунок уже не потеряешь: в облако
+          // он может не влезть (документ больше 1 МБ сервер не принимает), а на
+          // устройстве может кончиться место. Пишем в том же виде, что и бэкап
+          // проекта, — тогда его принимает обычный «Импортировать из JSON»,
+          // и второй способ загрузки заводить не нужно.
+          const downloadRescued = (item) => {
+            try {
+              const body = JSON.stringify({ inks: { [activeBoardId]: packInk(item.strokes) } });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+              a.download = `cineflow-risunok-${activeBoardId}-${item.n}.json`;
+              document.body.appendChild(a); a.click();
+              setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+              showToast(`Скачал ${item.n} штрихов файлом. Вернуть — «Импортировать из JSON».`);
+            } catch (e) { showToast('Не удалось скачать файл: ' + e.message); }
+          };
           const putRescued = (item) => {
             strokesRef.current = item.strokes;
             bumpInk();
-            saveStrokes(activeBoardId, item.strokes);
+            const saved = saveStrokes(activeBoardId, item.strokes);
             setRescue(null);
-            showToast(`Положил на доску ${item.n} штрихов. Сразу скачайте бэкап JSON.`);
+            showToast(saved
+              ? `Положил на доску ${item.n} штрихов. Сразу скачайте файлом.`
+              : `Положил ${item.n} штрихов на доску, но на устройстве НЕ СОХРАНИЛОСЬ — кончилось место. Скачайте файлом сейчас же.`);
           };
 
+          // Отвечает, легло ли на УСТРОЙСТВО: место в браузере кончается, и
+          // «Спасение рисунка» обязано сказать правду, а не обещать вслепую.
           const saveStrokes = (boardId, list) => {
-            if (READ_ONLY) return;
+            if (READ_ONLY) return false;
             const json = packInk(list);
+            let saved = false;
             try {
               if (list.length) localStorage.setItem('cf_ink_' + boardId, json);
               else localStorage.removeItem('cf_ink_' + boardId);
+              saved = true;
             } catch (err) {}
-            if (!db || !user) return;
+            if (!db || !user) return saved;
             trackWrite(
               dataRef().collection('canvas').doc(strokesDocId(boardId))
                 .set({ strokes: json, lastDrawBy: user.uid })
                 .catch(err => {
                   console.warn('saveStrokes', err);
+                  // Отказ сервера — это ещё и ОТКАТ: подписка сейчас же
+                  // пришлёт прежнее содержимое документа и сотрёт с экрана
+                  // то, что человек только что нарисовал или вернул
+                  // «Спасением». Помечаем отказ и возвращаем рисунок на
+                  // место — на устройстве он уже лежит.
+                  inkRollbackRef.current = { board: boardId, at: Date.now() };
+                  if (boardId === activeBoardId) { strokesRef.current = list; bumpInk(); }
                   showToast('⚠️ Рисунок не сохранился в облако — слишком много линий');
                 })
             );
+            return saved;
           };
 
           // Запись откладываем и, уходя с доски, ДОПИСЫВАЕМ — иначе последний
@@ -7111,6 +7145,11 @@
             }, err => console.warn('sync canvas', err));
             const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(doc => {
               if (!doc.exists) return;
+              // Наша запись только что отвергнута сервером — значит этот ответ
+              // не чужая правка, а ОТКАТ: в нём лежит прежнее содержимое
+              // документа, и принять его значило бы стереть рисунок.
+              const rb = inkRollbackRef.current;
+              if (rb && rb.board === activeBoardId && Date.now() - rb.at < 5000) { inkRollbackRef.current = null; return; }
               if (doc.data().lastDrawBy === user.uid) return;
               try { strokesRef.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) { strokesRef.current = []; }
               bumpInk();
@@ -13899,12 +13938,16 @@
                                 <span className="text-xs" style={{ color: 'var(--text-2)' }}>
                                   {item.where}: <b style={{ color: 'var(--text)' }}>{item.n}</b> штрихов
                                 </span>
-                                <button onClick={() => putRescued(item)} className="cf-chip shrink-0">Положить на доску</button>
+                                <span className="flex items-center gap-1.5 shrink-0">
+                                  <button onClick={() => downloadRescued(item)} className="cf-chip shrink-0" title="Скачать файлом — оттуда рисунок уже не потеряется">⬇ Файлом</button>
+                                  <button onClick={() => putRescued(item)} className="cf-chip shrink-0">Положить на доску</button>
+                                </span>
                               </div>
                             ))}
                             {rescue.found.length > 0 && (
                               <p className="text-[11px] text-zinc-500 leading-relaxed">
-                                Выбирайте, где штрихов больше. Положили — сразу скачайте бэкап JSON.
+                                Выбирайте, где штрихов больше. Сначала «Файлом» — оттуда рисунок
+                                уже не потеряется и возвращается кнопкой «Импортировать из JSON» ниже.
                               </p>
                             )}
                           </div>
