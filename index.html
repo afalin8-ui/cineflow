@@ -3804,14 +3804,12 @@
           const [ocrResult, setOcrResult] = useState(null);
           const [brushColor, setBrushColor] = useState('#d97757'); 
           const [brushType, setBrushType] = useState('pen'); 
-          // РАЗМЕРЫ КИСТИ — короткий набор, смещённый к ТОНКОМУ краю.
-          // Был ползунок 2…32, и тонкая часть, которой пользуются почти
-          // всегда, занимала пятую часть его хода: попасть пером в «4»
-          // и не задеть «7» на планшете почти нельзя. Из шести размеров
-          // половина — тонкие, а толстый остался для обводки референса.
-          // Та же мысль, что у палитры из шести цветов: короткий набор
-          // хороших значений вместо бесконечной точности.
-          const BRUSH_SIZES = [2, 3, 4, 6, 10, 18];
+          // Размер кисти — ПОЛЗУНОК. Пробовали заменить его набором точек
+          // (2·3·4·6·10·18) в расчёте на то, что тонкий край станет ближе,
+          // и откатили по прямой просьбе: точками пользоваться оказалось
+          // хуже. Не возвращай без просьбы. Верхний предел оставлен 32:
+          // толстым рисуют редко, но обводку референса им и делают.
+          // Выбранный размер помнится (cf_brush) — это оставили.
           const [brushSize, setBrushSize] = useState(() => {
             try { const v = Number(localStorage.getItem('cf_brush')); return v > 0 ? v : 3; } catch (e) { return 3; }
           });
@@ -5784,6 +5782,52 @@
             if (s.jn) o.jn = s.jn;
             return o;
           }));
+          // СПАСЕНИЕ ПРОПАВШЕГО РИСУНКА.
+          // Рисунок какое-то время раскладывался в облаке по частям
+          // (`ink-{boardId}`, `~2`, `~3`…), а читалась потом только первая:
+          // на доске оставался огрызок, и следующая запись закрепляла его.
+          // Части при этом НЕ удалялись и лежат в облаке целыми.
+          // Инструмент только ЧИТАЕТ и показывает, что где нашлось;
+          // класть на доску — отдельное решение человека.
+          const [rescue, setRescue] = useState(null);
+          const byId = (list) => { const m = new Map(); (list || []).forEach(s => { if (s && s.id) m.set(s.id, s); }); return m; };
+          const findLostInk = async () => {
+            setRescue({ busy: true, found: [] });
+            const found = [];
+            let local = [];
+            try { local = JSON.parse(localStorage.getItem('cf_ink_' + activeBoardId) || '[]') || []; } catch (e) {}
+            if (local.length) found.push({ key: 'local', where: 'На этом устройстве', n: local.length, strokes: local });
+            if (db && user) {
+              const col = dataRef().collection('canvas');
+              const ids = [strokesDocId(activeBoardId)];
+              for (let i = 2; i <= 40; i++) ids.push(strokesDocId(activeBoardId) + '~' + i);
+              const docs = await Promise.all(ids.map(id => col.doc(id).get().catch(() => null)));
+              let cloud = [], parts = 0;
+              docs.forEach(d => {
+                if (!d || !d.exists) return;
+                parts++;
+                try { cloud = cloud.concat(JSON.parse((d.data() || {}).strokes || '[]') || []); } catch (e) {}
+              });
+              if (cloud.length) found.push({ key: 'cloud', where: `В облаке · частей ${parts}`, n: cloud.length, strokes: cloud });
+              if (cloud.length && local.length) {
+                const m = byId(local);
+                cloud.forEach(s => { if (s && s.id && !m.has(s.id)) m.set(s.id, s); });
+                const both = [...m.values()];
+                if (both.length > Math.max(cloud.length, local.length)) {
+                  found.push({ key: 'both', where: 'Всё вместе (устройство + облако)', n: both.length, strokes: both });
+                }
+              }
+            }
+            setRescue({ busy: false, found });
+          };
+          const putRescued = (item) => {
+            strokesRef.current = item.strokes;
+            bumpInk();
+            saveStrokes(activeBoardId, item.strokes);
+            setRescue(null);
+            showToast(`Положил на доску ${item.n} штрихов. Сразу скачайте бэкап JSON.`);
+          };
+
           const saveStrokes = (boardId, list) => {
             if (READ_ONLY) return;
             const json = packInk(list);
@@ -12587,24 +12631,9 @@
                               <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
                               <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
                           </div>
-                          {/* Размер — точками, а не ползунком: каждая нарисована
-                              своей толщиной, поэтому выбирают глазом, а не по
-                              числу, и попадают пером с первого раза. */}
                           <div className="space-y-2">
                             <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Размер</span><span>{brushSize}px</span></div>
-                            <div className="flex items-center justify-between gap-1">
-                              {BRUSH_SIZES.map(sz => (
-                                <button key={sz} onClick={() => setBrushSize(sz)} title={sz + " px"}
-                                        className="flex items-center justify-center rounded-lg transition-colors"
-                                        style={{ width: 30, height: 30, flexShrink: 0,
-                                                 background: brushSize === sz ? "var(--accent)" : "transparent",
-                                                 border: "1px solid " + (brushSize === sz ? "var(--accent)" : "var(--border)") }}>
-                                  <span className="block rounded-full"
-                                        style={{ width: Math.min(18, 3 + sz), height: Math.min(18, 3 + sz),
-                                                 background: brushSize === sz ? "var(--bg)" : "var(--text-2)" }} />
-                                </button>
-                              ))}
-                            </div>
+                            <input type="range" min="2" max="32" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
                           </div>
                           <div className="space-y-2">
                             <span className="text-[11px] text-zinc-400 font-bold uppercase tracking-wider block">Цвет</span>
@@ -13838,6 +13867,49 @@
                         const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                         showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks), Object.keys(figs))).size}`);
                       }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
+
+                      {/* СПАСЕНИЕ ПРОПАВШЕГО РИСУНКА. Рисунок какое-то время
+                          раскладывался в облаке по частям, а читалась только
+                          первая — на доске оставался огрызок. Части при этом
+                          целы. Инструмент их ищет и показывает; класть на
+                          доску — отдельное нажатие. Ничего не стирает. */}
+                      <div className="rounded-lg p-4" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+                        <h4 className="text-sm font-bold text-white mb-1.5">Пропал рисунок доски?</h4>
+                        <p className="text-[12px] text-zinc-400 leading-relaxed mb-3">
+                          Поищу его во всех местах, где он мог остаться, — на этом устройстве
+                          и в облаке, включая части, которые приложение перестало читать.
+                          Ничего не удаляю: просто покажу, что нашлось.
+                          Ищу для доски, открытой сейчас: <span className="font-mono">{(sortedBoards.find(b => b.id === activeBoardId) || {}).title || activeBoardId}</span>
+                        </p>
+                        <button onClick={findLostInk} disabled={rescue && rescue.busy}
+                                className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
+                                style={{ background: 'var(--raised)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                          {rescue && rescue.busy ? 'Ищу…' : '🔎 Найти рисунок этой доски'}
+                        </button>
+                        {rescue && !rescue.busy && (
+                          <div className="mt-3 space-y-2">
+                            {rescue.found.length === 0 && (
+                              <p className="text-[12px]" style={{ color: 'var(--warn)' }}>
+                                Ничего не нашлось. Проверьте, что открыта та самая доска, и что есть связь с облаком.
+                              </p>
+                            )}
+                            {rescue.found.map(item => (
+                              <div key={item.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
+                                   style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                                <span className="text-xs" style={{ color: 'var(--text-2)' }}>
+                                  {item.where}: <b style={{ color: 'var(--text)' }}>{item.n}</b> штрихов
+                                </span>
+                                <button onClick={() => putRescued(item)} className="cf-chip shrink-0">Положить на доску</button>
+                              </div>
+                            ))}
+                            {rescue.found.length > 0 && (
+                              <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                Выбирайте, где штрихов больше. Положили — сразу скачайте бэкап JSON.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       
                       <label className="w-full py-4 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-white/10">
                         <span>📂 Импортировать из JSON</span>
