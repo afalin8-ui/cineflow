@@ -3804,7 +3804,19 @@
           const [ocrResult, setOcrResult] = useState(null);
           const [brushColor, setBrushColor] = useState('#d97757'); 
           const [brushType, setBrushType] = useState('pen'); 
-          const [brushSize, setBrushSize] = useState(4); 
+          // РАЗМЕРЫ КИСТИ — короткий набор, смещённый к ТОНКОМУ краю.
+          // Был ползунок 2…32, и тонкая часть, которой пользуются почти
+          // всегда, занимала пятую часть его хода: попасть пером в «4»
+          // и не задеть «7» на планшете почти нельзя. Из шести размеров
+          // половина — тонкие, а толстый остался для обводки референса.
+          // Та же мысль, что у палитры из шести цветов: короткий набор
+          // хороших значений вместо бесконечной точности.
+          const BRUSH_SIZES = [2, 3, 4, 6, 10, 18];
+          const [brushSize, setBrushSize] = useState(() => {
+            try { const v = Number(localStorage.getItem('cf_brush')); return v > 0 ? v : 3; } catch (e) { return 3; }
+          });
+          // Любая запись в localStorage — только внутри try.
+          useEffect(() => { try { localStorage.setItem('cf_brush', String(brushSize)); } catch (e) {} }, [brushSize]);
           const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
           const [zoom, setZoom] = useState(1.0);
           // --- ГДЕ ДОСКА СЕЙЧАС ---
@@ -12575,9 +12587,24 @@
                               <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
                               <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
                           </div>
+                          {/* Размер — точками, а не ползунком: каждая нарисована
+                              своей толщиной, поэтому выбирают глазом, а не по
+                              числу, и попадают пером с первого раза. */}
                           <div className="space-y-2">
                             <div className="flex justify-between text-[11px] text-zinc-400 font-bold uppercase tracking-wider"><span>Размер</span><span>{brushSize}px</span></div>
-                            <input type="range" min="2" max="32" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-white/10" />
+                            <div className="flex items-center justify-between gap-1">
+                              {BRUSH_SIZES.map(sz => (
+                                <button key={sz} onClick={() => setBrushSize(sz)} title={sz + " px"}
+                                        className="flex items-center justify-center rounded-lg transition-colors"
+                                        style={{ width: 30, height: 30, flexShrink: 0,
+                                                 background: brushSize === sz ? "var(--accent)" : "transparent",
+                                                 border: "1px solid " + (brushSize === sz ? "var(--accent)" : "var(--border)") }}>
+                                  <span className="block rounded-full"
+                                        style={{ width: Math.min(18, 3 + sz), height: Math.min(18, 3 + sz),
+                                                 background: brushSize === sz ? "var(--bg)" : "var(--text-2)" }} />
+                                </button>
+                              ))}
+                            </div>
                           </div>
                           <div className="space-y-2">
                             <span className="text-[11px] text-zinc-400 font-bold uppercase tracking-wider block">Цвет</span>
