@@ -4978,6 +4978,124 @@
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
           // Что вообще лежит на доске: карточки в том же порядке, в каком
           // они нарисованы на экране, а под ними — размеры.
+          // МИНИ-КАРТА ДОСКИ. Доска большая, а окно маленькое: отъехал
+          // в сторону — и не помнишь, где осталась заметка, которую ищешь.
+          // Карта показывает ВСЮ доску целиком и рамкой — то, что сейчас
+          // на экране; нажатие переносит туда.
+          // Рисуется из тех же `boardCards`/`boardBounds`, что и выгрузка
+          // доски картинкой: вторая копия обмера разъехалась бы с первой.
+          const MINI_W = 168, MINI_H = 112;   // на телефоне меньше, см. разметку
+          const miniRef = useRef(null);
+          // k и смещение последней отрисовки — по ним считаем, куда ткнули.
+          const miniFit = useRef({ k: 1, ox: 0, oy: 0 });
+          const miniDrag = useRef(false);
+          const [miniOpen, setMiniOpen] = useState(() => {
+            try { return localStorage.getItem('cf_mini') !== '0'; } catch (e) { return true; }
+          });
+          // Любая запись в localStorage — только внутри try.
+          useEffect(() => { try { localStorage.setItem('cf_mini', miniOpen ? '1' : '0'); } catch (e) {} }, [miniOpen]);
+
+          const drawMini = () => {
+            const cv = miniRef.current;
+            if (!cv) return;
+            // Размер спрашиваем у самой канвы: на телефоне карта меньше,
+            // и держать это число в двух местах — в разметке и здесь —
+            // значило бы однажды их рассинхронить.
+            const CW = cv.clientWidth || MINI_W, CH = cv.clientHeight || MINI_H;
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            if (cv.width !== Math.round(CW * dpr) || cv.height !== Math.round(CH * dpr)) {
+              cv.width = Math.round(CW * dpr); cv.height = Math.round(CH * dpr);
+            }
+            const ctx = cv.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, CW, CH);
+
+            const host = liveCanvasRef.current;
+            const vwPx = host ? host.clientWidth : 0, vhPx = host ? host.clientHeight : 0;
+            const v = viewRef.current;
+            // Что сейчас видно — в координатах самой доски.
+            const vis = { x: -v.x / v.z, y: -v.y / v.z, w: vwPx / v.z, h: vhPx / v.z };
+            const box = boardBounds();
+            // Карта охватывает и содержимое, и текущий экран: уехав в пустоту,
+            // человек иначе не увидел бы на карте ни себя, ни доски.
+            const x0 = Math.min(box ? box.x : vis.x, vis.x);
+            const y0 = Math.min(box ? box.y : vis.y, vis.y);
+            const x1 = Math.max(box ? box.x + box.w : vis.x + vis.w, vis.x + vis.w);
+            const y1 = Math.max(box ? box.y + box.h : vis.y + vis.h, vis.y + vis.h);
+            const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+            const k = Math.min(CW / bw, CH / bh) * 0.92;
+            const ox = (CW - bw * k) / 2 - x0 * k, oy = (CH - bh * k) / 2 - y0 * k;
+            miniFit.current = { k, ox, oy };
+            const X = x => x * k + ox, Y = y => y * k + oy;
+
+            // Штрихи — тонкой ломаной, без нажима и сглаживания: на карте
+            // важно ГДЕ рисовали, а не чем.
+            ctx.strokeStyle = 'rgba(240,238,230,.5)'; ctx.lineWidth = 0.7;
+            (strokesRef.current || []).forEach(s => {
+              const pts = strokePts(s); if (!pts || pts.length < 2) return;
+              ctx.beginPath();
+              const step = Math.max(1, Math.floor(pts.length / 24));
+              for (let i = 0; i < pts.length; i += step) {
+                const px = X(pts[i][0]), py = Y(pts[i][1]);
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+              }
+              ctx.stroke();
+            });
+            // Фигуры — только габарит.
+            ctx.strokeStyle = 'rgba(240,238,230,.35)'; ctx.lineWidth = 0.7;
+            (shapesRef.current || []).forEach(s => {
+              if (s.ct) return;
+              const b = shapeBox(s);
+              ctx.strokeRect(X(b.x), Y(b.y), Math.max(1, b.w * k), Math.max(1, b.h * k));
+            });
+            // Карточки — заливкой, цвет по виду: так на карте видно не только
+            // «что-то лежит», но и что именно.
+            const COL = { scene: '#d97757', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a' };
+            boardCards().forEach(c => {
+              ctx.fillStyle = c.t === 'sticky' ? ((c.o && c.o.color) || COL.sticky) : COL[c.t];
+              ctx.globalAlpha = 0.9;
+              ctx.fillRect(X(c.x), Y(c.y), Math.max(1.5, c.w * k), Math.max(1.5, c.h * k));
+            });
+            ctx.globalAlpha = 1;
+            // Рамка «где я сейчас».
+            ctx.strokeStyle = '#f0eee6'; ctx.lineWidth = 1.2;
+            ctx.strokeRect(X(vis.x) + 0.5, Y(vis.y) + 0.5, Math.max(3, vis.w * k), Math.max(3, vis.h * k));
+          };
+
+          // Карта обновляется НЕ каждым кадром. Панорама зовёт перерисовку
+          // на каждое движение пальца, а обмер доски проходит по всем
+          // штрихам и карточкам — на большой доске это отняло бы у жеста
+          // ровно то, ради чего панораму когда-то увели в ref. Десяти
+          // обновлений в секунду карте хватает с запасом; последнее
+          // обязательно догоняет, иначе рамка замерла бы не там, где встали.
+          const miniAt = useRef(0);
+          const miniPend = useRef(0);
+          const drawMiniSoon = () => {
+            const now = Date.now();
+            if (now - miniAt.current >= 90) { miniAt.current = now; drawMini(); return; }
+            if (miniPend.current) return;
+            miniPend.current = setTimeout(() => {
+              miniPend.current = 0; miniAt.current = Date.now();
+              (inkDraw.current.mm || drawMini)();
+            }, 90);
+          };
+
+          // Нажали по карте — переносим доску туда. Работает и пальцем:
+          // ведение продолжает переносить, как в любой карте.
+          const miniGoto = (e) => {
+            const cv = miniRef.current; if (!cv) return;
+            const r = cv.getBoundingClientRect();
+            const m = miniFit.current;
+            const bx = ((e.clientX - r.left) - m.ox) / m.k;
+            const by = ((e.clientY - r.top) - m.oy) / m.k;
+            const host = liveCanvasRef.current;
+            const vwPx = host ? host.clientWidth : 0, vhPx = host ? host.clientHeight : 0;
+            const z = viewRef.current.z;
+            applyView(vwPx / 2 - bx * z, vhPx / 2 - by * z, z);
+          };
+
+          useEffect(() => { if (miniOpen) requestStatic(); }, [miniOpen, activeBoardId, currentView]);
+
           const boardCards = () => {
             const out = [];
             boardScenes.forEach(s => out.push({ t: 'scene', o: s, x: s.x, y: s.y, w: 288, h: 150 }));
@@ -5456,14 +5574,17 @@
           // взял бы устаревшие панораму и масштаб — доска замирала бы
           // на кадр позади пальца.
           const inkDraw = useRef({});
-          inkDraw.current = { s: drawInkStatic, l: drawInkLive };
+          inkDraw.current = { s: drawInkStatic, l: drawInkLive, m: drawMiniSoon, mm: drawMini };
           const requestInk = (both) => {
             inkNeed.current = Math.max(inkNeed.current, both ? 2 : 1);
             if (inkRaf.current) return;
             inkRaf.current = requestAnimationFrame(() => {
               inkRaf.current = 0;
               const need = inkNeed.current; inkNeed.current = 0;
-              if (need >= 2) inkDraw.current.s();
+              // Мини-карту трогаем только когда изменилось что-то
+              // существенное (need >= 2): во время штриха её содержимое
+              // не меняется, и лишний кадр ей ни к чему.
+              if (need >= 2) { inkDraw.current.s(); inkDraw.current.m(); }
               inkDraw.current.l();
             });
           };
@@ -11121,7 +11242,7 @@
                         if (e.pointerType !== 'touch') return;
                         // Кнопки панели инструментов не доска: два пальца
                         // на них не должны утаскивать холст.
-                        if (e.target.closest && e.target.closest('button, input, textarea, select')) return;
+                        if (e.target.closest && e.target.closest('button, input, textarea, select, .cf-mini')) return;
                         // Подчищаем забытые пальцы. Отпускание изредка теряется
                         // (палец увели за край, вкладку свернули), и один
                         // застрявший в списке превращал бы следующее обычное
@@ -12301,6 +12422,40 @@
                           </div>
                         </div>
                       )}
+
+                      {/* МИНИ-КАРТА — в свободном нижнем правом углу: слева
+                          внизу масштаб, слева панель инструментов, сверху
+                          справа действия с доской. Гостю по ссылке она нужна
+                          не меньше, чем владельцу, поэтому `cf-edit-only`
+                          на ней НЕТ: это чтение, а не правка. */}
+                      <div className="cf-mini absolute z-30" style={{ right: 12, bottom: isPhone ? 62 : 12 }}>
+                        {miniOpen ? (
+                          <div className="rounded-lg overflow-hidden"
+                               style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+                            <div className="flex items-center justify-between" style={{ padding: '2px 4px 2px 8px' }}>
+                              <span className="cf-meta">карта доски</span>
+                              <button onClick={() => setMiniOpen(false)} title="Свернуть карту"
+                                      className="flex items-center justify-center"
+                                      style={{ width: 22, height: 22, borderRadius: 6, color: 'var(--muted-2)', fontSize: 11 }}>✕</button>
+                            </div>
+                            {/* touchAction: none — иначе браузер на планшете
+                                примет ведение по карте за прокрутку страницы. */}
+                            <canvas ref={miniRef}
+                                    style={{ width: isPhone ? 124 : MINI_W, height: isPhone ? 84 : MINI_H, display: 'block', cursor: 'pointer', touchAction: 'none' }}
+                                    onPointerDown={(e) => { e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); miniDrag.current = true; miniGoto(e); }}
+                                    onPointerMove={(e) => { if (miniDrag.current) { e.stopPropagation(); miniGoto(e); } }}
+                                    onPointerUp={(e) => { e.stopPropagation(); miniDrag.current = false; commitView(); }}
+                                    onPointerCancel={() => { miniDrag.current = false; commitView(); }} />
+                          </div>
+                        ) : (
+                          <button onClick={() => setMiniOpen(true)} title="Карта доски — где что лежит"
+                                  className="flex items-center justify-center transition-colors hover:bg-white/5"
+                                  style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--card)',
+                                           border: '1px solid var(--border)', color: 'var(--muted)' }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg>
+                          </button>
+                        )}
+                      </div>
 
                       {/* Масштаб стоит ПРАВЕЕ панели инструментов (44 точки
                           плюс отступ): раньше он лежал ровно под ней и
