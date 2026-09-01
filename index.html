@@ -5079,12 +5079,23 @@
             // Что сейчас видно — в координатах самой доски.
             const vis = { x: -v.x / v.z, y: -v.y / v.z, w: vwPx / v.z, h: vhPx / v.z };
             const box = boardBounds();
-            // Карта охватывает и содержимое, и текущий экран: уехав в пустоту,
-            // человек иначе не увидел бы на карте ни себя, ни доски.
-            const x0 = Math.min(box ? box.x : vis.x, vis.x);
-            const y0 = Math.min(box ? box.y : vis.y, vis.y);
-            const x1 = Math.max(box ? box.x + box.w : vis.x + vis.w, vis.x + vis.w);
-            const y1 = Math.max(box ? box.y + box.h : vis.y + vis.h, vis.y + vis.h);
+            // Карта показывает СОДЕРЖИМОЕ. Раньше она охватывала ещё и текущий
+            // экран целиком, и стоило отъехать в пустоту, как вся доска
+            // съёживалась в угол: на карте оставались рамка экрана да пара
+            // квадратиков, а рисунок превращался в точки — то есть ровно то,
+            // ради чего карту и открывают, с неё пропадало. Экран теперь
+            // только РАСШИРЯЕТ охват, и не больше чем вдвое от содержимого;
+            // дальше рамка «где я» просто упирается в край карты.
+            let x0, y0, x1, y1;
+            if (box) {
+              const gx = box.w, gy = box.h;
+              x0 = Math.max(Math.min(box.x, vis.x), box.x - gx);
+              y0 = Math.max(Math.min(box.y, vis.y), box.y - gy);
+              x1 = Math.min(Math.max(box.x + box.w, vis.x + vis.w), box.x + box.w + gx);
+              y1 = Math.min(Math.max(box.y + box.h, vis.y + vis.h), box.y + box.h + gy);
+            } else {
+              x0 = vis.x; y0 = vis.y; x1 = vis.x + vis.w; y1 = vis.y + vis.h;
+            }
             const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
             const k = Math.min(CW / bw, CH / bh) * 0.92;
             const ox = (CW - bw * k) / 2 - x0 * k, oy = (CH - bh * k) / 2 - y0 * k;
@@ -5093,17 +5104,21 @@
 
             // Штрихи — тонкой ломаной, без нажима и сглаживания: на карте
             // важно ГДЕ рисовали, а не чем.
-            ctx.strokeStyle = 'rgba(240,238,230,.5)'; ctx.lineWidth = 0.7;
+            // Одним путём на все штрихи: рисунок из тысячи линий — это тысяча
+            // отдельных обводок по десять раз в секунду. И ярче: полупрозрачная
+            // нитка в 0,7 точки на карте не читалась вовсе.
+            ctx.strokeStyle = 'rgba(240,238,230,.8)'; ctx.lineWidth = 1;
+            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            ctx.beginPath();
             (strokesRef.current || []).forEach(s => {
               const pts = strokePts(s); if (!pts || pts.length < 2) return;
-              ctx.beginPath();
-              const step = Math.max(1, Math.floor(pts.length / 24));
+              const step = Math.max(1, Math.floor(pts.length / 40));
               for (let i = 0; i < pts.length; i += step) {
                 const px = X(pts[i][0]), py = Y(pts[i][1]);
                 if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
               }
-              ctx.stroke();
             });
+            ctx.stroke();
             // Фигуры — только габарит.
             ctx.strokeStyle = 'rgba(240,238,230,.35)'; ctx.lineWidth = 0.7;
             (shapesRef.current || []).forEach(s => {
@@ -5791,11 +5806,28 @@
           // Добавляя штриху новое поле, впиши его и сюда: `jn` (стыки
           // разрезанной линии) один раз уже терялся при записи, и после
           // перезагрузки длинная линия схлопывалась на каждом стыке.
-          const packInk = (list) => JSON.stringify(list.map(s => {
+          const inkFields = (s) => {
             const o = { id: s.id, t: s.t, c: s.c, w: s.w, p: s.p };
             if (s.jn) o.jn = s.jn;
             return o;
-          }));
+          };
+          const packInk = (list) => JSON.stringify((list || []).map(inkFields));
+          // Документ Firestore ограничен мегабайтом, а рисунок бывает больше.
+          // Режем СПИСОК, а не строку: каждая часть обязана быть целым
+          // списком штрихов, иначе её нельзя ни прочитать, ни проверить
+          // отдельно.
+          const INK_PART_MAX = 900000;   // с запасом под служебные поля
+          const INK_PART_SCAN = 40;      // столько частей подчищаем от прошлых версий
+          const inkChunks = (list, max) => {
+            const out = []; let cur = [], size = 2;
+            (list || []).forEach(s => {
+              const str = JSON.stringify(inkFields(s));
+              if (cur.length && size + str.length + 1 > max) { out.push('[' + cur.join(',') + ']'); cur = []; size = 2; }
+              cur.push(str); size += str.length + 1;
+            });
+            out.push('[' + cur.join(',') + ']');
+            return out;
+          };
           // СПАСЕНИЕ ПРОПАВШЕГО РИСУНКА.
           // Рисунок какое-то время раскладывался в облаке по частям
           // (`ink-{boardId}`, `~2`, `~3`…), а читалась потом только первая:
@@ -5899,6 +5931,17 @@
           // Снять рисунок с доски, когда положенное оказалось неподъёмным.
           // Облако и скачанный файл не трогаем — снимаем только с доски
           // и с устройства, иначе из зависшей доски не выбраться.
+          // Отправить рисунок в облако прямо сейчас, не дожидаясь следующего
+          // штриха: после восстановления бэкапа он лежит только на устройстве,
+          // и человеку надо уметь сказать «сохрани его туда» одним нажатием.
+          const pushInkToCloud = () => {
+            if (READ_ONLY) return;
+            const list = strokesRef.current || [];
+            if (!db || !user) { showToast('Нет связи с облаком — рисунок остался на устройстве'); return; }
+            inkPinnedRef.current = null;
+            saveStrokes(activeBoardId, list);
+            showToast(`Отправляю в облако ${list.length} штрихов…`);
+          };
           const clearBoardInk = () => {
             if (READ_ONLY) return;
             strokesRef.current = [];
@@ -5942,9 +5985,26 @@
               saved = true;
             } catch (err) {}
             if (!db || !user) return saved;
+            // ОДНОЙ ПАЧКОЙ. Части пишутся вместе или не пишутся вовсе:
+            // наполовину записанный рисунок — это ровно та беда, из-за
+            // которой в прошлый раз пропала работа. Заодно в той же пачке
+            // стираем части прошлых версий, иначе они остались бы висеть
+            // и путать чтение.
+            const col = dataRef().collection('canvas');
+            const mainId = strokesDocId(boardId);
+            const chunks = json.length <= INK_PART_MAX ? null : inkChunks(list, INK_PART_MAX);
+            const ver = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            const batch = db.batch();
+            if (!chunks) batch.set(col.doc(mainId), { strokes: json, v: ver, n: 1, lastDrawBy: user.uid });
+            else {
+              batch.set(col.doc(mainId), { strokes: chunks[0], v: ver, n: chunks.length, lastDrawBy: user.uid });
+              for (let i = 1; i < chunks.length; i++)
+                batch.set(col.doc(mainId + '~' + (i + 1)), { strokes: chunks[i], v: ver, lastDrawBy: user.uid });
+            }
+            const keep = chunks ? chunks.length : 1;
+            for (let i = keep + 1; i <= INK_PART_SCAN; i++) batch.delete(col.doc(mainId + '~' + i));
             trackWrite(
-              dataRef().collection('canvas').doc(strokesDocId(boardId))
-                .set({ strokes: json, lastDrawBy: user.uid })
+              batch.commit()
                 .catch(err => {
                   console.warn('saveStrokes', err);
                   // Отказ сервера — это ещё и ОТКАТ: подписка сейчас же
@@ -5954,7 +6014,7 @@
                   // место — на устройстве он уже лежит.
                   inkRollbackRef.current = { board: boardId, at: Date.now() };
                   if (boardId === activeBoardId) { strokesRef.current = list; bumpInk(); }
-                  showToast('⚠️ Рисунок не сохранился в облако — слишком много линий');
+                  showToast('⚠️ Рисунок не сохранился в облако. На устройстве он цел — скачайте его файлом.');
                 })
             );
             return saved;
@@ -7224,17 +7284,51 @@
               loadLegacy(doc.data().dataUrl || null);
               bumpInk();
             }, err => console.warn('sync canvas', err));
-            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(doc => {
-              if (!doc.exists) return;
-              // Наша запись только что отвергнута сервером — значит этот ответ
-              // не чужая правка, а ОТКАТ: в нём лежит прежнее содержимое
-              // документа, и принять его значило бы стереть рисунок.
-              if (INK_OFF) return;
+            // Рисунок может лежать НЕСКОЛЬКИМИ документами: в один он не
+            // всегда влезает. Правило тут одно и оно главное — либо пришли
+            // ВСЕ части одной и той же версии, либо не берём НИЧЕГО и
+            // остаёмся на местной копии. Взяв половину, ближайшее
+            // сохранение записало бы огрызок поверх целого — и в облако,
+            // и на устройство; так однажды и пропала работа.
+            let alive = true;
+            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(async doc => {
+              if (!doc.exists || INK_OFF || !alive) return;
               const rb = inkRollbackRef.current;
               if (rb && rb.board === activeBoardId && Date.now() - rb.at < 5000) { inkRollbackRef.current = null; return; }
               if (inkPinnedRef.current === activeBoardId) return;
-              if (doc.data().lastDrawBy === user.uid) return;
-              try { strokesRef.current = JSON.parse(doc.data().strokes || '[]') || []; } catch (err) { strokesRef.current = []; }
+              const d = doc.data() || {};
+              // Наша запись только что отвергнута сервером — значит этот
+              // ответ не чужая правка, а ОТКАТ: в нём лежит прежнее
+              // содержимое документа, и принять его значило бы стереть
+              // рисунок.
+              if (d.lastDrawBy === user.uid) return;
+              const n = d.n || 1;
+              let list = null;
+              if (n <= 1) {
+                try { list = JSON.parse(d.strokes || '[]') || []; } catch (err) { list = []; }
+              } else {
+                const base = strokesDocId(activeBoardId);
+                const ids = []; for (let k = 2; k <= n; k++) ids.push(base + '~' + k);
+                let got = null;
+                try { got = await Promise.all(ids.map(id => col.doc(id).get())); } catch (err) { got = null; }
+                if (!alive) return;
+                // Не пришло, пришло не всё или части от РАЗНЫХ версий —
+                // остаёмся на своём и говорим об этом человеку.
+                if (!got || got.some(x => !x || !x.exists || (x.data() || {}).v !== d.v)) {
+                  showToast('Рисунок доски пришёл из облака не целиком — оставил тот, что на устройстве');
+                  return;
+                }
+                try {
+                  const acc = JSON.parse(d.strokes || '[]') || [];
+                  got.forEach(x => { const part = JSON.parse((x.data() || {}).strokes || '[]') || []; part.forEach(q => acc.push(q)); });
+                  list = acc;
+                } catch (err) {
+                  showToast('Рисунок доски из облака не прочитался — оставил тот, что на устройстве');
+                  return;
+                }
+              }
+              if (!alive || list === null) return;
+              strokesRef.current = list;
               bumpInk();
             }, err => console.warn('sync ink', err));
             const unFig = col.doc(shapesDocId(activeBoardId)).onSnapshot(doc => {
@@ -7246,7 +7340,7 @@
             }, err => console.warn('sync shapes', err));
             // Уходя с доски, дописываем отложенное: иначе последний штрих
             // уехал бы в облако уже под именем СЛЕДУЮЩЕЙ доски.
-            return () => { unRaster(); unInk(); unFig(); flushInk(); };
+            return () => { alive = false; unRaster(); unInk(); unFig(); flushInk(); };
           }, [user, activeBoardId]);
 
           // Перерисовка при панораме, зуме и смене размера окна. Штрихи
@@ -14052,7 +14146,10 @@
                                   адресом <span className="font-mono">?inkoff=1</span>: доска
                                   откроется без рисунка, и ничего при этом не сотрётся.
                                 </p>
-                                <button onClick={clearBoardInk} className="cf-chip">Снять рисунок с этой доски</button>
+                                <div className="flex flex-wrap gap-1.5">
+                                  <button onClick={pushInkToCloud} className="cf-chip">Отправить рисунок этой доски в облако</button>
+                                  <button onClick={clearBoardInk} className="cf-chip">Снять рисунок с этой доски</button>
+                                </div>
                               </div>
                             )}
                           </div>
