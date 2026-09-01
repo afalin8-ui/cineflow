@@ -3106,7 +3106,22 @@
 
           const [scenes, setScenes] = useState(() => safeLoad('cf_scenes', initialScenes, true));
           const sortedScenes = useMemo(() => [...scenes].sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, {numeric: true})), [scenes]);
+          // ПРАВДА О СПИСКЕ СЦЕН ЖИВЁТ ЗДЕСЬ, а не только в состоянии.
+          // Каждая функция правки строила новый список от `scenes` из СВОЕГО
+          // отрисовочного замыкания. Пока правка одна на нажатие, это верно;
+          // но агент КПП применяет СПИСОК правок разом, и в одном такте вторая
+          // затирала первую: полоска говорила «применено 2», а переезжала одна
+          // сцена. Присваивание при отрисовке — тот же приём, что у viewRef
+          // и inkDraw; сами функции правки дописывают сюда свой результат,
+          // поэтому следующая в том же такте видит уже изменённый список.
+          const scenesRef = useRef(scenes);
+          scenesRef.current = scenes;
           const [storyboard, setStoryboard] = useState(() => safeLoad('cf_storyboard', [], true));
+          // Ссылка объявляется ПОСЛЕ самого списка: обращение к нему выше
+          // по файлу — это обращение к ещё не созданной переменной, то есть
+          // белый экран при запуске (поймано проверкой в браузере).
+          const storyboardRef = useRef(storyboard);
+          storyboardRef.current = storyboard;
           const [references, setReferences] = useState(() => safeLoad('cf_references', [], true));
           const [stickies, setStickies] = useState(() => safeLoad('cf_stickies', [], true));
           const [docs, setDocs] = useState(() => safeLoad('cf_docs', initialDocs, true));
@@ -3264,6 +3279,13 @@
           const [lightboxData, setLightboxData] = useState(null);
           const [showAgentModal, setShowAgentModal] = useState(false);
           const [manualJsonInput, setManualJsonInput] = useState('');
+          // Разговор с агентом КПП. Живёт на сеанс и в облако НЕ уезжает:
+          // это переписка одного человека с ИИ, а не общее содержимое проекта.
+          const [agentChat, setAgentChat] = useState([]);
+          const [agentInput, setAgentInput] = useState('');
+          const [agentBusy, setAgentBusy] = useState(false);
+          // Предложенные правки, которые ждут вашего «Применить».
+          const [agentPlan, setAgentPlan] = useState(null);
           const [tagSearch, setTagSearch] = useState('');
           // Панель тегов в галерее: сворачивается в полоску 40px.
           const [galleryTagsOpen, setGalleryTagsOpen] = useState(true);
@@ -6527,6 +6549,128 @@
             } catch (err) { console.error(err); showToast("Ошибка сети при вызове ИИ."); return null; }
           };
 
+          // Что агент знает о проекте. Отдаём КРАТКО и по делу: номера,
+          // названия, даты, объект и сводку техники — на них и опираются
+          // вопросы вроде «что снимаем 29-го» и «чем снимаем эту сцену».
+          // Тексты сцен и экспликации целиком не шлём: их страницы, а ответ
+          // от этого не станет лучше.
+          const agentBrief = () => {
+            const byLoc = {};
+            locations.forEach(l => (l.sceneIds || []).forEach(id => { byLoc[id] = l.name || 'объект'; }));
+            const rows = sortedScenes.map(s => {
+              const cam = gearLine(s.gear, gearTypes || DEFAULT_GEAR);
+              const lig = gearLine(s.lightGear, lightGearTypes || DEFAULT_LIGHT_GEAR);
+              return [
+                '#' + (s.number || '—'),
+                (s.title || 'без названия'),
+                s.date ? ('смена ' + s.date) : 'без даты',
+                byLoc[s.id] ? ('объект: ' + byLoc[s.id]) : '',
+                cam ? ('камера: ' + cam) : '',
+                lig ? ('свет: ' + lig) : ''
+              ].filter(Boolean).join(' · ');
+            });
+            const cat = Object.values(gearTypes || DEFAULT_GEAR).map(g => g.label).join(', ');
+            const lcat = Object.values(lightGearTypes || DEFAULT_LIGHT_GEAR).map(g => g.label).join(', ');
+            return 'СЦЕНЫ ПРОЕКТА (' + rows.length + '):\n' + rows.join('\n')
+                 + '\n\nКАТАЛОГ КАМЕРЫ: ' + (cat || '—')
+                 + '\nКАТАЛОГ СВЕТА: ' + (lcat || '—');
+          };
+
+          const AGENT_SYS = [
+            'Ты — второй режиссёр съёмочной группы. Отвечай ПО-РУССКИ, коротко и по делу, без вступлений и без похвал.',
+            'Тебе дан список сцен проекта. Отвечай на вопросы по нему и выполняй задания оператора.',
+            'ЕСЛИ задание требует изменить проект — В КОНЦЕ ответа добавь блок ```json``` строго такого вида:',
+            '{"changes":[{"op":"date","scene":"12А","value":"2026-07-03"}]}',
+            'op бывает: date (дата смены, ГГГГ-ММ-ДД), number (новый номер сцены), title (название), content (экспликация оператора),',
+            'new (новая сцена: поля number, title, date, content).',
+            'scene — номер СУЩЕСТВУЮЩЕЙ сцены ровно так, как он записан в списке. Меняй только то, о чём просили.',
+            'Если менять ничего не надо — блок json НЕ добавляй вовсе.'
+          ].join(' ');
+
+          // Ответ приходит текстом, правки — блоком json внутри него.
+          // Разделяем: человеку показываем текст, правки уводим в предпросмотр.
+          const splitAgentReply = (raw) => {
+            const txt = String(raw || '');
+            const m = txt.match(/```(?:json)?\s*([\s\S]*?)```/i) || txt.match(/(\{[\s\S]*"changes"[\s\S]*\})/);
+            if (!m) return { text: txt.trim(), changes: null };
+            let changes = null;
+            try {
+              const obj = JSON.parse(m[1].trim());
+              if (obj && Array.isArray(obj.changes) && obj.changes.length) changes = obj.changes;
+            } catch (e) {}
+            return { text: txt.replace(m[0], '').trim(), changes };
+          };
+
+          // Понятная человеку строка про каждую правку: он должен видеть,
+          // ЧТО именно поменяется, а не «агент предлагает 6 изменений».
+          const OP_RU = { date: 'дата смены', number: 'номер', title: 'название', content: 'экспликация' };
+          const describeChange = (c) => {
+            const s = scenes.find(x => String(x.number || '').trim() === String(c.scene || '').trim());
+            if (c.op === 'new') return `новая сцена #${c.number || '—'} · ${c.title || 'без названия'}` + (c.date ? ` · смена ${formatDateDisplay(c.date)}` : '');
+            if (!s) return `сцена #${c.scene} — не нашлась, пропущу`;
+            const was = c.op === 'date' ? (s.date ? formatDateDisplay(s.date) : 'не назначена')
+                      : c.op === 'number' ? (s.number || '—')
+                      : c.op === 'title' ? (s.title || 'без названия')
+                      : String(s.content || '').slice(0, 40) + '…';
+            const now = c.op === 'date' ? (c.value ? formatDateDisplay(c.value) : '—')
+                      : c.op === 'content' ? String(c.value || '').slice(0, 40) + '…' : c.value;
+            return `#${s.number} · ${OP_RU[c.op] || c.op}: ${was} → ${now}`;
+          };
+
+          // Применяем ТОЛЬКО через обычные функции правки: они же переносят
+          // номера кадров, чинят название и уходят в облако. Своя ветка
+          // записи разъехалась бы с ними при первой правке.
+          const applyAgentPlan = () => {
+            const list = agentPlan || [];
+            let done = 0;
+            const born = [];
+            list.forEach(c => {
+              if (c.op === 'new') {
+                const ns = { id: `scene-${Date.now()}-${born.length}`, number: String(c.number || nextSceneNumber()),
+                             title: c.title || 'НОВАЯ СЦЕНА', content: c.content || '', script: '', date: c.date || '',
+                             boardId: '', x: 150, y: 180, gear: {}, lightGear: {} };
+                born.push(ns); done++;
+                return;
+              }
+              // Ищем по ЖИВОМУ списку: правки идут одна за другой, и вторая
+              // должна видеть, что сделала первая.
+              const s = scenesRef.current.find(x => String(x.number || '').trim() === String(c.scene || '').trim());
+              if (!s) return;
+              if (c.op === 'date') { updateScene(s.id, 'date', c.value || ''); done++; }
+              else if (c.op === 'number') { updateSceneNumber(s.id, String(c.value || '')); done++; }
+              else if (c.op === 'title') { updateSceneTitle(s.id, String(c.value || '')); done++; }
+              else if (c.op === 'content') { updateScene(s.id, 'content', String(c.value || '')); done++; }
+            });
+            if (born.length) {
+              const up = [...scenesRef.current, ...born];
+              scenesRef.current = up; setScenes(up);
+              born.forEach(ns => syncDoc('scenes', ns.id, ns));
+            }
+            setAgentPlan(null);
+            showToast(done ? `Применено правок: ${done}` : 'Ни одна правка не подошла — сцены не нашлись');
+          };
+
+          const askAgent = async (text) => {
+            const task = String(text || '').trim();
+            if (!task || agentBusy) return;
+            setAgentChat(prev => [...prev, { role: 'me', text: task }]);
+            setAgentInput('');
+            setAgentBusy(true);
+            setAgentPlan(null);
+            // Разговор отдаём одной строкой: так не нужно менять callGeminiAI,
+            // через который уже идут разбор сценария и распознавание почерка.
+            const history = agentChat.slice(-8).map(m => (m.role === 'me' ? 'Оператор: ' : 'Ты: ') + m.text).join('\n');
+            const prompt = agentBrief()
+              + (history ? '\n\nРАНЕЕ В РАЗГОВОРЕ:\n' + history : '')
+              + '\n\nЗАДАНИЕ ОПЕРАТОРА:\n' + task;
+            const raw = await callGeminiAI(prompt, false, null, AGENT_SYS);
+            setAgentBusy(false);
+            if (raw === null) return;                       // об ошибке уже сказано полоской
+            const { text: answer, changes } = splitAgentReply(raw);
+            setAgentChat(prev => [...prev, { role: 'ai', text: answer || 'Готово.' }]);
+            if (changes) setAgentPlan(changes);
+          };
+
           const handleAIAgentFile = async (e) => {
             const file = e.target.files[0]; if (!file) return;
             setIsAILoading(true); showToast("🤖 Агент читает документ КПП...");
@@ -7075,8 +7219,8 @@
 
           const updateScene = (id, field, val) => {
             if (READ_ONLY) return;
-            const up = scenes.map(s => s.id === id ? { ...s, [field]: val } : s);
-            setScenes(up);
+            const up = scenesRef.current.map(s => s.id === id ? { ...s, [field]: val } : s);
+            scenesRef.current = up; setScenes(up);
             const t = up.find(s => s.id === id); if (t) syncDoc('scenes', id, t);
           };
 
@@ -7087,7 +7231,7 @@
           // и проверку на повтор.
           const updateSceneNumber = (id, raw) => {
             if (READ_ONLY) return;
-            const scene = scenes.find(s => s.id === id);
+            const scene = scenesRef.current.find(s => s.id === id);
             if (!scene) return;
             const oldNum = String(scene.number || '');
             const next = String(raw).replace(/\s/g, '');
@@ -7102,19 +7246,19 @@
             if (next && title) {
               title = title.replace(/^(\s*СЦЕНА\s+)(\d[^\s.,:;]*)(?=[\s.,:;—–-]|$)/i, '$1' + next);
             }
-            const up = scenes.map(s => s.id === id ? { ...s, number: next, title } : s);
-            setScenes(up);
+            const up = scenesRef.current.map(s => s.id === id ? { ...s, number: next, title } : s);
+            scenesRef.current = up; setScenes(up);
             syncDoc('scenes', id, up.find(s => s.id === id));
             // Кадры раскадровки нумеруются от сцены («5.1», «5.2»), поэтому
             // переезжают вместе с ней — иначе в распечатке номера разойдутся.
             if (!oldNum || oldNum === next) return;
             const moved = [];
-            const upFrames = storyboard.map(f => {
+            const upFrames = storyboardRef.current.map(f => {
               if (f.sceneId !== id || !String(f.frameNum || '').startsWith(oldNum + '.')) return f;
               const nf = { ...f, frameNum: next + String(f.frameNum).slice(oldNum.length) };
               moved.push(nf); return nf;
             });
-            if (moved.length) { setStoryboard(upFrames); moved.forEach(f => syncDoc('storyboard', f.id, f)); }
+            if (moved.length) { storyboardRef.current = upFrames; setStoryboard(upFrames); moved.forEach(f => syncDoc('storyboard', f.id, f)); }
           };
 
           // Название вида «СЦЕНА 12А. КОРИДОР» несёт номер — забираем его в поле
@@ -7130,13 +7274,13 @@
             // проект у себя на экране — в облако не уходило ничего,
             // но выглядело это как «я сломал чужой проект».
             if (READ_ONLY) return;
-            const scene = scenes.find(s => s.id === id);
+            const scene = scenesRef.current.find(s => s.id === id);
             if (!scene) return;
             const title = String(raw);
             const m = title.match(/^\s*СЦЕНА\s+(\d[^\s.,:;]*)(?=[\s.,:;—–-]|$)/i);
             const number = m ? m[1] : scene.number;
-            const up = scenes.map(s => s.id === id ? { ...s, title, number } : s);
-            setScenes(up);
+            const up = scenesRef.current.map(s => s.id === id ? { ...s, title, number } : s);
+            scenesRef.current = up; setScenes(up);
             syncDoc('scenes', id, up.find(s => s.id === id));
           };
 
@@ -13721,7 +13865,7 @@
 
               {showAgentModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-lg w-full relative">
+                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-2xl w-full relative">
                     <button onClick={() => setShowAgentModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
                     <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> Агент импорта: КПП и сценарий</h3>
                     
@@ -13767,6 +13911,85 @@
                           }}
                           className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
                         >Импортировать сцены</button>
+                      </div>
+
+                      {/* РАЗГОВОР С АГЕНТОМ — внизу этого же окна, а не на
+                          главном экране: главный экран занят работой, а сюда
+                          заходят именно за тем, чтобы дать задание словами.
+                          Агент ОТВЕЧАЕТ и ПРЕДЛАГАЕТ правки, но не применяет
+                          их сам: ошибку ИИ иначе увидели бы уже после того,
+                          как она разошлась по всей группе через облако. */}
+                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
+                        <div className="flex items-center justify-between mb-2 gap-2">
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2"><Icons.Chat/> Задание словами</h4>
+                          {agentChat.length > 0 && (
+                            <button onClick={() => { setAgentChat([]); setAgentPlan(null); }}
+                                    className="cf-chip shrink-0">Очистить</button>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
+                          Агент видит ваши сцены — номера, названия, даты смен, объекты и технику.
+                          Спросите «что снимаем 29-го» или дайте задание: «перенеси сцены 4–7 на 3 июля».
+                          Правки он ПРЕДЛОЖИТ, а применять будете вы.
+                        </p>
+
+                        {agentChat.length > 0 && (
+                          <div className="space-y-2 mb-3 overflow-y-auto" style={{ maxHeight: 260 }}>
+                            {agentChat.map((m, i) => (
+                              <div key={i} className={m.role === 'me' ? 'text-right' : ''}>
+                                <span className="inline-block text-left rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                      style={{ whiteSpace: 'pre-wrap', maxWidth: '92%',
+                                               background: m.role === 'me' ? 'var(--raised)' : 'rgba(217,119,87,.12)',
+                                               color: m.role === 'me' ? 'var(--text-2)' : 'var(--text)',
+                                               border: '1px solid ' + (m.role === 'me' ? 'var(--border)' : 'var(--accent-line)') }}>
+                                  {m.text}
+                                </span>
+                              </div>
+                            ))}
+                            {agentBusy && <div className="cf-meta">агент думает…</div>}
+                          </div>
+                        )}
+
+                        {/* Предпросмотр правок: человек обязан видеть, ЧТО
+                            именно поменяется, до того как это случится. */}
+                        {agentPlan && (
+                          <div className="mb-3 rounded-lg p-3" style={{ background: 'var(--card)', border: '1px solid var(--accent-line)' }}>
+                            <span className="cf-meta block mb-2">Агент предлагает изменить:</span>
+                            <ul className="space-y-1 mb-3">
+                              {agentPlan.map((c, i) => (
+                                <li key={i} className="text-xs" style={{ color: 'var(--text-2)' }}>· {describeChange(c)}</li>
+                              ))}
+                            </ul>
+                            <div className="flex gap-2">
+                              <button onClick={applyAgentPlan}
+                                      className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2 rounded-lg transition-colors">
+                                Применить
+                              </button>
+                              <button onClick={() => setAgentPlan(null)} className="cf-chip">Не надо</button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          {/* Enter отправляет, Shift+Enter — новая строка:
+                              задание обычно в одну строку, и лишнее нажатие
+                              по кнопке на планшете стоит дороже. */}
+                          <textarea value={agentInput} onChange={(e) => setAgentInput(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAgent(agentInput); } }}
+                                    placeholder="Что снимаем 29-го? · Перенеси сцены 4–7 на 3 июля"
+                                    rows={2}
+                                    className="flex-1 glass-input rounded-lg px-3 py-2 text-sm resize-none" />
+                          <button onClick={() => askAgent(agentInput)} disabled={agentBusy || !agentInput.trim()}
+                                  className={`shrink-0 px-4 rounded-lg text-sm font-bold transition-colors ${agentBusy || !agentInput.trim() ? 'bg-zinc-800 text-zinc-600' : 'bg-indigo-500 hover:bg-indigo-400 text-[#1a1918]'}`}
+                                  style={{ minHeight: 44 }}>
+                            {agentBusy ? '…' : 'Спросить'}
+                          </button>
+                        </div>
+                        {!geminiKey.trim() && (
+                          <p className="text-[11px] mt-2" style={{ color: 'var(--warn)' }}>
+                            Нужен ключ Gemini — впишите его в «···» → «Проект».
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
