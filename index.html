@@ -5806,10 +5806,17 @@
           };
           const packInk = (list) => splitInk(list, Infinity)[0];
           // Рисунок БОЛЬШЕ ОДНОГО ДОКУМЕНТА раскладывается по частям.
-          // Предел документа — 1 МБ; берём с запасом на служебные поля.
+          // Предел документа — 1 МБ, но часть НАМЕРЕННО МЕЛКАЯ. Рисуют
+          // в конец, значит последняя часть переписывается на КАЖДЫЙ штрих:
+          // с частями по 700 КБ это гнало в сеть по три четверти мегабайта
+          // каждые 400 мс, очередь неотправленного не успевала расходиться,
+          // и точка связи горела жёлтым, не переставая. Со 120 КБ та же
+          // работа стоит в шесть раз дешевле, а заполненные части лежат
+          // нетронутыми. Документов становится больше, но читаются они
+          // разом, в один заход.
           // Первая часть лежит под прежним именем, поэтому старые записи
           // читаются как читались, а число частей написано в ней самой.
-          const INK_DOC_MAX = 700000;
+          const INK_DOC_MAX = 120000;
           const inkPartId = (boardId, i) => strokesDocId(boardId) + (i > 0 ? '~' + (i + 1) : '');
           // Сколько частей записали в прошлый раз — лишние надо убрать,
           // иначе стёртые линии вернулись бы из хвоста при следующем чтении.
@@ -7156,16 +7163,21 @@
               try { all = JSON.parse(d.strokes || '[]') || []; } catch (err) { all = []; }
               const n = Number(d.parts) || 1;
               if (n > 1) {
+                // Части тянем РАЗОМ, а не одну за другой: их бывает
+                // несколько десятков, и по очереди это заняло бы столько же
+                // круговых поездок к облаку, сколько частей.
                 // Пока читаем хвост, может прийти ответ поновее — тогда этот
                 // бросаем: иначе на доску лёг бы наполовину устаревший рисунок.
                 const my = ++inkReadTok.current;
-                for (let i = 1; i < n; i++) {
-                  const part = await col.doc(inkPartId(activeBoardId, i)).get().catch(() => null);
-                  if (inkReadTok.current !== my) return;
+                const rest = [];
+                for (let i = 1; i < n; i++) rest.push(col.doc(inkPartId(activeBoardId, i)).get().catch(() => null));
+                const got = await Promise.all(rest);
+                if (inkReadTok.current !== my) return;
+                got.forEach(part => {
                   if (part && part.exists) {
                     try { all = all.concat(JSON.parse((part.data() || {}).strokes || '[]') || []); } catch (err) {}
                   }
-                }
+                });
               }
               inkParts.current[activeBoardId] = n;
               if (mine && inkFirst) {
@@ -9209,7 +9221,13 @@
           const [kicking, setKicking] = useState(false);
           const kickSyncNow = () => {
             if (kicking) return;
-            setKicking(true); showToast('Обновляю связь с облаком...');
+            // Жёлтая точка на планшете ничего не объясняет: наведения там
+            // нет, подсказку не прочитать. Нажали — говорим прямо, сколько
+            // правок ещё не подтверждено облаком.
+            setKicking(true);
+            showToast(pendingRef.current > 0
+              ? `Ждут отправки: ${pendingRef.current}. Обновляю связь…`
+              : 'Обновляю связь с облаком...');
             Promise.resolve(cfKickSync(true))
               .then(() => showToast('Связь обновлена'))
               .catch(() => showToast('⚠️ Не удалось обновить связь'))
