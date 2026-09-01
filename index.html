@@ -217,6 +217,17 @@
         /* точки намеренно еле заметны: сетка нужна как ориентир при
            перетаскивании, но не должна спорить с референсами на доске */
         .cf-canvas { background: var(--canvas); background-image: radial-gradient(rgba(240,238,230,.05) 1.2px, transparent 1.2px); background-size: 26px 26px; }
+        /* ДЛИННЫЙ ШТРИХ ПЕРОМ — это рисование, а не «правый щелчок».
+           Браузер считает долгое удержание пера или пальца вызовом
+           контекстного меню, и на отпускании оно выскакивало прямо
+           поверх доски: медленную линию нельзя было довести до конца.
+           На iPad то же самое делает системная выноска (callout).
+           Гасим и то, и другое — но только на самих холстах и на
+           области доски, а не на карточках: текст в карточке
+           по-прежнему выделяется и копируется. */
+        #whiteboard-canvas { -webkit-touch-callout: none; }
+        #whiteboard-canvas canvas { touch-action: none; -webkit-touch-callout: none;
+                                    -webkit-user-select: none; user-select: none; }
 
         /* Режим «только просмотр». Ничего не уходит в облако (см. syncDoc),
            а здесь дополнительно гасим саму возможность что-то печатать,
@@ -2547,7 +2558,13 @@
 
                     <div className="flex-1 flex overflow-hidden">
                         <div className="flex-1 relative p-4 flex justify-center items-center" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
-                            <div ref={containerRef} onPointerDown={handlePointerDown} className="relative w-full max-w-5xl aspect-video bg-zinc-950 rounded-lg overflow-hidden border border-white/10 cursor-crosshair">
+                            {/* Та же беда, что и на доске: долгое ведение пером
+                                браузер отдаёт как «правый щелчок», и на
+                                отпускании поверх схемы выскакивало меню. */}
+                            <div ref={containerRef} onPointerDown={handlePointerDown}
+                                 onContextMenu={(e) => e.preventDefault()}
+                                 style={{ touchAction: 'none' }}
+                                 className="no-select relative w-full max-w-5xl aspect-video bg-zinc-950 rounded-lg overflow-hidden border border-white/10 cursor-crosshair">
                                 <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
                                 {elements.map(el => (
                                     <div key={el.id} className={`scheme-el absolute pointer-events-auto ${selectedId === el.id ? 'ring-2 ring-indigo-400' : ''}`} 
@@ -11234,6 +11251,11 @@
                     </div>
 
                     <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
+                    /* Долгое удержание пера браузер отдаёт как contextmenu —
+                       и меню выскакивает на отпускании, посреди штриха.
+                       Одного CSS мало: на Windows и Android событие
+                       приходит всё равно, его надо отменить. */
+                    onContextMenu={(e) => e.preventDefault()}
                     /* Щипок ловим В ФАЗЕ ПЕРЕХВАТА, до холста и карточек:
                        рисование и перенос успевают начаться от первого
                        пальца, и перехватить второй уже некому. Пока идёт
