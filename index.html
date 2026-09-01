@@ -4580,6 +4580,12 @@
           const inkCanvasRef = useRef(null);   // готовые штрихи + старый растр
           const liveCanvasRef = useRef(null);  // текущий штрих и кольцо кисти
           const strokesRef = useRef([]);       // векторные штрихи открытой доски
+          // ДВЕРЬ НАРУЖУ. Слишком большой рисунок кладёт доску: двадцать тысяч
+          // штрихов — это полторы секунды на кадр, то есть работать нельзя,
+          // а значит и до кнопок «Проекта» не добраться. Адрес с ?inkoff=1
+          // открывает доску БЕЗ рисунка. Записывать в этом режиме нельзя
+          // вовсе: пустой список ушёл бы поверх целого рисунка на устройстве.
+          const INK_OFF = (() => { try { return new URLSearchParams(location.search).has('inkoff'); } catch (e) { return false; } })();
           // Сервер не принимает документ больше 1 МБ и ОТКАТЫВАЕТ такую запись:
           // подписка тут же присылает прежнее содержимое, и рисунок пропадал
           // с экрана. Здесь помним, что отказ только что был.
@@ -5814,24 +5820,29 @@
               // Части писались в РАЗНОЕ время и повторяют друг друга. Складывать
               // их подряд нельзя: получалось число вчетверо больше настоящего,
               // и выглядело оно ошибкой. Считаем только РАЗНЫЕ штрихи.
-              let parts = 0, rawCount = 0; const seen = new Map();
-              docs.forEach(d => {
+              let parts = 0, rawCount = 0; const seen = new Map(); const byPart = [];
+              docs.forEach((d, i) => {
                 if (!d || !d.exists) return;
                 let list = [];
                 try { list = JSON.parse((d.data() || {}).strokes || '[]') || []; } catch (e) { return; }
                 if (!list.length) return;
                 parts++;
+                byPart.push({ id: ids[i], list: [...byId(list).values()] });
                 list.forEach(x => { if (!x || !x.id) return; rawCount++; if (!seen.has(x.id)) seen.set(x.id, x); });
               });
               const cloud = [...seen.values()];
-              if (cloud.length) found.push({ key: 'cloud', where: `В облаке · частей ${parts}`,
-                                             n: cloud.length, dup: rawCount - cloud.length, strokes: cloud });
+              // Части — это СНИМКИ РАЗНОГО ВРЕМЕНИ, а не куски одного целого.
+              // Каждую показываем отдельно: только так можно взять ту, что
+              // была до поломки, а не сумму всего, что когда-либо рисовали.
+              byPart.forEach(x => { if (x.list.length) found.push({ key: 'part-' + x.id, where: `Часть «${x.id}»`, n: x.list.length, strokes: x.list }); });
+              if (cloud.length) found.push({ key: 'cloud', where: `Всё из облака · частей ${parts}`,
+                                             n: cloud.length, dup: rawCount - cloud.length, strokes: cloud, union: true });
               if (cloud.length && local.length) {
                 const m = byId(local);
                 cloud.forEach(x => { if (x && x.id && !m.has(x.id)) m.set(x.id, x); });
                 const both = [...m.values()];
                 if (both.length > Math.max(cloud.length, local.length)) {
-                  found.push({ key: 'both', where: 'Всё вместе (устройство + облако)', n: both.length, strokes: both });
+                  found.push({ key: 'both', where: 'Всё вместе (устройство + облако)', n: both.length, strokes: both, union: true });
                 }
               }
             }
@@ -5865,6 +5876,21 @@
             applyView(vw / 2 - (b.x + b.w / 2) * z, vh / 2 - (b.y + b.h / 2) * z, z);
             commitView();
           };
+          // Выше этого доска перестаёт быть рабочей: замер на 20 000 штрихов —
+          // 1750 мс на кадр, то есть кисть и панорама не отвечают вовсе.
+          const INK_HEAVY = 4000;
+          // Снять рисунок с доски, когда положенное оказалось неподъёмным.
+          // Облако и скачанный файл не трогаем — снимаем только с доски
+          // и с устройства, иначе из зависшей доски не выбраться.
+          const clearBoardInk = () => {
+            if (READ_ONLY) return;
+            strokesRef.current = [];
+            try { localStorage.removeItem('cf_ink_' + activeBoardId); } catch (e) {}
+            inkPinnedRef.current = activeBoardId;
+            bumpInk();
+            setRescue(null);
+            showToast('Снял рисунок с доски. В облаке и в скачанном файле он остался.');
+          };
           const putRescued = (item) => {
             if (READ_ONLY) return;
             strokesRef.current = item.strokes;
@@ -5881,15 +5907,16 @@
             setShowProjectModal(false);      // иначе окно закрывает доску, и кажется, что ничего не произошло
             setCurrentView('whiteboard');
             setTimeout(showWholeBoard, 60);  // холст доски успевает появиться
+            const heavy = item.n > INK_HEAVY ? ' Рисунок очень большой — доска может подтормаживать.' : '';
             showToast(saved
-              ? `Положил на доску ${item.n} штрихов. Сразу скачайте файлом — в облако он не уехал.`
-              : `Положил ${item.n} штрихов на доску, но на устройстве НЕ СОХРАНИЛОСЬ — кончилось место. Скачайте файлом сейчас же.`);
+              ? `Положил на доску ${item.n} штрихов.${heavy} Сразу скачайте файлом — в облако он не уехал.`
+              : `Положил ${item.n} штрихов на доску, но на устройстве НЕ СОХРАНИЛОСЬ — не хватило места.${heavy} Скачайте файлом сейчас же.`);
           };
 
           // Отвечает, легло ли на УСТРОЙСТВО: место в браузере кончается, и
           // «Спасение рисунка» обязано сказать правду, а не обещать вслепую.
           const saveStrokes = (boardId, list) => {
-            if (READ_ONLY) return false;
+            if (READ_ONLY || INK_OFF) return false;
             const json = packInk(list);
             let saved = false;
             try {
@@ -7166,6 +7193,7 @@
                 localFigs = localStorage.getItem('cf_shapes_' + activeBoardId);
               } catch (err) {}
             }
+            if (INK_OFF) localInk = null;
             if (localInk) { try { strokesRef.current = JSON.parse(localInk) || []; } catch (err) {} }
             if (localFigs) { try { shapesRef.current = JSON.parse(localFigs) || []; } catch (err) {} }
             loadLegacy(localLegacy);
@@ -7184,6 +7212,7 @@
               // Наша запись только что отвергнута сервером — значит этот ответ
               // не чужая правка, а ОТКАТ: в нём лежит прежнее содержимое
               // документа, и принять его значило бы стереть рисунок.
+              if (INK_OFF) return;
               const rb = inkRollbackRef.current;
               if (rb && rb.board === activeBoardId && Date.now() - rb.at < 5000) { inkRollbackRef.current = null; return; }
               if (inkPinnedRef.current === activeBoardId) return;
@@ -13975,6 +14004,8 @@
                                 <span className="text-xs" style={{ color: 'var(--text-2)' }}>
                                   {item.where}: <b style={{ color: 'var(--text)' }}>{item.n}</b> штрихов
                                   {item.dup ? <span className="text-zinc-500"> · повторов {item.dup} не считал</span> : null}
+                                  {item.union ? <span style={{ color: 'var(--warn)' }}> · вернёт и стёртое</span> : null}
+                                  {item.n > INK_HEAVY ? <span style={{ color: 'var(--warn)' }}> · тяжёлый</span> : null}
                                 </span>
                                 <span className="flex items-center gap-1.5 shrink-0">
                                   <button onClick={() => downloadRescued(item)} className="cf-chip shrink-0" title="Скачать файлом — оттуда рисунок уже не потеряется">⬇ Файлом</button>
@@ -13983,10 +14014,21 @@
                               </div>
                             ))}
                             {rescue.found.length > 0 && (
-                              <p className="text-[11px] text-zinc-500 leading-relaxed">
-                                Выбирайте, где штрихов больше. Сначала «Файлом» — оттуда рисунок
-                                уже не потеряется и возвращается кнопкой «Импортировать из JSON» ниже.
-                              </p>
+                              <div className="text-[11px] text-zinc-500 leading-relaxed space-y-1.5">
+                                <p>
+                                  Части — это снимки РАЗНОГО времени, а не куски одного целого.
+                                  Строки «Всё из облака» и «Всё вместе» складывают их и возвращают
+                                  в том числе стёртое когда-то — рисунок выходит больше, чем был.
+                                  Сначала «Файлом»: оттуда он уже не потеряется и возвращается
+                                  кнопкой «Импортировать из JSON» ниже.
+                                </p>
+                                <p>
+                                  Если после этого доска перестанет отзываться — откройте её
+                                  адресом <span className="font-mono">?inkoff=1</span>: доска
+                                  откроется без рисунка, и ничего при этом не сотрётся.
+                                </p>
+                                <button onClick={clearBoardInk} className="cf-chip">Снять рисунок с этой доски</button>
+                              </div>
                             )}
                           </div>
                         )}
