@@ -4217,6 +4217,8 @@
             if (st && belongsToBoard(st, activeBoardId)) return { id, k: 'rect', x: st.x, y: st.y, w: stickyW(st), h: stickyH(st) };
             const dc = (c.docs || []).find(x => x.id === id);
             if (dc && dc.boardId === activeBoardId) return { id, k: 'rect', x: dc.x, y: dc.y, w: docCardW(dc), h: docCardH(dc) };
+            const fr = (c.storyboard || []).find(x => x.id === id);
+            if (fr && fr.boardId === activeBoardId) return { id, k: 'rect', x: fr.x, y: fr.y, w: frameW(fr), h: frameH(fr) };
             return null;
           };
           const findBind = (id) => id ? (findShape(id) || cardBind(id)) : null;
@@ -5134,7 +5136,7 @@
             });
             // Карточки — заливкой, цвет по виду: так на карте видно не только
             // «что-то лежит», но и что именно.
-            const COL = { scene: '#d97757', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a' };
+            const COL = { scene: '#d97757', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
             boardCards().forEach(c => {
               ctx.fillStyle = c.t === 'sticky' ? ((c.o && c.o.color) || COL.sticky) : COL[c.t];
               ctx.globalAlpha = 0.9;
@@ -5201,13 +5203,14 @@
           useEffect(() => {
             if (currentView !== 'whiteboard' || !miniOpen) return;
             drawMiniSoon();
-          }, [scenes, references, stickies, docs, currentView, activeBoardId, miniOpen]);
+          }, [scenes, references, stickies, docs, storyboard, currentView, activeBoardId, miniOpen]);
 
           const boardCards = () => {
             const out = [];
             boardScenes.forEach(s => out.push({ t: 'scene', o: s, x: s.x, y: s.y, w: 288, h: 150 }));
             references.filter(r => r.boardId === activeBoardId).forEach(r => out.push({ t: 'ref', o: r, x: r.x, y: r.y, w: refW(r), h: refH(r) }));
             boardDocs.forEach(d => out.push({ t: 'doc', o: d, x: d.x, y: d.y, w: docCardW(d), h: docCardH(d) }));
+            boardFrames.forEach(f => out.push({ t: 'frame', o: f, x: f.x, y: f.y, w: frameW(f), h: frameH(f) }));
             stickies.filter(s => belongsToBoard(s, activeBoardId)).forEach(s => out.push({ t: 'sticky', o: s, x: s.x, y: s.y, w: stickyW(s), h: stickyH(s) }));
             return out;
           };
@@ -5238,6 +5241,15 @@
             im.src = u;
           })));
 
+          // У референса картинка лежит в `url`, у кадра раскадровки — в
+          // `image`, подпись у одного `label`, у другого `description`.
+          // Спрашиваем через эти две, чтобы выгрузка PNG, выгрузка SVG
+          // и доска не разъехались: три копии правила разошлись бы при
+          // первой же правке, а заметил бы это тот, кому доску уже прислали.
+          const cardImg = (c) => c.t === 'frame' ? c.o.image : c.o.url;
+          const cardCap = (c) => c.t === 'frame'
+            ? [c.o.frameNum, c.o.description].filter(Boolean).join(' · ')
+            : (c.o.label || '');
           const paintCardOn = (ctx, c, imgs) => {
             const bg = cssVar('--panel', '#242322'), line = 'rgba(255,255,255,0.10)';
             const round = (x, y, w, h, r) => { ctx.beginPath();
@@ -5271,6 +5283,14 @@
               return;
             }
             const im = imgs[c.o.id];
+            if (c.t === 'frame' && !im) {
+              // Пустое окошко кадра — это тоже содержимое доски: по нему
+              // видно, сколько кадров ещё предстоит нарисовать.
+              ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+              ctx.setLineDash([5, 4]);
+              ctx.strokeRect(c.x + 7, c.y + 7, c.w - 14, c.h - 38);
+              ctx.setLineDash([]);
+            }
             const ih = c.h - 24;
             if (im) {
               // Вписываем как на доске: по ширине, с сохранением пропорций.
@@ -5280,7 +5300,7 @@
               ctx.drawImage(im, c.x + 6, c.y + 6, dw, dh); ctx.restore();
             }
             ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `11px ${FONT_UI}`;
-            ctx.fillText(String(c.o.label || '').slice(0, 46), c.x + 8, c.y + c.h - 16);
+            ctx.fillText(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 16);
           };
 
           const exportBoard = async (fmt) => {
@@ -5289,9 +5309,10 @@
             setExportBusy(true);
             try {
               const cards = boardCards();
-              const list = await loadImages(cards.filter(c => c.t === 'ref').map(c => c.o.url));
+              const withImg = cards.filter(c => c.t === 'ref' || c.t === 'frame');
+              const list = await loadImages(withImg.map(cardImg));
               const imgs = {};
-              cards.filter(c => c.t === 'ref').forEach((c, i) => { if (list[i]) imgs[c.o.id] = list[i]; });
+              withImg.forEach((c, i) => { if (list[i]) imgs[c.o.id] = list[i]; });
               const bgCol = cssVar('--canvas', '#1a1918');
               const name = `CineFlow_доска_${new Date().toISOString().split('T')[0]}`;
               const save = (blob, ext) => {
@@ -5345,9 +5366,11 @@
                     parts.push(txt(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 24, 13, '#ffffff', 'bold'));
                     mc.font = `12px ${FONT_UI}`;
                     wrapText(mc, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
-                  } else if (c.o.url) {
-                    parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - 28)}" preserveAspectRatio="xMidYMid slice" href="${esc(c.o.url)}"/>`);
-                    parts.push(txt(String(c.o.label || '').slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
+                  } else {
+                    const src = cardImg(c);
+                    if (src) parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - 28)}" preserveAspectRatio="xMidYMid slice" href="${esc(src)}"/>`);
+                    else if (c.t === 'frame') parts.push(`<rect x="${rn(c.x + 7)}" y="${rn(c.y + 7)}" width="${rn(c.w - 14)}" height="${rn(c.h - 38)}" rx="6" fill="none" stroke="rgba(255,255,255,.16)" stroke-dasharray="5 4"/>`);
+                    parts.push(txt(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
                   }
                 });
                 shapesRef.current.forEach(s => {
@@ -6123,16 +6146,16 @@
           // отсутствовать: штрихи, фигуры, растровая подложка, карточки.
           // Иначе одно движение — перетащили карточку вместе с фигурой —
           // распадалось бы на два шага, и Ctrl+Z возвращал бы половину.
-          const cardColl = { scene: 'scenes', ref: 'references', sticky: 'stickies', doc: 'docs' };
+          const cardColl = { scene: 'scenes', ref: 'references', sticky: 'stickies', doc: 'docs', frame: 'storyboard' };
           // Списки карточек берём через ссылку, а не из замыкания: отмена
           // висит на слушателе клавиатуры, который переустанавливается не на
           // каждую правку, — и «как есть» снималось бы устаревшее. Именно
           // из-за этого шаг вперёд возвращал карточку туда же, откуда её
           // только что вернул шаг назад.
           const cardsRef = useRef({});
-          cardsRef.current = { scenes, references, stickies, docs };
+          cardsRef.current = { scenes, references, stickies, docs, storyboard };
           const cardListOf = (coll) => cardsRef.current[coll] || [];
-          const cardSetterOf = (coll) => ({ scenes: setScenes, references: setReferences, stickies: setStickies, docs: setDocs })[coll];
+          const cardSetterOf = (coll) => ({ scenes: setScenes, references: setReferences, stickies: setStickies, docs: setDocs, storyboard: setStoryboard })[coll];
           // Снимаем «как есть» по названным записям. `before: null` значит
           // «этой записи не было» — отмена её удалит.
           const grabCards = (items) => (items || []).map(({ coll, id }) => {
@@ -6253,7 +6276,9 @@
           // Положить сразу несколько выбранных из галереи. Кладём
           // сеткой от видимого угла, а не в одну точку: шесть карточек
           // друг на друге пришлось бы растаскивать руками.
-          const putRefsOnBoard = (list, boardId = activeBoardId, at = null) => {
+          // `quiet` — когда полоску показывает тот, кто нас позвал: две
+          // полоски подряд затирают друг друга, и человек читает вторую.
+          const putRefsOnBoard = (list, boardId = activeBoardId, at = null, quiet = false) => {
             if (!list.length) return;
             const x0 = at ? at.x : (260 - canvasOffset.x) / zoom;
             const y0 = at ? at.y : (240 - canvasOffset.y) / zoom;
@@ -6266,7 +6291,22 @@
             const byId = new Map(placed.map(r => [r.id, r]));
             setReferences(references.map(r => ids.has(r.id) ? byId.get(r.id) : r));
             placed.forEach(r => syncDoc('references', r.id, r));
-            showToast(list.length === 1 ? 'Референс на доске' : `На доску добавлено ${list.length} шт.`);
+            if (!quiet) showToast(list.length === 1 ? 'Референс на доске' : `На доску добавлено ${list.length} шт.`);
+          };
+
+          // Кадры одной сцены на доску из списка «Положить на доску».
+          // Без этой двери снятый с доски кадр вернуть было бы нечем:
+          // шаблон «Раскадровка» показывается только на ПУСТОЙ доске.
+          // Та же мысль, что у референсов, для которых этот список —
+          // единственный путь к уже загруженному с самой доски.
+          const putSceneFramesOnBoard = (sceneId) => {
+            if (READ_ONLY) return;
+            const scene = scenes.find(s => s.id === sceneId);
+            const at = { x: (260 - canvasOffset.x) / zoom, y: (240 - canvasOffset.y) / zoom };
+            const r = putFramesOnBoard(sceneId, activeBoardId, at, { onlyOff: true });
+            showToast(r.made
+              ? `${r.made} пустых окошек под кадры сцены #${scene ? scene.number : ''} — на доске`
+              : `Раскадровка сцены #${scene ? scene.number : ''} · ${r.count} на доске`);
           };
 
           // Окно «взять из галереи»: открыто ли и куда класть выбранное.
@@ -6280,10 +6320,36 @@
           // вручную, и на сцене с десятью референсами превращалось
           // в десять походов в список.
           const [sceneToBoard, setSceneToBoard] = useState(null);   // id сцены
-          const spreadSceneOnBoard = (sceneId, boardId) => {
+          // Сколько пустых окошек заводит шаблон «Раскадровка», когда
+          // у сцены нет ни одного кадра. Шесть — это ровно та лента,
+          // с которой начинают раскадровывать сцену: меньше не о чем
+          // говорить с режиссёром, больше — сплошная пустота на доске.
+          const FRAME_SEED = 6;
+          // Наводим доску на то, что только что положили. Без этого
+          // «положил на доску» ничего не меняло на экране: холст 4000×4000,
+          // и карточки могли лечь в другом его углу — человек видел ровно
+          // ту же пустоту, что и до нажатия, и решал, что кнопка сломана.
+          // Масштаб держим читаемым, а не «лишь бы влезло».
+          const showBoardArea = (x0, y0, x1, y1) => {
+            const host = liveCanvasRef.current; if (!host) return;
+            const vw = host.clientWidth, vh = host.clientHeight;
+            if (!vw || !vh) return;
+            const z = Math.min(1, Math.max(0.35, Math.min(vw / Math.max(1, x1 - x0 + 120),
+                                                          vh / Math.max(1, y1 - y0 + 120))));
+            applyView(vw / 2 - ((x0 + x1) / 2) * z, vh / 2 - ((y0 + y1) / 2) * z, z);
+            commitView();
+          };
+          // `frames: true` — шаблон «Раскадровка»: кроме карточки сцены
+          // и референсов кладём ЛЕНТУ КАДРОВ, а если кадров у сцены ещё
+          // нет — заводим пустые окошки. Раньше шаблон обещал «кадры
+          // и референсы лентой на доску», а клал одну карточку сцены:
+          // у новой сцены референсов нет, кадры не клались вовсе, и
+          // нажатие выглядело как ничего не делающее.
+          const spreadSceneOnBoard = (sceneId, boardId, opts) => {
             if (READ_ONLY) return;
             const scene = scenes.find(s => s.id === sceneId);
             if (!scene) return;
+            const withFrames = !!(opts && opts.frames);
             const refs = references.filter(r => r.sceneId === sceneId);
             // Кладём в левый верхний угол ПУСТОГО места доски, а не
             // в видимый угол экрана: карточки этой сцены не должны
@@ -6292,22 +6358,82 @@
               ...scenes.filter(s => s.id !== sceneId && sceneOnBoard(s, boardId)),
               ...references.filter(r => r.sceneId !== sceneId && r.boardId === boardId),
               ...stickies.filter(k => belongsToBoard(k, boardId)),
-              ...docs.filter(d => d.boardId === boardId)
+              ...docs.filter(d => d.boardId === boardId),
+              ...storyboard.filter(f => f.sceneId !== sceneId && f.boardId === boardId)
             ];
             const x0 = 120;
             const y0 = busy.length ? Math.max(...busy.map(o => (o.y || 0) + 320)) + 60 : 120;
             const up = scenes.map(s => s.id === sceneId ? { ...s, boardId, x: x0, y: y0 } : s);
             setScenes(up);
             syncDoc('scenes', sceneId, up.find(s => s.id === sceneId));
-            // Референсы — под карточкой сцены, сеткой. Связь со сценой
+            let bottom = y0 + 190;
+            let placedFrames = 0, madeFrames = 0;
+            if (withFrames) {
+              const r = putFramesOnBoard(sceneId, boardId, { x: x0, y: bottom });
+              placedFrames = r.count; madeFrames = r.made; bottom = r.bottom;
+            }
+            // Референсы — под лентой кадров, сеткой. Связь со сценой
             // у них уже есть, поэтому пунктир нарисуется сам.
-            if (refs.length) putRefsOnBoard(refs, boardId, { x: x0, y: y0 + 300 });
+            if (refs.length) putRefsOnBoard(refs, boardId, { x: x0, y: bottom + 24 }, true);
             setActiveBoardId(boardId);
             setCurrentView('whiteboard');
             setSceneToBoard(null);
-            showToast(refs.length
-              ? `Сцена #${scene.number} и ${refs.length} референсов на доске`
-              : `Сцена #${scene.number} на доске · референсов к ней пока нет`);
+            // Показать результат обязательно — иначе кнопка выглядит
+            // неработающей. Ждём кадр: карточки только что уехали
+            // в состояние, а вид считается по их местам.
+            const right = x0 + Math.max(288, placedFrames ? FRAME_COLS * (FRAME_W + 20) : 0,
+                                        refs.length ? 4 * (192 + 24) : 0);
+            const low = Math.max(y0 + 190, bottom + (refs.length ? 300 : 0));
+            requestAnimationFrame(() => showBoardArea(x0 - 40, y0 - 40, right, low));
+            const parts = [`Сцена #${scene.number}`];
+            if (withFrames) parts.push(madeFrames
+              ? `${madeFrames} пустых окошек под кадры`
+              : (placedFrames ? `${placedFrames} кадров` : 'кадров у сцены нет'));
+            if (refs.length) parts.push(`${refs.length} референсов`);
+            showToast(parts.join(' · ') + ' — на доске');
+          };
+
+          // Лента кадров сцены на доску. Кадр — та же запись `storyboard`,
+          // что и в разделе «Сцены»: на доске это не копия, а тот же кадр.
+          // Кадров у сцены нет — заводим пустые окошки, иначе шаблон
+          // «Раскадровка» нечем было бы выполнить.
+          const FRAME_COLS = 4;
+          const putFramesOnBoard = (sceneId, boardId, at, opts) => {
+            if (READ_ONLY) return { count: 0, made: 0, bottom: at.y };
+            const scene = scenes.find(s => s.id === sceneId);
+            let list = storyboardRef.current.filter(f => f.sceneId === sceneId);
+            // `onlyOff` — из списка «Положить на доску»: там просят вернуть
+            // недостающее, а не переложить ленту заново. Уже разложенные
+            // кадры трогать нельзя: их расставили руками, и «вернул один»
+            // не должно перетасовывать остальные пять.
+            if (opts && opts.onlyOff && list.some(f => f.boardId === boardId))
+              list = list.filter(f => f.boardId !== boardId);
+            let made = 0;
+            if (!list.length) {
+              // Номера кадров — «номер сцены.порядковый», как их заводит
+              // «+ кадр» на экране сцены: иначе кадры с доски и из сцены
+              // назывались бы по-разному.
+              const base = scene ? scene.number : '';
+              const born = [];
+              for (let i = 0; i < FRAME_SEED; i++) {
+                born.push({ id: `sb-${Date.now()}-${i}`, sceneId, frameNum: `${base}.${i + 1}`,
+                            description: '', image: '' });
+              }
+              list = born; made = born.length;
+            }
+            const stepX = FRAME_W + 20;
+            const rowH = Math.round((FRAME_W - 14) / (projectRatio || 16 / 9)) + 52 + 20;
+            const byId = new Map();
+            list.forEach((f, i) => byId.set(f.id, { ...f, boardId,
+              x: at.x + (i % FRAME_COLS) * stepX,
+              y: at.y + Math.floor(i / FRAME_COLS) * rowH }));
+            const kept = storyboardRef.current.map(f => byId.has(f.id) ? byId.get(f.id) : f);
+            const born = [...byId.values()].filter(f => !storyboardRef.current.some(x => x.id === f.id));
+            const next = kept.concat(born);
+            storyboardRef.current = next; setStoryboard(next);
+            byId.forEach(f => syncDoc('storyboard', f.id, f));
+            return { count: list.length, made,
+                     bottom: at.y + Math.ceil(list.length / FRAME_COLS) * rowH };
           };
 
           // Ушли с доски или сменили её посреди жеста — дописываем положение
@@ -8448,6 +8574,7 @@
               apply(setReferences, 'ref');
               apply(setStickies, 'sticky');
               apply(setDocs, 'doc');
+              apply(setStoryboard, 'frame');
               d.items.filter(i => i.type === 'shape').forEach(item => {
                   const s = shapesRef.current.find(q => q.id === item.id);
                   if (s) { s.x = item.ox + dx; s.y = item.oy + dy; shapeDirty(s); }
@@ -8471,6 +8598,7 @@
                   const r = references.find(x => x.id === sId); if (r) return items.push({ id: sId, type: 'ref', ox: r.x, oy: r.y, bx: r.x, by: r.y, w: refW(r), h: refH(r) });
                   const st = stickies.find(x => x.id === sId); if (st) return items.push({ id: sId, type: 'sticky', ox: st.x, oy: st.y, bx: st.x, by: st.y, w: stickyW(st), h: stickyH(st) });
                   const dc = docs.find(x => x.id === sId); if (dc) return items.push({ id: sId, type: 'doc', ox: dc.x, oy: dc.y, bx: dc.x, by: dc.y, w: docCardW(dc), h: docCardH(dc) });
+                  const fr = storyboard.find(x => x.id === sId); if (fr) return items.push({ id: sId, type: 'frame', ox: fr.x, oy: fr.y, bx: fr.x, by: fr.y, w: frameW(fr), h: frameH(fr) });
               });
               (shapeIds || []).forEach(id => {
                   const s = shapesRef.current.find(q => q.id === id); if (!s) return;
@@ -8503,7 +8631,8 @@
               const { dx: ddx, dy: ddy, idle } = dragDelta();
               if (!idle) {
                   const where = { scene: ['scenes', scenes], ref: ['references', references],
-                                  sticky: ['stickies', stickies], doc: ['docs', docs] };
+                                  sticky: ['stickies', stickies], doc: ['docs', docs],
+                                  frame: ['storyboard', storyboard] };
                   let hadShapes = false;
                   draggingWbItems.items.forEach(item => {
                       if (item.type === 'shape') { hadShapes = true; return; }
@@ -8553,6 +8682,7 @@
                   };
                   back(setScenes, 'scene'); back(setReferences, 'ref');
                   back(setStickies, 'sticky'); back(setDocs, 'doc');
+                  back(setStoryboard, 'frame');
                   dd.items.filter(i => i.type === 'shape').forEach(it => {
                       const sh = shapesRef.current.find(q => q.id === it.id);
                       if (sh) { sh.x = it.ox; sh.y = it.oy; shapeDirty(sh); }
@@ -8725,6 +8855,19 @@
           const refH = (r) => Math.round((refW(r) - 20) / refAR(r)) + 58;
           // Замеряем при первой же отрисовке: так подхватываются и старые
           // референсы, без всякого перевода данных.
+          // --- КАДР РАСКАДРОВКИ НА ДОСКЕ ---
+          // Кадр — не копия на доске, а ТА ЖЕ САМАЯ запись из `storyboard`,
+          // что и в разделе «Сцены»: правка на доске меняет раскадровку
+          // сцены, а не её двойник. Правило доски то же, что у референса:
+          // нет `boardId` — на доску не выкладывается. Иначе на первую же
+          // доску вывалились бы все кадры проекта.
+          const FRAME_W = 240;
+          const frameW = (f) => Math.round(f.w || FRAME_W);
+          // Высота считается от ПРОПОРЦИИ КАДРА ПРОЕКТА, а не от картинки:
+          // раскадровка обещает тот кадр, который снимут, и в 16:9 при
+          // анаморфе 2.39 она обещает не его. Плюс строка номера сверху
+          // и подпись снизу.
+          const frameH = (f) => Math.round((frameW(f) - 14) / (projectRatio || 16 / 9)) + 52;
           const noteRefRatio = (ref, img) => {
             if (!img || !img.naturalWidth || !img.naturalHeight) return;
             const ar = Math.round((img.naturalWidth / img.naturalHeight) * 1000) / 1000;
@@ -8783,7 +8926,16 @@
           const docCardW = (d) => Math.round(d.w || DOC_W);
           const docCardH = (d) => Math.round(d.h || DOC_H);
           const boardDocs = useMemo(() => docs.filter(d => d.boardId === activeBoardId), [docs, activeBoardId]);
+          // Кадры раскадровки на этой доске. Правило референса, а не стикера:
+          // пустое поле означает «не на доске», а не «на основной».
+          const boardFrames = useMemo(() => storyboard.filter(f => f.boardId === activeBoardId), [storyboard, activeBoardId]);
           const offBoardDocs = useMemo(() => docs.filter(d => d.boardId !== activeBoardId), [docs, activeBoardId]);
+          // Кадры кладутся сценой целиком, а не по одному: раскадровка —
+          // это лента, и класть её по кадру значило бы шесть походов
+          // в список ради одной сцены.
+          const offBoardFrameScenes = useMemo(() => sortedScenes.map(scene => ({
+              scene, n: storyboard.filter(f => f.sceneId === scene.id && f.boardId !== activeBoardId).length
+            })).filter(x => x.n > 0), [sortedScenes, storyboard, activeBoardId]);
 
           const patchDoc = (id, patch) => {
             const up = docs.map(d => d.id === id ? { ...d, ...patch } : d);
@@ -8804,6 +8956,27 @@
             setSelectedWbItems(prev => prev.filter(x => x !== id));
             showToast('Убрано с доски · референс остался в галерее');
           };
+          // Кадр на доске — та же запись, что и в раскадровке сцены,
+          // поэтому пишем её обычным путём. Через `storyboardRef`, а не
+          // через `storyboard` из замыкания: две правки в одном такте
+          // иначе затирают друг друга.
+          const updateFrame = (id, patch) => {
+            if (READ_ONLY) return;
+            const up = storyboardRef.current.map(f => f.id === id ? { ...f, ...patch } : f);
+            storyboardRef.current = up; setStoryboard(up);
+            syncDoc('storyboard', id, up.find(f => f.id === id));
+          };
+          // Крестик ОТВЯЗЫВАЕТ от доски, а не удаляет кадр: то же правило,
+          // что у референса и документа. Сам кадр остаётся в раскадровке
+          // сцены со своим номером, описанием и картинкой.
+          const removeFrameFromBoard = (id) => {
+            if (READ_ONLY) return;
+            pushUndo(false, [{ coll: 'storyboard', id }]);
+            freezeArrowsForCards([id]);
+            updateFrame(id, { boardId: '' });
+            setSelectedWbItems(prev => prev.filter(x => x !== id));
+            showToast('Убрано с доски · кадр остался в раскадровке сцены');
+          };
           const removeDocFromBoard = (id) => {
             pushUndo(false, [{ coll: 'docs', id }]);
             freezeArrowsForCards([id]);
@@ -8815,6 +8988,7 @@
           const linkAnchor = (item, type) =>
               type === 'sticky' ? { x: item.x + stickyW(item), y: item.y + stickyH(item) / 2 }
             : type === 'doc'    ? { x: item.x + docCardW(item), y: item.y + docCardH(item) / 2 }
+            : type === 'frame'  ? { x: item.x + frameW(item), y: item.y + frameH(item) / 2 }
             : type === 'scene'  ? { x: item.x + 288, y: item.y + 75 }
             :                     { x: item.x + refW(item), y: item.y + refH(item) / 2 };
 
@@ -8882,12 +9056,17 @@
           // только поле sceneId.
           const setItemScene = (id, type, sceneId) => {
             if (READ_ONLY) return;
-            pushUndo(false, [{ coll: type === 'sticky' ? 'stickies' : (type === 'doc' ? 'docs' : 'references'), id }]);
+            pushUndo(false, [{ coll: cardColl[type] || 'references', id }]);
             if (type === 'sticky') {
               const up = stickies.map(s => s.id === id ? { ...s, sceneId } : s);
               setStickies(up); syncDoc('stickies', id, up.find(s => s.id === id));
             } else if (type === 'doc') {
               patchDoc(id, { sceneId });
+            } else if (type === 'frame') {
+              // Кадр перенесли на другую сцену — вместе с ним едет и его
+              // место в раскадровке. Номер не трогаем: он у кадра свой
+              // и правится руками, как номер сцены.
+              updateFrame(id, { sceneId });
             } else {
               const up = references.map(r => r.id === id ? { ...r, sceneId } : r);
               setReferences(up); syncDoc('references', id, up.find(r => r.id === id));
@@ -8916,7 +9095,7 @@
             if (arrowSyncKey.current !== key) { arrowSyncKey.current = key; return; }
             if (draggingWbItems || resizingSticky || resizingDoc || resizingRef) return;
             if (shapesRef.current.some(q => isLineKind(q.k) && (q.b1 || q.b2))) requestStatic();
-          }, [scenes, references, stickies, docs, currentView, activeBoardId,
+          }, [scenes, references, stickies, docs, storyboard, currentView, activeBoardId,
               draggingWbItems, resizingSticky, resizingDoc, resizingRef]);
           const handleDocResizeMove = (e) => {
               if (!resizingDoc || resizingDoc.pointerId !== e.pointerId) return;
@@ -11592,6 +11771,12 @@
                                           .map(st => (belongsToBoard(st, b.id) && st.locationId) ? { ...st, boardId: '' } : st));
                                         setReferences(references.map(r => r.boardId === b.id ? { ...r, boardId: '' } : r));
                                         references.filter(r => r.boardId === b.id).forEach(r => syncDoc('references', r.id, { ...r, boardId: '' }));
+                                        // Кадры раскадровки — как референсы: снимаем с доски,
+                                        // сам кадр остаётся в раскадровке своей сцены. Иначе
+                                        // он унёс бы с собой id мёртвой доски и не показался
+                                        // бы больше нигде.
+                                        setStoryboard(storyboard.map(f => f.boardId === b.id ? { ...f, boardId: '' } : f));
+                                        storyboard.filter(f => f.boardId === b.id).forEach(f => syncDoc('storyboard', f.id, { ...f, boardId: '' }));
                                         // Сцены с удалённой доски просто снимаем — сами сцены остаются в проекте
                                         setScenes(scenes.map(s => s.boardId === b.id ? { ...s, boardId: '' } : s));
                                         scenes.filter(s => s.boardId === b.id).forEach(s => syncDoc('scenes', s.id, { ...s, boardId: '' }));
@@ -11895,6 +12080,7 @@
                                 references.filter(r => r.boardId === activeBoardId).forEach(r => checkInt(r, refW(r), refH(r)));
                                 stickies.filter(st => belongsToBoard(st, activeBoardId)).forEach(st => checkInt(st, stickyW(st), stickyH(st)));
                                 boardDocs.forEach(d => checkInt(d, docCardW(d), docCardH(d)));
+                                boardFrames.forEach(f => checkInt(f, frameW(f), frameH(f)));
                                 setSelectedWbItems(newSelected);
                                 setSelShapes(expandGroups(shapesRef.current.filter(s => {
                                     if (s.ct) return false;
@@ -12349,6 +12535,75 @@
                             </div>
                             ))}
 
+                            {/* КАДРЫ РАСКАДРОВКИ. На доске лежит ТА ЖЕ запись,
+                                что и в разделе «Сцены»: подпись, картинка и
+                                номер там и здесь — одно и то же, а не копия.
+                                Пустое окошко — это и есть то, ради чего
+                                шаблон «Раскадровка» существует: рамка нужной
+                                пропорции, в которую кладут скетч или снимок. */}
+                            {boardFrames.map(f => {
+                            const fSel = selectedWbItems.includes(f.id);
+                            const fScene = f.sceneId ? scenes.find(x => x.id === f.sceneId) : null;
+                            return (
+                            <div key={f.id} data-card-id={f.id} onPointerDown={(e) => handleElementPointerDown(e, f.id, 'frame')}
+                                 style={{ left: `${f.x}px`, top: `${f.y}px`, width: `${frameW(f)}px`, position: 'absolute', zIndex: fSel ? 40 : 20 }}
+                                 className={`glass-panel rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${isDragging(f.id) ? '' : 'transition-all'} ${fSel ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'}`}>
+                                <div className="flex items-center gap-1.5 px-2" style={{ minHeight: 24 }}>
+                                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: f.shot ? 'var(--ok)' : 'var(--accent)' }}>
+                                      {f.frameNum || 'кадр'}{f.shot ? ' ✓' : ''}
+                                    </span>
+                                    {f.lens && <span className="cf-meta truncate">{f.lens}</span>}
+                                    {/* Номер кадра почти всегда начинается с номера
+                                        сцены («1.3»), и подпись «сц 1» под каждым
+                                        окошком была бы тем же самым дважды. Ставим
+                                        её только там, где номер о сцене не говорит:
+                                        кадр перенесли на другую сцену или номер
+                                        правили руками. */}
+                                    {fScene && !String(f.frameNum || '').startsWith(fScene.number + '.') &&
+                                      <span className="cf-meta truncate">сц {fScene.number}</span>}
+                                    {/* Убрать с доски — не удалить: кадр остаётся
+                                        в раскадровке сцены. То же правило, что
+                                        у референса и документа. */}
+                                    <button title="Убрать с доски — кадр останется в раскадровке сцены"
+                                            onClick={(e) => { e.stopPropagation(); removeFrameFromBoard(f.id); }}
+                                            className={`cf-edit-only ml-auto shrink-0 text-zinc-500 hover:text-white transition-all text-[13px] ${fSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                            style={{ width: 22, height: 22 }}>✕</button>
+                                </div>
+                                {/* Рамка в ПРОПОРЦИИ КАДРА ПРОЕКТА: раскадровка
+                                    обещает тот кадр, который снимут. */}
+                                <div className="relative bg-black/60 overflow-hidden mx-[7px]"
+                                     style={{ aspectRatio: String(projectRatio || 16 / 9), borderRadius: 6,
+                                              border: f.image ? '1px solid rgba(255,255,255,0.10)' : '1px dashed var(--border)' }}>
+                                {f.image ? (
+                                    <img src={f.image} className="w-full h-full object-cover pointer-events-none" draggable="false" />
+                                ) : (
+                                    /* Кнопка во всю карточку: жест доски её
+                                       пропускает по метке data-card-tap, а на
+                                       отпускании без сдвига доска зовёт её сама. */
+                                    <PhotoSourcePicker multiple={false} cardTap
+                                        onFiles={(fs) => { const file = fs[0]; if (!file) return;
+                                          const rd = new FileReader();
+                                          rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => updateFrame(f.id, { image: c }));
+                                          rd.readAsDataURL(file); }}
+                                        style={{ pointerEvents: 'auto' }}
+                                        className="cf-edit-only text-[11px] font-bold text-zinc-600 hover:text-indigo-400 w-full h-full flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/5">
+                                      <Icons.Gallery/><span>кадр или скетч</span>
+                                    </PhotoSourcePicker>
+                                )}
+                                </div>
+                                {cardField(f.id, 'description', f.description,
+                                  (v) => updateFrame(f.id, { description: v }),
+                                  { multiline: true, placeholder: 'Что в кадре...',
+                                    className: 'w-full bg-transparent text-[11px] leading-snug text-zinc-300 focus:outline-none px-2 py-1.5 placeholder-zinc-600 resize-none',
+                                    style: { minHeight: 26 } })}
+                                <div className="cf-edit-only" onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: f.id, type: 'frame' }); }}
+                                     title="Потяните к любой карточке — получится связь"
+                                     className="node-handle absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30"
+                                     style={{ pointerEvents: 'auto' }} />
+                            </div>
+                            );
+                            })}
+
                             {/* Документы: заголовок и длинный текст, правятся прямо
                                 здесь и открываются целиком в «Экспликациях» */}
                             {boardDocs.map(d => {
@@ -12515,7 +12770,8 @@
                       {wbMode === 'select' && !READ_ONLY && !boardInked
                         && boardScenes.length === 0 && boardDocs.length === 0
                         && !stickies.some(st => belongsToBoard(st, activeBoardId))
-                        && !references.some(r => r.boardId === activeBoardId) && (
+                        && !references.some(r => r.boardId === activeBoardId)
+                        && boardFrames.length === 0 && (
                         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none" style={{ paddingLeft: 70 }}>
                           {/* width:100% обязателен вместе с maxWidth: во flex
                               с центрированием ширина иначе считается по
@@ -12554,7 +12810,7 @@
                                   выглядело как сломанная кнопка. Чипы пропорции
                                   внутри — отдельные нажатия, они всплытие гасят. */}
                               <div className="cf-tpl text-left"
-                                   onClick={() => { if (activeSceneId) spreadSceneOnBoard(activeSceneId, activeBoardId); else showToast('Сначала выберите сцену на экране «Сцены»'); }}>
+                                   onClick={() => { if (activeSceneId) spreadSceneOnBoard(activeSceneId, activeBoardId, { frames: true }); else showToast('Сначала выберите сцену на экране «Сцены»'); }}>
                                 <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
                                   <rect x="10" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
                                   <rect x="59" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
@@ -12564,7 +12820,7 @@
                                 <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>
                                   Раскадровка{(() => { const sc = scenes.find(x => x.id === activeSceneId); return sc ? ` · сц ${sc.number}` : ''; })()}
                                 </div>
-                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>кадры и референсы сцены лентой на эту доску · пропорция:</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 3 }}>лента кадров сцены на эту доску · нет кадров — положит пустые окошки · пропорция:</div>
                                 {/* Пропорция кадра — общая для проекта: её же
                                     берут превью раскадровки на экране сцены,
                                     чтобы раскадровка обещала тот кадр, который
@@ -12663,6 +12919,21 @@
                                 <span className="shrink-0" style={{ color: 'var(--muted-2)' }}><Icons.Docs /></span>
                                 <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{d.title || 'Без названия'}</span>
                                 {d.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                              </button>
+                            ))}
+
+                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Раскадровка</span></div>
+                            {offBoardFrameScenes.length === 0 ? (
+                              <p className="px-2 pb-2" style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>
+                                {storyboard.length ? 'Все кадры уже на этой доске.' : 'Кадров пока нет — заведите их на экране сцены или шаблоном «Раскадровка» на пустой доске.'}
+                              </p>
+                            ) : offBoardFrameScenes.map(({ scene, n }) => (
+                              <button key={scene.id} onClick={() => { putSceneFramesOnBoard(scene.id); setScenePickerOpen(false); }}
+                                      className="w-full text-left px-2 rounded-md hover:bg-white/5 flex items-center gap-2 transition-colors"
+                                      style={{ minHeight: 40 }}>
+                                <span className="font-mono text-[11px] font-bold shrink-0" style={{ color: 'var(--accent)' }}>#{scene.number || '—'}</span>
+                                <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{scene.title || 'Без названия'}</span>
+                                <span className="cf-meta shrink-0">{plur(n, 'кадр', 'кадра', 'кадров')}</span>
                               </button>
                             ))}
 
