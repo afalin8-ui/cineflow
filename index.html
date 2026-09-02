@@ -4753,10 +4753,28 @@
           // Итоговое положение: сначала направляющие, по осям где их нет —
           // сетка. Сетку не выбрасываем: она гасит дрожание при медленном
           // ведении, и без неё каждое движение указателя двигало бы карточку.
+          // Сетка ПРИТЯГИВАЕТ, а не защёлкивает. Раньше положение всегда
+          // округлялось до 24 точек доски — куда бы ни вели, фигура садилась
+          // на решётку. На 100 % это значило, что сдвиг на десяток точек
+          // не двигает фигуру ВООБЩЕ (замер: потянули на 10, уехала на 0),
+          // а на увеличении 190 % шаг сетки — 46 точек ЭКРАНА, и фигура
+          // прыгала из-под пальца почти на полсотни точек. Это и есть
+          // «с шейпами тяжело взаимодействовать».
+          // Теперь у сетки тот же допуск, что у направляющих: рядом с линией
+          // притянет, в стороне оставит там, где отпустили. Допуск в ЭКРАННЫХ
+          // точках и делится на масштаб — иначе на увеличении сетка снова
+          // становится частоколом. Вне допуска округляем до ЦЕЛОЙ точки
+          // доски: дробное положение глазу ничего не даёт, а перерисовку
+          // на каждое дрожание пальца заказывает.
+          const gridPull = (v) => {
+            const tol = SNAP_PX / Math.max(0.05, viewRef.current.z);
+            const g = Math.round(v / GRID) * GRID;
+            return Math.abs(g - v) <= tol ? g - v : Math.round(v) - v;
+          };
           const snapMove = (box) => {
             const a = snapAdjust(box);
-            const gx = a.dx !== 0 ? a.dx : (noSnap.current ? 0 : Math.round(box.x0 / GRID) * GRID - box.x0);
-            const gy = a.dy !== 0 ? a.dy : (noSnap.current ? 0 : Math.round(box.y0 / GRID) * GRID - box.y0);
+            const gx = a.dx !== 0 ? a.dx : (noSnap.current ? 0 : gridPull(box.x0));
+            const gy = a.dy !== 0 ? a.dy : (noSnap.current ? 0 : gridPull(box.y0));
             return { dx: gx, dy: gy };
           };
           const clearGuides = () => { guides.current = []; snapPool.current = null; };
@@ -4771,7 +4789,7 @@
               const cand = vertical ? [t.x0, (t.x0 + t.x1) / 2, t.x1] : [t.y0, (t.y0 + t.y1) / 2, t.y1];
               for (const c of cand) { const d = c - v; if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, c, t }; }
             }
-            if (!best) return Math.round(v / GRID) * GRID;
+            if (!best) return v + gridPull(v);
             guides.current.push(vertical
               ? { vertical: true, at: best.c, a: Math.min(best.t.y0, a), b: Math.max(best.t.y1, b) }
               : { vertical: false, at: best.c, a: Math.min(best.t.x0, a), b: Math.max(best.t.x1, b) });
@@ -8693,7 +8711,9 @@
           const dragDelta = () => {
               const p = dragPos.current, d = draggingWbItems;
               if (!p || !d) return { dx: 0, dy: 0, idle: true };
-              const z = zoom || 1;
+              // Живой масштаб, а не состояние: во время жеста `zoom`
+              // отстаёт, и карточка ехала бы не за пальцем.
+              const z = viewRef.current.z || 1;
               if (!dragMoved.current) {
                   if (Math.hypot(p.x - d.startX, p.y - d.startY) < DRAG_START_PX) return { dx: 0, dy: 0, idle: true };
                   dragMoved.current = true;
@@ -9055,7 +9075,7 @@
 
           const handleResizeMove = (e) => {
               if (!resizingRef || resizingRef.pointerId !== e.pointerId) return;
-              const dx = (e.clientX - resizingRef.startX) / zoom;
+              const dx = (e.clientX - resizingRef.startX) / (viewRef.current.z || 1);
               const nw = Math.max(120, Math.min(960, Math.round((resizingRef.startW + dx) / 8) * 8));
               setReferences(prev => prev.map(r => r.id === resizingRef.id ? { ...r, w: nw } : r));
           };
@@ -9077,8 +9097,9 @@
 
           const handleStickyResizeMove = (e) => {
               if (!resizingSticky || resizingSticky.pointerId !== e.pointerId) return;
-              const dx = (e.clientX - resizingSticky.startX) / zoom;
-              const dy = (e.clientY - resizingSticky.startY) / zoom;
+              const z = viewRef.current.z || 1;
+              const dx = (e.clientX - resizingSticky.startX) / z;
+              const dy = (e.clientY - resizingSticky.startY) / z;
               const nw = Math.max(120, Math.min(800, Math.round((resizingSticky.startW + dx) / 8) * 8));
               const nh = Math.max(80,  Math.min(600, Math.round((resizingSticky.startH + dy) / 8) * 8));
               setStickies(prev => prev.map(s => s.id === resizingSticky.id ? { ...s, w: nw, h: nh } : s));
@@ -9275,8 +9296,9 @@
               draggingWbItems, resizingSticky, resizingDoc, resizingRef]);
           const handleDocResizeMove = (e) => {
               if (!resizingDoc || resizingDoc.pointerId !== e.pointerId) return;
-              const dx = (e.clientX - resizingDoc.startX) / zoom;
-              const dy = (e.clientY - resizingDoc.startY) / zoom;
+              const z = viewRef.current.z || 1;
+              const dx = (e.clientX - resizingDoc.startX) / z;
+              const dy = (e.clientY - resizingDoc.startY) / z;
               const nw = Math.max(200, Math.min(900, Math.round((resizingDoc.startW + dx) / 8) * 8));
               const nh = Math.max(140, Math.min(800, Math.round((resizingDoc.startH + dy) / 8) * 8));
               setDocs(prev => prev.map(d => d.id === resizingDoc.id ? { ...d, w: nw, h: nh } : d));
@@ -12142,11 +12164,10 @@
                         // Кладём туда, куда бросили, и на открытую доску. Раньше
                         // картинка молча уезжала в галерею, а на доске ничего
                         // не появлялось — выглядело как «перетаскивание не работает».
-                        const rect = canvasRef.current.getBoundingClientRect();
+                        const p = inkPt(e.clientX, e.clientY);
                         handleMultiFileUpload(e.dataTransfer.files, null, {
                             boardId: activeBoardId,
-                            x: (e.clientX - rect.left) / zoom,
-                            y: (e.clientY - rect.top) / zoom
+                            x: p.x, y: p.y
                         });
                     }}
                     onDoubleClick={(e) => {
@@ -12161,8 +12182,7 @@
                         if (wbMode !== 'select' || READ_ONLY) return;
                         const tid = e.target.id;
                         if (tid !== 'wb-container' && tid !== 'whiteboard-canvas' && e.target.tagName !== 'CANVAS') return;
-                        const rect = canvasRef.current.getBoundingClientRect();
-                        const x = (e.clientX - rect.left) / zoom, y = (e.clientY - rect.top) / zoom;
+                        const { x, y } = inkPt(e.clientX, e.clientY);
                         const hit = shapeAt(x, y, true);
                         if (hit) { openText(hit); return; }
                         pushUndo(false);
@@ -12175,10 +12195,34 @@
                         requestStatic();
                     }}
                     onPointerDown={(e) => {
-                        if (wbMode === 'select' && e.target.id === 'wb-container') {
-                            const rect = canvasRef.current.getBoundingClientRect();
-                            const x = (e.clientX - rect.left) / zoom;
-                            const y = (e.clientY - rect.top) / zoom;
+                        // Фигуры живут на ХОЛСТЕ, а не карточками в разметке,
+                        // и холст размером с окно: нарисовать их можно где
+                        // угодно, хоть за краем подложки 4000×4000. А ловили
+                        // мы нажатие ТОЛЬКО когда оно пришлось на саму
+                        // подложку (`wb-container`) — стоило отъехать за её
+                        // край, и фигуры переставали и выделяться, и
+                        // двигаться, и попадать в рамку. У края подложки одна
+                        // половина фигуры бралась, другая нет — это и есть
+                        // «криво выделяется». Ошибок при этом никаких:
+                        // нажатие просто уходит в пустоту.
+                        // Поэтому берём и подложку, и сам холст — ровно те же
+                        // три варианта, что у двойного клика выше. Карточки
+                        // сюда не доходят (они гасят всплытие), а кнопки на
+                        // них исключены отдельно: нажатие по корзине
+                        // не должно начинать рамку выделения.
+                        const selTid = e.target.id;
+                        const onBoardSurface = selTid === 'wb-container' || selTid === 'whiteboard-canvas'
+                                            || (e.target.tagName === 'CANVAS' && !e.target.closest('[data-card-id], .cf-mini'));
+                        if (wbMode === 'select' && onBoardSurface) {
+                            // Экран → доска ОДНИМ способом на всю доску
+                            // (`inkPt`): он считает от холста, который лежит
+                            // ровно по области доски и никуда не уезжает,
+                            // и смотрит в `viewRef` — живую панораму. Прежний
+                            // счёт делил на `zoom` из состояния, а оно во
+                            // время жеста отстаёт: пока колесо не «устоялось»,
+                            // нажатие попадало мимо тем сильнее, чем дальше
+                            // от начала доски.
+                            const { x, y } = inkPt(e.clientX, e.clientY);
                             noSnap.current = e.ctrlKey || e.metaKey;
                             // Фигуры живут на холсте, а не карточками в разметке,
                             // поэтому их попадание проверяем ЗДЕСЬ — там, куда
@@ -12210,16 +12254,14 @@
                     }}
                     onPointerMove={(e) => {
                         if (shapeAct.current && shapeAct.current.pointerId === e.pointerId) {
-                            const rect = canvasRef.current.getBoundingClientRect();
                             noSnap.current = e.ctrlKey || e.metaKey;
-                            shapeMoveAct({ x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom }, e.shiftKey);
+                            const p = inkPt(e.clientX, e.clientY);
+                            shapeMoveAct({ x: p.x, y: p.y }, e.shiftKey);
                             return;
                         }
                         if (selectionBox && selectionBox.pointerId === e.pointerId) {
-                            const rect = canvasRef.current.getBoundingClientRect();
-                            const x = (e.clientX - rect.left) / zoom;
-                            const y = (e.clientY - rect.top) / zoom;
-                            setSelectionBox({ ...selectionBox, currentX: x, currentY: y });
+                            const p = inkPt(e.clientX, e.clientY);
+                            setSelectionBox({ ...selectionBox, currentX: p.x, currentY: p.y });
                         }
                         handleDragMove(e);
                         handleResizeMove(e);
@@ -12636,8 +12678,7 @@
                                        : references.find(x => x.id === linkingFrom.id);
                              if (!src) return null;
                              const a = linkAnchor(src, linkingFrom.type);
-                             const ex = (mousePos.x - canvasRef.current?.getBoundingClientRect().left) / zoom;
-                             const ey = (mousePos.y - canvasRef.current?.getBoundingClientRect().top) / zoom;
+                             const { x: ex, y: ey } = inkPt(mousePos.x, mousePos.y);
                              return <path d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#d97757" strokeWidth="4" />;
                           })()}
                         </svg>
