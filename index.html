@@ -5526,6 +5526,168 @@
             bumpInk(); scheduleInkSave('shapes');
           };
 
+          // --- КОПИРОВАТЬ И ВСТАВИТЬ ---
+          // Буфер СВОЙ, а не системный. Системный на iPad просит разрешение
+          // на каждое чтение, отдаёт его не всегда и молча отказывает без
+          // жеста человека, а хранить в нём наши записи всё равно нечем.
+          // Внутренний работает без сети и МЕЖДУ ДОСКАМИ: скопировал схему
+          // на одной, перешёл на другую, вставил.
+          const wbClip = useRef(null);
+          // Наружу торчит только «сколько лежит» — по нему живёт кнопка
+          // «Вставить». Сам буфер в состоянии держать нельзя: там лежат
+          // картинки кадров, и каждая копия перерисовывала бы приложение.
+          const [clipCount, setClipCount] = useState(0);
+          const PASTE_STEP = 24;
+          // Копия ложится со сдвигом, и каждая следующая — дальше предыдущей:
+          // иначе три вставки подряд легли бы стопкой, и человек решил бы,
+          // что сработала одна.
+          const newId = (pre) => `${pre}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          // Номер копии кадра — по тому же правилу, что у «+ кадр» на экране
+          // сцены: «номер сцены.следующий свободный». Иначе на доске
+          // оказались бы два кадра «1.3».
+          const nextFrameNum = (sceneId, taken) => {
+            const sc = (cardsRef.current.scenes || []).find(x => x.id === sceneId);
+            const base = sc ? sc.number : '';
+            let max = 0;
+            (storyboardRef.current || []).forEach(f => {
+              if (f.sceneId !== sceneId) return;
+              const m = String(f.frameNum || '').match(/(\d+)$/);
+              if (m && +m[1] > max) max = +m[1];
+            });
+            (taken || []).forEach(n => { if (n > max) max = n; });
+            return { num: `${base}.${max + 1}`, n: max + 1 };
+          };
+
+          // Что вообще имеет смысл копировать. Фигуры, стрелки, надписи,
+          // заметки и окошки раскадровки — да: это либо сама доска, либо
+          // дешёвая запись. А сцена, документ и референс — записи ПРОЕКТА,
+          // а не картинки на доске: их копия завела бы вторую сцену в списке,
+          // второй гайд в «Экспликациях» и вторую фотографию в галерее —
+          // вместе с самим файлом на сотни килобайт. Такие карточки
+          // пропускаем и ГОВОРИМ об этом: молча скопировать три из пяти
+          // хуже, чем честно сказать, почему две остались.
+          const CLIP_CARDS = { sticky: 'stickies', frame: 'storyboard' };
+          const copySelection = () => {
+            const shapeIds = expandGroups(selShapes);
+            const set = new Set(shapeIds);
+            // Подпись внутри фигуры своих координат не имеет вовсе и едет
+            // с хозяином: копируем её только вместе с ним.
+            shapesRef.current.forEach(s => { if (s.ct && set.has(s.ct)) set.add(s.id); });
+            const shapes = shapesRef.current.filter(s => set.has(s.id))
+              .map(s => { const o = {}; for (const k in s) if (k[0] !== '_') o[k] = s[k]; return o; });
+            const cards = [];
+            let skipped = 0;
+            (selWbRef.current || []).forEach(id => {
+              const st = (cardsRef.current.stickies || []).find(x => x.id === id);
+              if (st) return cards.push({ t: 'sticky', o: { ...st } });
+              const fr = (cardsRef.current.storyboard || []).find(x => x.id === id);
+              if (fr) return cards.push({ t: 'frame', o: { ...fr } });
+              skipped++;
+            });
+            if (!shapes.length && !cards.length) {
+              showToast(skipped
+                ? 'Сцену, документ и референс копировать нельзя: это записи проекта, а не картинки на доске'
+                : 'Сначала выберите, что копировать');
+              return;
+            }
+            wbClip.current = { shapes, cards, n: 0 };
+            setClipCount(shapes.length + cards.length);
+            const n = shapes.length + cards.length;
+            showToast(`Скопировано: ${n} ${plur(n, 'объект', 'объекта', 'объектов')}`
+              + (skipped ? ` · ${skipped} ${plur(skipped, 'карточка', 'карточки', 'карточек')} пропущено: сцену, документ и референс копировать нельзя` : ''));
+          };
+
+          // Габарит скопированного — по нему считаем, куда класть копию.
+          const clipBox = (clip) => {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            const eat = (x, y, w, h) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); };
+            clip.shapes.forEach(s => { if (s.ct) return; const b = shapeBox(s); eat(b.x, b.y, b.w, b.h); });
+            clip.cards.forEach(c => c.t === 'sticky'
+              ? eat(c.o.x, c.o.y, stickyW(c.o), stickyH(c.o))
+              : eat(c.o.x, c.o.y, frameW(c.o), frameH(c.o)));
+            if (!isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
+            return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+          };
+          // Копия обязана лечь ТУДА, ГДЕ ЕЁ ВИДНО. Сдвиг на шаг от оригинала —
+          // как в любом редакторе; но если оригинал остался за краем экрана
+          // (скопировали, отъехали, вставили), копия легла бы туда же, и
+          // вставка выглядела бы не сделавшей ничего. Тогда кладём в середину
+          // видимого.
+          const pasteAt = (box, step) => {
+            const host = liveCanvasRef.current, v = viewRef.current;
+            const vw = host ? host.clientWidth : 0, vh = host ? host.clientHeight : 0;
+            let x = box.x + step, y = box.y + step;
+            if (!vw || !vh) return { dx: x - box.x, dy: y - box.y };
+            const vis = { x: -v.x / v.z, y: -v.y / v.z, w: vw / v.z, h: vh / v.z };
+            const out = x < vis.x || y < vis.y || x + box.w > vis.x + vis.w || y + box.h > vis.y + vis.h;
+            if (out) { x = vis.x + (vis.w - box.w) / 2; y = vis.y + (vis.h - box.h) / 2; }
+            return { dx: x - box.x, dy: y - box.y };
+          };
+
+          const pasteClip = () => {
+            if (READ_ONLY) return;
+            const clip = wbClip.current;
+            if (!clip || (!clip.shapes.length && !clip.cards.length)) { showToast('Буфер пуст — сначала скопируйте'); return; }
+            clip.n += 1;
+            const { dx, dy } = pasteAt(clipBox(clip), PASTE_STEP * clip.n);
+            // Новые id считаем ДО записи: по ним же переписываются связи
+            // внутри копии и заводится шаг отмены.
+            const map = new Map();
+            clip.shapes.forEach(s => map.set(s.id, newId('sh')));
+            const newCards = [];
+            const usedNums = {};
+            clip.cards.forEach(c => {
+              const id = newId(c.t === 'sticky' ? 'st' : 'sb');
+              map.set(c.o.id, id);
+              const o = { ...c.o, id, boardId: activeBoardId, x: c.o.x + dx, y: c.o.y + dy };
+              if (c.t === 'frame') {
+                // «Снято ✓» — это факт о настоящем дубле, а не о плане:
+                // копия кадра начинается неснятой.
+                delete o.shot;
+                const taken = usedNums[o.sceneId] || (usedNums[o.sceneId] = []);
+                const nf = nextFrameNum(o.sceneId, taken);
+                o.frameNum = nf.num; taken.push(nf.n);
+              }
+              newCards.push({ t: c.t, o });
+            });
+            pushUndo(false, newCards.map(c => ({ coll: CLIP_CARDS[c.t], id: c.o.id })));
+            // Группы копии — свои: иначе выделение копии тянуло бы за собой
+            // оригинал, ведь группа это общая метка.
+            const gmap = new Map();
+            const shapes = clip.shapes.map(s => {
+              const o = { ...s, id: map.get(s.id) };
+              if (!s.ct) { o.x = s.x + dx; o.y = s.y + dy; }
+              if (s.ct) o.ct = map.get(s.ct) || s.ct;
+              // Стрелка держится за id хозяина. Если хозяин копируется —
+              // копия цепляется за копию; если нет — отпускаем конец, иначе
+              // копия схемы висела бы на оригинале и ездила за ним.
+              ['b1', 'b2'].forEach(k => { if (o[k]) o[k] = map.get(o[k]) || undefined; });
+              if (s.g) { if (!gmap.has(s.g)) gmap.set(s.g, `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`); o.g = gmap.get(s.g); }
+              return shapeDirty(o);
+            });
+            if (shapes.length) {
+              shapesRef.current = shapesRef.current.concat(shapes);
+              scheduleInkSave('shapes');
+            }
+            const st = newCards.filter(c => c.t === 'sticky').map(c => c.o);
+            const fr = newCards.filter(c => c.t === 'frame').map(c => c.o);
+            if (st.length) { setStickies(prev => prev.concat(st)); st.forEach(o => syncDoc('stickies', o.id, o)); }
+            if (fr.length) {
+              const next = storyboardRef.current.concat(fr);
+              storyboardRef.current = next; setStoryboard(next);
+              fr.forEach(o => syncDoc('storyboard', o.id, o));
+            }
+            // Вставленное сразу ВЫДЕЛЕНО и рука переключается на стрелку:
+            // копию почти всегда тут же тащат на место, а выделение имеет
+            // смысл только в режиме выбора.
+            setWbMode('select');
+            setSelShapes(shapes.filter(s => !s.ct).map(s => s.id));
+            setSelectedWbItems(newCards.map(c => c.o.id));
+            bumpInk();
+            const n = shapes.filter(s => !s.ct).length + newCards.length;
+            showToast(`Вставлено: ${n} ${plur(n, 'объект', 'объекта', 'объектов')}`);
+          };
+
           const patchShapes = (patch) => {
             setShapeStyle(st => {
               const next = { ...st, ...patch };
@@ -6222,6 +6384,7 @@
           };
 
           // Ctrl+Z — отменить, Ctrl+Shift+Z и Ctrl+Y — вернуть,
+          // Ctrl+C / Ctrl+V — копировать и вставить выбранное,
           // Delete — удалить выбранные фигуры, Ctrl+] / Ctrl+[ — порядок слоёв
           useEffect(() => {
             const onKey = (e) => {
@@ -6238,6 +6401,12 @@
                 if (k === 'z' || k === 'y') { e.preventDefault(); if (k === 'y' || e.shiftKey) redoStroke(); else undoStroke(); return; }
                 if (e.key === ']' || e.key === '[') { e.preventDefault(); orderShapes(e.key === ']' ? 1 : -1); return; }
                 if (k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupShapes(); else groupShapes(); return; }
+                // Перехватываем ТОЛЬКО когда есть что копировать и что
+                // вставлять. Иначе Ctrl+C отнял бы у страницы обычное
+                // копирование текста, а Ctrl+V — вставку картинки из буфера,
+                // которая на других экранах уже работает.
+                if (k === 'c' && (selShapes.length || (selWbRef.current || []).length)) { e.preventDefault(); copySelection(); return; }
+                if (k === 'v' && wbClip.current) { e.preventDefault(); pasteClip(); return; }
                 return;
               }
               if ((e.key === 'Delete' || e.key === 'Backspace') && selShapes.length) { e.preventDefault(); deleteShapes(); return; }
@@ -6254,6 +6423,13 @@
           const [hoveredSceneId, setHoveredSceneId] = useState(null);
           
           const [selectedWbItems, setSelectedWbItems] = useState([]);
+          // Ссылка на выделенное. Нужна тем, кто живёт ВЫШЕ по файлу:
+          // копирование объявлено рядом с фигурами, а слушатель клавиатуры
+          // стоит до этой строки — обращение к самому списку оттуда это
+          // обращение к ещё не созданной переменной, то есть белый экран
+          // при запуске. Присваивание идёт при отрисовке, как у cardsRef.
+          const selWbRef = useRef([]);
+          selWbRef.current = selectedWbItems;
           const [selectionBox, setSelectionBox] = useState(null);
           const [draggingWbItems, setDraggingWbItems] = useState(null);
           const [resizingRef, setResizingRef] = useState(null);
@@ -12758,6 +12934,22 @@
                                 className={`cf-tool cf-edit-only ${canRedo ? '' : 'off'}`}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
                         </button>
+                        {/* КОПИРОВАТЬ И ВСТАВИТЬ — кнопками, а не только
+                            клавишами: на планшете клавиатуры нет вовсе,
+                            а копирование нужно как раз там, где раскладывают
+                            схему пальцем. Стоят рядом с отменой — это тоже
+                            действия над выбранным, а не режимы рисования. */}
+                        <span className="cf-tool-sep cf-edit-only" style={{ width: 20, height: 1, margin: '2px 0', background: 'var(--border)' }} />
+                        <button onClick={copySelection} disabled={!selShapes.length && !selectedWbItems.length}
+                                title="Копировать выбранное — один объект или всю группу (Ctrl+C)"
+                                className={`cf-tool cf-edit-only ${(selShapes.length || selectedWbItems.length) ? '' : 'off'}`}>
+                          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        </button>
+                        <button onClick={pasteClip} disabled={!clipCount}
+                                title={clipCount ? `Вставить ${clipCount} ${plur(clipCount, 'объект', 'объекта', 'объектов')} (Ctrl+V)` : 'Вставить (Ctrl+V) — буфер пуст'}
+                                className={`cf-tool cf-edit-only ${clipCount ? '' : 'off'}`}>
+                          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+                        </button>
                       </div>
 
                       {/* ПУСТАЯ ДОСКА — НЕ ПУСТОЙ ЭКРАН.
@@ -12933,7 +13125,7 @@
                                       style={{ minHeight: 40 }}>
                                 <span className="font-mono text-[11px] font-bold shrink-0" style={{ color: 'var(--accent)' }}>#{scene.number || '—'}</span>
                                 <span className="truncate flex-1" style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{scene.title || 'Без названия'}</span>
-                                <span className="cf-meta shrink-0">{plur(n, 'кадр', 'кадра', 'кадров')}</span>
+                                <span className="cf-meta shrink-0">{n} {plur(n, 'кадр', 'кадра', 'кадров')}</span>
                               </button>
                             ))}
 
