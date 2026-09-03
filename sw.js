@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v10';
+const VERSION = 'cineflow-v11';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -96,6 +96,9 @@ self.addEventListener('fetch', event => {
   // worker'ом. Не трогаем её вовсе: иначе навигация на игру подменит
   // в кэше './index.html' CineFlow на страницу игры.
   if (url.origin === self.location.origin && url.pathname.includes('/game/')) return;
+  // Папка /splat/ — 3D-сцены из 360-видео (Splat.js), тоже со своим
+  // service worker'ом. По той же причине не трогаем.
+  if (url.origin === self.location.origin && url.pathname.includes('/splat/')) return;
 
   // Сама страница: сначала сеть (чтобы приезжали обновления),
   // при отсутствии связи — версия из кэша.
