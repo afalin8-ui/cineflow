@@ -467,7 +467,11 @@
             Diamond: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L22 12L12 22L2 12Z"/></svg>,
             Star: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.8L6 21l1.6-7L2.2 9.2l7.1-.6z"/></svg>,
             BeamArrow: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17L17 7M7 7h10v10"/></svg>,
-            Video: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4z"/><rect x="3" y="6" width="12" height="12" rx="2" ry="2"/></svg>
+            Video: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4z"/><rect x="3" y="6" width="12" height="12" rx="2" ry="2"/></svg>,
+            // Значок ролика. Icons.Video занят плиткой «Техника»: один рисунок
+            // на два понятия нельзя.
+            Play: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l12-7.5z"/></svg>,
+            Still: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.2"/><path d="M7 5V3h10v2"/></svg>
         };
 
         const DEFAULT_GEAR = {
@@ -863,6 +867,429 @@
         };
 
         // =====================================================================
+        // ВИДЕО-РЕФЕРЕНСЫ
+        // =====================================================================
+        // Видео — это обычный референс с флагом `video: true`, ровно по
+        // образцу панорамы. В поле `url` лежит ПОСТЕР (кадр из ролика,
+        // JPEG до 1280 px): на него без правок смотрят галерея, доска,
+        // печать, снимок и резервная копия. Сам ролик живёт ТОЛЬКО
+        // в облаке пользователя (`full` + `cloud`): в документ базы он не
+        // влезет никогда — предел 1 МБ. Ниже всё, что не зависит от React:
+        // узнавание видео, постер, кодек из заголовка.
+        //
+        // Файл целиком в память НЕ читается никогда: `FileReader.readAsDataURL`
+        // на 400 МБ кладёт iPad без единой ошибки, а `compressImage` по
+        // onerror вернула бы весь ролик строкой в `url`. Постер снимается
+        // через временную ссылку на файл и скрытый <video>.
+        const VIDEO_EXT = /\.(mp4|m4v|mov|webm)$/i;
+        const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp|tiff?|heic|heif)$/i;
+        // Тип у .MOV на Android и Windows бывает пустым или «octet-stream» —
+        // смотрим и расширение.
+        const isVideoFile = (f) => !!f && (/^video\//i.test(f.type || '')
+          || (!/^image\//i.test(f.type || '') && VIDEO_EXT.test(f.name || '')));
+        const isImageFile = (f) => !!f && (/^image\//i.test(f.type || '')
+          || (!/^video\//i.test(f.type || '') && IMAGE_EXT.test(f.name || '')));
+        const EXT_BY_MIME = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/x-m4v': 'm4v', 'video/webm': 'webm',
+                              'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+                              'image/heic': 'heic', 'image/heif': 'heif', 'image/avif': 'avif', 'image/bmp': 'bmp' };
+        // Автотег ролика — той же механикой, что «скаут» у фотографий
+        // объекта: фильтр «только видео» в галерее получается бесплатно.
+        const VIDEO_TAG = 'видео';
+        // Длительность тайм-кодом: «0:42», «12:05», «1:03:10».
+        const fmtDur = (s) => {
+          const n = Math.max(0, Math.round(+s || 0));
+          const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), r = n % 60;
+          return `${h ? h + ':' : ''}${h ? String(m).padStart(2, '0') : m}:${String(r).padStart(2, '0')}`;
+        };
+        const fmtMB = (b) => {
+          const mb = (+b || 0) / 1048576;
+          if (mb >= 1024) return `${(mb / 1024).toFixed(1)} ГБ`;
+          return `${mb >= 10 ? Math.round(mb) : mb.toFixed(1)} МБ`;
+        };
+        // Постер: ширина как у превью фото (CLOUD_THUMB объявлен внутри
+        // приложения и отсюда не виден), вес — не больше 300 КБ. Общего
+        // предохранителя по размеру документа перед записью нет: слишком
+        // тяжёлый документ сервер откатывает, и карточка исчезает молча.
+        const VIDEO_POSTER_W = 1280;
+        const VIDEO_POSTER_MAX = 300 * 1024;
+        // Предел размера ролика по облаку. У Dropbox файл едет кусками
+        // (dropboxUploadSession), и потолок здесь практический — время
+        // отправки с телефона. У Яндекса без подписки 1 ГБ, у Nextcloud
+        // обычно 512 МБ на сервере — цифра оценочная.
+        const VIDEO_MAX = { dropbox: 2 * 1024 * 1024 * 1024, yandex: 1024 * 1024 * 1024, nextcloud: 500 * 1024 * 1024 };
+        const isHevc = (codec) => /^(hvc1|hev1|dvh1|dvhe)/i.test(String(codec || ''));
+        const codecLabel = (codec) => {
+          const c = String(codec || '').toLowerCase();
+          if (!c) return '';
+          if (/^(hvc1|hev1|dvh)/.test(c)) return 'HEVC';
+          if (/^avc/.test(c)) return 'H.264';
+          if (/^av01/.test(c)) return 'AV1';
+          if (/^vp0?9/.test(c)) return 'VP9';
+          if (/^vp0?8/.test(c)) return 'VP8';
+          return c.toUpperCase();
+        };
+        // Умеет ли ЭТОТ браузер HEVC. Проверять надо у зрителя, а не у того,
+        // кто загрузил: iPad играет всё, а Chrome на Windows — только
+        // с аппаратным декодером. Отказ там — чёрный экран без слов.
+        const canPlayHevc = () => {
+          try { return !!document.createElement('video').canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"'); }
+          catch (e) { return false; }
+        };
+
+        // JPEG из канвы с потолком по весу: ступени качества, затем меньше.
+        const posterJpeg = (cv, maxLen) => {
+          let out = '';
+          for (const q of [0.72, 0.6, 0.5, 0.4]) {
+            out = cv.toDataURL('image/jpeg', q);
+            if (out.length <= maxLen) return out;
+          }
+          if (cv.width > 960) {
+            const small = document.createElement('canvas');
+            small.width = 960; small.height = Math.max(1, Math.round(cv.height * 960 / cv.width));
+            small.getContext('2d').drawImage(cv, 0, 0, small.width, small.height);
+            return posterJpeg(small, maxLen);
+          }
+          return out.length <= maxLen ? out : '';
+        };
+        // Нарисованная обложка на случай, когда кадр не снялся (например,
+        // HEVC-ролик открыли в Chrome на Windows, где декодера нет). Пустой
+        // `url` недопустим: на доске такая карточка превращается в кнопку
+        // «Загрузить», а в галерее — в битую картинку.
+        const blankPoster = (name, ar) => {
+          const w = 960, h = Math.round(w / (ar && ar > 0.2 && ar < 5 ? ar : 16 / 9));
+          const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+          const g = cv.getContext('2d');
+          g.fillStyle = '#242322'; g.fillRect(0, 0, w, h);
+          g.fillStyle = '#33312d'; g.fillRect(0, h - 6, w, 6);
+          g.fillStyle = '#d97757';
+          const r = Math.min(w, h) * 0.13, cx = w / 2, cy = h / 2 - r * 0.15;
+          g.beginPath(); g.moveTo(cx - r * 0.7, cy - r); g.lineTo(cx + r, cy); g.lineTo(cx - r * 0.7, cy + r); g.closePath(); g.fill();
+          g.fillStyle = '#a6a39a'; g.font = `500 ${Math.round(h * 0.055)}px -apple-system, Helvetica, Arial, sans-serif`;
+          g.textAlign = 'center';
+          let t = String(name || 'видео'); if (t.length > 42) t = t.slice(0, 40) + '…';
+          g.fillText(t, cx, cy + r * 2.1);
+          return cv.toDataURL('image/jpeg', 0.8);
+        };
+
+        // Постер и метаданные ИЗ САМОГО ФАЙЛА, без чтения его в память:
+        // временная ссылка → скрытый <video muted playsinline> → метаданные
+        // (длительность, размер кадра) → кадр на ~1-й секунде (нулевой
+        // часто чёрный) → канва → JPEG. После — обязательная уборка: снять
+        // src, load(), отозвать ссылку: на iOS 15 blob-ссылки в <video>
+        // текут, а декодеров у планшета 4–16 на всё устройство. Ролики
+        // готовятся строго ПО ОДНОМУ, как панорамы. Не вышло — {url: ''}.
+        const makeVideoAssets = (file) => new Promise((resolve) => {
+          let done = false, dur = 0, ar = 0, w = 0, h = 0, url = '';
+          let armedOuter = () => false;
+          try { url = URL.createObjectURL(file); } catch (e) { resolve({ url: '', dur, ar, w, h }); return; }
+          const v = document.createElement('video');
+          v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
+          const finish = (poster) => {
+            if (done) return; done = true;
+            clearTimeout(timer);
+            try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+            try { URL.revokeObjectURL(url); } catch (e) {}
+            resolve({ url: poster || '', dur, ar, w, h });
+          };
+          const timer = setTimeout(() => finish(''), 20000);
+          const grab = () => {
+            try {
+              if (!v.videoWidth || !v.videoHeight) { finish(''); return; }
+              const cw = Math.min(VIDEO_POSTER_W, v.videoWidth);
+              const ch = Math.max(1, Math.round(cw * v.videoHeight / v.videoWidth));
+              const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+              cv.getContext('2d').drawImage(v, 0, 0, cw, ch);
+              finish(posterJpeg(cv, VIDEO_POSTER_MAX));
+            } catch (e) { finish(''); }
+          };
+          v.onerror = () => finish('');
+          let probed = false;
+          v.onloadedmetadata = () => {
+            w = v.videoWidth || 0; h = v.videoHeight || 0;
+            if (w && h) ar = Math.round(w / h * 1000) / 1000;
+            // У записанного браузером webm длительности в заголовке нет
+            // (Infinity). Известный приём: перемотать «за край», браузер
+            // дочитает файл и назовёт настоящую длину; после этого — как обычно.
+            if (!isFinite(v.duration) && !probed) {
+              probed = true;
+              let backed = false;
+              const back = () => {
+                if (backed) return; backed = true;
+                v.removeEventListener('durationchange', back); v.removeEventListener('seeked', back);
+                if (!done) v.onloadedmetadata();
+              };
+              v.addEventListener('durationchange', back, { once: true });
+              v.addEventListener('seeked', back, { once: true });
+              try { v.currentTime = 1e9; } catch (e) { back(); }
+              setTimeout(() => { if (!done && !armedOuter()) back(); }, 4000);
+              return;
+            }
+            dur = isFinite(v.duration) ? v.duration : 0;
+            const t = dur > 0 ? Math.min(1, dur / 10) : 0.1;
+            let armed = false;
+            armedOuter = () => armed;
+            const onSeeked = () => {
+              if (armed) return; armed = true;
+              // Кадр после перемотки встаёт не мгновенно: ждём настоящий
+              // кадр, а не событие «перемотка кончилась».
+              if (typeof v.requestVideoFrameCallback === 'function') {
+                let got = false;
+                try { v.requestVideoFrameCallback(() => { got = true; grab(); }); } catch (e) { grab(); return; }
+                setTimeout(() => { if (!got) grab(); }, 900);
+              } else setTimeout(grab, 80);
+            };
+            v.addEventListener('seeked', onSeeked, { once: true });
+            try { v.currentTime = t; } catch (e) { grab(); }
+            // Страховка: seeked так и не пришёл — берём что есть.
+            setTimeout(() => { if (!armed) onSeeked(); }, 6000);
+          };
+          v.src = url;
+          try { v.load(); } catch (e) {}
+        });
+
+        // Кодек ИЗ ЗАГОЛОВКА файла, без декодирования: идём по атомам
+        // moov → trak → mdia → minf → stbl → stsd и читаем тип первой записи
+        // (hvc1/hev1 — HEVC, avc1 — H.264). У .mov с iPhone moov часто лежит
+        // в КОНЦЕ файла, поэтому по верхним атомам шагаем заголовками, а не
+        // читаем файл целиком. Не разобрали (webm, битый файл) — null.
+        const mp4CodecOf = async (file) => {
+          const rd = async (o, n) => new DataView(await file.slice(o, Math.min(file.size, o + n)).arrayBuffer());
+          const tag = (d, o) => String.fromCharCode(d.getUint8(o), d.getUint8(o + 1), d.getUint8(o + 2), d.getUint8(o + 3));
+          const box = (d, o, end) => {
+            let s = d.getUint32(o); let hd = 8;
+            if (s === 1) { s = d.getUint32(o + 8) * 4294967296 + d.getUint32(o + 12); hd = 16; }
+            else if (s === 0) s = end - o;
+            return { s, hd, t: tag(d, o + 4) };
+          };
+          try {
+            let off = 0, moov = null, guard = 0;
+            while (off + 16 <= file.size && guard++ < 64) {
+              const h = await rd(off, 16);
+              if (h.byteLength < 8) break;
+              const b = box(h, 0, file.size - off);
+              if (b.s < b.hd) break;
+              if (b.t === 'moov') { moov = { off, size: b.s }; break; }
+              off += b.s;
+            }
+            if (!moov || moov.size > 48 * 1024 * 1024) return null;
+            const d = await rd(moov.off, moov.size);
+            const find = (start, end, want) => {
+              let o = start;
+              while (o + 8 <= end) {
+                const b = box(d, o, end);
+                if (b.s < b.hd) return null;
+                if (b.t === want) return { o: o + b.hd, e: Math.min(end, o + b.s) };
+                o += b.s;
+              }
+              return null;
+            };
+            const out = { video: '', audio: '' };
+            let o = 8; const end = d.byteLength;
+            while (o + 8 <= end) {
+              const b = box(d, o, end);
+              if (b.s < b.hd) break;
+              if (b.t === 'trak') {
+                const mdia = find(o + b.hd, o + b.s, 'mdia');
+                const hdlr = mdia && find(mdia.o, mdia.e, 'hdlr');
+                const kind = hdlr && hdlr.e - hdlr.o >= 12 ? tag(d, hdlr.o + 8) : '';
+                const minf = mdia && find(mdia.o, mdia.e, 'minf');
+                const stbl = minf && find(minf.o, minf.e, 'stbl');
+                const stsd = stbl && find(stbl.o, stbl.e, 'stsd');
+                if (stsd && stsd.e - stsd.o >= 16) {
+                  const fourcc = tag(d, stsd.o + 12);
+                  if (kind === 'vide' && !out.video) out.video = fourcc;
+                  else if (kind === 'soun' && !out.audio) out.audio = fourcc;
+                }
+              }
+              o += b.s;
+            }
+            return (out.video || out.audio) ? out : null;
+          } catch (e) { return null; }
+        };
+
+        // СОВМЕСТИМАЯ КОПИЯ: перекодирование тем, что есть в браузере.
+        // Скрытый <video> проигрывает файл (декодер системный — HEVC на Apple
+        // читается), каждый кадр рисуется на холст, MediaRecorder пишет поток
+        // холста в H.264 mp4 (Safari, часть Chrome) или webm (остальные).
+        // Звук — через Web Audio: элемент подключается к графу, на колонки
+        // не выводится, а в запись идёт. iOS не даст играть со звуком без
+        // жеста человека — тогда копия пишется без звука, и об этом сказано.
+        // Идёт в РЕАЛЬНОМ ВРЕМЕНИ: минутный ролик — минута. Быстрее нечем:
+        // WebCodecs требует своего демуксера и муксера, а ffmpeg.wasm весит
+        // 31 МБ. Вкладка обязана быть открыта: свёрнутая на iPad засыпает.
+        const PROXY_MIMES = [
+          'video/mp4;codecs="avc1.42E01E,mp4a.40.2"', 'video/mp4;codecs=avc1', 'video/mp4',
+          'video/webm;codecs="vp9,opus"', 'video/webm;codecs="vp8,opus"', 'video/webm'
+        ];
+        const proxyMime = () => {
+          try {
+            if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+            return PROXY_MIMES.find(m => MediaRecorder.isTypeSupported(m)) || '';
+          } catch (e) { return ''; }
+        };
+        // РАЗБЛОКИРОВКА ЗВУКА ДЛЯ КОПИИ. iOS даёт играть со звуком только
+        // элементу, который трогали в жесте человека, и только контексту
+        // Web Audio, созданному в жесте. Копия же стартует через минуты,
+        // когда оригинал уехал — жеста уже нет. Поэтому в самом нажатии на
+        // строку «Откуда взять фото» заводим скрытый <video> и вызываем у
+        // него load(): WebKit снимает с элемента ограничения навсегда. Тот же
+        // приём, что у окна печати (window.open до await). Не вышло — копия
+        // пишется без звука, и это сказано словами.
+        const mediaUnlock = { ctx: null, video: null, src: null, busy: false };
+        const armMedia = () => {
+          try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC && !mediaUnlock.ctx) mediaUnlock.ctx = new AC();
+            if (mediaUnlock.ctx && mediaUnlock.ctx.state === 'suspended') mediaUnlock.ctx.resume().catch(() => {});
+            if (!mediaUnlock.video) {
+              const v = document.createElement('video');
+              v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+              v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+              document.body.appendChild(v);
+              mediaUnlock.video = v;
+            }
+            if (!mediaUnlock.busy) { try { mediaUnlock.video.load(); } catch (e) {} }
+          } catch (e) {}
+        };
+        const makeVideoProxy = (file, { onProgress, maxW = 1280, bitrate = 6e6 } = {}) => new Promise((resolve, reject) => {
+          const mime = proxyMime();
+          if (!mime) { reject(new Error('этот браузер не умеет записывать видео')); return; }
+          // Разблокированный элемент — если он есть и свободен; иначе свой.
+          const reuse = !!(mediaUnlock.video && !mediaUnlock.busy);
+          const v = reuse ? mediaUnlock.video : document.createElement('video');
+          if (reuse) mediaUnlock.busy = true;
+          else {
+            v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+            v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+            document.body.appendChild(v);
+          }
+          const url = URL.createObjectURL(file);
+          let rec = null, done = false, silent = false, ctx = null, ownCtx = false, dest = null, raf = 0;
+          const chunks = [];
+          const cleanup = () => {
+            try { if (raf) cancelAnimationFrame(raf); } catch (e) {}
+            v.ontimeupdate = v.onended = v.onpause = v.onerror = v.onloadedmetadata = null;
+            try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+            if (reuse) mediaUnlock.busy = false; else { try { v.remove(); } catch (e) {} }
+            try { URL.revokeObjectURL(url); } catch (e) {}
+            if (dest && mediaUnlock.src && !ownCtx) { try { mediaUnlock.src.disconnect(dest); } catch (e) {} }
+            if (ctx && ownCtx) { try { ctx.close(); } catch (e) {} }
+          };
+          const fail = (e) => {
+            if (done) return; done = true;
+            try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (x) {}
+            cleanup();
+            reject(e instanceof Error ? e : new Error(String(e)));
+          };
+          v.onerror = () => fail(new Error('браузер не смог открыть ролик для копии'));
+          v.onloadedmetadata = async () => {
+            try {
+              const w = v.videoWidth, h = v.videoHeight;
+              if (!w || !h) throw new Error('у ролика нет картинки');
+              const cw = Math.min(maxW, w), ch = Math.max(2, Math.round(cw * h / w));
+              const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+              const g = cv.getContext('2d');
+              const stream = cv.captureStream(30);
+              try {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (AC) {
+                  // Источник из элемента заводится ОДИН раз на элемент: второй
+                  // вызов createMediaElementSource для того же <video> бросает.
+                  if (reuse && mediaUnlock.ctx) {
+                    ctx = mediaUnlock.ctx;
+                    if (!mediaUnlock.src) mediaUnlock.src = ctx.createMediaElementSource(v);
+                    dest = ctx.createMediaStreamDestination();
+                    mediaUnlock.src.connect(dest);
+                  } else {
+                    ctx = new AC(); ownCtx = true;
+                    ctx.createMediaElementSource(v).connect(dest = ctx.createMediaStreamDestination());
+                  }
+                  dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+                  if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (e) {} }
+                  if (ctx.state !== 'running') silent = true;
+                } else silent = true;
+              } catch (e) { silent = true; }
+              rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
+              rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+              rec.onerror = (e) => fail((e && e.error) || new Error('запись оборвалась'));
+              rec.onstop = () => {
+                if (done) return; done = true;
+                const type = mime.split(';')[0];
+                const blob = new Blob(chunks, { type });
+                cleanup();
+                resolve({ blob, mime: type, silent, w: cw, h: ch });
+              };
+              const draw = () => {
+                if (done) return;
+                try { g.drawImage(v, 0, 0, cw, ch); } catch (e) {}
+                if (typeof v.requestVideoFrameCallback === 'function') v.requestVideoFrameCallback(draw);
+                else raf = requestAnimationFrame(draw);
+              };
+              v.ontimeupdate = () => { if (onProgress) { try { onProgress(v.currentTime, v.duration); } catch (e) {} } };
+              v.onended = () => { try { if (rec.state !== 'inactive') rec.stop(); } catch (e) { fail(e); } };
+              // Вкладку свернули — iOS ставит на паузу, и запись рвётся. Честно падаем.
+              v.onpause = () => {
+                if (!done && !v.ended && v.currentTime < (v.duration || Infinity) - 0.25) fail(new Error('воспроизведение остановилось — вкладку свернули?'));
+              };
+              rec.start(1000);
+              draw();
+              try {
+                v.muted = false; v.volume = 1;
+                await v.play();
+              } catch (e) {
+                // Без жеста человека звук не дают — пишем без звука.
+                silent = true;
+                try { v.muted = true; await v.play(); }
+                catch (e2) { fail(new Error('браузер не дал проиграть ролик для копии')); }
+              }
+            } catch (e) { fail(e); }
+          };
+          v.src = url;
+          try { v.load(); } catch (e) {}
+        });
+        makeVideoProxy.available = () => !!proxyMime() && typeof HTMLCanvasElement !== 'undefined'
+          && typeof HTMLCanvasElement.prototype.captureStream === 'function';
+
+        // Кадр ролика из облака на секунде t. Отдельный <video crossOrigin>:
+        // без CORS холст с чужим кадром «портится», и JPEG из него не снять.
+        const grabVideoFrame = (src, t) => new Promise((resolve, reject) => {
+          const v = document.createElement('video');
+          v.crossOrigin = 'anonymous'; v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+          let done = false;
+          const fin = (fn) => {
+            if (done) return; done = true;
+            clearTimeout(timer);
+            try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+            fn();
+          };
+          const timer = setTimeout(() => fin(() => reject(new Error('кадр не пришёл за 25 секунд'))), 25000);
+          v.onerror = () => fin(() => reject(new Error('облако не разрешает странице читать кадры этого ролика')));
+          v.onloadedmetadata = () => {
+            const draw = () => {
+              try {
+                if (!v.videoWidth || !v.videoHeight) throw new Error('пусто');
+                const cw = Math.min(1920, v.videoWidth), ch = Math.max(1, Math.round(cw * v.videoHeight / v.videoWidth));
+                const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+                cv.getContext('2d').drawImage(v, 0, 0, cw, ch);
+                const out = cv.toDataURL('image/jpeg', 0.9);
+                fin(() => resolve(out));
+              } catch (e) { fin(() => reject(new Error('кадр не снялся: облако не разрешает читать ролик со страницы'))); }
+            };
+            const onSeeked = () => {
+              if (typeof v.requestVideoFrameCallback === 'function') {
+                let got = false;
+                try { v.requestVideoFrameCallback(() => { got = true; draw(); }); } catch (e) { draw(); return; }
+                setTimeout(() => { if (!got) draw(); }, 900);
+              } else setTimeout(draw, 80);
+            };
+            v.addEventListener('seeked', onSeeked, { once: true });
+            try { v.currentTime = Math.max(0.05, t || 0); } catch (e) { onSeeked(); }
+          };
+          v.src = src;
+          try { v.load(); } catch (e) {}
+        });
+
+        // =====================================================================
         // ВНЕШНЕЕ ХРАНИЛИЩЕ ФОТОГРАФИЙ (Dropbox / Яндекс.Диск / Nextcloud)
         // =====================================================================
         // Зачем: картинки лежали в базе целиком, в base64. Предел документа
@@ -912,10 +1339,12 @@
         // Имя файла в облаке: латиница и цифры, остальное — подчёркиванием.
         // Кириллица в пути ломает заголовок Dropbox-API-Arg и путается
         // в WebDAV, а ценности не несёт — подпись хранится в проекте.
-        const cloudFileName = (refId, original) => {
+        const cloudFileName = (refId, original, mime) => {
           const dot = String(original || '').lastIndexOf('.');
-          let ext = dot > 0 ? String(original).slice(dot + 1).toLowerCase() : 'jpg';
-          if (!/^[a-z0-9]{1,5}$/.test(ext)) ext = 'jpg';
+          let ext = dot > 0 ? String(original).slice(dot + 1).toLowerCase() : '';
+          // Запасное расширение — по типу файла, а не «jpg»: ролик под именем
+          // .jpg облако отдаст с типом картинки, и Safari его не заиграет.
+          if (!/^[a-z0-9]{1,5}$/.test(ext)) ext = EXT_BY_MIME[String(mime || '').toLowerCase()] || 'jpg';
           return `${refId}.${ext}`;
         };
         // Имя файла ПРОЕКТА (КПП, сценарий, доки) в облаке. Отличается от
@@ -1030,26 +1459,15 @@
             return u.toString();
           } catch (e) { return String(url); }
         };
-        const dropboxUpload = async (cfg, file, name) => {
-          const token = await dropboxAccess(cfg);
-          const path = '/' + (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '') + '/' + name;
-          const up = await cloudFetch('https://content.dropboxapi.com/2/files/upload', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer ' + token,
-              'Dropbox-API-Arg': asciiJSON({ path, mode: 'overwrite', mute: true }),
-              'Content-Type': 'application/octet-stream'
-            },
-            body: file
-          });
-          if (!up.ok) await cloudErr(up, 'Dropbox не принял файл');
-          const meta = await up.json();
-          // Публичная ссылка. Если она уже есть, Dropbox отвечает ошибкой —
-          // тогда спрашиваем существующую, а не считаем это провалом.
+        // Публичная ссылка на уже лежащий файл. Если она уже есть, Dropbox
+        // отвечает ошибкой — тогда спрашиваем существующую, а не считаем
+        // это провалом. Одна функция на обычную и кусочную загрузку:
+        // две копии разъехались бы при первой правке.
+        const dropboxShareLink = async (token, pathLower) => {
           const mk = await fetch('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-            body: asciiJSON({ path: meta.path_lower, settings: { requested_visibility: 'public' } })
+            body: asciiJSON({ path: pathLower, settings: { requested_visibility: 'public' } })
           });
           let link = '';
           if (mk.ok) { link = (await mk.json()).url; }
@@ -1057,14 +1475,87 @@
             const list = await fetch('https://api.dropboxapi.com/2/sharing/list_shared_links', {
               method: 'POST',
               headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-              body: asciiJSON({ path: meta.path_lower, direct_only: true })
+              body: asciiJSON({ path: pathLower, direct_only: true })
             });
             if (!list.ok) await cloudErr(list, 'Dropbox не дал ссылку на файл');
             const j = await list.json();
             link = (j.links && j.links[0] && j.links[0].url) || '';
           }
           if (!link) throw new Error('Dropbox не дал ссылку на файл');
-          return { full: dropboxRaw(link), path: meta.path_lower };
+          return dropboxRaw(link);
+        };
+        // БОЛЬШИЕ ФАЙЛЫ — КУСКАМИ. Одним запросом files/upload принимает
+        // не больше 150 МиБ, а минута 4K с iPhone весит 350–400 МБ. Сессия:
+        // start → append_v2 → finish, каждый кусок 8 МиБ (Dropbox просит
+        // кратно 4 МиБ) и через cloudFetch с его повторами — на плохой
+        // связи повторяется кусок, а не весь файл. Заодно это и есть
+        // настоящий прогресс отправки: fetch прогресса не даёт, куски дают.
+        //
+        // Повтор куска может прийти, когда предыдущая попытка на самом деле
+        // дошла, а ответ потерялся: Dropbox отвечает 409 incorrect_offset
+        // и называет верное смещение — продолжаем с него, а не падаем.
+        const DROPBOX_CHUNK = 8 * 1024 * 1024;
+        const DROPBOX_SINGLE_MAX = 16 * 1024 * 1024;
+        const dropboxUploadSession = async (token, path, file, onProgress) => {
+          const hdr = (arg) => ({ 'Authorization': 'Bearer ' + token, 'Dropbox-API-Arg': asciiJSON(arg),
+                                  'Content-Type': 'application/octet-stream' });
+          const total = file.size;
+          const tick = (sent) => { if (onProgress) { try { onProgress(sent, total); } catch (e) {} } };
+          const first = file.slice(0, Math.min(DROPBOX_CHUNK, total));
+          const st = await cloudFetch('https://content.dropboxapi.com/2/files/upload_session/start',
+            { method: 'POST', headers: hdr({ close: false }), body: first });
+          if (!st.ok) await cloudErr(st, 'Dropbox не начал загрузку');
+          const { session_id } = await st.json();
+          let offset = first.size;
+          tick(offset);
+          while (total - offset > DROPBOX_CHUNK) {
+            const chunk = file.slice(offset, offset + DROPBOX_CHUNK);
+            const ap = await cloudFetch('https://content.dropboxapi.com/2/files/upload_session/append_v2',
+              { method: 'POST', headers: hdr({ cursor: { session_id, offset }, close: false }), body: chunk });
+            if (ap.ok) { offset += chunk.size; tick(offset); continue; }
+            let fixed = null;
+            if (ap.status === 409) {
+              try {
+                const j = await ap.clone().json();
+                const err = j && j.error;
+                if (err && err['.tag'] === 'incorrect_offset' && typeof err.correct_offset === 'number') fixed = err.correct_offset;
+              } catch (e) {}
+            }
+            if (fixed === null) await cloudErr(ap, 'Dropbox не принял часть файла');
+            offset = fixed;
+          }
+          const last = file.slice(offset, total);
+          const fin = await cloudFetch('https://content.dropboxapi.com/2/files/upload_session/finish', {
+            method: 'POST',
+            headers: hdr({ cursor: { session_id, offset }, commit: { path, mode: 'overwrite', mute: true } }),
+            body: last
+          });
+          if (!fin.ok) await cloudErr(fin, 'Dropbox не завершил загрузку');
+          tick(total);
+          return fin.json();
+        };
+        const dropboxUpload = async (cfg, file, name, onProgress) => {
+          const token = await dropboxAccess(cfg);
+          const path = '/' + (cfg.folder || 'CineFlow').replace(/^\/+|\/+$/g, '') + '/' + name;
+          let meta;
+          if (file.size > DROPBOX_SINGLE_MAX) {
+            meta = await dropboxUploadSession(token, path, file, onProgress);
+          } else {
+            const up = await cloudFetch('https://content.dropboxapi.com/2/files/upload', {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + token,
+                'Dropbox-API-Arg': asciiJSON({ path, mode: 'overwrite', mute: true }),
+                'Content-Type': 'application/octet-stream'
+              },
+              body: file
+            });
+            if (!up.ok) await cloudErr(up, 'Dropbox не принял файл');
+            meta = await up.json();
+            if (onProgress) { try { onProgress(file.size, file.size); } catch (e) {} }
+          }
+          const full = await dropboxShareLink(token, meta.path_lower);
+          return { full, path: meta.path_lower };
         };
 
         // --- Яндекс.Диск ---
@@ -1266,8 +1757,10 @@
         };
 
         // Единая дверь наружу. Возвращает {full, path} либо бросает ошибку.
-        const cloudUpload = async (cfg, file, name) => {
-          if (cfg.provider === 'dropbox') return dropboxUpload(cfg, file, name);
+        // onProgress(sent, total) — необязателен; сегодня его даёт только
+        // кусочная загрузка Dropbox, остальные облака шлют файл одним PUT.
+        const cloudUpload = async (cfg, file, name, onProgress) => {
+          if (cfg.provider === 'dropbox') return dropboxUpload(cfg, file, name, onProgress);
           if (cfg.provider === 'yandex') return yandexUpload(cfg, file, name);
           if (cfg.provider === 'nextcloud') return nextcloudUpload(cfg, file, name);
           throw new Error('Облако не выбрано');
@@ -2178,10 +2671,82 @@
           );
         };
 
-        const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano }) => {
+        // ПЛЕЕР ПОЛНОЭКРАННОГО ПРОСМОТРА. Штатный <video controls>: пауза,
+        // перемотка, громкость, полный экран, AirPlay — от браузера, без
+        // единой строки жестов, и они не спорят с нашими касаниями. НЕ внутри
+        // ZoomImage: тот забирает указатель и глушит нажатия по кнопкам
+        // плеера. playsInline обязателен: без него iPhone уводит в системный
+        // плеер поверх просмотра. preload="metadata": на площадке связь
+        // мобильная, ролик не тянем до нажатия. Живой <video> в приложении
+        // ОДИН — этот; при закрытии освобождаем декодер (src снять, load()).
+        // Звук включается по нажатию на штатную ▶ — это жест, и браузер его
+        // разрешает; после первого запуска элемент разблокирован навсегда.
+        const VideoView = ({ ref_, src, poster, apiRef, onTap, onPlay, onPause, onState, onError, cantPlay, offline, missing }) => {
+          const vRef = useRef(null);
+          const startedRef = useRef(false);
+          useEffect(() => {
+            const v = vRef.current;
+            if (apiRef) apiRef.current = {
+              time: () => (vRef.current ? vRef.current.currentTime : 0),
+              paused: () => (!vRef.current || vRef.current.paused),
+              toggle: () => { const x = vRef.current; if (!x) return; if (x.paused) x.play().catch(() => {}); else x.pause(); },
+              pause: () => { const x = vRef.current; if (x) x.pause(); }
+            };
+            return () => {
+              if (apiRef) apiRef.current = null;
+              if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
+            };
+          }, []);
+          const stop = (e) => e.stopPropagation();
+          const note = (text, sub) => (
+            <div className="flex flex-col items-center gap-1.5 text-center px-5" style={{ maxWidth: 520 }}>
+              <span style={{ color: 'var(--text)', fontSize: 14.5, fontWeight: 600, lineHeight: 1.35 }}>{text}</span>
+              {sub && <span style={{ color: 'var(--text-2)', fontSize: 12.5, lineHeight: 1.45 }}>{sub}</span>}
+            </div>
+          );
+          const blocked = missing || offline || cantPlay || !src;
+          return (
+            <div className="relative w-full h-full flex items-center justify-center"
+                 onClick={(e) => { if (e.target === e.currentTarget && onTap) onTap(); }}>
+              {blocked ? (
+                <div className="relative flex items-center justify-center" style={{ maxWidth: '100%', maxHeight: 'calc(95vh - 96px)' }}>
+                  <img src={poster} draggable="false" alt=""
+                       style={{ maxWidth: '100%', maxHeight: 'calc(95vh - 96px)', display: 'block', borderRadius: 8, opacity: .8 }} />
+                  <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(26,25,24,.6)', borderRadius: 8 }}>
+                    {missing ? note('Ролик ещё не в облаке', 'Есть только кадр-обложка. Файл отправляется с того устройства, где его загрузили')
+                     : cantPlay ? note(`Этот браузер не играет формат ${codecLabel(ref_.codec) || 'ролика'}`,
+                                       'Ролик снят на iPhone. На iPad и iPhone он откроется, а здесь можно скачать файл и открыть его системным плеером')
+                     : offline ? note('Без связи видео не откроется', 'Ролик в облаке, на устройстве только кадр-обложка')
+                     : note('Ищу адрес ролика…')}
+                  </div>
+                </div>
+              ) : (
+                <video ref={vRef} src={src} poster={poster} controls playsInline preload="metadata"
+                       onPointerDown={stop} onClick={stop}
+                       onPlay={() => { startedRef.current = true; if (onState) onState('playing'); if (onPlay) onPlay(); }}
+                       onPause={() => { if (onState) onState('paused'); if (onPause) onPause(); }}
+                       onWaiting={() => { if (onState) onState('loading'); }}
+                       onCanPlay={() => { if (onState) onState(startedRef.current ? 'playing' : 'ready'); }}
+                       onError={() => { const v = vRef.current; if (onError) onError(v && v.error ? v.error.code : 0); }}
+                       style={{ maxWidth: '100%', maxHeight: 'calc(95vh - 96px)', borderRadius: 8, background: '#000', outline: 'none' }} />
+              )}
+            </div>
+          );
+        };
+
+        const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano,
+                            onStill, onResend, onReload, onProxy, videoStateOf, sceneOf }) => {
             const [currentId, setCurrentId] = useState(initialId);
             const currentIndex = refs.findIndex(r => r.id === currentId);
             const currentRef = refs[currentIndex];
+            const isVideo = !!(currentRef && currentRef.video);
+            // Плеер: ручка для стоп-кадра и пробела, состояние словом для
+            // нижней строки, одноразовый переспрос адреса у Яндекса.
+            const videoApi = useRef(null);
+            const [vState, setVState] = useState('');
+            const ydRetried = useRef(false);
+            const [stillMenu, setStillMenu] = useState(false);
+            const [stillBusy, setStillBusy] = useState(false);
             // Окошко тегов: размечать удобнее всего именно здесь, где кадр
             // виден целиком. Показано оно или нет — помним, чтобы не включать
             // заново на каждом кадре.
@@ -2204,13 +2769,18 @@
                         if (e.key === 'Escape') t.blur();
                         return;
                     }
+                    // Фокус на плеере: стрелки там — перемотка, пробел — пауза,
+                    // и это делает сам браузер; наши стрелки не должны
+                    // одновременно листать кадр.
+                    if (t && t.tagName === 'VIDEO') { if (e.key === 'Escape') t.blur(); return; }
+                    if (e.key === ' ' && isVideo && videoApi.current) { e.preventDefault(); videoApi.current.toggle(); return; }
                     if (e.key === 'Escape') { onClose(); return; }
                     if (e.key === 'ArrowLeft' && currentIndex > 0) setCurrentId(refs[currentIndex - 1].id);
                     if (e.key === 'ArrowRight' && currentIndex < refs.length - 1) setCurrentId(refs[currentIndex + 1].id);
                 };
                 window.addEventListener('keydown', onKey);
                 return () => window.removeEventListener('keydown', onKey);
-            }, [currentIndex, refs, onClose]);
+            }, [currentIndex, refs, onClose, isVideo]);
 
             // Полный размер лежит в облаке, а в проекте — только превью.
             // Показываем сразу превью (оно уже на устройстве), а следом
@@ -2243,7 +2813,10 @@
             const [bigReady, setBigReady] = useState('');
             useEffect(() => {
                 setBigReady('');
-                if (!bigUrl) return;
+                // Видео предзагружать картинкой нельзя: new Image() на адрес
+                // ролика упадёт в onerror и обнулил бы bigUrl — плеер остался
+                // бы без адреса. Плеер сам ходит за файлом по кускам.
+                if (!bigUrl || isVideo) return;
                 let alive = true;
                 const pre = new Image();
                 pre.onload = () => { if (alive) setBigReady(bigUrl); };
@@ -2299,8 +2872,10 @@
             const showChrome = () => {
                 clearTimeout(chromeTimer.current);
                 setChromeOn(true);
-                // Пока открыто окошко тегов, прятать нечего: человек размечает кадр
-                if (touchUI.current && !tagsOpen) chromeTimer.current = setTimeout(() => setChromeOn(false), 2800);
+                // Пока открыто окошко тегов, прятать нечего: человек размечает кадр.
+                // У видео по таймеру не прячем: уходят по запуску ролика,
+                // возвращаются по паузе — пока стоит на паузе, кнопки нужны.
+                if (touchUI.current && !tagsOpen && !isVideo) chromeTimer.current = setTimeout(() => setChromeOn(false), 2800);
             };
             const toggleChrome = () => {
                 if (!touchUI.current) return;
@@ -2312,9 +2887,38 @@
                 return () => clearTimeout(chromeTimer.current);
             }, [currentId, tagsOpen]);
 
+            // Ролик HEVC у зрителя без декодера — играем совместимую копию,
+            // если она есть; адрес у неё свой.
+            const useProxy = isVideo && isHevc(currentRef.codec) && !canPlayHevc() && !!currentRef.proxy;
+            const [proxyUrl, setProxyUrl] = useState('');
+            useEffect(() => {
+                setProxyUrl('');
+                if (!useProxy) return;
+                let alive = true;
+                cloudDirectUrl({ full: currentRef.proxy, cloud: currentRef.proxyCloud, url: '' }).then(u => { if (alive && u) setProxyUrl(u); });
+                return () => { alive = false; };
+            }, [currentRef && currentRef.id, useProxy, currentRef && currentRef.proxy]);
+            useEffect(() => { setVState(''); ydRetried.current = false; setStillMenu(false); }, [currentId]);
+
             if (!currentRef) return null;
 
             const isPano = !!currentRef.pano;
+            // Видео: состояние ролика словом, адрес потока, что играть и почему нет
+            const vst = isVideo ? (videoStateOf ? videoStateOf(currentRef) : (currentRef.full ? 'ok' : 'missing')) : '';
+            const cantPlay = isVideo && isHevc(currentRef.codec) && !canPlayHevc() && !currentRef.proxy;
+            const videoSrc = isVideo ? (useProxy ? proxyUrl : bigUrl) : '';
+            const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+            const sceneHint = isVideo && sceneOf ? sceneOf(currentRef) : null;
+            const onVideoError = () => {
+                // Временный адрес Яндекса живёт недолго: один раз переспрашиваем
+                if ((currentRef.cloud || {}).provider === 'yandex' && !ydRetried.current && !useProxy) {
+                    ydRetried.current = true;
+                    ydCache.delete(currentRef.full);
+                    cloudDirectUrl(currentRef).then(u => { if (u) setBigUrl(u); });
+                    return;
+                }
+                setVState('error');
+            };
             // Скрытое не должно ловить нажатия, иначе невидимая стрелка
             // листает кадр под пальцем.
             const chromeCls = 'transition-opacity duration-200 ' + (chromeOn ? 'opacity-100' : 'opacity-0 pointer-events-none');
@@ -2327,7 +2931,7 @@
                     {/* Метка «это панорама» — она же переключатель.
                         Распознавание ошибается в обе стороны, и починить
                         это должно быть можно прямо здесь, где кадр виден. */}
-                    {onSetPano && (
+                    {onSetPano && !isVideo && (
                         <button onClick={() => onSetPano(currentRef, !isPano)}
                                 title={isPano ? 'Показывать обычным плоским кадром' : 'Это панорама 360° — развернуть на сферу'}
                                 className={'cf-edit-only absolute top-6 left-6 z-20 rounded-full px-3 py-1.5 ' + chromeCls}
@@ -2337,9 +2941,47 @@
                             360°
                         </button>
                     )}
-                    <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]">
+                    {/* СТОП-КАДР: остановленный кадр уходит в референсы рядом с
+                        роликом или в раскадровку сцены. Это запись — cf-edit-only. */}
+                    {isVideo && onStill && vst === 'ok' && !cantPlay && (
+                        <div className={'cf-edit-only absolute top-6 left-6 z-20 flex flex-col items-start gap-2 ' + chromeCls}>
+                            <button onClick={(e) => { e.stopPropagation(); setStillMenu(v => !v); }} disabled={stillBusy || !videoSrc}
+                                    className="rounded-full px-3 py-1.5 flex items-center gap-1.5"
+                                    style={{ background: stillMenu ? 'var(--accent)' : 'rgba(255,255,255,.08)', color: stillMenu ? 'var(--bg)' : 'var(--text)',
+                                             border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 700, minHeight: 34, opacity: stillBusy ? .6 : 1 }}>
+                                <Icons.Still/> {stillBusy ? 'снимаю…' : 'Стоп-кадр'}
+                            </button>
+                            {stillMenu && (
+                                <div className="rounded-lg p-1" onClick={(e) => e.stopPropagation()}
+                                     style={{ background: 'var(--card)', border: '1px solid var(--border)', boxShadow: '0 12px 32px rgba(0,0,0,.5)', minWidth: 230 }}>
+                                    {[['ref', 'В референсы, рядом с видео'],
+                                      ['frame', sceneHint ? `В раскадровку сцены #${sceneHint.number}` : 'В раскадровку сцены']].map(([k, label]) => (
+                                        <button key={k}
+                                                onClick={async (e) => {
+                                                    e.stopPropagation(); setStillMenu(false);
+                                                    if (!videoApi.current) return;
+                                                    const t = videoApi.current.time();
+                                                    videoApi.current.pause();
+                                                    setStillBusy(true);
+                                                    try { await onStill(currentRef, k, t); } finally { setStillBusy(false); }
+                                                }}
+                                                className="w-full text-left rounded-md px-3 flex items-center hover:bg-white/5"
+                                                style={{ minHeight: 40, fontSize: 12.5, color: 'var(--text-2)' }}>{label}</button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]"
+                         style={isVideo ? { paddingBottom: 56 } : undefined}>
                         {currentIndex > 0 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex - 1].id); }} className={'absolute left-2 md:left-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 ' + chromeCls}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg></button> )}
-                        {isPano ? (
+                        {isVideo ? (
+                            <VideoView key={currentRef.id} ref_={currentRef} src={videoSrc} poster={currentRef.url}
+                                       apiRef={videoApi} onTap={toggleChrome} onState={setVState} onError={onVideoError}
+                                       cantPlay={cantPlay} offline={offline && !videoSrc} missing={vst !== 'ok'}
+                                       onPlay={() => { if (touchUI.current) { clearTimeout(chromeTimer.current); setChromeOn(false); } }}
+                                       onPause={() => { clearTimeout(chromeTimer.current); setChromeOn(true); }} />
+                        ) : isPano ? (
                             <PanoView key={currentRef.id} src={panoSrc} maxW={panoMax} onTap={toggleChrome} />
                         ) : (
                             <ZoomImage key={currentRef.id} src={bigReady || currentRef.url} onTap={toggleChrome}
@@ -2397,11 +3039,45 @@
                         {/* Молчаливое ожидание выглядит как «зависло»: на площадке
                             оригинал едет долго, и человек должен видеть, что идёт
                             работа, а не поломка. */}
-                        {!!bigUrl && !bigReady && (
+                        {!isVideo && !!bigUrl && !bigReady && (
                             <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
                                   style={{ color: 'var(--muted)' }}>
                                 полный размер...
                             </span>
+                        )}
+                        {isVideo && (
+                            <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
+                                  style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
+                                ▶ {fmtDur(currentRef.dur)}
+                                {currentRef.size ? ` · ${fmtMB(currentRef.size)}` : ''}
+                                {codecLabel(currentRef.codec) ? ` · ${codecLabel(currentRef.codec)}` : ''}
+                                {useProxy && <span style={{ color: 'var(--muted-2)' }}> · копия{currentRef.proxySilent ? ' без звука' : ''}</span>}
+                                {vState === 'loading' && <span style={{ color: 'var(--muted-2)' }}> · загружается…</span>}
+                                {vState === 'error' && <span style={{ color: '#e08a7c' }}> · облако не отдало ролик</span>}
+                            </span>
+                        )}
+                        {/* Ручки правки ролика — только владельцу: cf-edit-only */}
+                        {isVideo && vst === 'failed' && onResend && (
+                            <button onClick={() => onResend(currentRef)}
+                                    className="cf-edit-only glass-panel rounded-full px-3 py-1.5 text-xs font-bold shrink-0 whitespace-nowrap"
+                                    style={{ color: 'var(--accent)' }}>Повторить отправку</button>
+                        )}
+                        {isVideo && vst === 'missing' && onReload && (
+                            <PhotoSourcePicker media multiple={false} onFiles={(fs) => { if (fs && fs[0]) onReload(currentRef.id, fs[0]); }}
+                                               className="cf-edit-only glass-panel rounded-full px-3 py-1.5 text-xs font-bold shrink-0 whitespace-nowrap"
+                                               style={{ color: 'var(--accent)' }} title="Файл ролика ляжет в эту же карточку">
+                                Загрузить ролик заново
+                            </PhotoSourcePicker>
+                        )}
+                        {isVideo && vst === 'ok' && isHevc(currentRef.codec) && !currentRef.proxy && onProxy && (
+                            <button onClick={() => onProxy(currentRef)} title="Копия в H.264: откроется и там, где HEVC не читают"
+                                    className="cf-edit-only glass-panel rounded-full px-3 py-1.5 text-xs font-bold shrink-0 whitespace-nowrap"
+                                    style={{ color: 'var(--text-2)' }}>Копия для Windows</button>
+                        )}
+                        {isVideo && cantPlay && (bigUrl || currentRef.full) && (
+                            <a href={bigUrl || currentRef.full} target="_blank" rel="noopener"
+                               className="glass-panel rounded-full px-3 py-1.5 text-xs font-bold shrink-0 whitespace-nowrap"
+                               style={{ color: 'var(--text)' }}>Скачать файл</a>
                         )}
                         {isPano && (
                             <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
@@ -2704,6 +3380,12 @@
                             {r.url
                               ? <img src={r.url} alt="" className="w-full h-full object-contain relative z-10 pointer-events-none" draggable="false" />
                               : <span className="absolute inset-0 flex items-center justify-center text-zinc-600 text-[11px]">без картинки</span>}
+                            {r.video && (
+                              <span className="absolute top-1.5 right-1.5 z-20 rounded pointer-events-none"
+                                    style={{ background: 'rgba(0,0,0,.75)', color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 5px' }}>
+                                ▶ {fmtDur(r.dur)}
+                              </span>
+                            )}
                             {on && (
                               <span className="absolute top-1.5 left-1.5 z-20 rounded-full flex items-center justify-center font-bold"
                                     style={{ width: 20, height: 20, background: 'var(--accent)', color: 'var(--bg)', fontSize: 11 }}>
@@ -2819,13 +3501,19 @@
         // «Фотоплёнка», — то есть врала бы. Расширения Safari при этом
         // толком не фильтрует, поэтому нефотографию отсекает уже
         // handleMultiFileUpload — и говорит об этом вслух.
+        // Второй набор `media` — для мест, куда кладут и видео (референсы):
+        // с accept="image/*" фотоплёнка iOS ролики не показывает вовсе,
+        // а камера с video/* предлагает переключатель фото/видео. Кадры
+        // раскадровки и остальные фото-места остаются на первом наборе:
+        // там файл читается картинкой, и ролик лёг бы в базу строкой.
         const PHOTO_SOURCES = [
-          { key: 'cam',  label: 'Снять камерой', hint: 'откроется камера',
-            accept: 'image/*', capture: 'environment' },
-          { key: 'lib',  label: 'Фотоплёнка',    hint: 'снимки на устройстве',
-            accept: 'image/*' },
+          { key: 'cam',  label: 'Снять камерой', hint: 'откроется камера', mediaHint: 'фото или видео',
+            accept: 'image/*', media: 'image/*,video/*', capture: 'environment' },
+          { key: 'lib',  label: 'Фотоплёнка',    hint: 'снимки на устройстве', mediaHint: 'снимки и ролики на устройстве',
+            accept: 'image/*', media: 'image/*,video/*' },
           { key: 'file', label: 'Файлы',         hint: 'загрузки, облака, флешка',
-            accept: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff' }
+            accept: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff',
+            media: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff,.mp4,.mov,.m4v,.webm' }
         ];
         const PHOTO_SOURCE_ICON = { cam: Icons.Camera, lib: Icons.Image, file: Icons.Folder };
         // СПРАШИВАЕМ ТОЛЬКО ТАМ, ГДЕ ЕСТЬ ИЗ ЧЕГО ВЫБИРАТЬ. У компьютера
@@ -2844,7 +3532,7 @@
         // Плитка «+ фото» со списком источников. Своё состояние живёт
         // ВНУТРИ — как у TagInput: открытие меню не должно перерисовывать
         // всю ленту объектов.
-        const PhotoSourcePicker = ({ onFiles, className, style, children, hint, title, multiple = true, cardTap }) => {
+        const PhotoSourcePicker = ({ onFiles, className, style, children, hint, title, multiple = true, cardTap, media = false }) => {
           // Что открыто и КАК показывать: на телефоне шторкой снизу
           // (до верха экрана большой палец не достаёт), на широком
           // экране — списком у самой кнопки.
@@ -2859,6 +3547,9 @@
           const pick = (key) => {
             const el = inputs.current[key];
             setMenu(null);
+            // Это жест человека — единственный момент, когда можно
+            // разблокировать звук для будущей совместимой копии видео.
+            if (media) armMedia();
             // Сброс перед открытием: без него повторный выбор ТОГО ЖЕ
             // файла не даёт события change, и кнопка выглядит нерабочей.
             if (el) { el.value = ''; el.click(); }
@@ -2901,7 +3592,7 @@
                 <span style={{ color: 'var(--accent)', display: 'flex', flexShrink: 0 }}><Ico /></span>
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: 'block', fontSize: phone ? 14 : 12.5, color: 'var(--text)' }}>{s.label}</span>
-                  <span style={{ display: 'block', fontSize: phone ? 11.5 : 10.5, color: 'var(--muted-2)' }}>{s.hint}</span>
+                  <span style={{ display: 'block', fontSize: phone ? 11.5 : 10.5, color: 'var(--muted-2)' }}>{media && s.mediaHint ? s.mediaHint : s.hint}</span>
                 </span>
               </button>
             );
@@ -2930,7 +3621,7 @@
               </button>
               {PHOTO_SOURCES.map(s => (
                 <input key={s.key} ref={el => { inputs.current[s.key] = el; }}
-                       type="file" multiple={multiple} accept={s.accept}
+                       type="file" multiple={multiple} accept={media && s.media ? s.media : s.accept}
                        {...(s.capture ? { capture: s.capture } : {})}
                        className="hidden"
                        onChange={(e) => onFiles(e.target.files)} />
@@ -2943,7 +3634,7 @@
                     <div className="cf-sheet" style={{ zIndex: 301 }} {...stop}>
                       <div className="cf-sheet-grip" />
                       <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
-                        <span style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>Откуда взять фото</span>
+                        <span style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>{media ? 'Откуда взять фото или видео' : 'Откуда взять фото'}</span>
                         <button onClick={() => setMenu(null)} className="ml-auto flex items-center justify-center"
                                 style={{ width: 44, height: 44, border: '1px solid var(--border)', borderRadius: 10, color: 'var(--muted-2)', fontSize: 14 }}>✕</button>
                       </div>
@@ -2994,7 +3685,7 @@
             });
             references.forEach(r => {
               if (match(norm(`${r.label} ${(r.tags || []).join(' ')} ${r.folder}`)))
-                push('Кадр в галерее', 'rf' + r.id, r.label || 'без подписи', (r.tags || []).join(' · '), () => onGo('gallery', { refId: r.id }));
+                push(r.video ? 'Видео в галерее' : 'Кадр в галерее', 'rf' + r.id, r.label || 'без подписи', (r.tags || []).join(' · '), () => onGo('gallery', { refId: r.id }));
             });
             locations.forEach(l => {
               if (match(norm(`${l.name} ${l.address} ${l.description}`)))
@@ -3360,6 +4051,24 @@
           // что кадр уже пристроен, не открывая его: на общем листе
           // из четырёхсот картинок иначе не отличить «ещё не смотрел»
           // от «уже поставил в сцену».
+          // Метка ролика на карточке: «▶ 0:42», всегда видна (планшет без
+          // наведения), нажатий не ловит. Пока ролика нет в облаке — состояние
+          // словом; у остальных участников это «ещё не в облаке».
+          const videoBadge = (r, pos) => {
+            if (!r || !r.video) return null;
+            const st = videoState(r);
+            const text = st === 'ok' ? `▶ ${fmtDur(r.dur)}`
+              : st === 'sending' ? '⟳ отправляется…'
+              : st === 'failed' ? '⚠ не отправлено'
+              : '▶ ещё не в облаке';
+            return (
+              <span className="absolute z-20 rounded-md pointer-events-none"
+                    style={{ ...(pos || { right: 8, bottom: 8 }), background: 'rgba(0,0,0,.75)', fontFamily: 'var(--font-mono)',
+                             color: st === 'failed' ? '#e08a7c' : 'var(--accent)', fontSize: 10, fontWeight: 700,
+                             letterSpacing: '.02em', padding: '2px 6px', whiteSpace: 'nowrap' }}>{text}</span>
+            );
+          };
+
           const refUsedLabel = (r) => {
             if (r.sceneId) {
               const sc = scenes.find(x => x.id === r.sceneId);
@@ -3582,6 +4291,9 @@
             const out = {};
             const need = [];
             refs.forEach(r => {
+              // У видео на лист идёт постер как есть: копии кадра облако не
+              // отдаст, а «тянуть файл и уменьшать» скачало бы весь ролик.
+              if (r.video) return;
               const had = printCache.current.get(r.id);
               if (had) { out[r.id] = had; return; }
               if (!r.full && !(r.cloud || {}).path) return;
@@ -3706,7 +4418,10 @@
                     {photos.map(ph => (
                       <div key={ph.id} className="print-keep" style={{width: solo ? '48%' : '31%', fontSize: '9pt'}}>
                         <img src={printPhotos[ph.id] || ph.url} style={{width: '100%', border: '1px solid #ccc'}} />
-                        {ph.label && <div style={{marginTop: '2pt'}}>{ph.label}</div>}
+                        {/* Ролик на листе — постер с пометкой, иначе кадр читается как фотография точки;
+                            в выгрузке одного объекта ещё и ссылка: PDF сделает её нажимаемой */}
+                        {(ph.label || ph.video) && <div style={{marginTop: '2pt'}}>{ph.video ? `▶ видео · ${fmtDur(ph.dur)}${ph.label ? ' · ' + ph.label : ''}` : ph.label}</div>}
+                        {ph.video && solo && ph.full && <div style={{fontSize: '7.5pt', wordBreak: 'break-all', color: '#555'}}><a href={ph.full}>{ph.full}</a></div>}
                       </div>
                     ))}
                   </div>
@@ -3767,7 +4482,8 @@
           // и без интернета крутить было бы нечего. Поэтому, если оригинал
           // лежит в облаке, готовим превью прямо сейчас — один раз.
           const setRefPano = async (ref, value) => {
-            if (READ_ONLY) return;
+            // У видео переключателя нет: иначе он скачал бы весь ролик как картинку
+            if (READ_ONLY || ref.video) return;
             const up = references.map(r => r.id === ref.id ? { ...r, pano: !!value } : r);
             setReferences(up);
             syncDoc('references', ref.id, up.find(r => r.id === ref.id));
@@ -7081,13 +7797,15 @@
           // человека в этом окне нельзя.
           const migrateStop = useRef(false);
           const [migrate, setMigrate] = useState(null); // {done, total, failed}
+          // Видео мимо: у ролика без `full` в url лежит ПОСТЕР, а не оригинал —
+          // перенос отправил бы картинку в облако под именем ролика.
           const localRefs = useMemo(
-            () => references.filter(r => !r.full && String(r.url || '').startsWith('data:')),
+            () => references.filter(r => !r.full && !r.video && String(r.url || '').startsWith('data:')),
             [references]);
           const migrateToCloud = async () => {
             const cfg = loadCloudCfg();
             if (!cfg.provider) { setCloudError('Сначала подключите облако'); return; }
-            const list = references.filter(r => !r.full && String(r.url || '').startsWith('data:'));
+            const list = references.filter(r => !r.full && !r.video && String(r.url || '').startsWith('data:'));
             if (!list.length) { showToast('Переносить нечего — всё уже в облаке'); return; }
             migrateStop.current = false;
             setMigrate({ done: 0, total: list.length, failed: 0 });
@@ -7984,19 +8702,56 @@
           // place — куда класть: {boardId, x, y}. Задаётся, когда картинку
           // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
+          // Один раз за устройство: ролики с iPhone идут в HEVC, и на Windows
+          // они могут не открыться. Совет человеку, а не автоматика; показан
+          // с задержкой, чтобы не затереть полоску о самой загрузке.
+          const hevcHint = (videos) => {
+            if (!videos.some(f => /quicktime/i.test(f.type || '') || /\.mov$/i.test(f.name || ''))) return;
+            try {
+              if (localStorage.getItem('cf_hevc_hint') === '1') return;
+              localStorage.setItem('cf_hevc_hint', '1');
+            } catch (e) { return; }
+            setTimeout(() => showToast('Ролик с iPhone обычно в формате HEVC: на iPad и iPhone играет, на Windows может нет. Для общих референсов: Настройки → Камера → Форматы → «Наиболее совместимые»'), 3700);
+          };
+
           const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '') => {
             // Загрузка фотографий — самая заметная правка проекта:
             // бросок файла на доску идёт сюда мимо кнопок.
             if (READ_ONLY) return;
               const picked = Array.from(files);
-              const imageFiles = picked.filter(f => f.type.startsWith('image/'));
-              // Через «Файлы» браузер показывает и то, что картинкой не
-              // является (расширения Safari толком не фильтрует). Молча
-              // ничего не делать нельзя: человек выбрал файл и ждёт его.
-              if (imageFiles.length === 0) {
-                if (picked.length) showToast('Это не картинка — выберите фотографию');
+              // Две корзины: картинки и видео. Через «Файлы» браузер показывает
+              // и то, что ни тем ни другим не является (расширения Safari
+              // толком не фильтрует). Молча ничего не делать нельзя: человек
+              // выбрал файл и ждёт его.
+              let mediaFiles = picked.filter(f => isImageFile(f) || isVideoFile(f));
+              if (mediaFiles.length === 0) {
+                if (picked.length) showToast('Это не картинка и не видео — выберите фотографию или ролик');
                 return;
               }
+              // ВОРОТА ДЛЯ ВИДЕО — до всякой работы. Ролику в базе места нет
+              // (предел документа 1 МБ), значит без облака класть его некуда:
+              // отсекаем честно и зовём подключить хранилище, а картинки из
+              // той же пачки грузим как обычно. С облаком — предел размера,
+              // тоже до отправки: ждать минуты ради отказа нельзя.
+              const videos = mediaFiles.filter(isVideoFile);
+              if (videos.length) {
+                const cfg = loadCloudCfg();
+                if (!cfg.provider) {
+                  showToast('Видео хранится только в подключённом облаке: меню «Проект» → «Хранилище фото»'
+                    + (mediaFiles.length > videos.length ? '. Фотографии загружаю' : ''));
+                  mediaFiles = mediaFiles.filter(f => !isVideoFile(f));
+                } else {
+                  const lim = VIDEO_MAX[cfg.provider] || VIDEO_MAX.dropbox;
+                  const big = videos.filter(f => f.size > lim);
+                  if (big.length) {
+                    showToast(`«${big[0].name}» весит ${fmtMB(big[0].size)}, а предел для ${CLOUD_NAMES[cfg.provider]} — ${fmtMB(lim)}. Сожмите или обрежьте ролик в приложении камеры`);
+                    mediaFiles = mediaFiles.filter(f => !big.includes(f));
+                  }
+                  hevcHint(videos);
+                }
+                if (!mediaFiles.length) return;
+              }
+              const imageFiles = mediaFiles;
 
               const existing = new Set(references.map(r => normName(r.label)));
               const dups = imageFiles.filter(f => existing.has(normName(f.name)));
@@ -8025,7 +8780,11 @@
           const compressFile = (file, w, h, q) => new Promise(resolve => {
             const r = new FileReader();
             r.onerror = () => resolve('');
-            r.onloadend = () => compressImage(r.result, w, h, resolve, q);
+            // compressImage при недекодируемом файле (HEIC в браузере без его
+            // поддержки, битый файл) возвращает ВХОДНУЮ строку как есть —
+            // в базу ей нельзя: это мегабайты base64 в документе. Отдаём
+            // пусто, а вызывающий скажет об этом вслух.
+            r.onloadend = () => compressImage(r.result, w, h, (out) => resolve(out === r.result ? '' : out), q);
             r.readAsDataURL(file);
           });
           // Размер превью в базе. Было 640 — этого хватало экрану, но на
@@ -8042,7 +8801,9 @@
           // приложение (см. addTagTo).
           const SCOUT_TAG = 'скаут';
 
-          const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null, folder = '') => {
+          // extra — поля, которые дописываются каждой новой записи (так
+          // стоп-кадр из видео помнит, из какого ролика и с какой секунды он).
+          const uploadFiles = async (imageFiles, sceneId, place = null, locationId = null, folder = '', extra = null) => {
               const cfg = loadCloudCfg();
               const useCloud = !!cfg.provider;
               // Загруженное в объект сразу ложится в папку с его именем
@@ -8053,7 +8814,11 @@
               // Бросить картинку в открытую папку и найти её потом «где-то
               // среди всех» — разные вещи; человек ждёт первого.
               const locFolder = loc ? String(loc.name || '').trim() : String(folder || '').trim();
-              showToast(`Оптимизация ${imageFiles.length} изображений...`);
+              const videoFlags = imageFiles.map(isVideoFile);
+              const nVid = videoFlags.filter(Boolean).length;
+              showToast(nVid
+                ? `Готовлю ${imageFiles.length} ${plur(imageFiles.length, 'файл', 'файла', 'файлов')}...`
+                : `Оптимизация ${imageFiles.length} изображений...`);
               // В облачном режиме в базу кладём только превью, а оригинал
               // уезжает в облако файлом как есть — незачем портить фотографию
               // со скаута пересжатием, если она всё равно хранится снаружи.
@@ -8061,12 +8826,13 @@
               const flatOf = (file) => compressFile(file, useCloud ? CLOUD_THUMB : 1440, useCloud ? CLOUD_THUMB : 1080,
                                                    useCloud ? 0.72 : 0.8);
               // Кто тут панорама — выясняем ДО распаковки, по заголовку файла:
-              // это дёшево и памяти не стоит ничего.
-              const panoFlags = await Promise.all(imageFiles.map(f => detectPano(f).catch(() => false)));
+              // это дёшево и памяти не стоит ничего. Видео мимо: detectPano
+              // при неудаче открывает файл картинкой.
+              const panoFlags = await Promise.all(imageFiles.map((f, i) => videoFlags[i] ? false : detectPano(f).catch(() => false)));
               const prepared = new Array(imageFiles.length);
               // Обычные фотографии — разом, как и раньше.
               await Promise.all(imageFiles.map(async (file, idx) => {
-                if (panoFlags[idx]) return;
+                if (panoFlags[idx] || videoFlags[idx]) return;
                 prepared[idx] = { file, idx, thumb: await flatOf(file) };
               }));
               // Панорамы — строго ПО ОДНОЙ: распаковывать несколько кадров
@@ -8083,41 +8849,84 @@
                   // чем не лечь вовсе.
                   : { file, idx, thumb: await flatOf(file) };
               }
-              const newRefs = prepared.map(({ file, thumb, idx, pano, panoUrl }) => ({
+              // ВИДЕО — тоже по одному: несколько роликов в распаковке разом
+              // планшет не тянет и молча отдаёт пустые кадры. Постер, размер
+              // кадра и длительность — из самого файла, кодек — из заголовка.
+              // Сам файл в память не читается (см. makeVideoAssets).
+              let vi = 0;
+              for (let idx = 0; idx < imageFiles.length; idx++) {
+                if (!videoFlags[idx]) continue;
+                const file = imageFiles[idx];
+                vi++;
+                showToast(nVid > 1 ? `Видео ${vi} из ${nVid}: снимаю кадр-обложку...` : 'Снимаю кадр-обложку с видео...');
+                const a = await makeVideoAssets(file);
+                let codec = '';
+                try { const c = await mp4CodecOf(file); codec = (c && c.video) || ''; } catch (e) {}
+                if (!a.url) showToast(`Кадр из «${file.name}» на этом устройстве не снялся — поставил обложку с именем. На iPad ролик откроется`);
+                prepared[idx] = { file, idx, thumb: a.url || blankPoster(file.name, a.ar), video: true,
+                                  dur: a.dur, ar: a.ar || 16 / 9, mime: file.type || '', size: file.size, codec };
+              }
+              // Что не прочиталось (HEIC в браузере без его поддержки, битый
+              // файл) — не кладём: пустой url это битая карточка, а исходный
+              // base64 — документ на мегабайты. Говорим об этом вслух.
+              const unread = prepared.filter(p => p && !p.thumb);
+              if (unread.length) {
+                const names = unread.map(p => p.file.name).slice(0, 2).join(', ') + (unread.length > 2 ? '…' : '');
+                showToast(`${unread.length} ${plur(unread.length, 'файл не прочитался', 'файла не прочитались', 'файлов не прочитались')} в этом браузере (${names}). HEIC с iPhone откройте с iPad или снимайте в формате «Наиболее совместимые»`);
+              }
+              const ready = prepared.filter(p => p && p.thumb);
+              if (!ready.length) return;
+              const newRefs = ready.map(({ file, thumb, idx, pano, panoUrl, video, dur, ar, mime, size, codec }) => ({
                     id: `ref-${stamp}-${idx}`,
                     sceneId: sceneId || '',
                     locationId: locationId || '',
                     boardId: place ? place.boardId : '',
                     url: thumb,
-                    // Поля панорамы заводим только у панорам: у остальных
-                    // они были бы лишним весом в каждом документе
+                    // Поля панорамы заводим только у панорам, поля видео —
+                    // только у видео: у остальных они были бы лишним весом
+                    // в каждом документе
                     ...(pano ? { pano: true, panoUrl: panoUrl || '' } : {}),
+                    ...(video ? { video: true, dur: Math.round((dur || 0) * 10) / 10, ar, mime, size, codec: codec || '' } : {}),
                     // Брошенные на доску раскладываем лесенкой от точки броска,
                     // остальные — как раньше, от левого верхнего угла экрана.
                     x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
                     y: place ? place.y + Math.floor(idx / 4) * 26 : (250 - canvasOffset.y) / zoom + (idx*20),
                     label: file.name,
                     folder: locFolder,
-                    tags: locationId ? [SCOUT_TAG] : []
+                    tags: [...(locationId ? [SCOUT_TAG] : []), ...(video ? [VIDEO_TAG] : [])],
+                    ...(extra || {})
               }));
               // Показываем сразу, не дожидаясь облака: на площадке связь
               // медленная, и стоять над кружком загрузки никто не будет.
               setReferences(prev => { const up = [...prev, ...newRefs]; newRefs.forEach(nr => syncDoc('references', nr.id, nr)); return up; });
               if (place) showToast(`На доску добавлено ${newRefs.length} шт.`);
-              else if (locationId) showToast(`К объекту добавлено ${newRefs.length} фото`);
-              if (useCloud) sendOriginals(newRefs, prepared.map(p => p.file), cfg);
+              else if (locationId) showToast(`К объекту добавлено ${newRefs.length} ${nVid ? plur(newRefs.length, 'файл', 'файла', 'файлов') : 'фото'}`);
+              if (useCloud) sendOriginals(newRefs, ready.map(p => p.file), cfg);
           };
 
           // Отправка оригиналов в облако. Идёт ПОСЛЕ того, как картинки
           // уже показаны, и по одной: пачка параллельных загрузок с телефона
           // только мешает друг другу, а порядок здесь не важен.
           const sendOriginals = async (refs, files, cfg) => {
-            let ok = 0; const bad = [];
+            let ok = 0; const bad = []; let badVideo = 0;
+            const cloud = CLOUD_NAMES[cfg.provider] || 'Облако';
             for (let i = 0; i < refs.length; i++) {
               const ref = refs[i], file = files[i];
-              if (refs.length > 1) showToast(`${CLOUD_NAMES[cfg.provider] || 'Облако'}: отправляю ${i + 1} из ${refs.length}...`);
+              const isV = !!ref.video;
+              if (isV) { videoQueue.current.set(ref.id, { file, state: 'sending' }); bumpVideoQueue(); }
+              if (isV) showToast(`${cloud}: отправляю видео «${ref.label || ''}» · ${fmtMB(file.size)}. Не сворачивайте приложение`);
+              else if (refs.length > 1) showToast(`${cloud}: отправляю ${i + 1} из ${refs.length}...`);
               try {
-                const { full, path } = await cloudUpload(cfg, file, cloudFileName(ref.id, file.name));
+                // Прогресс есть у видео и идёт кусками (Dropbox): на 400 МБ
+                // тишина в пять минут читается как «зависло».
+                let lastTick = 0;
+                const onProgress = isV ? (sent, total) => {
+                  const now = Date.now();
+                  if (sent < total && now - lastTick < 1500) return;
+                  lastTick = now;
+                  showToast(`${cloud}: отправляю видео · ${fmtMB(sent)} из ${fmtMB(total)}`);
+                } : null;
+                const { full, path } = await cloudUpload(cfg, file, cloudFileName(ref.id, file.name, file.type), onProgress);
                 setReferences(prev => {
                   const up = prev.map(r => r.id === ref.id ? { ...r, full, cloud: { provider: cfg.provider, path } } : r);
                   const t = up.find(r => r.id === ref.id);
@@ -8125,9 +8934,22 @@
                   return up;
                 });
                 ok++;
+                if (isV) {
+                  videoQueue.current.delete(ref.id); bumpVideoQueue();
+                  scheduleProxy({ ...ref, full, cloud: { provider: cfg.provider, path } }, file, cfg);
+                }
               } catch (err) {
                 console.warn('Облако не приняло файл:', err);
                 bad.push(err && err.message ? err.message : String(err));
+                if (isV) {
+                  // У видео отката в базу НЕТ: ролик в документ не влезет
+                  // никогда, а compressFile прочитал бы его целиком в память.
+                  // Постер остаётся, файл ждёт в памяти сеанса, карточка
+                  // говорит «не отправлено» и даёт «Повторить».
+                  videoQueue.current.set(ref.id, { file, state: 'failed' }); bumpVideoQueue();
+                  badVideo++;
+                  continue;
+                }
                 // Оригинал никуда не уехал, а в базе лежит только мелкое
                 // превью — то есть фотография пропала бы. Возвращаем ей
                 // обычный полный размер прямо в базу, как было до облака.
@@ -8143,11 +8965,162 @@
                 });
               }
             }
-            if (!bad.length) showToast(`${CLOUD_NAMES[cfg.provider]}: отправлено ${ok} шт.`);
+            if (!bad.length) showToast(`${cloud}: отправлено ${ok} шт.`);
             else {
               setCloudError(bad[0]);
-              showToast(`⚠️ ${CLOUD_NAMES[cfg.provider]} не принял ${bad.length} из ${refs.length} — фото сохранены в проекте`);
+              showToast(badVideo
+                ? `⚠️ ${cloud} не принял видео (${badVideo} шт.) — ролик не сохранён. Откройте его и нажмите «Повторить отправку»`
+                : `⚠️ ${cloud} не принял ${bad.length} из ${refs.length} — фото сохранены в проекте`);
             }
+          };
+
+          // --- ВИДЕО: очередь отправки на сеанс, повтор, замена файла ---
+          // Файл ролика живёт в памяти ТОЛЬКО до конца сеанса: второй копии
+          // нет нигде (в базу он не влезает), а держать его на устройстве —
+          // отдельное хранилище, которого мы не заводим. Поэтому карточка
+          // без `full` честно говорит «ещё не в облаке», а после перезагрузки
+          // предлагает выбрать файл заново — в ТУ ЖЕ карточку.
+          const videoQueue = useRef(new Map());          // id → {file, state: 'sending' | 'failed'}
+          const [videoQueueVer, setVideoQueueVer] = useState(0);
+          const bumpVideoQueue = () => setVideoQueueVer(v => v + 1);
+          // Состояние ролика словом: ok · sending · failed · missing (файла
+          // в памяти нет — перезагрузились или загружали с другого устройства).
+          const videoState = (r) => {
+            if (!r || !r.video) return '';
+            if (r.full) return 'ok';
+            const q = videoQueue.current.get(r.id);
+            return q ? q.state : 'missing';
+          };
+          const resendVideo = async (ref) => {
+            if (READ_ONLY) return false;
+            const q = videoQueue.current.get(ref.id);
+            if (!q || !q.file) { showToast('Файла уже нет в памяти — выберите ролик заново, он ляжет в эту же карточку'); return false; }
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) { showToast('Сначала подключите облако: меню «Проект» → «Хранилище фото»'); return false; }
+            await sendOriginals([ref], [q.file], cfg);
+            return true;
+          };
+          // Ролик заново в СУЩЕСТВУЮЩУЮ карточку: обложка обновится, а теги,
+          // привязки к сцене и объекту и место на доске останутся. Сюда же
+          // ведёт пустая карточка «Загрузить» на доске, если в неё бросили видео.
+          const reloadVideoInto = async (refId, file) => {
+            if (READ_ONLY) return;
+            if (!isVideoFile(file)) { showToast('Это не видео — выберите ролик'); return; }
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) { showToast('Видео хранится только в подключённом облаке: меню «Проект» → «Хранилище фото»'); return; }
+            const lim = VIDEO_MAX[cfg.provider] || VIDEO_MAX.dropbox;
+            if (file.size > lim) { showToast(`Ролик весит ${fmtMB(file.size)}, а предел для ${CLOUD_NAMES[cfg.provider]} — ${fmtMB(lim)}`); return; }
+            showToast('Снимаю кадр-обложку с видео...');
+            const a = await makeVideoAssets(file);
+            let codec = '';
+            try { const c = await mp4CodecOf(file); codec = (c && c.video) || ''; } catch (e) {}
+            const base = references.find(x => x.id === refId) || { id: refId, tags: [] };
+            const patch = {
+              url: a.url || blankPoster(file.name, a.ar), video: true, dur: Math.round((a.dur || 0) * 10) / 10,
+              ar: a.ar || 16 / 9, mime: file.type || '', size: file.size, codec, full: '', cloud: null,
+              proxy: '', proxyCloud: null, proxyMime: '',
+              label: (base.label && base.label !== 'Референс') ? base.label : file.name,
+              tags: Array.from(new Set([...(base.tags || []), VIDEO_TAG]))
+            };
+            const next = { ...base, ...patch };
+            setReferences(prev => prev.map(x => x.id === refId ? { ...x, ...patch } : x));
+            syncDoc('references', refId, next);
+            hevcHint([file]);
+            await sendOriginals([next], [file], cfg);
+          };
+          // Появилась сеть — один раз пробуем дослать то, что не уехало в
+          // этом сеансе. Один раз: повтор безопасен (overwrite), но гонять
+          // сотни мегабайт по кругу без спроса нельзя.
+          const autoRetried = useRef(new Set());
+          useEffect(() => {
+            if (!isOnline || READ_ONLY) return;
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) return;
+            const pending = [];
+            videoQueue.current.forEach((q, id) => {
+              if (q.state !== 'failed' || autoRetried.current.has(id)) return;
+              autoRetried.current.add(id);
+              const r = references.find(x => x.id === id);
+              if (r && !r.full) pending.push([r, q.file]);
+            });
+            if (!pending.length) return;
+            showToast(`Связь появилась — отправляю ${pending.length} ${plur(pending.length, 'ролик', 'ролика', 'роликов')}`);
+            sendOriginals(pending.map(p => p[0]), pending.map(p => p[1]), cfg);
+          }, [isOnline]);
+
+          // --- СОВМЕСТИМАЯ КОПИЯ ДЛЯ HEVC ---
+          // Ролик с iPhone (HEVC) на Windows без аппаратного декодера не
+          // играет вовсе — чёрный экран без слов. Перекодировать его может
+          // устройство, которое HEVC читает: обычно тот же iPad, с которого
+          // загрузили. Скрытый плеер проигрывает ролик, кадры рисуются на
+          // холст, MediaRecorder пишет H.264 (или webm, где mp4 не умеют).
+          // Идёт в реальном времени, по одному, ПОСЛЕ отправки оригинала и
+          // пока вкладка открыта. Копия уезжает в облако рядом с оригиналом
+          // (`proxy`), и зритель без HEVC играет её.
+          const proxyQueue = useRef([]);
+          const proxyBusy = useRef(false);
+          const proxyPossible = () => typeof makeVideoProxy === 'function' && makeVideoProxy.available() && canPlayHevc();
+          const runProxyQueue = async () => {
+            if (proxyBusy.current) return;
+            const job = proxyQueue.current.shift();
+            if (!job) return;
+            proxyBusy.current = true;
+            try { await makeProxyFor(job.ref, job.file, job.cfg); }
+            catch (e) { console.warn('Совместимая копия:', e); showToast(`Совместимая копия не собралась: ${e && e.message ? e.message : e}`); }
+            proxyBusy.current = false;
+            runProxyQueue();
+          };
+          const scheduleProxy = (ref, file, cfg) => {
+            if (!isHevc(ref.codec) || ref.proxy || !proxyPossible()) return;
+            proxyQueue.current.push({ ref, file, cfg });
+            runProxyQueue();
+          };
+          const makeProxyFor = async (ref, file, cfg) => {
+            const label = ref.label || 'видео';
+            showToast(`Готовлю совместимую копию «${label}» — идёт столько, сколько длится ролик. Не сворачивайте приложение`);
+            let lastTick = 0;
+            const out = await makeVideoProxy(file, {
+              onProgress: (t, d) => {
+                const now = Date.now();
+                if (now - lastTick < 1500) return;
+                lastTick = now;
+                showToast(`Совместимая копия «${label}» · ${fmtDur(t)} из ${fmtDur(d)}`);
+              }
+            });
+            if (!out || !out.blob || !out.blob.size) throw new Error('копия пустая');
+            const ext = /mp4/i.test(out.mime) ? 'mp4' : 'webm';
+            const { full, path } = await cloudUpload(cfg, out.blob, `${ref.id}-h264.${ext}`,
+              (s, t) => showToast(`Отправляю совместимую копию · ${fmtMB(s)} из ${fmtMB(t)}`));
+            setReferences(prev => {
+              const up = prev.map(r => r.id === ref.id
+                ? { ...r, proxy: full, proxyCloud: { provider: cfg.provider, path }, proxyMime: out.mime || '', proxySilent: !!out.silent }
+                : r);
+              const t = up.find(r => r.id === ref.id);
+              if (t) syncDoc('references', ref.id, t);
+              return up;
+            });
+            showToast(`Совместимая копия «${label}» готова: ролик откроется и там, где HEVC не читают${out.silent ? ' (без звука)' : ''}`);
+          };
+          // Копию можно попросить и позже — из просмотра, для роликов,
+          // загруженных раньше или с другого устройства: файл тогда
+          // забирается из облака (Dropbox и Яндекс отдают его странице).
+          const requestProxy = async (ref) => {
+            if (READ_ONLY) return;
+            const cfg = loadCloudCfg();
+            if (!cfg.provider) { showToast('Сначала подключите облако: меню «Проект» → «Хранилище фото»'); return; }
+            if (!proxyPossible()) { showToast('Этот браузер сам HEVC не читает — копию может сделать iPad или iPhone, с которого ролик загружали'); return; }
+            if (proxyQueue.current.some(j => j.ref.id === ref.id)) { showToast('Копия уже в очереди'); return; }
+            let file = (videoQueue.current.get(ref.id) || {}).file || null;
+            if (!file) {
+              try {
+                showToast('Забираю ролик из облака для копии...');
+                const res = await fetch(await cloudDirectUrl(ref));
+                if (!res.ok) throw new Error(String(res.status));
+                file = await res.blob();
+              } catch (e) { showToast('Облако не отдало ролик странице — копию можно сделать только с файла на этом устройстве'); return; }
+            }
+            proxyQueue.current.push({ ref, file, cfg });
+            runProxyQueue();
           };
 
           // --- Картинку можно БРОСИТЬ и ВСТАВИТЬ, а не только выбирать файлом ---
@@ -8165,7 +9138,9 @@
           // как раз одной секунды.
           const pasteSeq = useRef({ base: '', n: 0 });
           const pasteName = (type) => {
-            let ext = String(type || '').split('/')[1] || 'png';
+            // Расширение по таблице, а не обрезкой типа: «video/quicktime»
+            // иначе давал бы «.quic», а дальше облако — «.jpg» у ролика.
+            let ext = EXT_BY_MIME[String(type || '').toLowerCase()] || String(type || '').split('/')[1] || 'png';
             ext = ext.replace(/[^a-z0-9]/gi, '').slice(0, 4).toLowerCase() || 'png';
             const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
             const base = `Вставлено ${p2(d.getDate())}.${p2(d.getMonth() + 1)} ${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}`;
@@ -8187,11 +9162,11 @@
             if (!dt) return [];
             const out = [], seen = new Set();
             const push = (f) => {
-              if (!f || !f.type || !f.type.startsWith('image/')) return;
+              if (!f || !(isImageFile(f) || isVideoFile(f))) return;
               const key = `${f.name}|${f.size}|${f.lastModified || 0}`;
               if (seen.has(key)) return;
               seen.add(key);
-              out.push(!f.name || /^image\.\w+$/i.test(f.name) ? renamedFile(f, pasteName(f.type)) : f);
+              out.push(!f.name || /^(image|video)\.\w+$/i.test(f.name) ? renamedFile(f, pasteName(f.type)) : f);
             };
             Array.from(dt.files || []).forEach(push);
             Array.from(dt.items || []).forEach(it => { if (it.kind === 'file') push(it.getAsFile()); });
@@ -8214,11 +9189,11 @@
             const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
             if (!res.ok) throw new Error(`сервер ответил ${res.status}`);
             const blob = await res.blob();
-            if (!blob.type.startsWith('image/')) throw new Error('это не картинка');
+            if (!blob.type.startsWith('image/') && !blob.type.startsWith('video/')) throw new Error('это не картинка и не видео');
             let name = '';
             try {
               const tail = new URL(url, location.href).pathname.split('/').pop() || '';
-              if (/\.(jpe?g|png|gif|webp|avif|bmp)$/i.test(tail)) name = decodeURIComponent(tail);
+              if (/\.(jpe?g|png|gif|webp|avif|bmp|mp4|mov|m4v|webm)$/i.test(tail)) name = decodeURIComponent(tail);
             } catch (e) {}
             return renamedFile(blob, name || pasteName(blob.type));
           };
@@ -8258,7 +9233,7 @@
             catch (e) { showToast('Буфер прочитать не дали. Нажмите Ctrl+V или перетащите файл'); return; }
             const files = [];
             for (const it of items) {
-              const type = (it.types || []).find(t => t.startsWith('image/'));
+              const type = (it.types || []).find(t => t.startsWith('image/') || t.startsWith('video/'));
               if (!type) continue;
               try { files.push(renamedFile(await it.getType(type), pasteName(type))); } catch (e) {}
             }
@@ -8418,11 +9393,67 @@
             }
           };
 
+          // СТОП-КАДР ИЗ ВИДЕО — в референсы (рядом с роликом: те же сцена,
+          // объект, папка) или в раскадровку сцены новым кадром. Пишется
+          // только существующими путями: uploadFiles и запись кадра как
+          // в updateFrame — своя ветка разъехалась бы с ними. Кадр берётся
+          // отдельным скрытым плеером с crossOrigin: из играющего плеера
+          // в холст не снять (он открыт без CORS, и холст «портится»).
+          // Dropbox и Яндекс отдают файл странице, Nextcloud без отдельной
+          // настройки сервера — нет, и об этом говорится словами.
+          const stillFromVideo = async (ref, target, t) => {
+            if (READ_ONLY) return;
+            let src = '';
+            try { src = await cloudDirectUrl(ref); } catch (e) {}
+            if (!src || src === ref.url) { showToast('Ролика в облаке ещё нет — стоп-кадр снять нечем'); return; }
+            showToast('Снимаю стоп-кадр…');
+            let dataUrl = '';
+            try { dataUrl = await grabVideoFrame(src, t); }
+            catch (e) { showToast(`Стоп-кадр не снялся: ${e && e.message ? e.message : e}`); return; }
+            const tc = fmtDur(t);
+            const base = String(ref.label || 'видео').replace(/\.[a-z0-9]{1,5}$/i, '');
+            const from = { ref: ref.id, t: Math.round((t || 0) * 10) / 10 };
+            if (target === 'frame') {
+              const sc = scenes.find(s => s.id === (lightboxData && lightboxData.sceneId))
+                      || scenes.find(s => s.id === ref.sceneId) || scenes.find(s => s.id === activeSceneId);
+              if (!sc) { showToast('Непонятно, в какую сцену: откройте ролик из сцены или привяжите его к сцене'); return; }
+              const img = await new Promise(res => compressImage(dataUrl, 600, 450, res, 0.85));
+              const f = { id: `sb-${Date.now()}`, sceneId: sc.id, frameNum: nextFrameNum(sc.id).num,
+                          description: `из видео «${base}» · ${tc}`, image: img, from };
+              const up = [...storyboardRef.current, f];
+              storyboardRef.current = up; setStoryboard(up);
+              syncDoc('storyboard', f.id, f);
+              showToast(`Кадр ${f.frameNum} добавлен в раскадровку сцены #${sc.number}`);
+              return;
+            }
+            const file = new File([dataUrlToBlob(dataUrl)], `${base} · ${tc.replace(/:/g, '.')}.jpg`, { type: 'image/jpeg' });
+            await uploadFiles([file], ref.sceneId || (lightboxData && lightboxData.sceneId) || null, null,
+                              ref.locationId || null, ref.folder || '', { from });
+            showToast(`Стоп-кадр ${tc} добавлен в референсы`);
+          };
+
+          // Кадр раскадровки — картинка. Ролик сюда не кладём: путь видео
+          // в раскадровку — кнопка «Стоп-кадр» в просмотре.
+          const frameFileOk = (file) => {
+            if (isVideoFile(file)) { showToast('В кадр раскадровки — только картинка. Откройте видео в просмотре и нажмите «Стоп-кадр»'); return false; }
+            if (!isImageFile(file)) { showToast('Это не картинка — выберите фотографию или скетч'); return false; }
+            return true;
+          };
+
           // Пустая карточка референса на доске: заполняем именно её,
           // а не создаём рядом ещё одну картинку в галерее.
           const fillRefImage = (refId, file) => {
+              // Видео — общим путём в эту же карточку: постер и отправка
+              // в облако. Иначе ролик ушёл бы в compressImage и лёг в url
+              // строкой на сотни мегабайт.
+              if (isVideoFile(file)) { reloadVideoInto(refId, file); return; }
+              if (!isImageFile(file)) { showToast('Это не картинка и не видео — выберите фотографию или ролик'); return; }
               const r = new FileReader();
               r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => {
+                if (!c || c === r.result) {
+                  showToast(`«${file.name}» не прочитался в этом браузере (HEIC?) — откройте с iPad или снимайте в формате «Наиболее совместимые»`);
+                  return;
+                }
                 setReferences(prev => {
                   const up = prev.map(x => x.id === refId
                     ? { ...x, url: c, label: (x.label && x.label !== 'Референс') ? x.label : file.name }
@@ -10321,9 +11352,13 @@
                                 <p style={{ fontSize: 14.5, lineHeight: 1.6, color: 'var(--text-2)', margin: '10px 0 0', whiteSpace: 'pre-line' }}>{s.content}</p>
                               )}
                               {(shots.length ? shots : sceneRefs).map((f, i) => (
-                                <img key={f.id} src={f.image || f.url} draggable="false"
-                                     style={{ width: '100%', borderRadius: 10, display: 'block', marginTop: i === 0 ? 14 : 10,
-                                              aspectRatio: shots.length ? SHOT_RATIO : 'auto', objectFit: shots.length ? 'cover' : 'contain' }} />
+                                <div key={f.id} className="relative" style={{ marginTop: i === 0 ? 14 : 10 }}
+                                     onClick={() => { if (!shots.length) setLightboxData({ scope: sceneRefs.map(x => x.id), scopeLabel: `Сцена #${s.number}`, currentId: f.id }); }}>
+                                  <img src={f.image || f.url} draggable="false"
+                                       style={{ width: '100%', borderRadius: 10, display: 'block',
+                                                aspectRatio: shots.length ? SHOT_RATIO : 'auto', objectFit: shots.length ? 'cover' : 'contain' }} />
+                                  {!shots.length && videoBadge(f)}
+                                </div>
                               ))}
                               <div className="cf-meta" style={{ marginTop: 14 }}>
                                 {frames.length} кадр. · {sceneRefs.length} референс.{loc ? ' · ' + loc.name : ''}
@@ -10354,11 +11389,14 @@
 
                             <div className="flex gap-2 mt-3 overflow-x-auto cf-bleed" style={{ paddingBottom: 2 }}>
                               {strip.map(r => (
-                                <img key={r.id} src={r.url} draggable="false"
+                                <div key={r.id} className="relative shrink-0"
                                      onClick={() => setLightboxData({ scope: strip.map(x => x.id), scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
-                                     style={{ width: 230, height: 130, objectFit: 'cover', borderRadius: 9, flexShrink: 0 }} />
+                                     style={{ width: 230, height: 130, borderRadius: 9, overflow: 'hidden' }}>
+                                  <img src={r.url} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                  {videoBadge(r)}
+                                </div>
                               ))}
-                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, sceneMode === 'scout' ? null : s.id, null, sceneMode === 'scout' && loc ? loc.id : null)}
+                              <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, sceneMode === 'scout' ? null : s.id, null, sceneMode === 'scout' && loc ? loc.id : null)}
                                      className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1"
                                      style={{ width: 130, height: 130, border: '1px dashed var(--border)', borderRadius: 9, color: 'var(--muted-2)', fontSize: 12, boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 20, lineHeight: 1 }}>+</span>
@@ -10412,7 +11450,7 @@
                                        вовсе. На планшете половинки две, и здесь их две. */
                                     <div className="flex w-full" style={{ aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 6, boxSizing: 'border-box', overflow: 'hidden' }}>
                                       <PhotoSourcePicker multiple={false}
-                                              onFiles={(fs) => { const file = fs[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }}
+                                              onFiles={(fs) => { const file = fs[0]; if (!file || !frameFileOk(file)) return; const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => { if (c && c !== rd.result) patchFrame(f.id, { image: c }); else showToast('Файл не прочитался в этом браузере'); }); rd.readAsDataURL(file); }}
                                               className="cf-edit-only flex-1 flex flex-col items-center justify-center gap-1"
                                               style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase' }}>
                                         <Icons.Image />фото
@@ -10590,7 +11628,14 @@
                               ))}
                               {sceneRefs.length > 0 && frames.filter(f => f.image).length === 0 && (
                                 <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', marginTop: 22 }}>
-                                  {sceneRefs.map(r => <img key={r.id} src={r.url} draggable="false" style={{ width: '100%', borderRadius: 10, display: 'block' }} />)}
+                                  {/* Нажатие открывает просмотр: ролик режиссёру показывают оттуда */}
+                                  {sceneRefs.map(r => (
+                                    <div key={r.id} className="relative cursor-pointer"
+                                         onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}>
+                                      <img src={r.url} draggable="false" style={{ width: '100%', borderRadius: 10, display: 'block' }} />
+                                      {videoBadge(r)}
+                                    </div>
+                                  ))}
                                 </div>
                               )}
                               <div className="cf-meta" style={{ marginTop: 18 }}>
@@ -10620,10 +11665,11 @@
                                    style={{ width: 340, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
                                 <img src={r.url} style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} draggable="false" />
                                 {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                {videoBadge(r, { right: 6, top: 6 })}
                               </div>
                             ))}
                             {loc ? (
-                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, loc.id)}
+                              <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, loc.id)}
                                      hint="камера · плёнка · файлы"
                                      className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
                                      style={{ width: 180, height: 200, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', boxSizing: 'border-box' }}>
@@ -10793,13 +11839,14 @@
                                          style={{ width: 210, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
                                       <img src={r.url} style={{ width: '100%', height: 118, objectFit: 'cover', display: 'block' }} draggable="false" />
                                       {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                      {videoBadge(r, { left: 6, top: 6 })}
                                       <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
                                               title="Убрать из сцены — картинка останется в галерее"
                                               className="cf-edit-only absolute opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center"
                                               style={{ top: 6, right: 6, width: 24, height: 24, borderRadius: 6, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 11 }}>✕</button>
                                     </div>
                                   ))}
-                                  <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, s.id)}
+                                  <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, s.id)}
                                          className="cf-edit-only shrink-0 flex flex-col items-center justify-center"
                                          style={{ width: 110, height: 118, border: '1px dashed var(--border)', borderRadius: 8, color: 'var(--muted-2)', fontSize: 18, boxSizing: 'border-box' }}
                                          title="Загрузить картинки в сцену">+
@@ -10824,6 +11871,7 @@
                                          style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
                                       <img src={r.url} style={{ width: '100%', display: 'block' }} draggable="false" />
                                       {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                      {videoBadge(r)}
                                     </div>
                                   ))}
                                   <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
@@ -10867,7 +11915,7 @@
                                             значит, его СНИМАЮТ. Отсюда тот же выбор
                                             источника, что и у фотографий. */}
                                         <PhotoSourcePicker multiple={false}
-                                                onFiles={(fs) => { const file = fs[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }}
+                                                onFiles={(fs) => { const file = fs[0]; if (!file || !frameFileOk(file)) return; const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => { if (c && c !== rd.result) patchFrame(f.id, { image: c }); else showToast('Файл не прочитался в этом браузере'); }); rd.readAsDataURL(file); }}
                                                 className="flex-1 flex flex-col items-center justify-center cf-edit-only" style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)' }}>
                                           <Icons.Image /><span style={{ fontSize: 10, marginTop: 2 }}>файл</span>
                                         </PhotoSourcePicker>
@@ -11199,7 +12247,7 @@
                           )}
                         </div>
                         <div className="p-3 shrink-0 cf-edit-only space-y-2" style={{ borderTop: '1px solid var(--border)' }}>
-                          <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
+                          <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
                                  className="w-full flex items-center justify-center gap-2 rounded-lg transition-colors hover:bg-white/5"
                                  style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                             <Icons.Gallery /> Загрузить референсы
@@ -11266,7 +12314,7 @@
                               <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder() })}
                                       title="Вставить картинку из буфера обмена"
                                       className="cf-chip shrink-0 flex items-center gap-1.5"><Icons.Paste /> Вставить</button>
-                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
+                              <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
                                      className="md:hidden flex items-center gap-2 rounded-lg px-4 shrink-0"
                                      style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-2)' }}>
                                   + Загрузить
@@ -11344,7 +12392,7 @@
                                         </button>
                                         <button onClick={(e) => { e.stopPropagation(); setConfirmAction({
                                                     title: 'Удалить референс?',
-                                                    message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта. Сразу после удаления его можно будет вернуть кнопкой.',
+                                                    message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта. Сразу после удаления его можно будет вернуть кнопкой.' + (ref.video ? ' Файл ролика в облаке останется и место продолжит занимать.' : ''),
                                                     onConfirm: () => deleteRefs([ref]) }); }}
                                                 title="Удалить референс"
                                                 className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
@@ -11406,6 +12454,7 @@
                                                 style={{ background: 'rgba(0,0,0,.75)', color: 'var(--accent)',
                                                          fontSize: 10, fontWeight: 700, letterSpacing: '.04em', padding: '2px 5px' }}>360°</span>
                                         )}
+                                        {videoBadge(ref)}
                                     </div>
                                     <div className="p-3 space-y-2 bg-black/30">
                                         <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
@@ -11664,6 +12713,8 @@
                                      style={{ width: locPhotosOpen ? 'auto' : 320, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}
                                      onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
                                   <img src={r.url} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} draggable="false" loading="lazy" />
+                                  {/* Метка слева сверху: правый верх занят крестиком, низ — подписью */}
+                                  {videoBadge(r, { left: 6, top: 6 })}
                                   {/* Отвязываем от объекта, а НЕ удаляем из проекта —
                                       это правило всего приложения */}
                                   <button onClick={(e) => { e.stopPropagation(); setRefLocation(r.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
@@ -11682,7 +12733,7 @@
                                   файлы. Раньше кнопка уводила прямо в камеру, и
                                   снимок, уже лежащий в телефоне, положить сюда
                                   было нечем. */}
-                              <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
+                              <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
                                      hint="камера · плёнка · файлы"
                                      className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
                                      style={{ width: locPhotosOpen ? 'auto' : 160, height: 190, border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted-2)', boxSizing: 'border-box' }}>
@@ -12713,7 +13764,7 @@
                             {references.filter(r => r.boardId === activeBoardId).map(ref => (
                             <div key={ref.id} data-card-id={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${(resizingRef && resizingRef.id === ref.id) || isDragging(ref.id) ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'} ${hoveredSceneId === ref.id ? 'scene-drop-target' : ''}`}>
                                 <div className="relative bg-black/60 rounded-lg overflow-hidden border border-white/10" style={{ aspectRatio: String(refAR(ref)) }}>
-                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className={`cf-edit-only absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-8 h-8 rounded-lg transition-all text-xs z-20 flex items-center justify-center ${selectedWbItems.includes(ref.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}><Icons.Trash/></button>
+                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.' + (ref.video ? ' Файл ролика в облаке останется и место продолжит занимать.' : ''), onConfirm:()=> deleteRefs([ref])})} className={`cf-edit-only absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-8 h-8 rounded-lg transition-all text-xs z-20 flex items-center justify-center ${selectedWbItems.includes(ref.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}><Icons.Trash/></button>
                                 {/* Убрать с доски — не то же, что удалить: в галерее
                                     референс остаётся. У сцены и документа такая
                                     кнопка есть, у референса её не было вовсе, и
@@ -12725,6 +13776,21 @@
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={bgStyle(ref.id, ref.url)}></div>
                                     <img src={ref.url} onLoad={(e) => noteRefRatio(ref, e.target)}
                                          className="w-full h-full object-contain pointer-events-none relative z-[1]" draggable="false" />
+                                    {ref.video && (
+                                      /* ▶ во всё окно постера с меткой data-card-tap: карточка
+                                         таскается и за него, а отпускание без сдвига открывает
+                                         просмотр. Играть на доске нельзя: жест переноса и щипок
+                                         забрали бы указатель у плеера, а каждая карточка держала
+                                         бы декодер. Заодно это единственная дверь с доски в просмотр. */
+                                      <button type="button" data-card-tap="1" title="Открыть видео"
+                                              onClick={(e) => { e.stopPropagation(); setLightboxData({ scope: references.filter(x => x.boardId === activeBoardId).map(x => x.id), scopeLabel: 'Доска', currentId: ref.id }); }}
+                                              className="absolute inset-0 z-[5] flex items-center justify-center"
+                                              style={{ pointerEvents: 'auto', background: 'transparent' }}>
+                                        <span className="flex items-center justify-center rounded-full"
+                                              style={{ width: 46, height: 46, background: 'rgba(240,238,230,.9)', color: '#1a1918', fontSize: 18, paddingLeft: 3 }}>▶</span>
+                                        {videoBadge(ref, { right: 6, bottom: 6 })}
+                                      </button>
+                                    )}
                                 </React.Fragment>) : (
                                     /* Заполняем именно эту карточку, а не создаём рядом новую */
                                     <PhotoSourcePicker multiple={false} cardTap
@@ -12798,9 +13864,9 @@
                                        пропускает по метке data-card-tap, а на
                                        отпускании без сдвига доска зовёт её сама. */
                                     <PhotoSourcePicker multiple={false} cardTap
-                                        onFiles={(fs) => { const file = fs[0]; if (!file) return;
+                                        onFiles={(fs) => { const file = fs[0]; if (!file || !frameFileOk(file)) return;
                                           const rd = new FileReader();
-                                          rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => updateFrame(f.id, { image: c }));
+                                          rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => { if (c && c !== rd.result) updateFrame(f.id, { image: c }); else showToast('Файл не прочитался в этом браузере'); });
                                           rd.readAsDataURL(file); }}
                                         style={{ pointerEvents: 'auto' }}
                                         className="cf-edit-only text-[11px] font-bold text-zinc-600 hover:text-indigo-400 w-full h-full flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/5">
@@ -14060,7 +15126,7 @@
               {dupPrompt && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[420] p-4">
                   <div className="cf-modal-box glass-panel rounded-lg p-6 max-w-md w-full relative">
-                    <h3 className="text-lg font-bold text-white mb-2">Такие картинки уже есть</h3>
+                    <h3 className="text-lg font-bold text-white mb-2">Такие файлы уже есть</h3>
                     <p className="text-sm text-zinc-400 mb-3 leading-relaxed">
                       {dupPrompt.names.length === dupPrompt.total
                         ? `Все ${dupPrompt.total} выбранных файлов уже загружены в проект под теми же именами.`
@@ -14139,6 +15205,7 @@
                     <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
                       <p>Обычно фотографии лежат внутри самого проекта. Это удобно, пока их немного: примерно после сотни проект становится тяжёлым и начинает медленно открываться.</p>
                       <p>Можно хранить их в своём облаке. Тогда в проекте останется только маленькое превью — галерея и доска будут открываться быстро и без интернета, а полный размер подтянется, когда откроете фотографию на весь экран.</p>
+                      <p><b className="text-zinc-200">Видео живёт только здесь.</b> Без облака ролики в проект не загружаются: в самом проекте остаётся кадр-обложка, а ролик играет из облака при связи. Ролик с телефона весит 50–400 МБ и занимает место в вашем облаке; при удалении карточки файл в облаке остаётся, как и у фотографий. У бесплатного Dropbox общий предел трафика ссылок — 20 ГБ в сутки на все ссылки аккаунта: несколько роликов, которые группа посмотрела по паре раз, могут на сутки погасить и фотографии. На тарифе Plus предел 1 ТБ.</p>
                       {/* Раньше тут стояло «настройка запоминается на этом
                           устройстве, на другом её надо повторить» — и это
                           было главной причиной, по которой с планшета
@@ -14451,7 +15518,8 @@
                       <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
                         Отдельный HTML со вшитыми данными: открывается без интернета,
                         изменить нельзя вообще. Не обновляется — при правках пришлите новый.
-                        Файл тяжёлый, в нём лежат сами картинки.
+                        Файл тяжёлый, в нём лежат сами картинки. Видео в файле — обложка и ссылка:
+                        ролик играет только при связи.
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Доска'], ['all', 'Весь проект']].map(([scope, label]) => (
@@ -14912,7 +15980,10 @@
                   return <Lightbox refs={list} scopeLabel={lightboxData.scopeLabel} initialId={lightboxData.currentId}
                                    onClose={() => setLightboxData(null)}
                                    hints={tagHints} onAddTag={addTagTo} onRemoveTag={removeTagFrom}
-                                   onSetPano={setRefPano} />;
+                                   onSetPano={setRefPano}
+                                   onStill={stillFromVideo} onResend={resendVideo} onReload={reloadVideoInto} onProxy={requestProxy}
+                                   videoStateOf={videoState}
+                                   sceneOf={(r) => scenes.find(s => s.id === (lightboxData.sceneId || (r && r.sceneId) || activeSceneId)) || null} />;
               })()}
 
               {/* Печатная версия. Содержимое зависит от выбранной кнопки
@@ -15079,7 +16150,7 @@
                           {pRefs.map(r => (
                             <div key={r.id} style={{width: '30%', fontSize: '9pt'}}>
                               <img src={r.url} style={{width: '100%', border: '1px solid #ccc'}} />
-                              <div>{r.label}</div>
+                              <div>{r.video ? `▶ видео · ${fmtDur(r.dur)}${r.label ? ' · ' + r.label : ''}` : r.label}</div>
                             </div>
                           ))}
                         </div>

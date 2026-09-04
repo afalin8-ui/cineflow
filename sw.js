@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v10';
+const VERSION = 'cineflow-v11';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -86,6 +86,15 @@ self.addEventListener('message', event => {
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
+
+  // ВИДЕО И ЗВУК ИДУТ МИМО КЭША. Плеер ходит частичными запросами
+  // (заголовок Range), а caches.match заголовок Range не различает и
+  // отдал бы на такой запрос ПОЛНЫЙ ответ из кэша — Safari на iPad
+  // такое видео не играет вовсе, Chrome на столе разработчика прощает,
+  // и на стенде беды не видно. Вдобавок ответ на весь ролик (сотни МБ)
+  // лёг бы в APP_CACHE, а частичный ответ 206 cache.put отвергает
+  // с ошибкой. Поэтому без respondWith: браузер сам сходит в сеть.
+  if (req.headers.has('range') || req.destination === 'video' || req.destination === 'audio') return;
 
   let url;
   try { url = new URL(req.url); } catch (e) { return; }
