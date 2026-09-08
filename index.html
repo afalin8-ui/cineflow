@@ -552,6 +552,26 @@
           // вкладки: непонятное слово читаем как «весь проект».
           return out.length ? out : CF_ALL_VIEWS;
         })();
+
+        // ДОСКАМИ ДЕЛЯТСЯ ПО ОДНОЙ. Ссылка «Доска» открывала ВСЕ доски
+        // проекта: показать художнику раскадровку значило показать заодно
+        // и разбор с продюсером на соседней вкладке. Теперь рядом с
+        // `?view=board` едет `?board={id}` — тогда видна ровно эта доска,
+        // без соседних вкладок и без схем света.
+        //
+        // Чего эта ссылка НЕ делает: она не прячет данные комнаты. Код
+        // комнаты в ней есть, а подписки в приложении общие — при желании
+        // до остального всё равно дотянуться можно. Прячем мы ЭКРАН, а не
+        // содержимое, и в окне «Доступ» сказано об этом прямо: кому нельзя
+        // показывать проект целиком, тому шлют файл-снимок одной доски —
+        // в нём других досок нет физически.
+        // Читаем `?board=` ТОЛЬКО у ссылки-просмотра. Оставшийся в адресе
+        // параметр не должен прятать доски у самого хозяина проекта:
+        // человек скопировал ссылку, вернулся к себе — и половины досок
+        // как не бывало, без единого объяснения.
+        const CF_BOARD_SCOPE = CF_SNAPSHOT
+          ? (CF_SNAPSHOT.board || '')
+          : (CF_VIEW_SCOPE ? (new URLSearchParams(location.search).get('board') || '') : '');
         if (READ_ONLY) document.body.classList.add('cf-readonly');
 
         // --- Комната проекта ---
@@ -699,6 +719,41 @@
           });
           return xlsxLoading;
         };
+
+        // Чтение PDF — по той же причине по требованию: библиотека весит
+        // 320 КБ, а нужна она только тому, кто бросил PDF. Версия 3-я
+        // намеренно: с 4-й Mozilla раздаёт только модули, а сборки у нас
+        // нет и подключить их обычным тегом script нельзя.
+        // Рабочий поток (`workerSrc`) лежит на том же CDN: страница и
+        // поток с разных адресов, поэтому библиотека сама заворачивает
+        // его в местную обёртку — иначе браузер запретил бы такой поток.
+        // Не поднялся поток — pdf.js считает страницу в главном потоке:
+        // медленнее, но работает.
+        const PDFJS_VER = '3.11.174';
+        let pdfjsLoading = null;
+        const loadPdfJs = () => {
+          if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+          if (!pdfjsLoading) pdfjsLoading = new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/pdf.min.js`;
+            s.onload = () => {
+              try {
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/pdf.worker.min.js`;
+              } catch (e) {}
+              res(window.pdfjsLib);
+            };
+            s.onerror = () => { pdfjsLoading = null; rej(new Error('не удалось загрузить чтение PDF')); };
+            document.head.appendChild(s);
+          });
+          return pdfjsLoading;
+        };
+
+        // PDF — это не картинка, но приносят его вместо картинки постоянно:
+        // раскадровка от художника, план света, схема площадки, лист
+        // референсов. Отличаем по типу, а если браузер тип не сказал
+        // (так бывает с файлами из «Файлов» на iPad) — по расширению.
+        const isPdfFile = (f) => !!f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
 
         const compressImage = (base64Str, maxWidth, maxHeight, callback, quality) => {
           const img = new Image();
@@ -2824,8 +2879,8 @@
             accept: 'image/*', capture: 'environment' },
           { key: 'lib',  label: 'Фотоплёнка',    hint: 'снимки на устройстве',
             accept: 'image/*' },
-          { key: 'file', label: 'Файлы',         hint: 'загрузки, облака, флешка',
-            accept: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff' }
+          { key: 'file', label: 'Файлы',         hint: 'снимки, PDF, флешка',
+            accept: '.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.avif,.bmp,.tif,.tiff,.pdf' }
         ];
         const PHOTO_SOURCE_ICON = { cam: Icons.Camera, lib: Icons.Image, file: Icons.Folder };
         // СПРАШИВАЕМ ТОЛЬКО ТАМ, ГДЕ ЕСТЬ ИЗ ЧЕГО ВЫБИРАТЬ. У компьютера
@@ -3164,10 +3219,17 @@
           // свои референсы и свой холст.
           const DEFAULT_BOARD = { id: 'board-main', title: 'Основная', order: 0 };
           const [boards, setBoards] = useState(() => safeLoad('cf_boards', [DEFAULT_BOARD], true));
-          const [activeBoardId, setActiveBoardId] = useState(() => localStorage.getItem('cf_active_board') || DEFAULT_BOARD.id);
+          const [activeBoardId, setActiveBoardId] = useState(
+            () => CF_BOARD_SCOPE || localStorage.getItem('cf_active_board') || DEFAULT_BOARD.id);
           const sortedBoards = useMemo(() => {
             const list = (boards && boards.length) ? [...boards] : [DEFAULT_BOARD];
-            return list.sort((a, b) => (a.order || 0) - (b.order || 0));
+            // Поделились ОДНОЙ доской — остальных для этой ссылки нет:
+            // ни вкладки, ни выбора. Если названной доски в списке ещё
+            // нет (облако не ответило), показываем как обычно — иначе
+            // экран был бы пустым без объяснения, а через миг доска
+            // приедет и всё встанет на место.
+            const only = CF_BOARD_SCOPE ? list.filter(b => b.id === CF_BOARD_SCOPE) : [];
+            return (only.length ? only : list).sort((a, b) => (a.order || 0) - (b.order || 0));
           }, [boards]);
           // Если выбранной доски больше нет (удалили на другом устройстве) —
           // возвращаемся на первую, иначе доска покажется пустой без причины.
@@ -3183,7 +3245,13 @@
           // это так: нажал «новая доска» — и приложения нет. Запомнить,
           // какая доска открыта, — не та задача, ради которой стоит терять
           // приложение, поэтому молча переживаем отказ.
-          useEffect(() => { try { localStorage.setItem('cf_active_board', activeBoardId); } catch (e) {} }, [activeBoardId]);
+          // В режиме просмотра НЕ запоминаем: чужая ссылка не должна
+          // переставлять человеку доску в его собственном проекте —
+          // то же правило, что у кода комнаты.
+          useEffect(() => {
+            if (READ_ONLY) return;
+            try { localStorage.setItem('cf_active_board', activeBoardId); } catch (e) {}
+          }, [activeBoardId]);
           // Старые стикеры/референсы созданы без boardId — считаем их
           // принадлежащими первой доске, чтобы ничего не пропало.
           const belongsToBoard = (item, boardId) => (item.boardId || DEFAULT_BOARD.id) === boardId;
@@ -5309,16 +5377,23 @@
               ctx.strokeRect(c.x + 7, c.y + 7, c.w - 14, c.h - 38);
               ctx.setLineDash([]);
             }
-            const ih = c.h - 24;
+            // У кадра раскадровки под картинкой стоит строка с номером —
+            // ради номера кадр на доске и лежит. У референса подписи на
+            // доске больше нет (её показывает только выделенная карточка,
+            // см. refH), и в выгрузке её быть тоже не должно: картинка
+            // обязана совпадать с тем, что человек видит на экране.
+            const capH = c.t === 'frame' ? 24 : 10;
+            const ih = c.h - capH;
             if (im) {
               // Вписываем как на доске: по ширине, с сохранением пропорций.
-              const k = Math.min(c.w - 12 / 1, im.width) / im.width;
               const dw = c.w - 12, dh = Math.min(ih - 4, im.height * (dw / im.width));
               ctx.save(); round(c.x + 6, c.y + 6, dw, dh, 6); ctx.clip();
               ctx.drawImage(im, c.x + 6, c.y + 6, dw, dh); ctx.restore();
             }
-            ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `11px ${FONT_UI}`;
-            ctx.fillText(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 16);
+            if (c.t === 'frame') {
+              ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `11px ${FONT_UI}`;
+              ctx.fillText(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 16);
+            }
           };
 
           const exportBoard = async (fmt) => {
@@ -5386,9 +5461,12 @@
                     wrapText(mc, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
                   } else {
                     const src = cardImg(c);
-                    if (src) parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - 28)}" preserveAspectRatio="xMidYMid slice" href="${esc(src)}"/>`);
+                    // Полоса под подпись — только у кадра раскадровки:
+                    // у референса на доске подписи нет (см. paintCardOn).
+                    const capH = c.t === 'frame' ? 28 : 12;
+                    if (src) parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - capH)}" preserveAspectRatio="xMidYMid slice" href="${esc(src)}"/>`);
                     else if (c.t === 'frame') parts.push(`<rect x="${rn(c.x + 7)}" y="${rn(c.y + 7)}" width="${rn(c.w - 14)}" height="${rn(c.h - 38)}" rx="6" fill="none" stroke="rgba(255,255,255,.16)" stroke-dasharray="5 4"/>`);
-                    parts.push(txt(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
+                    if (c.t === 'frame') parts.push(txt(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
                   }
                 });
                 shapesRef.current.forEach(s => {
@@ -5640,6 +5718,17 @@
             const out = x < vis.x || y < vis.y || x + box.w > vis.x + vis.w || y + box.h > vis.y + vis.h;
             if (out) { x = vis.x + (vis.w - box.w) / 2; y = vis.y + (vis.h - box.h) / 2; }
             return { dx: x - box.x, dy: y - box.y };
+          };
+          // Середина того, что сейчас видно, в координатах доски. Доска
+          // 4000×4000, и всё, что кладётся не «куда ткнули», обязано лечь
+          // сюда: положенное в начало доски человек просто не найдёт.
+          // Считаем от `viewRef`, а не от состояния: во время жеста
+          // состояние показывает вчерашнее.
+          const boardVisibleCenter = () => {
+            const host = liveCanvasRef.current, v = viewRef.current;
+            const vw = host ? host.clientWidth : 0, vh = host ? host.clientHeight : 0;
+            if (!vw || !vh) return { x: 0, y: 0 };
+            return { x: (-v.x + vw / 2) / v.z, y: (-v.y + vh / 2) / v.z };
           };
 
           const pasteClip = () => {
@@ -6636,6 +6725,80 @@
           // бы мимо экрана. Жест на площадке обрывается постоянно: чужой
           // звонок, свёрнутое приложение, палец, уехавший за край.
           useEffect(() => { commitView(); }, [currentView, activeBoardId]);
+
+          // --- КОЛЕСО И ТАЧПАД НОУТБУКА ---
+          // Щипок двумя пальцами по тачпаду браузер отдаёт НЕ жестом, а
+          // колесом с поднятым ctrlKey. Пока его не отменить, браузер
+          // масштабирует ВСЮ СТРАНИЦУ: доска при этом тоже приближалась,
+          // и выходило, что интерфейс разъезжается, а холст живёт своей
+          // жизнью. Отсюда `preventDefault`, а он требует слушателя,
+          // НАВЕШЕННОГО РУКАМИ с `passive: false`: React вешает колесо
+          // на корень страницы пассивным, и отмена из `onWheel` не
+          // действует вовсе — браузер только пишет в консоль, что не может.
+          //
+          // Три случая, и они разные:
+          //   щипок по тачпаду (ctrl) — масштаб, шаг мелкий;
+          //   два пальца по тачпаду  — ПАНОРАМА, как в любой доске;
+          //   колесо мыши            — масштаб, как было всегда.
+          // Отличаем по самой дельте: настоящее колесо шагает крупно и
+          // ровно (100 точек за щелчок или строками), тачпад сыплет
+          // мелкими значениями и почти всегда с боковой составляющей.
+          // Раньше шаг был ОДИН на любое событие (0,9 / 1,1), и тачпад,
+          // присылающий десятки событий на движение, пролетал весь
+          // масштаб за мгновение.
+          useEffect(() => {
+            if (currentView !== 'whiteboard') return;
+            const host = document.getElementById('whiteboard-canvas');
+            if (!host) return;
+            // Внутри доски есть СВОИ прокручиваемые списки — «Положить на
+            // доску», панель свойств фигуры, панель инструментов. Колесо
+            // над ними обязано прокручивать их, а не доску: отменив
+            // событие, мы отняли бы у списка прокрутку совсем. Щипок —
+            // исключение: страницу зумить нельзя нигде.
+            const scrollable = (node) => {
+              for (let el = node; el && el !== host; el = el.parentElement) {
+                if (el.nodeType !== 1) continue;
+                const s = getComputedStyle(el);
+                if (/(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
+                if (/(auto|scroll)/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1) return true;
+              }
+              return false;
+            };
+            const onWheel = (e) => {
+              const pinch = e.ctrlKey || e.metaKey;
+              const t = e.target;
+              // Сам холст проверять незачем, и это не мелочь: при панораме
+              // колесо сыплет событиями, а `getComputedStyle` заказывает
+              // пересчёт стилей — платить за него на каждое движение
+              // пальца мы отказались ещё в самой панораме.
+              const surface = t === host || t.id === 'wb-container' || t.id === 'whiteboard-canvas'
+                           || (t.tagName === 'CANVAS' && !(t.closest && t.closest('.cf-mini')));
+              if (!pinch && !surface && scrollable(t)) return;
+              e.preventDefault();
+              const rect = host.getBoundingClientRect();
+              const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+              const v0 = viewRef.current;
+              const mouse = e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 40);
+              if (!pinch && !mouse) {
+                // Панорама: дельта приходит в точках ЭКРАНА, а `viewRef`
+                // в них же и считает — делить на масштаб не надо.
+                applyView(v0.x - e.deltaX, v0.y - e.deltaY, v0.z);
+                commitViewSoon();
+                return;
+              }
+              // Строки и страницы (Firefox, мышь) переводим в точки.
+              const step = e.deltaMode !== 0 ? e.deltaY * 16 : e.deltaY;
+              // Показательная зависимость, а не «умножить на 1,1»: шаг
+              // получается соразмерным движению, и щелчок мыши даёт
+              // прежние 10 %, а мелкое движение по тачпаду — мелкий шаг.
+              const nz = Math.min(2.0, Math.max(0.3, v0.z * Math.exp(-step / (pinch ? 100 : 950))));
+              const k = nz / v0.z;
+              applyView(mx - (mx - v0.x) * k, my - (my - v0.y) * k, nz);
+              commitViewSoon();
+            };
+            host.addEventListener('wheel', onWheel, { passive: false });
+            return () => host.removeEventListener('wheel', onWheel);
+          }, [currentView]);
 
           // Выделение живёт в пределах одной доски: переключились — сбросили.
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
@@ -7984,11 +8147,125 @@
           // place — куда класть: {boardId, x, y}. Задаётся, когда картинку
           // бросили прямо на доску; без него референс уходит только в галерею.
           const normName = (s) => String(s || '').trim().toLowerCase();
+          // --- PDF СТРАНИЦАМИ В КАРТИНКИ ---
+          // Раскадровку от художника, план света, схему площадки и лист
+          // референсов присылают в PDF, а положить такой лист на доску
+          // было нечем: загрузка принимала только картинки и молча
+          // выходила. Страница рисуется в холст и дальше идёт ОБЫЧНОЙ
+          // фотографией — то же сжатие, то же облако, та же галерея и
+          // печать. Своего хранилища у PDF нет намеренно: второе
+          // разъехалось бы с первым при первой же правке.
+          const PDF_PAGE_PX = 2200;   // длинная сторона страницы в точках
+          const PDF_MAX_PAGES = 20;   // столько кладём за один раз
+          const pdfToImages = async (file, maxPages = PDF_MAX_PAGES) => {
+            const lib = await loadPdfJs();
+            const buf = await file.arrayBuffer();
+            const doc = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
+            try {
+              const total = doc.numPages;
+              const n = Math.min(total, maxPages);
+              const base = String(file.name || 'PDF').replace(/\.pdf$/i, '');
+              const out = [];
+              // Страницы считаем СТРОГО ПО ОДНОЙ: разворот в 2200 точек —
+              // это холст на пару десятков мегабайт, и держать десяток
+              // таких разом планшет не станет. То же правило, что
+              // у панорам.
+              for (let i = 1; i <= n; i++) {
+                if (n > 1) showToast(`Читаю PDF · страница ${i} из ${n}`);
+                const page = await doc.getPage(i);
+                const v1 = page.getViewport({ scale: 1 });
+                const scale = Math.min(3, PDF_PAGE_PX / Math.max(v1.width, v1.height, 1));
+                const vp = page.getViewport({ scale });
+                const cv = document.createElement('canvas');
+                cv.width = Math.max(1, Math.round(vp.width));
+                cv.height = Math.max(1, Math.round(vp.height));
+                const ctx = cv.getContext('2d');
+                // Лист у PDF ПРОЗРАЧНЫЙ. Без заливки чёрный текст лёг бы
+                // на прозрачность, а после сжатия в jpeg — на чёрное,
+                // и страница выглядела бы пустой.
+                ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cv.width, cv.height);
+                await page.render({ canvasContext: ctx, viewport: vp }).promise;
+                try { page.cleanup(); } catch (e) {}
+                const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9));
+                cv.width = cv.height = 0;   // холст отпускаем сразу
+                if (blob) out.push(renamedFile(blob, n > 1 ? `${base} — стр. ${i}.jpg` : `${base}.jpg`));
+              }
+              return { files: out, total };
+            } finally { try { doc.destroy(); } catch (e) {} }
+          };
+
+          // Одна картинка из выбранного файла: у PDF берём ПЕРВУЮ страницу.
+          // Пустая карточка референса и окошко раскадровки — места ровно
+          // на одну картинку, и молча положить туда PDF нельзя: браузер
+          // его не показывает, и осталась бы пустая рамка без единой
+          // ошибки — то же самое молчание, из-за которого нефотографию
+          // теперь называют полоской.
+          const oneImageFrom = async (file) => {
+            if (!file || !isPdfFile(file)) return file || null;
+            showToast('Читаю PDF...');
+            try {
+              const r = await pdfToImages(file, 1);
+              if (!r.files.length) { showToast('В этом PDF не нашлось ни одной страницы'); return null; }
+              if (r.total > 1) showToast(`Взял первую страницу из ${r.total} — остальные кладите броском на доску`);
+              return r.files[0];
+            } catch (err) {
+              console.error(err);
+              showToast(`PDF «${file.name}» не открылся: ${(err && err.message) || 'файл не читается'}`);
+              return null;
+            }
+          };
+
+          // Картинка в окошко раскадровки — одним путём на три места
+          // (лента сцены, телефон, доска): три копии этой цепочки
+          // разъехались бы при первой правке.
+          const setFrameImage = async (file, apply) => {
+            const f = await oneImageFrom(file);
+            if (!f) return;
+            const rd = new FileReader();
+            rd.onloadend = () => compressImage(rd.result, 600, 450, apply);
+            rd.readAsDataURL(f);
+          };
+
           const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '') => {
             // Загрузка фотографий — самая заметная правка проекта:
             // бросок файла на доску идёт сюда мимо кнопок.
             if (READ_ONLY) return;
-              const picked = Array.from(files);
+              let picked = Array.from(files);
+              // PDF разбираем на страницы ДО всего остального: дальше про
+              // него не должны знать ни сжатие, ни проверка повторов,
+              // ни облако.
+              let pdfNote = '';
+              const pdfs = picked.filter(isPdfFile);
+              if (pdfs.length) {
+                const rest = picked.filter(f => !isPdfFile(f));
+                const pages = [];
+                let cut = 0;
+                showToast(pdfs.length === 1 ? 'Читаю PDF...' : `Читаю PDF · файлов: ${pdfs.length}`);
+                for (const f of pdfs) {
+                  try {
+                    const r = await pdfToImages(f);
+                    pages.push(...r.files);
+                    if (r.total > r.files.length) cut += r.total - r.files.length;
+                  } catch (err) {
+                    console.error(err);
+                    // Причину называем: «не получилось» без неё — тупик.
+                    // Чаще всего это защищённый паролем файл или отсутствие
+                    // связи в самый первый раз, когда библиотека ещё не
+                    // легла в кэш.
+                    showToast(`PDF «${f.name}» не открылся: ${(err && err.message) || 'файл не читается'}`);
+                  }
+                }
+                if (!pages.length && !rest.length) return;
+                // Страницы кладём В РЯД, а не стопкой со сдвигом в 26 точек:
+                // у PDF они идут по порядку, и разбирать стопку из пяти
+                // листов пришлось бы руками.
+                if (place && pages.length > 1) place = { ...place, step: REF_W + 16 };
+                if (cut) pdfNote = `Взял первые ${PDF_MAX_PAGES} страниц, остальные ${cut} пропустил`;
+                picked = pages.concat(rest);
+              }
+              // Что сказать ПОСЛЕ загрузки: полоска живёт секунды, и
+              // сказанное до неё перекрыл бы отчёт самой загрузки.
+              const finish = async (p) => { const r = await p; if (pdfNote) showToast(pdfNote); return r; };
               const imageFiles = picked.filter(f => f.type.startsWith('image/'));
               // Через «Файлы» браузер показывает и то, что картинкой не
               // является (расширения Safari толком не фильтрует). Молча
@@ -8014,10 +8291,10 @@
                   const dupSet = new Set(dups.map(f => normName(f.name)));
                   const kept = imageFiles.filter(f => !dupSet.has(normName(f.name)));
                   if (kept.length === 0) { showToast('Все выбранные картинки уже есть — ничего не загружено'); return; }
-                  return uploadFiles(kept, sceneId, place, locationId, folder);
+                  return finish(uploadFiles(kept, sceneId, place, locationId, folder));
                 }
               }
-              return uploadFiles(imageFiles, sceneId, place, locationId, folder);
+              return finish(uploadFiles(imageFiles, sceneId, place, locationId, folder));
           };
 
           // Сжать файл к нужному размеру. Отдельно от uploadFiles, потому
@@ -8094,8 +8371,12 @@
                     ...(pano ? { pano: true, panoUrl: panoUrl || '' } : {}),
                     // Брошенные на доску раскладываем лесенкой от точки броска,
                     // остальные — как раньше, от левого верхнего угла экрана.
-                    x: place ? place.x + (idx % 4) * 26 : (250 - canvasOffset.x) / zoom + (idx*20),
-                    y: place ? place.y + Math.floor(idx / 4) * 26 : (250 - canvasOffset.y) / zoom + (idx*20),
+                    // Шаг раскладки: обычные фотографии ложатся стопкой
+                    // со сдвигом (их разбирают руками), страницы одного
+                    // PDF — в ряд, по четыре в строке: у них есть порядок,
+                    // и стопка из пяти листов его прячет.
+                    x: place ? place.x + (idx % 4) * (place.step || 26) : (250 - canvasOffset.x) / zoom + (idx*20),
+                    y: place ? place.y + Math.floor(idx / 4) * (place.step ? Math.round(place.step * 0.8) : 26) : (250 - canvasOffset.y) / zoom + (idx*20),
                     label: file.name,
                     folder: locFolder,
                     tags: locationId ? [SCOUT_TAG] : []
@@ -8187,7 +8468,10 @@
             if (!dt) return [];
             const out = [], seen = new Set();
             const push = (f) => {
-              if (!f || !f.type || !f.type.startsWith('image/')) return;
+              // PDF пропускаем сюда же: страницами он станет в
+              // handleMultiFileUpload, а до тех пор это такой же
+              // брошенный файл, как фотография.
+              if (!f || (!isPdfFile(f) && !String(f.type || '').startsWith('image/'))) return;
               const key = `${f.name}|${f.size}|${f.lastModified || 0}`;
               if (seen.has(key)) return;
               seen.add(key);
@@ -8323,6 +8607,38 @@
             return () => document.removeEventListener('paste', onPaste);
           }, [currentView, activeLocationId, references, locations]);
 
+          // Ctrl+V НА ДОСКЕ. Вставка работала в галерее и в объекте, а на
+          // доске — нет: скопированный в браузере кадр приходилось сперва
+          // сохранять файлом и только потом бросать на холст. Тот же
+          // handleMultiFileUpload, что и везде, и тем же путём идут
+          // страницы PDF.
+          //
+          // Карточка ложится в СЕРЕДИНУ ВИДИМОГО: доска 4000×4000, и
+          // положенное в её начало человек не найдёт — то же правило,
+          // что у вставки карточек доски.
+          //
+          // Свой буфер доски остаётся первым: он перехватывает нажатие
+          // в обработчике клавиш, и до события вставки дело не доходит.
+          // Так и надо — скопировал на доске схему, вставил схему.
+          useEffect(() => {
+            if (READ_ONLY || currentView !== 'whiteboard') return;
+            const onPaste = (e) => {
+              const files = imagesFrom(e.clipboardData);
+              if (!files.length) return;
+              const t = e.target;
+              const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+              if (inField && (e.clipboardData.getData('text/plain') || '').trim()) return;
+              e.preventDefault();
+              const c = boardVisibleCenter();
+              handleMultiFileUpload(files, null, {
+                boardId: activeBoardId,
+                x: Math.round(c.x - REF_W / 2), y: Math.round(c.y - 70)
+              });
+            };
+            document.addEventListener('paste', onPaste);
+            return () => document.removeEventListener('paste', onPaste);
+          }, [currentView, activeBoardId, references]);
+
           // --- Файлы проекта: КПП, сценарий в PDF, доки ---
           // Файл лежит в документе базы строкой base64, а предел документа
           // Firestore — 1 МБ, то есть около 650 КБ настоящего файла. Раньше
@@ -8420,7 +8736,10 @@
 
           // Пустая карточка референса на доске: заполняем именно её,
           // а не создаём рядом ещё одну картинку в галерее.
-          const fillRefImage = (refId, file) => {
+          const fillRefImage = async (refId, file) => {
+              // Пустая карточка на доске принимает и PDF — первой страницей.
+              file = await oneImageFrom(file);
+              if (!file) return;
               const r = new FileReader();
               r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => {
                 setReferences(prev => {
@@ -8552,7 +8871,7 @@
           // Берём исходник самой страницы и вшиваем в него данные.
           // Открывается офлайн, к облаку не подключается, править нечего.
           const [snapshotBusy, setSnapshotBusy] = useState(false);
-          const exportSnapshot = async (scope) => {
+          const exportSnapshot = async (scope, boardId = '') => {
             setSnapshotBusy(true);
             try {
               showToast('Собираю файл — это займёт несколько секунд...');
@@ -8563,15 +8882,28 @@
               const data = {};
               if (scope === 'gallery' || scope === 'all') data.cf_references = references;
               if (scope === 'board' || scope === 'all') {
-                data.cf_references = references;
-                data.cf_stickies = stickies;
-                data.cf_boards = boards;
+                // Просят ОДНУ доску — кладём только её. Раньше в файл
+                // «Доска» уезжала вся галерея проекта: и лишние десятки
+                // мегабайт, и чужие фотографии там, где обещали одну
+                // доску.
+                const onlyBoard = scope === 'board' && boardId;
+                data.cf_references = onlyBoard ? references.filter(r => r.boardId === boardId) : references;
+                data.cf_stickies = onlyBoard ? stickies.filter(st => belongsToBoard(st, boardId)) : stickies;
+                data.cf_boards = onlyBoard ? boards.filter(b => b.id === boardId) : boards;
+                if (onlyBoard) {
+                  // На доске лежат не одни фотографии: карточки сцен,
+                  // документы и окошки раскадровки — та же доска.
+                  // Без них в файле оказалась бы её половина.
+                  data.cf_scenes = scenes.filter(s => sceneOnBoard(s, boardId));
+                  data.cf_docs = docs.filter(d => d.boardId === boardId);
+                  data.cf_storyboard = storyboard.filter(f => f.boardId === boardId);
+                }
                 // Рисунок кистью раньше в снимок не попадал вовсе: доска
                 // уезжала заказчику без единой линии. Векторные штрихи весят
                 // килобайты, поэтому теперь кладём их по всем доскам.
                 // Старую растровую подложку НЕ берём — она весит сотни
                 // килобайт на доску и раздула бы файл до неотправляемого.
-                sortedBoards.forEach(b => {
+                (onlyBoard ? sortedBoards.filter(b => b.id === boardId) : sortedBoards).forEach(b => {
                   const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
                   if (kk && kk !== '[]') data['cf_ink_' + b.id] = kk;
                   const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
@@ -8598,7 +8930,7 @@
               }
               if (scope === 'gallery') { data.cf_scenes = []; data.cf_stickies = []; }
 
-              const payload = { scope, room: appId, madeAt: new Date().toISOString(), data };
+              const payload = { scope, board: boardId || '', room: appId, madeAt: new Date().toISOString(), data };
               // Закрывающий тег скрипта внутри данных разорвал бы разметку — экранируем.
               const json = JSON.stringify(payload).replace(/<\//g, '<\\/');
               const inject = '<script>window.__CF_SNAPSHOT__ = ' + json + ';<\/script>\n</head>';
@@ -8610,7 +8942,12 @@
               const a = document.createElement('a');
               a.href = url;
               const names = { gallery: 'референсы', board: 'доска', all: 'проект' };
-              a.download = `CineFlow_${names[scope] || scope}_${new Date().toISOString().split('T')[0]}.html`;
+              // В имени файла — название самой доски: «CineFlow_доска_…»
+              // у пяти разных досок выглядит одинаково, и в загрузках
+              // потом не понять, какая из них какая.
+              const bTitle = boardId ? String((boards.find(b => b.id === boardId) || {}).title || '').trim() : '';
+              const nameBase = (bTitle ? 'доска ' + bTitle : (names[scope] || scope)).replace(/[\\/:*?"<>|]+/g, ' ').trim();
+              a.download = `CineFlow_${nameBase}_${new Date().toISOString().split('T')[0]}.html`;
               document.body.appendChild(a); a.click(); document.body.removeChild(a);
               URL.revokeObjectURL(url);
               showToast(`Готово · ${(blob.size / 1048576).toFixed(1)} МБ`);
@@ -9048,7 +9385,17 @@
           // Пропорции у каждой картинки СВОИ. Раньше окно было жёстко 16:9,
           // и вертикальный кадр ложился в него с чёрными полями в пол-карточки.
           const refAR = (r) => (r.ar && r.ar > 0.05 && r.ar < 20) ? r.ar : 16 / 9;
-          const refH = (r) => Math.round((refW(r) - 20) / refAR(r)) + 58;
+          // Высота — это САМА ФОТОГРАФИЯ плюс поля карточки, и ничего
+          // больше. Раньше под фотографией стояла строка подписи (те
+          // самые +58): имя файла вроде «IMG_4821.jpg» ничего не
+          // рассказывает, но занимает место под каждым кадром, и доска
+          // из двух десятков референсов читалась списком файлов, а не
+          // раскладкой. Теперь подпись показывается ПОВЕРХ нижнего края
+          // фотографии и только у выделенной карточки — нажал и увидел.
+          // Число здесь обязано совпадать с настоящей высотой карточки
+          // в разметке (поля p-2.5 сверху и снизу), иначе рамка выделения,
+          // связи и мини-карта начнут врать.
+          const refH = (r) => Math.round((refW(r) - 20) / refAR(r)) + 20;
           // Замеряем при первой же отрисовке: так подхватываются и старые
           // референсы, без всякого перевода данных.
           // --- КАДР РАСКАДРОВКИ НА ДОСКЕ ---
@@ -10412,7 +10759,7 @@
                                        вовсе. На планшете половинки две, и здесь их две. */
                                     <div className="flex w-full" style={{ aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 6, boxSizing: 'border-box', overflow: 'hidden' }}>
                                       <PhotoSourcePicker multiple={false}
-                                              onFiles={(fs) => { const file = fs[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }}
+                                              onFiles={(fs) => setFrameImage(fs[0], (c) => patchFrame(f.id, { image: c }))}
                                               className="cf-edit-only flex-1 flex flex-col items-center justify-center gap-1"
                                               style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase' }}>
                                         <Icons.Image />фото
@@ -10867,7 +11214,7 @@
                                             значит, его СНИМАЮТ. Отсюда тот же выбор
                                             источника, что и у фотографий. */}
                                         <PhotoSourcePicker multiple={false}
-                                                onFiles={(fs) => { const file = fs[0]; if (file) { const rd = new FileReader(); rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => patchFrame(f.id, { image: c })); rd.readAsDataURL(file); } }}
+                                                onFiles={(fs) => setFrameImage(fs[0], (c) => patchFrame(f.id, { image: c }))}
                                                 className="flex-1 flex flex-col items-center justify-center cf-edit-only" style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)' }}>
                                           <Icons.Image /><span style={{ fontSize: 10, marginTop: 2 }}>файл</span>
                                         </PhotoSourcePicker>
@@ -12007,8 +12354,14 @@
                           Открываются они в своём редакторе поверх экрана;
                           закрыл — вернулся на доску. Записи те же самые:
                           схема, выбранная у сцены или у объекта, — вот эта. */}
+                      {/* Поделились одной доской — схем света рядом с ней
+                          нет: это отдельные холсты проекта, и звать
+                          посмотреть раскадровку значит показать раскадровку,
+                          а не всё, что есть в комнате. */}
+                      {!CF_BOARD_SCOPE && (
                       <span className="shrink-0" style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px 9px' }} />
-                      {lightSchemes.map(sch => (
+                      )}
+                      {!CF_BOARD_SCOPE && lightSchemes.map(sch => (
                         <button key={sch.id} onClick={() => setDrawingSchemeId(sch.id)}
                                 onDoubleClick={() => {
                                   if (READ_ONLY) return;
@@ -12146,29 +12499,23 @@
                         boardTouch.current.delete(e.pointerId);
                         if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; commitView(); }
                     }}
-                    onWheel={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-                        const v0 = viewRef.current;
-                        const nz = Math.min(2.0, Math.max(0.3, v0.z * (e.deltaY > 0 ? 0.9 : 1.1)));
-                        const k = nz / v0.z;
-                        // У колеса нет «отпускания», поэтому состояние
-                        // догоняет по затишью — иначе долгая прокрутка
-                        // колеса снова перерисовывала бы всё на каждый щелчок.
-                        applyView(mx - (mx - v0.x) * k, my - (my - v0.y) * k, nz);
-                        commitViewSoon();
-                    }}
+                    /* Колесо и тачпад живут в СВОЁМ слушателе (см. эффект выше):
+                       React вешает колесо пассивным, и отменить зум страницы
+                       из `onWheel` нельзя в принципе. */
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
                         e.preventDefault();
                         // Кладём туда, куда бросили, и на открытую доску. Раньше
                         // картинка молча уезжала в галерею, а на доске ничего
                         // не появлялось — выглядело как «перетаскивание не работает».
+                        //
+                        // Идём через `acceptDropped`, а не напрямую файлами:
+                        // тем же путём приходят PDF (страницы станут
+                        // карточками) и картинка, притащенная из соседней
+                        // вкладки ссылкой. Вторая ветка приёма разъехалась
+                        // бы с первой при первой же правке.
                         const p = inkPt(e.clientX, e.clientY);
-                        handleMultiFileUpload(e.dataTransfer.files, null, {
-                            boardId: activeBoardId,
-                            x: p.x, y: p.y
-                        });
+                        acceptDropped(e.dataTransfer, { place: { boardId: activeBoardId, x: p.x, y: p.y } });
                     }}
                     onDoubleClick={(e) => {
                         // Двойной клик по фигуре — подпись внутри неё, по
@@ -12733,10 +13080,29 @@
                                     <span className="mb-1"><Icons.Gallery/></span><span>Загрузить</span>
                                     </PhotoSourcePicker>
                                 )}
+                                {/* ПОДПИСЬ — ПО НАЖАТИЮ, А НЕ ВСЕГДА.
+                                    Стояла она отдельной строкой под каждой
+                                    фотографией, а лежит в ней чаще всего имя
+                                    файла («IMG_4821.jpg», «Вставлено 08.09»),
+                                    которое не говорит ничего, но занимает
+                                    место под каждым кадром: доска из двух
+                                    десятков референсов читалась списком
+                                    файлов. Теперь она поверх нижнего края
+                                    самой фотографии и только у ВЫДЕЛЕННОЙ
+                                    карточки — нажал и увидел, нажал ещё раз
+                                    по ней же и правишь (тот же tapToEdit,
+                                    что у остальных карточек).
+                                    Подложка обязательна: белые буквы поверх
+                                    светлого кадра не читаются. */}
+                                {selectedWbItems.includes(ref.id) && (
+                                  <div className="absolute left-0 right-0 bottom-0 z-[15] px-1.5 pb-1 pt-5"
+                                       style={{ background: 'linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,0))' }}>
+                                    {cardField(ref.id, 'label', ref.label,
+                                      (v) => { const up = references.map(r => r.id === ref.id ? { ...r, label: v } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); },
+                                      { placeholder: 'Подпись...', className: 'w-full bg-transparent text-[11px] text-center font-bold text-zinc-100 focus:outline-none placeholder-zinc-400' })}
+                                  </div>
+                                )}
                                 </div>
-                                {cardField(ref.id, 'label', ref.label,
-                                  (v) => { const up = references.map(r => r.id === ref.id ? { ...r, label: v } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); },
-                                  { placeholder: 'Подпись...', className: 'w-full bg-transparent text-[11px] text-center font-bold text-zinc-300 focus:outline-none mt-2 placeholder-zinc-600' })}
                                 <div className="cf-edit-only" onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: ref.id, type: 'ref' }); }} title="Потяните к любой карточке — получится связь. К сцене — референс привяжется к ней" className="node-handle cf-edit-only absolute right-[-8px] top-1/2 -translate-y-1/2 w-5 h-5 bg-indigo-500 rounded-full border-4 border-[#1a1918] cursor-crosshair hover:scale-125 z-30" style={{pointerEvents: 'auto'}} />
                                 <div
                                     onPointerDown={(e) => { e.stopPropagation(); setResizingRef({ id: ref.id, pointerId: e.pointerId, startX: e.clientX, startW: refW(ref) }); e.currentTarget.setPointerCapture(e.pointerId); }}
@@ -12798,10 +13164,7 @@
                                        пропускает по метке data-card-tap, а на
                                        отпускании без сдвига доска зовёт её сама. */
                                     <PhotoSourcePicker multiple={false} cardTap
-                                        onFiles={(fs) => { const file = fs[0]; if (!file) return;
-                                          const rd = new FileReader();
-                                          rd.onloadend = () => compressImage(rd.result, 600, 450, (c) => updateFrame(f.id, { image: c }));
-                                          rd.readAsDataURL(file); }}
+                                        onFiles={(fs) => setFrameImage(fs[0], (c) => updateFrame(f.id, { image: c }))}
                                         style={{ pointerEvents: 'auto' }}
                                         className="cf-edit-only text-[11px] font-bold text-zinc-600 hover:text-indigo-400 w-full h-full flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/5">
                                       <Icons.Gallery/><span>кадр или скетч</span>
@@ -12986,9 +13349,22 @@
                                 className={`cf-tool cf-edit-only ${(selShapes.length || selectedWbItems.length) ? '' : 'off'}`}>
                           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                         </button>
-                        <button onClick={pasteClip} disabled={!clipCount}
-                                title={clipCount ? `Вставить ${clipCount} ${plur(clipCount, 'объект', 'объекта', 'объектов')} (Ctrl+V)` : 'Вставить (Ctrl+V) — буфер пуст'}
-                                className={`cf-tool cf-edit-only ${clipCount ? '' : 'off'}`}>
+                        {/* Пустой буфер доски — не повод быть кнопкой,
+                            которая ничего не делает: тогда пробуем буфер
+                            УСТРОЙСТВА и кладём картинку из него. На
+                            планшете Ctrl+V нет вовсе, а картинку из
+                            браузера копируют долгим нажатием — другого
+                            пути к ней с доски не было. Спрашивать буфер
+                            можно только из обработчика нажатия, поэтому
+                            зовём прямо здесь. */}
+                        <button onClick={() => {
+                                  if (clipCount) { pasteClip(); return; }
+                                  const c = boardVisibleCenter();
+                                  pasteFromClipboard({ place: { boardId: activeBoardId,
+                                                                x: Math.round(c.x - REF_W / 2), y: Math.round(c.y - 70) } });
+                                }}
+                                title={clipCount ? `Вставить ${clipCount} ${plur(clipCount, 'объект', 'объекта', 'объектов')} (Ctrl+V)` : 'Вставить картинку из буфера (Ctrl+V)'}
+                                className="cf-tool cf-edit-only">
                           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
                         </button>
                       </div>
@@ -14425,7 +14801,7 @@
                           те же, что у страниц в шапке: человек ищет ссылку
                           по тому слову, которое видит на экране. */}
                       <div className="flex flex-col gap-2 mb-5">
-                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Доска'],
+                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'],
                           ['scenes', 'Сцены'], ['table', 'КПП'], ['docs', 'Экспликации'],
                           ['all', 'Весь проект']].map(([scope, label]) => {
                           const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
@@ -14447,6 +14823,36 @@
                         <span className="font-mono"> ?view=locations,gallery</span>
                       </p>
 
+                      {/* ОДНА ДОСКА, А НЕ ВСЕ СРАЗУ. Ссылка «Доска» открывала
+                          все доски проекта: позвать художника посмотреть
+                          раскадровку значило показать ему заодно и разбор
+                          с продюсером на соседней вкладке. Здесь ссылка
+                          ведёт ровно на одну доску — соседних вкладок и
+                          схем света у неё нет. */}
+                      <h4 className="text-sm font-bold text-white mb-1.5">Показать ОДНУ доску</h4>
+                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+                        Ссылка открывает только выбранную доску: ни соседних вкладок, ни схем света.
+                        Но код комнаты в ней тот же, и по нему при желании доберутся и до остального —
+                        прячется экран, а не данные. Кому проект показывать нельзя совсем, отправьте
+                        файл-снимок: в нём других досок нет физически.
+                      </p>
+                      <div className="flex flex-col gap-2 mb-5">
+                        {sortedBoards.map(b => {
+                          const link = location.origin + location.pathname + '?view=board&board='
+                                     + encodeURIComponent(b.id) + '&room=' + encodeURIComponent(appId);
+                          return (
+                            <div key={b.id} className="flex items-center gap-2">
+                              <span className="text-xs text-zinc-300 truncate" style={{ minWidth: 0, flex: 1 }}>{b.title}</span>
+                              <button onClick={() => copyText(link, 'Ссылка на доску «' + b.title + '» скопирована')}
+                                      className="cf-chip shrink-0">Ссылка</button>
+                              <button onClick={() => exportSnapshot('board', b.id)} disabled={snapshotBusy}
+                                      title="Отдельный файл только с этой доской"
+                                      className="cf-chip shrink-0">{snapshotBusy ? 'Собираю…' : 'Файл'}</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
                       <h4 className="text-sm font-bold text-white mb-1.5">Файл-снимок</h4>
                       <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
                         Отдельный HTML со вшитыми данными: открывается без интернета,
@@ -14454,7 +14860,7 @@
                         Файл тяжёлый, в нём лежат сами картинки.
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Доска'], ['all', 'Весь проект']].map(([scope, label]) => (
+                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'], ['all', 'Весь проект']].map(([scope, label]) => (
                           <button key={scope} onClick={() => exportSnapshot(scope)} disabled={snapshotBusy}
                                   className="cf-chip shrink-0">
                             {snapshotBusy ? 'Собираю…' : 'Скачать · ' + label}
