@@ -4649,6 +4649,14 @@
           // кольцо-подсказка. Пока идёт штрих, нижний не трогаем вовсе.
           const inkCanvasRef = useRef(null);   // готовые штрихи + старый растр
           const liveCanvasRef = useRef(null);  // текущий штрих и кольцо кисти
+          // ТРЕТИЙ холст — ПОД карточками. Нужен ровно для фигур с меткой
+          // `bk` («за карточками»): холст с фигурами лежит ПОВЕРХ карточек
+          // намеренно (по фотографии нужно уметь чертить), и поэтому
+          // «Назад» уводило фигуру только за другие фигуры. Подложку под
+          // группу фотографий сделать было нечем: полупрозрачный
+          // прямоугольник всё равно лежал сверху и подкрашивал их.
+          const backCanvasRef = useRef(null);
+          const backInk = useRef(false);       // есть ли что на нём сейчас
           const strokesRef = useRef([]);       // векторные штрихи открытой доски
           // ДВЕРЬ НАРУЖУ. Слишком большой рисунок кладёт доску: двадцать тысяч
           // штрихов — это полторы секунды на кадр, то есть работать нельзя,
@@ -5119,6 +5127,42 @@
             bumpInk();
             scheduleInkSave('shapes');
           };
+
+          // «ЗА КАРТОЧКАМИ» — это тоже порядок, но ДРУГОЙ: «Вперёд» и
+          // «Назад» переставляют фигуру среди фигур, а холст с фигурами
+          // целиком лежит поверх карточек. Поэтому полупрозрачный
+          // прямоугольник, которым хотят подложить фон под группу
+          // фотографий, «назад» не уходил никуда: он менялся местами
+          // с соседними фигурами и всё равно подкрашивал кадры сверху.
+          //
+          // Своя функция, а НЕ `patchShapes`: тот заодно запоминает
+          // выбранное как стиль следующей фигуры (`cf_shape_style`), и
+          // тогда каждая новая фигура уезжала бы под карточки. Порядок
+          // стилем не бывает.
+          const setShapesBack = (on) => {
+            if (READ_ONLY) return;
+            if (!selShapes.length) return;
+            pushUndo(false);
+            const sel = new Set(selShapes);
+            // Подпись внутри фигуры едет за хозяином: иначе прямоугольник
+            // ушёл бы под фотографии, а его надпись осталась висеть
+            // поверх них. То же правило, что при удалении.
+            shapesRef.current.forEach(s => { if (s.ct && sel.has(s.ct)) sel.add(s.id); });
+            shapesRef.current = shapesRef.current.map(s => {
+              if (!sel.has(s.id)) return s;
+              const o = { ...s };
+              // Метку СНИМАЕМ, а не ставим в ноль: весь список фигур
+              // уезжает в облако одной строкой, и лишнее поле у каждой
+              // фигуры умножается на их число.
+              if (on) o.bk = 1; else delete o.bk;
+              return shapeDirty(o);
+            });
+            // Кнопка обязана показать своё состояние, а фигуры живут
+            // в ref — сама по себе панель не перерисуется.
+            setSelShapes(selShapes.slice());
+            bumpInk();
+            scheduleInkSave('shapes');
+          };
           // --- ВЫГРУЗКА ДОСКИ ---
           // PNG и SVG рисуются из ОДНОГО описания: тот же список карточек,
           // те же команды пути у фигур и штрихов. Иначе выгрузка со временем
@@ -5428,8 +5472,11 @@
                 ctx.fillStyle = bgCol; ctx.fillRect(0, 0, cv.width, cv.height);
                 ctx.setTransform(k, 0, 0, k, -box.x * k, -box.y * k);
                 if (legacyCv.current) ctx.drawImage(legacyCv.current, 0, 0);
+                // Подложки — ДО карточек: на экране они лежат под ними,
+                // и картинка обязана совпадать с тем, что видит человек.
+                shapesRef.current.forEach(s => { if (s.bk) paintShape(ctx, s); });
                 cards.forEach(c => paintCardOn(ctx, c, imgs));
-                shapesRef.current.forEach(s => paintShape(ctx, s));
+                shapesRef.current.forEach(s => { if (!s.bk) paintShape(ctx, s); });
                 strokesRef.current.forEach(s => paintStroke(ctx, s));
                 await new Promise(res => cv.toBlob(b => { if (b) save(b, 'png'); res(); }, 'image/png'));
                 showToast(`Доска выгружена · ${cv.width}×${cv.height}`);
@@ -5441,35 +5488,11 @@
                 const txt = (s, x, y, size, color, weight, anchor) =>
                   `<text x="${rn(x)}" y="${rn(y)}" font-family="Inter, sans-serif" font-size="${size}" fill="${color}"${weight ? ' font-weight="' + weight + '"' : ''}${anchor ? ' text-anchor="' + anchor + '"' : ''}>${esc(s)}</text>`;
                 const mc = hitCtx.current || (hitCtx.current = document.createElement('canvas').getContext('2d'));
-                cards.forEach(c => {
-                  if (c.t === 'sticky') {
-                    parts.push(`<rect x="${rn(c.x)}" y="${rn(c.y)}" width="${rn(c.w)}" height="${rn(c.h)}" rx="8" fill="${c.o.color || '#fef08a'}"/>`);
-                    mc.font = `13px ${FONT_UI}`;
-                    wrapText(mc, c.o.text, c.w - 20).slice(0, 12).forEach((ln, i) => parts.push(txt(ln, c.x + 10, c.y + 22 + i * 17, 13, '#1a1918')));
-                    return;
-                  }
-                  parts.push(`<rect x="${rn(c.x)}" y="${rn(c.y)}" width="${rn(c.w)}" height="${rn(c.h)}" rx="10" fill="${cssVar('--panel', '#242322')}" stroke="rgba(255,255,255,.10)"/>`);
-                  if (c.t === 'scene') {
-                    parts.push(txt('СЦЕНА #' + (c.o.number || '—'), c.x + 12, c.y + 22, 11, cssVar('--muted', '#8b8681'), 'bold'));
-                    mc.font = `bold 14px ${FONT_UI}`;
-                    wrapText(mc, c.o.title, c.w - 24).slice(0, 2).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 58 + i * 19, 14, '#ffffff', 'bold')));
-                    mc.font = `12px ${FONT_UI}`;
-                    wrapText(mc, c.o.content, c.w - 24).slice(0, 3).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 103 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
-                  } else if (c.t === 'doc') {
-                    parts.push(txt(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 24, 13, '#ffffff', 'bold'));
-                    mc.font = `12px ${FONT_UI}`;
-                    wrapText(mc, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
-                  } else {
-                    const src = cardImg(c);
-                    // Полоса под подпись — только у кадра раскадровки:
-                    // у референса на доске подписи нет (см. paintCardOn).
-                    const capH = c.t === 'frame' ? 28 : 12;
-                    if (src) parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - capH)}" preserveAspectRatio="xMidYMid slice" href="${esc(src)}"/>`);
-                    else if (c.t === 'frame') parts.push(`<rect x="${rn(c.x + 7)}" y="${rn(c.y + 7)}" width="${rn(c.w - 14)}" height="${rn(c.h - 38)}" rx="6" fill="none" stroke="rgba(255,255,255,.16)" stroke-dasharray="5 4"/>`);
-                    if (c.t === 'frame') parts.push(txt(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
-                  }
-                });
-                shapesRef.current.forEach(s => {
+                // Фигуру в SVG описываем ОДНИМ местом, а зовём двумя
+                // проходами: помеченные «за карточками» обязаны лечь
+                // в разметку ДО карточек — в SVG порядок рисования
+                // это и есть порядок в файле.
+                const emitShape = (s) => {
                   if (isText(s)) {
                     const host = s.ct ? findShape(s.ct) : null;
                     const b = host ? shapeBox(host) : shapeBox(s);
@@ -5502,7 +5525,38 @@
                     if (s.a2 === 'arrow') parts.push(head(q[n - 1][0], q[n - 1][1], q[n - 2][0], q[n - 2][1]));
                     if (s.a1 === 'arrow') parts.push(head(q[0][0], q[0][1], q[1][0], q[1][1]));
                   }
+                };
+                // Подложки — до карточек, как и на экране.
+                shapesRef.current.forEach(s => { if (s.bk) emitShape(s); });
+                cards.forEach(c => {
+                  if (c.t === 'sticky') {
+                    parts.push(`<rect x="${rn(c.x)}" y="${rn(c.y)}" width="${rn(c.w)}" height="${rn(c.h)}" rx="8" fill="${c.o.color || '#fef08a'}"/>`);
+                    mc.font = `13px ${FONT_UI}`;
+                    wrapText(mc, c.o.text, c.w - 20).slice(0, 12).forEach((ln, i) => parts.push(txt(ln, c.x + 10, c.y + 22 + i * 17, 13, '#1a1918')));
+                    return;
+                  }
+                  parts.push(`<rect x="${rn(c.x)}" y="${rn(c.y)}" width="${rn(c.w)}" height="${rn(c.h)}" rx="10" fill="${cssVar('--panel', '#242322')}" stroke="rgba(255,255,255,.10)"/>`);
+                  if (c.t === 'scene') {
+                    parts.push(txt('СЦЕНА #' + (c.o.number || '—'), c.x + 12, c.y + 22, 11, cssVar('--muted', '#8b8681'), 'bold'));
+                    mc.font = `bold 14px ${FONT_UI}`;
+                    wrapText(mc, c.o.title, c.w - 24).slice(0, 2).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 58 + i * 19, 14, '#ffffff', 'bold')));
+                    mc.font = `12px ${FONT_UI}`;
+                    wrapText(mc, c.o.content, c.w - 24).slice(0, 3).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 103 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
+                  } else if (c.t === 'doc') {
+                    parts.push(txt(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 24, 13, '#ffffff', 'bold'));
+                    mc.font = `12px ${FONT_UI}`;
+                    wrapText(mc, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
+                  } else {
+                    const src = cardImg(c);
+                    // Полоса под подпись — только у кадра раскадровки:
+                    // у референса на доске подписи нет (см. paintCardOn).
+                    const capH = c.t === 'frame' ? 28 : 12;
+                    if (src) parts.push(`<image x="${rn(c.x + 6)}" y="${rn(c.y + 6)}" width="${rn(c.w - 12)}" height="${rn(c.h - capH)}" preserveAspectRatio="xMidYMid slice" href="${esc(src)}"/>`);
+                    else if (c.t === 'frame') parts.push(`<rect x="${rn(c.x + 7)}" y="${rn(c.y + 7)}" width="${rn(c.w - 14)}" height="${rn(c.h - 38)}" rx="6" fill="none" stroke="rgba(255,255,255,.16)" stroke-dasharray="5 4"/>`);
+                    if (c.t === 'frame') parts.push(txt(String(cardCap(c)).slice(0, 46), c.x + 8, c.y + c.h - 6, 11, cssVar('--text-2', '#cfc9c0')));
+                  }
                 });
+                shapesRef.current.forEach(s => { if (!s.bk) emitShape(s); });
                 strokesRef.current.forEach(s => {
                   parts.push(`<path d="${cmdsD(strokeCmds(s))}" fill="${s.c}" fill-opacity="${rn(brushAlpha(s.t))}" fill-rule="nonzero"/>`);
                 });
@@ -5796,6 +5850,12 @@
           };
 
           const patchShapes = (patch) => {
+            // Панель свойств открывается и у гостя: выделять фигуры ему
+            // можно, это чтение. А вот красить — нет. В облако правка
+            // и так не уходила (`saveShapes` выходит по READ_ONLY), но
+            // на своём экране гость перекрашивал чужую доску и не знал,
+            // цела ли она, — та же беда, что была с удалением доски.
+            if (READ_ONLY) return;
             setShapeStyle(st => {
               const next = { ...st, ...patch };
               try { localStorage.setItem('cf_shape_style', JSON.stringify(next)); } catch (e) {}
@@ -5828,6 +5888,8 @@
             const busy = shapeAct.current ? shapeAct.current.ids : null;
             const typing = editText ? editText.id : null;
             for (const s of shapesRef.current) {
+              // Помеченные «за карточками» рисует нижний холст.
+              if (s.bk) continue;
               if (busy && busy.has(s.id)) continue;
               if (s.id === typing) continue;
               const b = shapeBox(s), m = s.sw + 12;
@@ -5838,6 +5900,40 @@
               const b = strokeBox(s);
               if (b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1) continue;
               paintStroke(ctx, s);
+            }
+            ctx.restore();
+          };
+
+          // ФИГУРЫ ЗА КАРТОЧКАМИ. Тот же рисунок, тот же `paintShape`,
+          // только холст лежит ПОД карточками. Дважды писать отрисовку
+          // фигуры нельзя — две копии разъедутся при первой же правке.
+          //
+          // Здесь НЕ пропускается та фигура, которую сейчас тащат: холст
+          // этот почти всегда пуст или несёт одну-две подложки, поэтому
+          // его не жалко перерисовать и на живом кадре — зато подложка
+          // не выпрыгивает поверх фотографий на время жеста.
+          // Пока помеченных фигур нет вовсе, холст не трогаем совсем:
+          // лишний clearRect на каждый кадр панорамы нам не нужен.
+          const drawInkBack = () => {
+            const c = backCanvasRef.current; if (!c) return;
+            let any = false;
+            for (const s of shapesRef.current) if (s.bk) { any = true; break; }
+            if (!any && !backInk.current) return;
+            const { w, h, ctx } = fitInk(c);
+            ctx.clearRect(0, 0, w, h);
+            backInk.current = any;
+            if (!any) return;
+            const vv = viewRef.current;
+            const ox = vv.x, oy = vv.y, z = vv.z;
+            ctx.save();
+            ctx.translate(ox, oy); ctx.scale(z, z);
+            const x0 = -ox / z, y0 = -oy / z, x1 = x0 + w / z, y1 = y0 + h / z;
+            const typing = editText ? editText.id : null;
+            for (const s of shapesRef.current) {
+              if (!s.bk || s.id === typing) continue;
+              const b = shapeBox(s), m = s.sw + 12;
+              if (b.x + b.w + m < x0 || b.x - m > x1 || b.y + b.h + m < y0 || b.y - m > y1) continue;
+              paintShape(ctx, s);
             }
             ctx.restore();
           };
@@ -5866,7 +5962,9 @@
               if (shapeDraft.current) paintShape(ctx, shapeDraft.current);
               if (shapeAct.current) shapeAct.current.ids.forEach(id => {
                 const s = shapesRef.current.find(q => q.id === id);
-                if (s) paintShape(ctx, s);
+                // Подложку за карточками ведёт нижний холст: подними её
+                // сюда на время жеста — и она поплывёт поверх фотографий.
+                if (s && !s.bk) paintShape(ctx, s);
               });
               ctx.restore();
             }
@@ -5973,7 +6071,7 @@
           // взял бы устаревшие панораму и масштаб — доска замирала бы
           // на кадр позади пальца.
           const inkDraw = useRef({});
-          inkDraw.current = { s: drawInkStatic, l: drawInkLive, m: drawMiniSoon, mm: drawMini };
+          inkDraw.current = { s: drawInkStatic, l: drawInkLive, b: drawInkBack, m: drawMiniSoon, mm: drawMini };
           const requestInk = (both) => {
             inkNeed.current = Math.max(inkNeed.current, both ? 2 : 1);
             if (inkRaf.current) return;
@@ -5984,6 +6082,9 @@
               // существенное (need >= 2): во время штриха её содержимое
               // не меняется, и лишний кадр ей ни к чему.
               if (need >= 2) { inkDraw.current.s(); inkDraw.current.m(); }
+              // Слой за карточками зовём и на живом кадре: пока на доске
+              // нет ни одной такой фигуры, он выходит сразу.
+              inkDraw.current.b();
               inkDraw.current.l();
             });
           };
@@ -12694,6 +12795,12 @@
                           остаётся резким. Слой всё так же ПОВЕРХ карточек —
                           по референсу нужно уметь чертить. */}
                       <React.Fragment>
+                          {/* Слой ПОД карточками (zIndex 19 против 20 у
+                              `#wb-container`): на нём живут фигуры,
+                              помеченные «за карточками». Больше на нём
+                              ничего нет и быть не должно — по фотографии
+                              чертят сверху, а подложку кладут снизу. */}
+                          <canvas ref={backCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 19 }} />
                           <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 26 }} />
                           <canvas ref={liveCanvasRef}
                             className={`absolute inset-0 w-full h-full ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'}`}
@@ -13727,15 +13834,30 @@
                             <div className={row}><button onClick={ungroupShapes} className={cell(false)}>Разбить группу</button></div>
                           )}
 
-                          {selNow.length > 0 && (
+                          {selNow.length > 0 && (() => {
+                            // «Вперёд/Назад» переставляют фигуру среди
+                            // ФИГУР. А холст с фигурами лежит поверх
+                            // карточек — поэтому подложку под группу
+                            // фотографий даёт отдельная кнопка, и она
+                            // названа прямо. Без неё полупрозрачный
+                            // прямоугольник «назад» не уходил никуда.
+                            const allBack = selNow.every(s => s.bk);
+                            return (
                             <div className="space-y-1">
                               <span className={cap}>Порядок</span>
                               <div className={row}>
                                 <button onClick={() => orderShapes(1)} className={cell(false)}>Вперёд</button>
                                 <button onClick={() => orderShapes(-1)} className={cell(false)}>Назад</button>
                               </div>
+                              <div className={row}>
+                                <button onClick={() => setShapesBack(!allBack)} className={cell(allBack)}
+                                        title="Фигура уйдёт ПОД фотографии, заметки и карточки сцен — так делают подложку под группу">
+                                  За карточками
+                                </button>
+                              </div>
                             </div>
-                          )}
+                            );
+                          })()}
                           {wbMode === 'shape' && (
                             <p style={{ fontSize: 10.5, lineHeight: 1.4, color: 'var(--muted-2)' }}>
                               {shapeKind === 'text'
