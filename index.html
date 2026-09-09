@@ -3949,6 +3949,29 @@
           // Пока не оторваны ВСЕ пальцы, ни рисование, ни перенос карточек
           // событий не получают: иначе после щипка остаётся случайная линия.
           const pinchLock = useRef(false);
+          // ПОТЕРЯННЫЙ ПАЛЕЦ СЪЕДАЛ ШТРИХИ, и выглядело это как «рисую,
+          // а доска не рисует, потом само проходит». Отпускание изредка
+          // теряется (палец увели за край экрана, систему отвлёк жест,
+          // вкладку свернули). Забытый палец оставался в списке, а замок
+          // `pinchLock` снимался только когда список пуст, — то есть
+          // не снимался НИКОГДА: все касания глохли в перехвате, и кисть
+          // молча умирала до перезагрузки или до подчистки по времени.
+          // Поэтому: остался кто-то в списке после отпускания — ждём
+          // немного, и если вестей от него больше нет, считаем потерянным.
+          // Живому пальцу это ничем не грозит: своего штриха он всё равно
+          // не начинал (его нажатие ушло в щипок), а доска просто
+          // перестанет отзываться на него до следующего касания.
+          const boardTouchTidy = useRef(0);
+          const tidyTouchesSoon = () => {
+            clearTimeout(boardTouchTidy.current);
+            if (!boardTouch.current.size) return;
+            boardTouchTidy.current = setTimeout(() => {
+              boardTouch.current.clear();
+              pinchLock.current = false;
+              pinchRef2.current = null;
+              commitView();
+            }, 2500);
+          };
 
           // Идёт ли сейчас штрих обратным концом стилуса
           const penErase = useRef(false);
@@ -6867,6 +6890,16 @@
             };
             const onWheel = (e) => {
               const pinch = e.ctrlKey || e.metaKey;
+              // ПОКА ВЕДУТ ШТРИХ, ДОСКУ НЕ ДВИГАЕМ ВОВСЕ. На тачпаде
+              // рисуют одним прижатым пальцем, и любой второй палец
+              // рядом — да хоть задетая ладонью площадка — присылает
+              // колесо: холст уезжал прямо из-под линии, и она получалась
+              // с разрывом, а её продолжение ложилось не туда, где ведут.
+              // Отменить событие всё равно надо: страницу зумить нельзя.
+              if (live.current || shapeDraft.current || erasePt.current || ocrDraft.current) {
+                e.preventDefault();
+                return;
+              }
               const t = e.target;
               // Сам холст проверять незачем, и это не мелочь: при панораме
               // колесо сыплет событиями, а `getComputedStyle` заказывает
@@ -12563,8 +12596,16 @@
                         // застрявший в списке превращал бы следующее обычное
                         // касание в щипок — доска дёргалась бы сама собой.
                         const now = Date.now();
+                        clearTimeout(boardTouchTidy.current);
                         boardTouch.current.forEach((v, k) => { if (now - v.t > 10000) boardTouch.current.delete(k); });
                         boardTouch.current.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+                        // Один палец на доске — щипка нет и быть не может.
+                        // Замок мог остаться поднятым от прошлого щипка,
+                        // если отпускание одного из пальцев потерялось,
+                        // и тогда этот штрих съело бы молча.
+                        if (boardTouch.current.size === 1 && pinchLock.current) {
+                            pinchLock.current = false; pinchRef2.current = null;
+                        }
                         if (boardTouch.current.size === 2) {
                             abortBoardGesture();
                             pinchLock.current = true;
@@ -12574,6 +12615,7 @@
                     }}
                     onPointerMoveCapture={(e) => {
                         if (e.pointerType !== 'touch' || !boardTouch.current.has(e.pointerId)) return;
+                        clearTimeout(boardTouchTidy.current);   // вести есть — палец живой
                         boardTouch.current.set(e.pointerId, { x: e.clientX, y: e.clientY, t: Date.now() });
                         if (!pinchLock.current) return;
                         boardPinchMove();
@@ -12593,12 +12635,18 @@
                         // (новая карточка «в видимой части»), клало бы
                         // её мимо экрана.
                         if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; commitView(); }
+                        // Кто-то в списке остался: либо палец и правда лежит,
+                        // либо его отпускание потерялось. Второе разбирает
+                        // подчистка по затишью — иначе замок не снялся бы
+                        // вовсе и кисть молча умерла бы (см. tidyTouchesSoon).
+                        else tidyTouchesSoon();
                         e.stopPropagation();
                     }}
                     onPointerCancelCapture={(e) => {
                         if (e.pointerType !== 'touch') return;
                         boardTouch.current.delete(e.pointerId);
                         if (boardTouch.current.size === 0) { pinchLock.current = false; pinchRef2.current = null; commitView(); }
+                        else tidyTouchesSoon();
                     }}
                     /* Колесо и тачпад живут в СВОЁМ слушателе (см. эффект выше):
                        React вешает колесо пассивным, и отменить зум страницы
