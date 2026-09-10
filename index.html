@@ -154,12 +154,50 @@
         .wb-color-well::-moz-color-swatch { border: none; border-radius: 9999px; }
         .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
-        /* Кнопки, которые «появляются при наведении», на планшете НЕ появляются
-           никогда: наведения мыши там не существует. То есть удалить кадр,
-           выделить референс или положить его на доску пальцем было нельзя.
-           Показываем их приглушённо — видно, но не кричит. */
-        @media (hover: none) {
-          .opacity-0.group-hover\:opacity-100 { opacity: .62 !important; }
+        /* ---------- ДЕЙСТВИЯ НА КАРТОЧКЕ: ПОКОЙ · НАВЕДЕНИЕ · ВЫБОР ----------
+           Здесь стояло правило «на устройстве без мыши показывать
+           hover-кнопки приглушённо». По намерению оно верное — пальцем
+           до наведения не дотянуться, — но по итогу на iPad, а это
+           ГЛАВНОЕ устройство оператора, покоя не существовало вовсе:
+           двадцать две кнопки, спрятанные под наведение, постоянно висели
+           на экране в 62% непрозрачности. Именно это, а не цвет и не
+           скругления, читалось как админ-панель.
+
+           Заменено явным состоянием карточки. Состояний три:
+
+             покой      — действий не видно;
+             наведение  — проявляются (только там, где мышь есть);
+             выбрана    — проявляются (и на мыши, и на пальце).
+
+           Правило одно на все карточки приложения, а не по месту в каждой:
+           двадцать две копии разъехались бы при первой же правке. Цепляется
+           за класс `group`, который у корней карточек уже стоял.
+
+           `pointer-events: none` в покое ОБЯЗАТЕЛЕН: невидимая кнопка,
+           которая всё ещё принимает нажатие, — это нажатие, уходящее
+           в никуда поверх фотографии. Та же беда, что чинили у прячущихся
+           стрелок в полноэкранном просмотре. */
+        .cf-acts { opacity: 0; pointer-events: none; transition: opacity .12s; }
+        .cf-acts.on { opacity: 1; pointer-events: auto; }
+        @media (hover: hover) {
+          .group:hover .cf-acts { opacity: 1; pointer-events: auto; }
+        }
+
+        /* КАРТОЧКА С ОДНИМ-ЕДИНСТВЕННЫМ ДЕЙСТВИЕМ — случай особый.
+           Спрятать это действие совсем значит, что на планшете до него
+           нет пути вовсе: выделения у таких карточек нет, а заводить
+           ради одной кнопки «···» — менять одно нажатие на два. Поэтому
+           сама кнопка и есть та единственная зацепка: в покое она
+           приглушена до еле заметной, но нажимается, а наведение или
+           выбор доводят её до полной. */
+        /* Теги выбранной карточки правятся чипами, а в покое просто
+           перечислены строкой — читать их надо всегда, править нет. */
+        .cf-ref-tags { font-size: 11px; color: var(--muted-2); line-height: 1.5; margin-top: 2px; }
+
+        .cf-act1 { opacity: .38; transition: opacity .12s; }
+        .cf-act1.on { opacity: 1; }
+        @media (hover: hover) {
+          .group:hover .cf-act1 { opacity: 1; }
         }
         /* Отдельного display-шрифта больше нет: заголовок отличает вес
            и плотный трекинг, а не другая гарнитура. */
@@ -11300,7 +11338,7 @@
                                       {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
                                       <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
                                               title="Убрать из сцены — картинка останется в галерее"
-                                              className="cf-edit-only absolute opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center"
+                                              className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
                                               style={{ top: 6, right: 6, width: 24, height: 24, borderRadius: 6, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 11 }}>✕</button>
                                     </div>
                                   ))}
@@ -11382,7 +11420,7 @@
                                       </div>
                                     )}
                                     <button onClick={() => dropFrame(f.id)} title="Удалить кадр"
-                                            className="cf-edit-only absolute opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center"
+                                            className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
                                             style={{ top: 5, right: 5, width: 24, height: 24, borderRadius: 6, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 11 }}>✕</button>
                                   </div>
                                   <div className="flex justify-between gap-2" style={{ marginTop: 7 }}>
@@ -11465,7 +11503,7 @@
                                   <div key={st.id} className="rounded-lg p-3 relative group" style={{ backgroundColor: st.color || '#fef08a', color: '#1a1918' }}>
                                     <button onClick={() => { setItemScene(st.id, 'sticky', ''); showToast('Заметка отвязана · осталась на доске'); }}
                                             title="Убрать из сцены — заметка останется на доске"
-                                            className="cf-edit-only absolute flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-all"
+                                            className="cf-edit-only absolute flex items-center justify-center rounded-full cf-act1 transition-all"
                                             style={{ top: 6, right: 6, width: 22, height: 22, color: 'rgba(0,0,0,.5)', fontSize: 11 }}>✕</button>
                                     <textarea value={st.text} onChange={(e) => { const up = stickies.map(x => x.id === st.id ? { ...x, text: e.target.value } : x); setStickies(up); syncDoc('stickies', st.id, up.find(x => x.id === st.id)); }}
                                               className="w-full bg-transparent border-none focus:outline-none resize-none font-bold leading-tight pr-5"
@@ -11843,7 +11881,7 @@
                                         )}
                                         <button onClick={(e) => { e.stopPropagation(); toggleRefSelection(ref.id); }}
                                                 title={isSel ? 'Снять выделение' : 'Выделить'}
-                                                className={`cf-edit-only absolute bottom-2 left-2 w-7 h-7 rounded-lg z-20 flex items-center justify-center transition-all ${isSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                                className={`cf-edit-only cf-act1 absolute bottom-2 left-2 w-7 h-7 rounded-lg z-20 flex items-center justify-center ${isSel ? 'on' : ''}`}
                                                 style={isSel ? { background: 'var(--accent)', color: 'var(--bg)' } : { background: 'rgba(0,0,0,.8)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                                         </button>
@@ -11852,7 +11890,7 @@
                                                     message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта. Сразу после удаления его можно будет вернуть кнопкой.',
                                                     onConfirm: () => deleteRefs([ref]) }); }}
                                                 title="Удалить референс"
-                                                className="cf-edit-only absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-all text-xs z-20 flex items-center justify-center"><Icons.Trash/></button>
+                                                className={`cf-edit-only cf-acts absolute top-2 right-2 bg-black/80 backdrop-blur text-zinc-400 hover:text-red-400 w-7 h-7 rounded-lg text-xs z-20 flex items-center justify-center ${isSel ? 'on' : ''}`}><Icons.Trash/></button>
                                         {/* ОДИНОЧНЫЙ КАДР НА СЦЕНУ — не уходя
                                             из галереи. Пачкой это делает панель
                                             снизу, а поодиночке ходить туда-сюда
@@ -11870,9 +11908,9 @@
                                                       showToast(mine ? 'Снято со сцены · осталось в галерее' : `На сцену #${sc.number}`);
                                                     }}
                                                     title={mine ? `Уже в сцене #${sc.number} — снять` : `На сцену #${sc.number}`}
-                                                    className="absolute top-2 backdrop-blur w-7 h-7 rounded-lg transition-all text-xs z-20 flex items-center justify-center opacity-0 group-hover:opacity-100"
+                                                    className={`cf-acts absolute top-2 backdrop-blur w-7 h-7 rounded-lg text-xs z-20 flex items-center justify-center ${isSel ? 'on' : ''}`}
                                                     style={mine
-                                                      ? { right: 74, background: 'var(--accent)', color: 'var(--bg)', opacity: 1 }
+                                                      ? { right: 74, background: 'var(--accent)', color: 'var(--bg)' }
                                                       : { right: 74, background: 'rgba(0,0,0,.8)', color: 'var(--muted)' }}>
                                               <Icons.Scene/>
                                             </button>
@@ -11893,9 +11931,9 @@
                                                       showToast(onBoard ? 'Убрано с доски · осталось в галерее' : 'Добавлено на доску');
                                                     }}
                                                     title={onBoard ? `Уже на доске «${boardName}» — убрать` : 'Положить на текущую доску'}
-                                                    className="absolute top-2 backdrop-blur w-7 h-7 rounded-lg transition-all text-xs z-20 flex items-center justify-center opacity-0 group-hover:opacity-100"
+                                                    className={`cf-acts absolute top-2 backdrop-blur w-7 h-7 rounded-lg text-xs z-20 flex items-center justify-center ${isSel ? 'on' : ''}`}
                                                     style={onBoard
-                                                      ? { right: 38, background: 'var(--accent)', color: 'var(--bg)', opacity: 1 }
+                                                      ? { right: 38, background: 'var(--accent)', color: 'var(--bg)' }
                                                       : { right: 38, background: 'rgba(0,0,0,.8)', color: 'var(--muted)' }}>
                                               <Icons.Board/>
                                             </button>
@@ -11914,6 +11952,23 @@
                                     </div>
                                     <div className="p-3 space-y-2 bg-black/30">
                                         <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
+                                        {/* ПАПКА И ТЕГИ — ПО ВЫБОРУ, А НЕ ВСЕГДА.
+                                            Под каждой фотографией постоянно стояли подпись,
+                                            выпадающий список папок и лента тегов с крестиками:
+                                            три органа управления на кадр, а на листе из двух
+                                            десятков — шестьдесят. Лист читался таблицей базы
+                                            данных, а не подборкой. Раскрытие идёт по ВЫБОРУ,
+                                            а не по наведению: на планшете наведения нет вовсе,
+                                            а на мыши подставший блок дёргал бы сетку прямо
+                                            под курсором.
+                                            Сами ТЕГИ при этом не спрятаны — они остаются
+                                            видны строкой и в покое (ниже): прятать их
+                                            ПРОБОВАЛИ и откатили по прямой просьбе. Спрятаны
+                                            органы управления ими, а это разные вещи. */}
+                                        {!isSel && (ref.tags || []).length > 0 && (
+                                          <div className="cf-ref-tags">{(ref.tags || []).join(' · ')}</div>
+                                        )}
+                                        {isSel && (<React.Fragment>
                                         <select value={(ref.folder || '')}
                                                 onChange={(e) => {
                                                   if (e.target.value === '__new__') {
@@ -11942,6 +11997,7 @@
                                             ))}
                                             <span className="cf-edit-only"><TagInput ref_={ref} hints={tagHints} onAdd={addTagTo} narrow /></span>
                                         </div>
+                                        </React.Fragment>)}
                                     </div>
                                 </div>
                               );
@@ -12173,7 +12229,7 @@
                                       это правило всего приложения */}
                                   <button onClick={(e) => { e.stopPropagation(); setRefLocation(r.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
                                           title="Убрать из объекта — фото останется в галерее"
-                                          className="cf-edit-only absolute opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center"
+                                          className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
                                           style={{ top: 6, right: 6, width: 24, height: 24, borderRadius: 6, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 11 }}>✕</button>
                                   <div className="absolute" style={{ left: 6, bottom: 6, right: 6 }} onClick={e => e.stopPropagation()}>
                                     <input type="text" value={r.label || ''}
@@ -12400,7 +12456,7 @@
                                   <button onClick={() => setConfirmAction({ title: 'Удалить заметку?', message: 'Заметка объекта исчезнет насовсем.',
                                             onConfirm: () => { setStickies(stickies.filter(x => x.id !== st.id)); deleteNetDoc('stickies', st.id); } })}
                                           title="Удалить заметку"
-                                          className="cf-edit-only absolute flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-all"
+                                          className="cf-edit-only absolute flex items-center justify-center rounded-full cf-act1 transition-all"
                                           style={{ top: 6, right: 6, width: 22, height: 22, color: 'rgba(0,0,0,.5)', fontSize: 11 }}>✕</button>
                                   <textarea value={st.text} onChange={(e) => { const up = stickies.map(x => x.id === st.id ? { ...x, text: e.target.value } : x); setStickies(up); syncDoc('stickies', st.id, up.find(x => x.id === st.id)); }}
                                             className="w-full bg-transparent border-none focus:outline-none resize-none font-bold leading-tight pr-5"
@@ -13218,7 +13274,7 @@
                                   {/* Убирает карточку с доски, а не сцену из проекта */}
                                   <button onClick={(e) => { e.stopPropagation(); removeSceneFromBoard(s.id); }}
                                           title="Убрать с доски — сцена и её связи останутся в проекте"
-                                          className={`cf-edit-only w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-all text-[11px] ${selectedWbItems.includes(s.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
+                                          className={`cf-edit-only w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-all text-[11px] cf-acts ${selectedWbItems.includes(s.id) ? 'on' : ''}`}>✕</button>
                                 </div>
                                 <div className="p-4 space-y-2">
                                 {cardField(s.id, 'title', s.title, (v) => updateSceneTitle(s.id, v),
@@ -13239,14 +13295,14 @@
                             {references.filter(r => r.boardId === activeBoardId).map(ref => (
                             <div key={ref.id} data-card-id={ref.id} onPointerDown={(e) => handleElementPointerDown(e, ref.id, 'ref')} style={{ left: `${ref.x}px`, top: `${ref.y}px`, width: `${refW(ref)}px`, position: 'absolute' }} className={`glass-panel p-2.5 rounded-lg cursor-move pointer-events-auto group hover:border-indigo-500/50 ${(resizingRef && resizingRef.id === ref.id) || isDragging(ref.id) ? '' : 'transition-all'} ${selectedWbItems.includes(ref.id) ? 'ring-2 ring-indigo-500' : 'border-t border-white/10'} ${hoveredSceneId === ref.id ? 'scene-drop-target' : ''}`}>
                                 <div className="relative bg-black/60 rounded-lg overflow-hidden border border-white/10" style={{ aspectRatio: String(refAR(ref)) }}>
-                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className={`cf-edit-only absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-8 h-8 rounded-lg transition-all text-xs z-20 flex items-center justify-center ${selectedWbItems.includes(ref.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}><Icons.Trash/></button>
+                                <button title="Удалить референс из проекта" onClick={() => setConfirmAction({title:'Удалить референс?', message: (ref.label ? `«${ref.label}» удалится` : 'Референс удалится') + ' из проекта целиком, не только с доски. Сразу после удаления его можно будет вернуть кнопкой.', onConfirm:()=> deleteRefs([ref])})} className={`cf-edit-only absolute top-1.5 right-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-red-400 w-8 h-8 rounded-lg transition-all text-xs z-20 flex items-center justify-center cf-acts ${selectedWbItems.includes(ref.id) ? 'on' : ''}`}><Icons.Trash/></button>
                                 {/* Убрать с доски — не то же, что удалить: в галерее
                                     референс остаётся. У сцены и документа такая
                                     кнопка есть, у референса её не было вовсе, и
                                     пустую карточку убрать было нечем. */}
                                 <button title="Убрать с доски — референс останется в галерее"
                                         onClick={(e) => { e.stopPropagation(); removeRefFromBoard(ref.id); }}
-                                        className={`cf-edit-only absolute top-1.5 left-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-white w-8 h-8 rounded-lg transition-all text-[13px] z-20 flex items-center justify-center ${selectedWbItems.includes(ref.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
+                                        className={`cf-edit-only absolute top-1.5 left-1.5 bg-black/80 backdrop-blur border border-white/10 text-zinc-400 hover:text-white w-8 h-8 rounded-lg transition-all text-[13px] z-20 flex items-center justify-center cf-acts ${selectedWbItems.includes(ref.id) ? 'on' : ''}`}>✕</button>
                                 {ref.url ? (<React.Fragment>
                                     <div className="absolute inset-0 bg-cover bg-center blur-md opacity-25 pointer-events-none" style={bgStyle(ref.id, ref.url)}></div>
                                     <img src={ref.url} onLoad={(e) => noteRefRatio(ref, e.target)}
@@ -13287,7 +13343,7 @@
                                     onPointerDown={(e) => { e.stopPropagation(); setResizingRef({ id: ref.id, pointerId: e.pointerId, startX: e.clientX, startW: refW(ref) }); e.currentTarget.setPointerCapture(e.pointerId); }}
                                     onDoubleClick={(e) => { e.stopPropagation(); const up = references.map(r => r.id === ref.id ? { ...r, w: REF_W } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); }}
                                     title="Потяните, чтобы изменить размер. Двойной клик — вернуть исходный"
-                                    className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize z-30 flex items-center justify-center transition-colors ${(resizingRef && resizingRef.id === ref.id) || selectedWbItems.includes(ref.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                    className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize z-30 flex items-center justify-center transition-colors cf-acts ${(resizingRef && resizingRef.id === ref.id) || selectedWbItems.includes(ref.id) ? 'on' : ''}`}
                                     style={{pointerEvents: 'auto', touchAction: 'none'}}>
                                     <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#f0eee6" strokeWidth="1.6" strokeLinecap="round"><path d="M9 2 2 9"/><path d="M9 6.5 6.5 9"/></svg>
                                 </div>
@@ -13328,7 +13384,7 @@
                                         у референса и документа. */}
                                     <button title="Убрать с доски — кадр останется в раскадровке сцены"
                                             onClick={(e) => { e.stopPropagation(); removeFrameFromBoard(f.id); }}
-                                            className={`cf-edit-only ml-auto shrink-0 text-zinc-500 hover:text-white transition-all text-[13px] ${fSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                            className={`cf-edit-only ml-auto shrink-0 text-zinc-500 hover:text-white transition-all text-[13px] cf-acts ${fSel ? 'on' : ''}`}
                                             style={{ width: 22, height: 22 }}>✕</button>
                                 </div>
                                 {/* Рамка в ПРОПОРЦИИ КАДРА ПРОЕКТА: раскадровка
@@ -13380,11 +13436,11 @@
                                         className: 'flex-1 min-w-0 bg-transparent text-[12px] font-bold text-white focus:outline-none placeholder-zinc-600' })}
                                     <button onClick={(e) => { e.stopPropagation(); setActiveDocId(d.id); setActiveSchemeId(null); setCurrentView('docs'); }}
                                             title="Открыть целиком в «Экспликациях»"
-                                            className={`shrink-0 w-6 h-6 flex items-center justify-center rounded text-[11px] transition-all ${dSel ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                            className={`shrink-0 w-6 h-6 flex items-center justify-center rounded text-[11px] transition-all cf-acts ${dSel ? 'on' : ''}`}
                                             style={{ color: 'var(--muted)' }}>⤢</button>
                                     <button onClick={(e) => { e.stopPropagation(); removeDocFromBoard(d.id); }}
                                             title="Убрать с доски — документ останется в «Экспликациях»"
-                                            className={`cf-edit-only shrink-0 w-6 h-6 flex items-center justify-center rounded text-[11px] text-zinc-500 hover:text-white hover:bg-white/10 transition-all ${dSel ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
+                                            className={`cf-edit-only shrink-0 w-6 h-6 flex items-center justify-center rounded text-[11px] text-zinc-500 hover:text-white hover:bg-white/10 transition-all cf-acts ${dSel ? 'on' : ''}`}>✕</button>
                                 </div>
                                 {cardField(d.id, 'content', d.content, (v) => patchDoc(d.id, { content: v }),
                                   { multiline: true, placeholder: 'Текст документа…',
@@ -13402,7 +13458,7 @@
                                     #{dScene.number}<span style={{ opacity: .7 }}>✕</span>
                                   </button>
                                 )}
-                                <div className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize flex items-center justify-center transition-colors ${dRes || dSel ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                <div className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize flex items-center justify-center transition-colors cf-acts ${dRes || dSel ? 'on' : ''}`}
                                      style={{ pointerEvents: 'auto', touchAction: 'none', zIndex: 30 }}
                                      onPointerDown={(e) => { e.stopPropagation(); setResizingDoc({ id: d.id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startW: docCardW(d), startH: docCardH(d) }); e.currentTarget.setPointerCapture(e.pointerId); }}
                                      onDoubleClick={(e) => { e.stopPropagation(); patchDoc(d.id, { w: DOC_W, h: DOC_H }); }}
@@ -13423,7 +13479,7 @@
                             <div key={st.id} data-card-id={st.id} onPointerDown={(e) => handleElementPointerDown(e, st.id, 'sticky')}
                                  style={{ left: `${st.x}px`, top: `${st.y}px`, width: `${stickyW(st)}px`, height: `${stickyH(st)}px`, position: 'absolute', backgroundColor: st.color, zIndex: stSel ? 40 : 20 }}
                                  className={`p-4 rounded-lg cursor-move pointer-events-auto text-zinc-900 transform rotate-1 hover:rotate-0 group ${stResizing || isDragging(st.id) ? '' : 'transition-all'} ${stSel ? 'ring-2 ring-indigo-500' : 'border border-white/20'} ${hoveredSceneId === st.id ? 'scene-drop-target' : ''}`}>
-                                <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { pushUndo(false, [{ coll: 'stickies', id: st.id }]); freezeArrowsForCards([st.id]); setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className={`cf-edit-only absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors ${stSel ? '' : 'opacity-0 group-hover:opacity-100'}`}>✕</button>
+                                <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { pushUndo(false, [{ coll: 'stickies', id: st.id }]); freezeArrowsForCards([st.id]); setStickies(stickies.filter(s => s.id !== st.id)); deleteNetDoc('stickies', st.id); }}); }} className={`cf-edit-only absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-black/60 hover:bg-black/10 rounded-full text-[11px] transition-colors cf-acts ${stSel ? 'on' : ''}`}>✕</button>
                                 {cardField(st.id, 'text', st.text,
                                   (v) => { const up = stickies.map(s => s.id === st.id ? { ...s, text: v } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); },
                                   { multiline: true, style: { height: '100%' }, placeholder: 'Текст заметки...',
@@ -13448,7 +13504,7 @@
                                 })()}
 
                                 {/* Уголок для растягивания — как у карточки референса */}
-                                <div className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize flex items-center justify-center transition-colors ${stResizing || stSel ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                <div className={`node-handle cf-edit-only absolute right-[-7px] bottom-[-7px] w-6 h-6 rounded-md bg-zinc-700 hover:bg-indigo-500 border-2 border-[#1a1918] cursor-nwse-resize flex items-center justify-center transition-colors cf-acts ${stResizing || stSel ? 'on' : ''}`}
                                      style={{ pointerEvents: 'auto', touchAction: 'none', zIndex: 30 }}
                                      onPointerDown={(e) => { e.stopPropagation(); setResizingSticky({ id: st.id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startW: stickyW(st), startH: stickyH(st) }); e.currentTarget.setPointerCapture(e.pointerId); }}
                                      onDoubleClick={(e) => { e.stopPropagation(); const up = stickies.map(s => s.id === st.id ? { ...s, w: STICKY_W, h: STICKY_H } : s); setStickies(up); syncDoc('stickies', st.id, up.find(s => s.id === st.id)); }}
@@ -14245,7 +14301,7 @@
                                             : { color: 'var(--muted-2)' }}>
                                     <Icons.Board />
                                   </button>
-                                  {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className="cf-edit-only absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>)}
+                                  {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeDocId === doc.id ? 'on' : ''}`}><Icons.Trash/></button>)}
                                 </div>
                               ))}
                               <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-white/10 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
@@ -14255,7 +14311,7 @@
                               {lightSchemes.map(sch => (
                                 <div key={sch.id} className="group relative mb-2">
                                   <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-white/5'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
-                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className="cf-edit-only absolute right-3 top-3 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all w-7 h-7 flex items-center justify-center rounded-lg text-xs"><Icons.Trash/></button>
+                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
                                 </div>
                               ))}
                               <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-white/10 text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
