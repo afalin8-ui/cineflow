@@ -192,7 +192,11 @@
            выбор доводят её до полной. */
         /* Теги выбранной карточки правятся чипами, а в покое просто
            перечислены строкой — читать их надо всегда, править нет. */
-        .cf-ref-tags { font-size: 11px; color: var(--muted-2); line-height: 1.5; margin-top: 2px; }
+        /* Теги — ЕДИНСТВЕННОЕ, что осталось под кадром, и они же отвечают
+           на «зачем этот кадр». Значит, читаться должны как содержимое,
+           а не как служебная сноска: подпись убрана, и прятаться им
+           больше не за кем. */
+        .cf-ref-tags { font-size: 12px; color: var(--text-2); line-height: 1.5; }
 
         .cf-act1 { opacity: .38; transition: opacity .12s; }
         .cf-act1.on { opacity: 1; }
@@ -2271,7 +2275,7 @@
           );
         };
 
-        const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano }) => {
+        const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano, onSetLabel }) => {
             const [currentId, setCurrentId] = useState(initialId);
             const currentIndex = refs.findIndex(r => r.id === currentId);
             const currentRef = refs[currentIndex];
@@ -2503,7 +2507,17 @@
                             </span>
                         )}
                         {scopeLabel && <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 hidden sm:block" style={{ color: 'var(--accent)' }}>{scopeLabel}</span>}
-                        {currentRef.label && <span className="px-3 md:px-5 py-1.5 md:py-2 glass-panel rounded-full text-xs md:text-sm font-medium text-white text-center truncate">{currentRef.label}</span>}
+                        {/* ПОДПИСЬ ПРАВИТСЯ ЗДЕСЬ, а не на карточке галереи:
+                            назвать кадр можно, только когда его видишь. Гостю
+                            это обычный текст — поле ввода с пустой подписью
+                            обещало бы ему правку, которой нет. */}
+                        {READ_ONLY
+                          ? (currentRef.label && <span className="px-3 md:px-5 py-1.5 md:py-2 glass-panel rounded-full text-xs md:text-sm font-medium text-white text-center truncate">{currentRef.label}</span>)
+                          : <input type="text" value={currentRef.label || ''}
+                                   onChange={(e) => onSetLabel && onSetLabel(currentRef.id, e.target.value)}
+                                   placeholder="Как назовём кадр?"
+                                   className="px-3 md:px-5 py-1.5 md:py-2 glass-panel rounded-full text-xs md:text-sm font-medium text-white text-center focus:outline-none"
+                                   style={{ minWidth: 150, maxWidth: 'min(46vw, 380px)' }} />}
                     </div>
                 </div>
             );
@@ -3466,6 +3480,15 @@
           // что кадр уже пристроен, не открывая его: на общем листе
           // из четырёхсот картинок иначе не отличить «ещё не смотрел»
           // от «уже поставил в сцену».
+          // Подпись референса правится из полноэкранного просмотра — с карточки
+          // галереи она убрана. Проверка READ_ONLY первой строкой, как у всех
+          // функций правки.
+          const setRefLabel = (id, text) => {
+            if (READ_ONLY) return;
+            const up = references.map(r => r.id === id ? { ...r, label: text } : r);
+            setReferences(up); syncDoc('references', id, up.find(r => r.id === id));
+          };
+
           const refUsedLabel = (r) => {
             if (r.sceneId) {
               const sc = scenes.find(x => x.id === r.sceneId);
@@ -11950,8 +11973,19 @@
                                                          fontSize: 10, fontWeight: 700, letterSpacing: '.04em', padding: '2px 5px' }}>360°</span>
                                         )}
                                     </div>
+                                    {/* НАЗВАНИЯ НА КАРТОЧКЕ НЕТ, И ЭТО НАМЕРЕННО.
+                                        Лежало в нём чаще всего имя файла — «IMG_4821.jpg»,
+                                        «Снимок экрана 2026-04-21 11.02.15», — то есть строка,
+                                        которая ничего не говорит о кадре, но занимает место
+                                        под каждой фотографией. На листе из двух десятков это
+                                        два десятка строк ни о чём, и лист читался списком
+                                        файлов, а не подборкой.
+                                        Зачем этот кадр — объясняют ТЕГИ, они и остаются
+                                        видны всегда. А само название читают и правят
+                                        в полноэкранном просмотре: там на него смотрят,
+                                        когда уже видят фотографию, и там оно к месту. */}
+                                    {(isSel || (ref.tags || []).length > 0) && (
                                     <div className="p-3 space-y-2 bg-black/30">
-                                        <input type="text" value={ref.label} onChange={(e) => { const up = references.map(r=>r.id===ref.id?{...r,label:e.target.value}:r); setReferences(up); syncDoc('references', ref.id, up.find(r=>r.id===ref.id)); }} className="bg-transparent w-full text-sm font-bold text-zinc-200 focus:outline-none placeholder-zinc-600" placeholder="Название референса..." />
                                         {/* ПАПКА И ТЕГИ — ПО ВЫБОРУ, А НЕ ВСЕГДА.
                                             Под каждой фотографией постоянно стояли подпись,
                                             выпадающий список папок и лента тегов с крестиками:
@@ -11999,6 +12033,7 @@
                                         </div>
                                         </React.Fragment>)}
                                     </div>
+                                    )}
                                 </div>
                               );
                             })}
@@ -15588,7 +15623,7 @@
                   return <Lightbox refs={list} scopeLabel={lightboxData.scopeLabel} initialId={lightboxData.currentId}
                                    onClose={() => setLightboxData(null)}
                                    hints={tagHints} onAddTag={addTagTo} onRemoveTag={removeTagFrom}
-                                   onSetPano={setRefPano} />;
+                                   onSetPano={setRefPano} onSetLabel={setRefLabel} />;
               })()}
 
               {/* Печатная версия. Содержимое зависит от выбранной кнопки
