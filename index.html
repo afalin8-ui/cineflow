@@ -13824,9 +13824,24 @@
                                 <div className="p-4 space-y-2">
                                 {cardField(s.id, 'title', s.title, (v) => updateSceneTitle(s.id, v),
                                   { placeholder: 'Название сцены', className: 'w-full bg-transparent text-sm font-black text-white focus:outline-none' })}
+                                {/* Экспликация на карточке доски — ПРЕВЬЮ, а не поле.
+                                    Раньше она лежала в тёмном колодце с рамкой и
+                                    обрезалась жёсткой высотой в 46 точек — то есть
+                                    посреди строки, без единого намёка, что текст
+                                    продолжается. Замер показывал 9 точек, срезанных
+                                    ровно по буквам. Теперь это текст карточки,
+                                    обрезанный по СТРОКЕ с многоточием: видно, что
+                                    дальше есть ещё. Правится по-прежнему двойным
+                                    нажатием — тогда клапан снимается и поле растёт. */}
                                 {cardField(s.id, 'content', s.content, (v) => updateScene(s.id, 'content', v),
-                                  { multiline: true, placeholder: 'Экспликация…', style: { minHeight: 46, maxHeight: 46 },
-                                    className: 'w-full bg-[var(--scrim)] border border-[var(--border)] rounded-lg p-2.5 text-[length:var(--fs-1)] text-zinc-300 resize-none focus:outline-none font-medium' })}
+                                  { multiline: true, placeholder: 'Экспликация…',
+                                    style: (editCard && editCard.id === s.id && editCard.key === 'content')
+                                      ? { minHeight: 64, background: 'var(--bg)', border: '1px solid var(--accent)', borderRadius: 'var(--r-md)', padding: 8 }
+                                      // minHeight прежний: габарит карточки объявлен числом
+                                      // в checkInt (288×150), и рамка выделения, связи,
+                                      // мини-карта и выгрузка считают по нему.
+                                      : { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: 46 },
+                                    className: 'w-full bg-transparent text-[length:var(--fs-1)] text-zinc-300 resize-none focus:outline-none leading-relaxed' })}
                                 </div>
                                 {/* Тот же кружок, что у остальных карточек: со сцены
                                     тоже надо уметь протянуть связь */}
