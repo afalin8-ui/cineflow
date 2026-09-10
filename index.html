@@ -73,7 +73,10 @@
                 base:  'var(--fs-4)',
                 lg:    'var(--fs-5)',
                 xl:    'var(--fs-5)',
-                '2xl': 'var(--fs-6)',
+                // Между 20 и 30 не было ступени, и text-2xl совпал
+                // с text-3xl — пара «поменьше на телефоне, крупнее
+                // на планшете» перестала что-либо значить.
+                '2xl': 'var(--fs-5x)',
                 '3xl': 'var(--fs-6)'
               },
               borderRadius: {
@@ -188,6 +191,10 @@
           --fs-3: 14px;           /* основной интерфейс: кнопки, строки списков */
           --fs-4: 16px;           /* текст, который ЧИТАЮТ: сценарий, гайд */
           --fs-5: 20px;           /* заголовок раздела */
+          /* Ступень между 20 и 30. Номер вне ряда намеренно: fs-1…fs-6
+             размечены по всему файлу, и сдвинуть их номера значило бы
+             править каждую строку, где они стоят. */
+          --fs-5x: 24px;          /* заголовок экрана на телефоне */
           --fs-6: 30px;           /* заголовок экрана */
 
           /* ---------- ОТСТУПЫ ----------
@@ -10320,6 +10327,11 @@
           // Одновременно они не помещаются, и притворяться, что помещаются,
           // значит сделать нечитаемым и то и другое.
           const [phoneSceneOpen, setPhoneSceneOpen] = useState(false);
+          // «Экспликации» на телефоне — тоже два экрана, а не один свиток:
+          // список гайдов и схем занимал весь первый экран, и чтобы дойти
+          // до самого гайда, его каждый раз приходилось пролистывать.
+          // Это ровно та же беда, что была у списка сцен, и лечится тем же.
+          const [phoneDocOpen, setPhoneDocOpen] = useState(false);
           // Что открыто шторкой снизу: техника, свет, солнце, экспликация,
           // «Ещё» с остальными модулями.
           const [phoneSheet, setPhoneSheet] = useState(null);
@@ -10771,7 +10783,17 @@
                 {isPhone ? (
                   <header className="flex items-center shrink-0 z-40 gap-2"
                           style={{ padding: '10px 16px 8px', background: 'var(--bg)' }}>
-                    {currentView === 'notion' && phoneSceneOpen ? (
+                    {currentView === 'docs' && phoneDocOpen ? (
+                      <React.Fragment>
+                        <button onClick={() => setPhoneDocOpen(false)}
+                                style={{ color: 'var(--accent)', fontSize: 'var(--fs-4)', minHeight: 30, paddingRight: 6 }}>‹ Гайды</button>
+                        <button onClick={() => setShowSearch(true)} title="Поиск по всему проекту"
+                                className="shrink-0 flex items-center justify-center ml-auto"
+                                style={{ width: 30, height: 30, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted)' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        </button>
+                      </React.Fragment>
+                    ) : currentView === 'notion' && phoneSceneOpen ? (
                       <React.Fragment>
                         <button onClick={() => setPhoneSceneOpen(false)}
                                 style={{ color: 'var(--accent)', fontSize: 'var(--fs-4)', minHeight: 30, paddingRight: 6 }}>‹ Сцены</button>
@@ -14493,17 +14515,22 @@
                     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 pb-24">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-[var(--border)] pb-5 gap-4">
                         <div className="flex items-baseline gap-3 flex-wrap">
-                          <h2 className="text-xl font-bold text-white flex items-center gap-2"><Icons.Table/> КПП</h2>
+                          {/* На телефоне это же слово стоит в шапке экрана — второй раз
+                              подряд оно только съедает первый экран. Прячем своим
+                              классом, а не tailwind-овским hidden: у того тот же вес,
+                              что у .cf-seg{display:flex}, и кто победит, зависело бы
+                              от порядка таблиц стилей. */}
+                          <h2 className="cf-wide-only text-xl font-bold text-white items-center gap-2"><Icons.Table/> КПП</h2>
                           <span className="text-[length:var(--fs-1)] font-mono text-zinc-500">
                             {(() => { const sh = new Set(scenes.map(s => s.date).filter(Boolean)).size;
                               return `${scenes.length} ${plur(scenes.length, 'сцена', 'сцены', 'сцен')} · ${sh} ${plur(sh, 'смена', 'смены', 'смен')}`; })()}
                           </span>
                         </div>
-                        <div className="flex glass-panel p-1.5 rounded-lg border border-[var(--line)]">
+                        <div className="flex w-full sm:w-auto glass-panel p-1.5 rounded-lg border border-[var(--line)]">
                           <button onClick={() => setTableSubView('grouped')} title="Что снимаем в этот день и чем"
-                                  className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>По сменам</button>
+                                  className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>По сменам</button>
                           <button onClick={() => setTableSubView('scenes')} title="Полный документ: экспликация, раскадровка, текст сцены"
-                                  className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'scenes' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Все сцены</button>
+                                  className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'scenes' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Все сцены</button>
                         </div>
                       </div>
 
@@ -14664,217 +14691,235 @@
                   {/* ЭКСПЛИКАЦИИ И ДОКУМЕНТЫ */}
                   <div className={`h-full w-full ${currentView === 'docs' ? 'block' : 'hidden'}`}>
                     <div className="flex flex-col lg:flex-row h-full max-w-7xl mx-auto p-4 md:p-6 gap-6 overflow-y-auto lg:overflow-hidden">
-                      <div className="w-full lg:w-72 glass-panel p-5 rounded-lg flex flex-col shrink-0 relative border-t border-[var(--border)] overflow-hidden">
-                        <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
-                          <div>
-                              <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские Гайды</span>
-                              {docs.map(doc => (
-                                <div key={doc.id} className="group relative mb-2">
-                                  <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
-                                  {/* Документ можно вынести на доску и связать со сценой */}
-                                  <button onClick={(e) => { e.stopPropagation(); if (doc.boardId === activeBoardId) removeDocFromBoard(doc.id); else putDocOnBoard(doc.id); }}
-                                          title={doc.boardId === activeBoardId ? 'Убрать с доски — документ останется здесь' : 'Положить на текущую доску'}
-                                          className="cf-edit-only absolute right-11 top-3 w-7 h-7 flex items-center justify-center rounded-lg transition-all"
-                                          style={doc.boardId === activeBoardId
-                                            ? { background: 'var(--accent)', color: 'var(--bg)' }
-                                            : { color: 'var(--muted-2)' }}>
-                                    <Icons.Board />
-                                  </button>
-                                  {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeDocId === doc.id ? 'on' : ''}`}><Icons.Trash/></button>)}
-                                </div>
-                              ))}
-                              <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
-                          </div>
-                          <div className="pt-4 border-t border-[var(--border)]">
-                              <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы Света</span>
-                              {lightSchemes.map(sch => (
-                                <div key={sch.id} className="group relative mb-2">
-                                  <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
-                                  <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
-                                </div>
-                              ))}
-                              <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); syncDoc('lightSchemes', nS.id, nS); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                      {/* Телефон: список и сам гайд — ДВА экрана. Список занимал
+                          весь первый экран, и до текста гайда приходилось
+                          пролистывать его каждый раз. То же правило, что
+                          у списка сцен на телефоне. */}
+                      {(!isPhone || !phoneDocOpen) && (
+                        <React.Fragment>
+                        <div className="w-full lg:w-72 glass-panel p-5 rounded-lg flex flex-col shrink-0 relative border-t border-[var(--border)] overflow-hidden">
+                          <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
+                            <div>
+                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские Гайды</span>
+                                {docs.map(doc => (
+                                  <div key={doc.id} className="group relative mb-2">
+                                    <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
+                                    {/* Документ можно вынести на доску и связать со сценой */}
+                                    <button onClick={(e) => { e.stopPropagation(); if (doc.boardId === activeBoardId) removeDocFromBoard(doc.id); else putDocOnBoard(doc.id); }}
+                                            title={doc.boardId === activeBoardId ? 'Убрать с доски — документ останется здесь' : 'Положить на текущую доску'}
+                                            className="cf-edit-only absolute right-11 top-3 w-7 h-7 flex items-center justify-center rounded-lg transition-all"
+                                            style={doc.boardId === activeBoardId
+                                              ? { background: 'var(--accent)', color: 'var(--bg)' }
+                                              : { color: 'var(--muted-2)' }}>
+                                      <Icons.Board />
+                                    </button>
+                                    {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeDocId === doc.id ? 'on' : ''}`}><Icons.Trash/></button>)}
+                                  </div>
+                                ))}
+                                <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); setPhoneDocOpen(true); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
+                            </div>
+                            <div className="pt-4 border-t border-[var(--border)]">
+                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы Света</span>
+                                {lightSchemes.map(sch => (
+                                  <div key={sch.id} className="group relative mb-2">
+                                    <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
+                                    <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
+                                  </div>
+                                ))}
+                                <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); setPhoneDocOpen(true); syncDoc('lightSchemes', nS.id, nS); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                        </React.Fragment>
+                      )}
 
-                      {/* Текстовый документ */}
-                      {activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
-                        const activeDoc = docs.find(d => d.id === activeDocId);
-                        return (
-                          <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-[var(--border)]">
-                            <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
-                            {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем
-                                дочитать: текст в полторы тысячи знаков — это
-                                тысяча точек по высоте, а поле было 460, и вторая
-                                половина пряталась во ВНУТРЕННЮЮ прокрутку.
-                                В режиме просмотра она не работала вовсе
-                                (у полей `pointer-events: none`), то есть гость
-                                видел ровно первый экран гайда и всё. На телефоне
-                                помещалась пятая часть.
-                                Теперь текст разворачивается — тем же жестом, что
-                                и текст сцены из сценария: свёрнутый показывает
-                                начало, «развернуть» отдаёт его целиком, и дальше
-                                прокручивается сама панель, как страница. */}
-                            {(() => {
-                              const open = !!docOpen[activeDoc.id];
-                              const body = activeDoc.content || '';
-                              // Длинный ли он — считаем по строкам и знакам, а не
-                              // по высоте: замерять DOM ради подписи на кнопке
-                              // значит перерисовывать экран на каждую букву.
-                              const long = body.length > 700 || body.split('\n').length > 12;
+                      {/* Второй экран телефона: сам гайд или схема. */}
+                      {(!isPhone || phoneDocOpen) && (
+                        <React.Fragment>
+                        {/* Текстовый документ */}
+                        {activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
+                          const activeDoc = docs.find(d => d.id === activeDocId);
+                          return (
+                            <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-[var(--border)]">
+                              <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
+                              {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем
+                                  дочитать: текст в полторы тысячи знаков — это
+                                  тысяча точек по высоте, а поле было 460, и вторая
+                                  половина пряталась во ВНУТРЕННЮЮ прокрутку.
+                                  В режиме просмотра она не работала вовсе
+                                  (у полей `pointer-events: none`), то есть гость
+                                  видел ровно первый экран гайда и всё. На телефоне
+                                  помещалась пятая часть.
+                                  Теперь текст разворачивается — тем же жестом, что
+                                  и текст сцены из сценария: свёрнутый показывает
+                                  начало, «развернуть» отдаёт его целиком, и дальше
+                                  прокручивается сама панель, как страница. */}
+                              {(() => {
+                                const open = !!docOpen[activeDoc.id];
+                                const body = activeDoc.content || '';
+                                // Длинный ли он — считаем по строкам и знакам, а не
+                                // по высоте: замерять DOM ради подписи на кнопке
+                                // значит перерисовывать экран на каждую букву.
+                                const long = body.length > 700 || body.split('\n').length > 12;
+                                return (
+                                  <div className={`flex flex-col ${open ? 'shrink-0' : ''}`}
+                                       style={open ? null : { flex: '1 1 0%', minHeight: 0 }}>
+                                    {READ_ONLY ? (
+                                      // Гостю поле ввода не нужно вовсе, а неподвижное
+                                      // поле с обрезанным текстом — это тупик: прокрутить
+                                      // его нельзя. Обычный текст течёт вместе со страницей.
+                                      <div className="w-full glass-input rounded-lg p-6 text-sm md:text-base leading-relaxed font-medium border border-[var(--border)] overflow-y-auto"
+                                           style={open ? { whiteSpace: 'pre-wrap', flexShrink: 0 } : { whiteSpace: 'pre-wrap', maxHeight: 420 }}>
+                                        {body || 'Гайд пока пустой'}
+                                      </div>
+                                    ) : (
+                                      <textarea value={body}
+                                                ref={el => { if (el && open) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
+                                                onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }}
+                                                className={`w-full glass-input rounded-lg p-6 text-sm md:text-base transition-shadow leading-relaxed resize-none font-medium border border-[var(--border)] ${open ? '' : 'flex-1 min-h-[300px] lg:min-h-0'}`}
+                                                style={open ? { overflow: 'hidden', flexShrink: 0 } : null}
+                                                placeholder="Содержание документа..." />
+                                    )}
+                                    {long && (
+                                      <button onClick={() => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] }))}
+                                              className="self-start mt-2 cf-chip shrink-0">
+                                        {open ? 'свернуть ⤡' : 'развернуть ⤢'}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            
+                              <div className="space-y-4 border-t border-[var(--border)] pt-6">
+                                <div className="flex justify-between items-center px-1">
+                                  <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
+                                  <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="cf-edit-only text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
+                                </div>
+                                <div className="glass-panel rounded-lg overflow-x-auto border border-[var(--line)]">
+                                  <table className="w-full min-w-[500px] text-left text-sm border-collapse">
+                                    <thead><tr className="bg-[var(--panel)] text-zinc-400 text-[length:var(--fs-1)] font-bold border-b border-[var(--border)]"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
+                                    <tbody className="divide-y divide-white/5 text-zinc-200">
+                                      {crew.map(c => (
+                                        <tr key={c.id} className="hover:bg-[var(--raised)] transition-colors">
+                                          <td className="p-2"><input type="text" value={c.name} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,name:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-white focus:outline-none font-bold placeholder-zinc-600" placeholder="ФИО" /></td>
+                                          <td className="p-2"><input type="text" value={c.role} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,role:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-zinc-400 font-medium focus:outline-none placeholder-zinc-600" placeholder="Роль" /></td>
+                                          <td className="p-2"><input type="text" value={c.phone} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,phone:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 font-mono font-medium focus:outline-none placeholder-zinc-600" placeholder="+7..." /></td>
+                                          <td className="p-2 text-center"><button onClick={() => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); }} className="cf-edit-only w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-[var(--raised)] text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      
+                        {/* Схема света */}
+                        {activeSchemeId && lightSchemes.find(s=>s.id === activeSchemeId) && (() => {
+                            const sch = lightSchemes.find(s=>s.id === activeSchemeId);
+                            return (
+                              <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative">
+                                  <div className="flex justify-between items-center gap-4">
+                                      <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
+                                      <button onClick={() => setDrawingSchemeId(sch.id)} className="cf-edit-only bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
+                                  </div>
+                                  <div className="w-full aspect-video bg-[var(--scrim-hi)] rounded-lg border border-[var(--border)] flex items-center justify-center overflow-hidden">
+                                      {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
+                                  </div>
+                                  <div className="pt-4 border-t border-[var(--border)]">
+                                      <span className="text-xs text-zinc-400 font-bold block mb-2">Привязано к сценам:</span>
+                                      <div className="flex gap-2 flex-wrap">
+                                          {scenes.filter(s=>s.lightSchemeId===sch.id).length > 0 
+                                              ? scenes.filter(s=>s.lightSchemeId===sch.id).map(s=>(<span key={s.id} className="bg-indigo-950/60 px-3 py-1 rounded-lg text-xs font-mono text-indigo-300">Сцена #{s.number}</span>))
+                                              : <span className="text-xs text-zinc-600">Схема не привязана ни к одной сцене</span>
+                                          }
+                                      </div>
+                                  </div>
+                              </div>
+                            );
+                        })()}
+
+                        </React.Fragment>
+                      )}
+                      {/* Файлы и печать — работа со списком, а не с гайдом. */}
+                      {(!isPhone || !phoneDocOpen) && (
+                        <React.Fragment>
+                        {/* Правая колонка: Файлы */}
+                        <div className="w-full lg:w-80 glass-panel p-6 rounded-lg shrink-0 space-y-8 relative border-t border-[var(--border)]">
+                          {/* Печать — самая редкая работа на этом экране, поэтому
+                              она свёрнута в один подпункт: раскрыл — и выбрал,
+                              что печатать. Четыре кнопки в развёрнутом виде
+                              занимали верх панели каждый день ради того, чем
+                              пользуются раз в неделю. */}
+                          <div className="space-y-3">
+                            <button onClick={() => setPrintPanelOpen(v => !v)}
+                                    title="Выбрать, что печатать"
+                                    className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-lg glass-panel border border-[var(--border)] hover:bg-[var(--raised)] transition-colors">
+                              <span className="flex items-center gap-2 text-[length:var(--fs-1)] font-bold text-zinc-300 "><Icons.Print/> Печать и экспорт</span>
+                              <span className="text-zinc-500 text-[length:var(--fs-1)] font-bold">{printPanelOpen ? '▲' : '▼'}</span>
+                            </button>
+                            {printPanelOpen && (() => {
+                              const openDoc = docs.find(d => d.id === activeDocId);
+                              const openScheme = lightSchemes.find(s => s.id === activeSchemeId);
+                              const btn = "w-full py-3 rounded-lg text-sm font-bold tracking-wide transition-all flex items-center justify-center gap-2 border";
                               return (
-                                <div className={`flex flex-col ${open ? 'shrink-0' : ''}`}
-                                     style={open ? null : { flex: '1 1 0%', minHeight: 0 }}>
-                                  {READ_ONLY ? (
-                                    // Гостю поле ввода не нужно вовсе, а неподвижное
-                                    // поле с обрезанным текстом — это тупик: прокрутить
-                                    // его нельзя. Обычный текст течёт вместе со страницей.
-                                    <div className="w-full glass-input rounded-lg p-6 text-sm md:text-base leading-relaxed font-medium border border-[var(--border)] overflow-y-auto"
-                                         style={open ? { whiteSpace: 'pre-wrap', flexShrink: 0 } : { whiteSpace: 'pre-wrap', maxHeight: 420 }}>
-                                      {body || 'Гайд пока пустой'}
-                                    </div>
-                                  ) : (
-                                    <textarea value={body}
-                                              ref={el => { if (el && open) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
-                                              onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }}
-                                              className={`w-full glass-input rounded-lg p-6 text-sm md:text-base transition-shadow leading-relaxed resize-none font-medium border border-[var(--border)] ${open ? '' : 'flex-1 min-h-[300px] lg:min-h-0'}`}
-                                              style={open ? { overflow: 'hidden', flexShrink: 0 } : null}
-                                              placeholder="Содержание документа..." />
-                                  )}
-                                  {long && (
-                                    <button onClick={() => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] }))}
-                                            className="self-start mt-2 cf-chip shrink-0">
-                                      {open ? 'свернуть ⤡' : 'развернуть ⤢'}
-                                    </button>
-                                  )}
+                                <div className="space-y-2">
+                                  <button onClick={() => requestPrint('full')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]`}>
+                                    <Icons.Print/> <span>Весь план</span>
+                                  </button>
+                                  <button onClick={() => requestPrint('doc')} disabled={!openDoc || !!activeSchemeId}
+                                          title={openDoc && !activeSchemeId ? `Печать: ${openDoc.title}` : 'Сначала откройте гайд слева'}
+                                          className={`${btn} ${openDoc && !activeSchemeId ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]' : 'bg-zinc-900/60 text-zinc-600 border-[var(--line)] cursor-not-allowed'}`}>
+                                    <Icons.Docs/> <span className="truncate">Гайд{openDoc && !activeSchemeId ? `: ${openDoc.title}` : ''}</span>
+                                  </button>
+                                  <button onClick={() => requestPrint('scheme')} disabled={!openScheme}
+                                          title={openScheme ? `Печать: ${openScheme.title}` : 'Сначала откройте схему света слева'}
+                                          className={`${btn} ${openScheme ? 'bg-amber-900/40 hover:bg-amber-900/60 text-amber-100 border-amber-500/30' : 'bg-zinc-900/60 text-zinc-600 border-[var(--line)] cursor-not-allowed'}`}>
+                                    <Icons.Lightbulb/> <span className="truncate">Схема света{openScheme ? `: ${openScheme.title}` : ''}</span>
+                                  </button>
+                                  <button onClick={() => requestPrint('gear')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]`}>
+                                    <Icons.Video/> <span>Список техники</span>
+                                  </button>
                                 </div>
                               );
                             })()}
-                            
-                            <div className="space-y-4 border-t border-[var(--border)] pt-6">
-                              <div className="flex justify-between items-center px-1">
-                                <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
-                                <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="cf-edit-only text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
-                              </div>
-                              <div className="glass-panel rounded-lg overflow-x-auto border border-[var(--line)]">
-                                <table className="w-full min-w-[500px] text-left text-sm border-collapse">
-                                  <thead><tr className="bg-[var(--panel)] text-zinc-400 text-[length:var(--fs-1)] font-bold border-b border-[var(--border)]"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
-                                  <tbody className="divide-y divide-white/5 text-zinc-200">
-                                    {crew.map(c => (
-                                      <tr key={c.id} className="hover:bg-[var(--raised)] transition-colors">
-                                        <td className="p-2"><input type="text" value={c.name} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,name:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-white focus:outline-none font-bold placeholder-zinc-600" placeholder="ФИО" /></td>
-                                        <td className="p-2"><input type="text" value={c.role} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,role:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-zinc-400 font-medium focus:outline-none placeholder-zinc-600" placeholder="Роль" /></td>
-                                        <td className="p-2"><input type="text" value={c.phone} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,phone:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 font-mono font-medium focus:outline-none placeholder-zinc-600" placeholder="+7..." /></td>
-                                        <td className="p-2 text-center"><button onClick={() => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); }} className="cf-edit-only w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-[var(--raised)] text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
+                          </div>
+                          <div className="space-y-4 pt-6 border-t border-[var(--border)]">
+                            <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block ml-1">Файлы и документы проекта</span>
+                            <div className="cf-edit-only border border-dashed border-[var(--border)] hover:border-indigo-500/50 rounded-lg p-6 text-center bg-[var(--scrim)] hover:bg-indigo-500/10 transition-all group">
+                              <label className="text-xs font-bold text-zinc-400 group-hover:text-indigo-300 cursor-pointer block w-full h-full flex flex-col items-center gap-2">
+                                <span className="opacity-60 group-hover:opacity-100 transition-opacity"><Icons.Folder/></span>
+                                <span>Загрузить КПП или доки</span>
+                                <input type="file" onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) addProjectFile(f); }} accept=".pdf,.xlsx,.csv,.txt,.png,.jpg" className="hidden" />
+                              </label>
+                            </div>
+                            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 hide-scrollbar">
+                              {projectFiles.map(file => (
+                                <div key={file.id} className="glass-panel p-4 rounded-lg flex flex-col space-y-3 group hover:border-indigo-500/30 transition-colors border border-[var(--line)]">
+                                  <div className="truncate flex flex-col">
+                                    <span className="text-sm text-zinc-200 truncate font-bold tracking-wide" title={file.name}>{file.name}</span>
+                                    <span className="text-[length:var(--fs-1)] font-mono text-zinc-500 mt-0.5">{file.size}{file.full ? ` · ${CLOUD_NAMES[(file.cloud || {}).provider] || 'облако'}` : ''}</span>
+                                  </div>
+                                  <div className="flex gap-2 justify-end">
+                                    {file.data && file.data !== '#'
+                                      ? (<a href={file.data} download={file.name} className="flex-1 text-emerald-400 font-bold px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-all text-center text-xs">Скачать</a>)
+                                      : file.full
+                                        ? (<a href={file.full} target="_blank" rel="noopener noreferrer" className="flex-1 text-emerald-400 font-bold px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-all text-center text-xs">Скачать</a>)
+                                        : null}
+                                    {!file.full && file.data && file.data !== '#' && cloudCfg.provider && (
+                                      <button onClick={() => sendFileToCloud(file)} title={`Отправить в ${CLOUD_NAMES[cloudCfg.provider]}`}
+                                        className="cf-edit-only w-10 flex items-center justify-center text-zinc-500 hover:text-indigo-300 rounded-lg bg-[var(--scrim)] hover:bg-[var(--raised)] transition-colors border border-[var(--line)]"><Icons.Cloud/></button>
+                                    )}
+                                    <button onClick={() => setConfirmAction({title:'Удалить файл?', message: '', onConfirm:()=>{ setProjectFiles(projectFiles.filter(f=>f.id!==file.id)); deleteNetDoc('projectFiles', file.id); }})} className="cf-edit-only w-10 flex items-center justify-center text-zinc-500 hover:text-red-400 font-bold rounded-lg bg-[var(--scrim)] hover:bg-[var(--raised)] transition-colors text-xs border border-[var(--line)]"><Icons.Trash/></button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
-                        );
-                      })()}
-                      
-                      {/* Схема света */}
-                      {activeSchemeId && lightSchemes.find(s=>s.id === activeSchemeId) && (() => {
-                          const sch = lightSchemes.find(s=>s.id === activeSchemeId);
-                          return (
-                            <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative">
-                                <div className="flex justify-between items-center gap-4">
-                                    <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
-                                    <button onClick={() => setDrawingSchemeId(sch.id)} className="cf-edit-only bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
-                                </div>
-                                <div className="w-full aspect-video bg-[var(--scrim-hi)] rounded-lg border border-[var(--border)] flex items-center justify-center overflow-hidden">
-                                    {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
-                                </div>
-                                <div className="pt-4 border-t border-[var(--border)]">
-                                    <span className="text-xs text-zinc-400 font-bold block mb-2">Привязано к сценам:</span>
-                                    <div className="flex gap-2 flex-wrap">
-                                        {scenes.filter(s=>s.lightSchemeId===sch.id).length > 0 
-                                            ? scenes.filter(s=>s.lightSchemeId===sch.id).map(s=>(<span key={s.id} className="bg-indigo-950/60 px-3 py-1 rounded-lg text-xs font-mono text-indigo-300">Сцена #{s.number}</span>))
-                                            : <span className="text-xs text-zinc-600">Схема не привязана ни к одной сцене</span>
-                                        }
-                                    </div>
-                                </div>
-                            </div>
-                          );
-                      })()}
-
-                      {/* Правая колонка: Файлы */}
-                      <div className="w-full lg:w-80 glass-panel p-6 rounded-lg shrink-0 space-y-8 relative border-t border-[var(--border)]">
-                        {/* Печать — самая редкая работа на этом экране, поэтому
-                            она свёрнута в один подпункт: раскрыл — и выбрал,
-                            что печатать. Четыре кнопки в развёрнутом виде
-                            занимали верх панели каждый день ради того, чем
-                            пользуются раз в неделю. */}
-                        <div className="space-y-3">
-                          <button onClick={() => setPrintPanelOpen(v => !v)}
-                                  title="Выбрать, что печатать"
-                                  className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-lg glass-panel border border-[var(--border)] hover:bg-[var(--raised)] transition-colors">
-                            <span className="flex items-center gap-2 text-[length:var(--fs-1)] font-bold text-zinc-300 "><Icons.Print/> Печать и экспорт</span>
-                            <span className="text-zinc-500 text-[length:var(--fs-1)] font-bold">{printPanelOpen ? '▲' : '▼'}</span>
-                          </button>
-                          {printPanelOpen && (() => {
-                            const openDoc = docs.find(d => d.id === activeDocId);
-                            const openScheme = lightSchemes.find(s => s.id === activeSchemeId);
-                            const btn = "w-full py-3 rounded-lg text-sm font-bold tracking-wide transition-all flex items-center justify-center gap-2 border";
-                            return (
-                              <div className="space-y-2">
-                                <button onClick={() => requestPrint('full')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]`}>
-                                  <Icons.Print/> <span>Весь план</span>
-                                </button>
-                                <button onClick={() => requestPrint('doc')} disabled={!openDoc || !!activeSchemeId}
-                                        title={openDoc && !activeSchemeId ? `Печать: ${openDoc.title}` : 'Сначала откройте гайд слева'}
-                                        className={`${btn} ${openDoc && !activeSchemeId ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]' : 'bg-zinc-900/60 text-zinc-600 border-[var(--line)] cursor-not-allowed'}`}>
-                                  <Icons.Docs/> <span className="truncate">Гайд{openDoc && !activeSchemeId ? `: ${openDoc.title}` : ''}</span>
-                                </button>
-                                <button onClick={() => requestPrint('scheme')} disabled={!openScheme}
-                                        title={openScheme ? `Печать: ${openScheme.title}` : 'Сначала откройте схему света слева'}
-                                        className={`${btn} ${openScheme ? 'bg-amber-900/40 hover:bg-amber-900/60 text-amber-100 border-amber-500/30' : 'bg-zinc-900/60 text-zinc-600 border-[var(--line)] cursor-not-allowed'}`}>
-                                  <Icons.Lightbulb/> <span className="truncate">Схема света{openScheme ? `: ${openScheme.title}` : ''}</span>
-                                </button>
-                                <button onClick={() => requestPrint('gear')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]`}>
-                                  <Icons.Video/> <span>Список техники</span>
-                                </button>
-                              </div>
-                            );
-                          })()}
                         </div>
-                        <div className="space-y-4 pt-6 border-t border-[var(--border)]">
-                          <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block ml-1">Файлы и документы проекта</span>
-                          <div className="cf-edit-only border border-dashed border-[var(--border)] hover:border-indigo-500/50 rounded-lg p-6 text-center bg-[var(--scrim)] hover:bg-indigo-500/10 transition-all group">
-                            <label className="text-xs font-bold text-zinc-400 group-hover:text-indigo-300 cursor-pointer block w-full h-full flex flex-col items-center gap-2">
-                              <span className="opacity-60 group-hover:opacity-100 transition-opacity"><Icons.Folder/></span>
-                              <span>Загрузить КПП или доки</span>
-                              <input type="file" onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) addProjectFile(f); }} accept=".pdf,.xlsx,.csv,.txt,.png,.jpg" className="hidden" />
-                            </label>
-                          </div>
-                          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 hide-scrollbar">
-                            {projectFiles.map(file => (
-                              <div key={file.id} className="glass-panel p-4 rounded-lg flex flex-col space-y-3 group hover:border-indigo-500/30 transition-colors border border-[var(--line)]">
-                                <div className="truncate flex flex-col">
-                                  <span className="text-sm text-zinc-200 truncate font-bold tracking-wide" title={file.name}>{file.name}</span>
-                                  <span className="text-[length:var(--fs-1)] font-mono text-zinc-500 mt-0.5">{file.size}{file.full ? ` · ${CLOUD_NAMES[(file.cloud || {}).provider] || 'облако'}` : ''}</span>
-                                </div>
-                                <div className="flex gap-2 justify-end">
-                                  {file.data && file.data !== '#'
-                                    ? (<a href={file.data} download={file.name} className="flex-1 text-emerald-400 font-bold px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-all text-center text-xs">Скачать</a>)
-                                    : file.full
-                                      ? (<a href={file.full} target="_blank" rel="noopener noreferrer" className="flex-1 text-emerald-400 font-bold px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-all text-center text-xs">Скачать</a>)
-                                      : null}
-                                  {!file.full && file.data && file.data !== '#' && cloudCfg.provider && (
-                                    <button onClick={() => sendFileToCloud(file)} title={`Отправить в ${CLOUD_NAMES[cloudCfg.provider]}`}
-                                      className="cf-edit-only w-10 flex items-center justify-center text-zinc-500 hover:text-indigo-300 rounded-lg bg-[var(--scrim)] hover:bg-[var(--raised)] transition-colors border border-[var(--line)]"><Icons.Cloud/></button>
-                                  )}
-                                  <button onClick={() => setConfirmAction({title:'Удалить файл?', message: '', onConfirm:()=>{ setProjectFiles(projectFiles.filter(f=>f.id!==file.id)); deleteNetDoc('projectFiles', file.id); }})} className="cf-edit-only w-10 flex items-center justify-center text-zinc-500 hover:text-red-400 font-bold rounded-lg bg-[var(--scrim)] hover:bg-[var(--raised)] transition-colors text-xs border border-[var(--line)]"><Icons.Trash/></button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
+                        </React.Fragment>
+                      )}
                     </div>
                   </div>
 
