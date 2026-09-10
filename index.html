@@ -453,6 +453,46 @@
            это читается как «фотография пропала из проекта», хотя пропала
            только связь с облаком. Штриховка и подпись говорят, что кадр
            есть, а показать его сейчас нечем. */
+        /* Длинная цитата — текст сценария в КПП и всё, что читают,
+           а не правят. Раньше такой текст лежал в тёмном колодце
+           с рамкой и читался как ПОЛЕ ВВОДА, хотя менять его там
+           нельзя. Отбивка линейкой слева говорит «это выдержка»
+           и не заводит ещё одну коробку внутри коробки. */
+        /* ---------- ПОЛЕ, КОТОРОЕ ПРАВЯТ ПРЯМО В СТРОКЕ ----------
+           Номер сцены и дата смены в КПП — единственное место, где их
+           правят подряд, не заходя в каждую карточку. Поэтому они обязаны
+           ЧИТАТЬСЯ как поля, иначе возможность становится невидимой.
+           Но полная рамка вокруг каждого давала по две лишние линии
+           на строку, а строк на смене десяток — отсюда «коробка в коробке».
+           Компромисс: в покое пунктирная подчёркивающая линия (её хватает,
+           чтобы отличить поле от текста), под курсором и в фокусе —
+           сплошная акцентная плюс подложка. */
+        .cf-inline-field {
+          background: transparent; border: none; border-bottom: 1px dashed var(--border);
+          border-radius: 0; padding: 7px 6px; min-height: 34px;
+          transition: background .12s, border-color .12s, color .12s;
+        }
+        /* На планшете и телефоне цель крупнее: 26 точек пальцем — промах
+           через раз, а номера в КПП правят подряд по всей смене. */
+        @media (hover: none) { .cf-inline-field { min-height: 40px; padding: 9px 8px; } }
+        .cf-inline-field:hover { background: var(--raised); border-bottom-color: var(--muted-2); }
+        .cf-inline-field:focus { outline: none; background: var(--raised); border-bottom: 1px solid var(--accent); color: var(--text); }
+        /* ---------- ТЕЛО ГАЙДА ----------
+           Гайд не только пишут, его ЧИТАЮТ, а он лежал в тёмном колодце
+           с рамкой — то есть выглядел полем ввода, в которое зачем-то
+           налили текст. Теперь это текст НА странице: фон общий, рамки
+           нет. Что его всё-таки можно править, показывает рамка под
+           курсором и в фокусе — тот же приём, что у номера сцены в КПП. */
+        /* Отступ ОДИН и тот же во всех состояниях: меняя его на фокусе,
+           мы сдвигали бы текст ровно в тот момент, когда в него ставят
+           курсор, — буквы уезжают из-под пальца. Меняются только рамка
+           и подложка. */
+        .cf-doc-body { background: transparent; border: 1px solid transparent; border-radius: var(--r-md);
+                       padding: 10px 12px; margin: 0 -12px; color: var(--text-2); }
+        .cf-doc-edit { transition: background .12s, border-color .12s; }
+        .cf-doc-edit:hover { border-color: var(--border); }
+        .cf-doc-edit:focus { outline: none; border-color: var(--accent); background: var(--bg); }
+        .cf-quote { border-left: 2px solid var(--border); padding-left: 14px; }
         .cf-img-bad {
           /* !important здесь обязателен и не от лени: почти у каждой
              картинки в файле свой инлайновый background (чаще var(--bg),
@@ -2132,7 +2172,10 @@
             );
         };
 
-        const DrawingModal = ({ onSave, onClose }) => {
+        // confirm — тот же setConfirmAction, что и во всём приложении.
+        // Своё окошко подтверждения тут заводить нельзя: все «Удалить …?»
+        // заперты ОДНОЙ дверью, и она же не пускает гостя по ссылке.
+        const DrawingModal = ({ onSave, onClose, confirm }) => {
             const canvasRef = useRef(null);
             const [isDrawing, setIsDrawing] = useState(false);
             const [color, setColor] = useState('#ffffff');
@@ -2210,7 +2253,7 @@
                             </div>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={() => { const ctx = canvasRef.current.getContext('2d'); ctx.fillStyle = '#242322'; ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs rounded-lg hover:bg-zinc-700 flex items-center gap-1"><Icons.Trash /> Очистить</button>
+                            <button onClick={() => confirm && confirm({ title: 'Очистить скетч?', message: 'Нарисованное пропадёт, вернуть его будет нечем.', onConfirm: () => { const ctx = canvasRef.current.getContext('2d'); ctx.fillStyle = '#242322'; ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height); } })} className="px-4 py-2 bg-zinc-800 text-zinc-300 text-xs rounded-lg hover:bg-zinc-700 flex items-center gap-1"><Icons.Trash /> Очистить</button>
                             <button onClick={() => onSave(canvasRef.current.toDataURL('image/jpeg', 0.8))} className="px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить</button>
                             <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Отмена</button>
                         </div>
@@ -2864,7 +2907,7 @@
             );
         };
 
-        const LightSchemeEditor = ({ scheme, onSave, onClose }) => {
+        const LightSchemeEditor = ({ scheme, onSave, onClose, confirm }) => {
             const [elements, setElements] = useState(scheme?.elements || []);
             const [mode, setMode] = useState('select'); 
             const [selectedId, setSelectedId] = useState(null);
@@ -2947,7 +2990,7 @@
                 <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col">
                     <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 p-4 glass-panel border-b-0 shrink-0">
                         <div className="flex flex-wrap items-center gap-y-2 gap-x-4">
-                            <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Интерактивная Схема Света</span>
+                            <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Схема света</span>
                             <div className="cf-edit-only flex flex-wrap gap-1 bg-black/50 p-1 rounded-lg">
                                 <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pointer/></button>
                                 <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pen/></button>
@@ -3049,7 +3092,7 @@
                                     <label className="text-[length:var(--fs-1)] text-zinc-400">Высота</label>
                                     <input type="range" min="20" max="400" value={elements.find(e=>e.id===selectedId).h} onChange={e=>updateSelected({h: Number(e.target.value)})} className="w-full accent-indigo-500" />
                                 </div>
-                                <button onClick={() => {setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null);}} className="cf-edit-only mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
+                                <button onClick={() => confirm && confirm({ title: 'Удалить объект со схемы?', message: 'Прибор или камера пропадёт со схемы. Отменить действие невозможно.', onConfirm: () => { setElements(elements.filter(e=>e.id!==selectedId)); setSelectedId(null); } })} className="cf-edit-only mt-auto bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-bold hover:bg-red-600/40">Удалить объект</button>
                             </div>
                         )}
                     </div>
@@ -14651,12 +14694,12 @@
                             const hasScript = !!(s.script || '').trim();
                             const scriptOpen = !!openScript[s.id];
                             return (
-                              <div key={s.id} className="glass-panel p-6 md:p-8 rounded-lg space-y-5">
-                                <div className="flex justify-between items-center border-b border-[var(--border)] pb-4 relative z-10 gap-3">
+                               <div key={s.id} className="p-6 md:p-8 rounded-lg space-y-5" style={{ background: 'var(--card)' }}>
+                                 <div className="flex justify-between items-center pb-4 relative z-10 gap-3" style={{ borderBottom: '1px solid var(--line)' }}>
                                   <span className="text-white font-bold text-sm md:text-lg"><span className="font-mono" style={{ color: 'var(--accent)' }}>{s.number}</span>  {s.title}</span>
-                                  <span className="text-[length:var(--fs-1)] md:text-xs text-zinc-400 font-mono bg-[var(--scrim)] px-3 py-1 rounded-lg border border-[var(--border)] font-semibold shrink-0">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
+                                  <span className="text-[length:var(--fs-1)] md:text-xs text-zinc-400 font-mono font-semibold shrink-0">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
                                 </div>
-                                <p className="text-sm text-zinc-300 bg-[var(--scrim)] p-4 rounded-lg border border-[var(--line)] leading-relaxed relative z-10 font-medium" style={{ whiteSpace: 'pre-wrap' }}>{s.content || 'Описание отсутствует'}</p>
+                                <p className="text-sm text-zinc-300 leading-relaxed relative z-10" style={{ whiteSpace: 'pre-wrap' }}>{s.content || 'Описание отсутствует'}</p>
 
                                 {/* Текст из сценария — по кнопке: он длиной со
                                     страницу и раскрытый у всех сцен разом
@@ -14669,7 +14712,7 @@
                                       <span className="text-zinc-500">{scriptOpen ? '▲' : '▼'}</span>
                                     </button>
                                     {scriptOpen && (
-                                      <p className="mt-3 text-sm text-zinc-300 bg-[var(--scrim)] p-5 rounded-lg border border-[var(--line)] leading-relaxed font-medium" style={{ whiteSpace: 'pre-wrap' }}>{s.script}</p>
+                                      <p className="mt-3 text-sm text-zinc-300 leading-relaxed cf-quote" style={{ whiteSpace: 'pre-wrap' }}>{s.script}</p>
                                     )}
                                   </div>
                                 )}
@@ -14679,13 +14722,13 @@
                                     <span className="text-[length:var(--fs-1)] md:text-xs font-bold text-zinc-500 block ml-1">Раскадровка и план смены</span>
                                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                                       {sceneFrames.map(frame => (
-                                        <div key={frame.id} className="bg-[var(--scrim)] rounded-lg border border-[var(--border)] p-2.5 flex flex-col space-y-2">
+                                         <div key={frame.id} className="flex flex-col space-y-2">
                                           {/* Кадр стоит в пропорции проекта: раскадровка
                                               в 16:9 при анаморфе обещает не тот кадр. */}
-                                          {frame.image && (<div className="bg-[var(--scrim)] rounded-lg overflow-hidden border border-[var(--line)]"><img src={frame.image} style={{ width: '100%', aspectRatio: projectRatio, objectFit: 'cover', display: 'block' }} className="pointer-events-none" draggable="false" /></div>)}
+                                          {frame.image && (<div className="rounded-lg overflow-hidden"><img src={frame.image} style={{ width: '100%', aspectRatio: projectRatio, objectFit: 'cover', display: 'block' }} className="pointer-events-none" draggable="false" /></div>)}
                                           <div className="text-[length:var(--fs-1)] md:text-xs leading-tight flex flex-col space-y-1.5 p-1">
                                             <span className="font-mono text-indigo-400 font-bold bg-indigo-500/10 self-start px-2 py-0.5 rounded-md">{frame.frameNum}</span>
-                                            <span className="text-zinc-400 font-medium line-clamp-4">{frame.description || '...'}</span>
+                                            <span className="text-zinc-400 font-medium line-clamp-4">{frame.description || ''}</span>
                                           </div>
                                         </div>
                                       ))}
@@ -14718,11 +14761,10 @@
                               const camSum = sumOf(dayScenes, 'gear'), lightSum = sumOf(dayScenes, 'lightGear');
                               return (
                                 <div key={dateKey || 'unassigned'} className="glass-panel rounded-lg overflow-hidden border-t border-[var(--border)]">
-                                  <div className="bg-[var(--panel)] px-6 py-4 border-b border-[var(--border)] flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                  <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ borderBottom: '1px solid var(--line)' }}>
                                     <div className="flex items-center space-x-4">
                                       <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `Смена · ${formatDateDisplay(dateKey)}` : 'Сцены вне смен'}</span>
-                                      <span className="text-zinc-600">|</span>
-                                      <span className="text-xs font-bold text-zinc-300 bg-[var(--scrim)] px-3 py-1 rounded-full border border-[var(--border)]">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
+                                      <span className="text-xs font-bold text-zinc-400">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
                                     </div>
                                     <div className="flex flex-col gap-2 md:items-end">
                                       {Object.keys(camSum).length > 0 && (
@@ -14757,10 +14799,10 @@
                                                 все поля становятся pointer-events: none. */}
                                             <input type="text" value={s.number || ''} onChange={(e) => updateSceneNumber(s.id, e.target.value)}
                                                    placeholder="—" maxLength="12" title="Номер сцены — правится прямо здесь"
-                                                   className={`shrink-0 mt-0.5 w-16 text-center font-mono font-black text-sm bg-[var(--scrim)] px-2 py-2 rounded-lg border transition-colors focus:outline-none placeholder-zinc-600 ${duplicateNumbers[String(s.number || '').trim()] ? 'text-amber-300 border-amber-500/50' : 'text-indigo-400 border-[var(--border)] hover:border-[var(--border)] focus:border-indigo-400'}`} />
+                                                   className={`cf-inline-field shrink-0 mt-0.5 w-14 text-center font-mono font-black text-sm placeholder-zinc-600 ${duplicateNumbers[String(s.number || '').trim()] ? 'text-amber-300' : 'text-indigo-400'}`} />
                                             <div className="space-y-1.5 min-w-0">
                                               <h4 className="text-sm font-bold text-white tracking-wide">{s.title || 'Без названия'}</h4>
-                                              <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || '...'}</p>
+                                              <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || ''}</p>
                                               {(cam || lig) && (
                                                 <div className="flex flex-col gap-1 pt-1">
                                                   {cam && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-indigo-400 font-bold ">камера: </span>{cam}</span>)}
@@ -14774,7 +14816,7 @@
                                               сцены на другой день. */}
                                           <input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)}
                                                  title="Дата смены — перенести сцену на другой день"
-                                                 className="glass-input rounded-lg px-3 py-2 font-mono text-xs shrink-0 md:mt-0.5" />
+                                                 className="cf-inline-field font-mono text-xs shrink-0 md:mt-0.5 text-zinc-400" style={{ colorScheme: 'dark' }} />
                                         </div>
                                       );
                                     })}
@@ -14801,7 +14843,7 @@
                         <div className="w-full lg:w-72 glass-panel p-5 rounded-lg flex flex-col shrink-0 relative border-t border-[var(--border)] overflow-hidden">
                           <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
                             <div>
-                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские Гайды</span>
+                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские гайды</span>
                                 {docs.map(doc => (
                                   <div key={doc.id} className="group relative mb-2">
                                     <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
@@ -14820,7 +14862,7 @@
                                 <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); setPhoneDocOpen(true); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
                             </div>
                             <div className="pt-4 border-t border-[var(--border)]">
-                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы Света</span>
+                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы света</span>
                                 {lightSchemes.map(sch => (
                                   <div key={sch.id} className="group relative mb-2">
                                     <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
@@ -14841,7 +14883,7 @@
                         {activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
                           const activeDoc = docs.find(d => d.id === activeDocId);
                           return (
-                            <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative border-t border-[var(--border)]">
+                            <div className="flex-1 p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative" style={{ background: 'var(--card)' }}>
                               <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
                               {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем
                                   дочитать: текст в полторы тысячи знаков — это
@@ -14869,7 +14911,7 @@
                                       // Гостю поле ввода не нужно вовсе, а неподвижное
                                       // поле с обрезанным текстом — это тупик: прокрутить
                                       // его нельзя. Обычный текст течёт вместе со страницей.
-                                      <div className="w-full glass-input rounded-lg p-6 text-sm md:text-base leading-relaxed font-medium border border-[var(--border)] overflow-y-auto"
+                                      <div className="w-full cf-doc-body text-sm md:text-base leading-relaxed overflow-y-auto"
                                            style={open ? { whiteSpace: 'pre-wrap', flexShrink: 0 } : { whiteSpace: 'pre-wrap', maxHeight: 420 }}>
                                         {body || 'Гайд пока пустой'}
                                       </div>
@@ -14877,7 +14919,7 @@
                                       <textarea value={body}
                                                 ref={el => { if (el && open) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
                                                 onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }}
-                                                className={`w-full glass-input rounded-lg p-6 text-sm md:text-base transition-shadow leading-relaxed resize-none font-medium border border-[var(--border)] ${open ? '' : 'flex-1 min-h-[300px] lg:min-h-0'}`}
+                                                className={`w-full cf-doc-body cf-doc-edit text-sm md:text-base leading-relaxed resize-none ${open ? '' : 'flex-1 min-h-[300px] lg:min-h-0'}`}
                                                 style={open ? { overflow: 'hidden', flexShrink: 0 } : null}
                                                 placeholder="Содержание документа..." />
                                     )}
@@ -14893,19 +14935,24 @@
                             
                               <div className="space-y-4 border-t border-[var(--border)] pt-6">
                                 <div className="flex justify-between items-center px-1">
-                                  <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
+                                  <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съёмочной группы</span>
                                   <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="cf-edit-only text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
                                 </div>
                                 <div className="glass-panel rounded-lg overflow-x-auto border border-[var(--line)]">
-                                  <table className="w-full min-w-[500px] text-left text-sm border-collapse">
-                                    <thead><tr className="bg-[var(--panel)] text-zinc-400 text-[length:var(--fs-1)] font-bold border-b border-[var(--border)]"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
+                                  {/* 500 точек не хватало: «Оператор-постановщик» обрезался на 65 точек,
+                                      а телефон — на 18. Роль ещё можно угадать, телефон нельзя:
+                                      по нему звонят с площадки. Таблице дана её настоящая ширина,
+                                      а обёртка прокручивается вбок — единственное место в
+                                      приложении, где это разрешено. */}
+                                    <table className="w-full min-w-[600px] text-left text-sm border-collapse">
+                                    <thead><tr className="bg-[var(--panel)] text-zinc-400 text-[length:var(--fs-1)] font-bold border-b border-[var(--border)]"><th className="p-4 w-[30%]">Имя</th><th className="p-4 w-[34%]">Роль</th><th className="p-4 w-[36%]">Телефон</th><th className="p-4 w-14"></th></tr></thead>
                                     <tbody className="divide-y divide-white/5 text-zinc-200">
                                       {crew.map(c => (
                                         <tr key={c.id} className="hover:bg-[var(--raised)] transition-colors">
                                           <td className="p-2"><input type="text" value={c.name} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,name:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-white focus:outline-none font-bold placeholder-zinc-600" placeholder="ФИО" /></td>
                                           <td className="p-2"><input type="text" value={c.role} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,role:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-zinc-400 font-medium focus:outline-none placeholder-zinc-600" placeholder="Роль" /></td>
                                           <td className="p-2"><input type="text" value={c.phone} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,phone:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 font-mono font-medium focus:outline-none placeholder-zinc-600" placeholder="+7..." /></td>
-                                          <td className="p-2 text-center"><button onClick={() => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); }} className="cf-edit-only w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-[var(--raised)] text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
+                                          <td className="p-2 text-center"><button onClick={() => setConfirmAction({ title: 'Удалить участника?', message: (c.name || c.role) ? `«${[c.name, c.role].filter(Boolean).join(' · ')}» пропадёт из состава группы и из отчётов.` : 'Пустая строка пропадёт из состава группы.', onConfirm: () => { setCrew(crew.filter(cr=>cr.id!==c.id)); deleteNetDoc('crew', c.id); } })} className="cf-edit-only w-8 h-8 flex items-center justify-center rounded-lg glass-panel hover:bg-[var(--raised)] text-zinc-400 hover:text-red-400 transition-colors mx-auto font-bold"><Icons.Trash/></button></td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -16088,7 +16135,7 @@
               )}
 
               {drawingFrameId && (
-                  <DrawingModal onClose={() => setDrawingFrameId(null)} onSave={(dataUrl) => {
+                  <DrawingModal confirm={setConfirmAction} onClose={() => setDrawingFrameId(null)} onSave={(dataUrl) => {
                         const up = storyboard.map(x=>x.id===drawingFrameId?{...x,image:dataUrl}:x); 
                         setStoryboard(up); syncDoc('storyboard', drawingFrameId, up.find(x=>x.id===drawingFrameId));
                         setDrawingFrameId(null);
@@ -16099,7 +16146,7 @@
                   Он и так открывается поверх всего экрана, а привязка
                   означала ровно одно: с «Досок» схему было не открыть. */}
               {drawingSchemeId && lightSchemes.find(s=>s.id === drawingSchemeId) && (
-                  <LightSchemeEditor scheme={lightSchemes.find(s=>s.id === drawingSchemeId)} onClose={() => setDrawingSchemeId(null)} onSave={(id, els, draw, preview) => {
+                  <LightSchemeEditor confirm={setConfirmAction} scheme={lightSchemes.find(s=>s.id === drawingSchemeId)} onClose={() => setDrawingSchemeId(null)} onSave={(id, els, draw, preview) => {
                       const up = lightSchemes.map(s=>s.id===id?{...s, elements: els, drawData: draw, preview: preview}:s);
                       setLightSchemes(up); syncDoc('lightSchemes', id, up.find(s=>s.id===id));
                       setDrawingSchemeId(null);
