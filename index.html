@@ -3074,6 +3074,7 @@
               // Ищем и по подписи, и по тегам: «ночь» человек ставил
               // тегом, а «двор школы» писал в названии файла.
               return String(r.label || '').toLowerCase().includes(needle)
+                  || String(r.file || '').toLowerCase().includes(needle)
                   || (r.tags || []).some(t => String(t).toLowerCase().includes(needle));
             });
           }, [refs, q, folder]);
@@ -3413,7 +3414,7 @@
                 push('Кадр', 'fr' + f.id, `${f.frameNum || 'кадр'} · ${(f.description || '').slice(0, 60)}`, sc ? `сцена #${sc.number}` : '', () => onGo('notion', { sceneId: f.sceneId }));
             });
             references.forEach(r => {
-              if (match(norm(`${r.label} ${(r.tags || []).join(' ')} ${r.folder}`)))
+              if (match(norm(`${r.label} ${r.file || ''} ${(r.tags || []).join(' ')} ${r.folder}`)))
                 push('Кадр в галерее', 'rf' + r.id, r.label || 'без подписи', (r.tags || []).join(' · '), () => onGo('gallery', { refId: r.id }));
             });
             locations.forEach(l => {
@@ -3880,7 +3881,8 @@
             const q = tagSearch.trim().toLowerCase();
             const byTag = !q
               || (r.tags && r.tags.some(t => t.toLowerCase().includes(q)))
-              || String(r.label || '').toLowerCase().includes(q);
+              || String(r.label || '').toLowerCase().includes(q)
+              || String(r.file || '').toLowerCase().includes(q);
             const f = (r.folder || '').trim();
             const byFolder = activeFolder === '' ? true : (activeFolder === '__none__' ? !f : f === activeFolder);
             return byTag && byFolder;
@@ -7793,7 +7795,7 @@
               if (migrateStop.current) break;
               try {
                 const blob = dataUrlToBlob(ref.url);
-                const { full, path } = await cloudUpload(cfg, blob, cloudFileName(ref.id, ref.label || 'photo.jpg'));
+                const { full, path } = await cloudUpload(cfg, blob, cloudFileName(ref.id, ref.file || ref.label || 'photo.jpg'));
                 // Превью пересобираем из того же изображения: в базе
                 // должно остаться лёгкое, ради этого перенос и затевался.
                 const thumb = await new Promise(res => compressImage(ref.url, CLOUD_THUMB, CLOUD_THUMB, res, 0.72));
@@ -8809,7 +8811,10 @@
                 return;
               }
 
-              const existing = new Set(references.map(r => normName(r.label)));
+              // У загруженных ДО этой правки имя файла лежит в подписи —
+              // поэтому спрашиваем оба поля, иначе повторы перестали бы
+              // находиться у всего, что уже в проекте.
+              const existing = new Set(references.map(r => normName(r.file || r.label)));
               const dups = imageFiles.filter(f => existing.has(normName(f.name)));
               if (dups.length > 0) {
                 const decision = await new Promise(resolve => {
@@ -8911,7 +8916,16 @@
                     // и стопка из пяти листов его прячет.
                     x: place ? place.x + (idx % 4) * (place.step || 26) : (250 - canvasOffset.x) / zoom + (idx*20),
                     y: place ? place.y + Math.floor(idx / 4) * (place.step ? Math.round(place.step * 0.8) : 26) : (250 - canvasOffset.y) / zoom + (idx*20),
-                    label: file.name,
+                    // ПОДПИСЬ ПУСТАЯ, А ИМЯ ФАЙЛА — В СВОЁМ ПОЛЕ.
+                    // Раньше в подпись клали file.name, и на карточках
+                    // стояли «Screenshot 2026-04-21 110215.png» и
+                    // «IMG_4821.jpg»: они не говорят ни о чём, но выглядят
+                    // как осмысленная подпись, и человек не понимает,
+                    // стирать это или так и надо. Само имя не выбрасываем:
+                    // по нему ищут, по нему же считаются повторы, и оно
+                    // даёт расширение файлу в облаке.
+                    label: '',
+                    file: file.name,
                     folder: locFolder,
                     tags: locationId ? [SCOUT_TAG] : []
               }));
@@ -9278,7 +9292,7 @@
               r.onloadend = () => compressImage(r.result, 1440, 1080, (c) => {
                 setReferences(prev => {
                   const up = prev.map(x => x.id === refId
-                    ? { ...x, url: c, label: (x.label && x.label !== 'Референс') ? x.label : file.name }
+                    ? { ...x, url: c, file: x.file || file.name, label: (x.label && x.label !== 'Референс') ? x.label : '' }
                     : x);
                   syncDoc('references', refId, up.find(x => x.id === refId));
                   return up;
@@ -11017,30 +11031,6 @@
                       const dropFrame = (id) => setConfirmAction({ title: 'Удалить кадр?', message: 'Отменить действие невозможно.',
                         onConfirm: () => { setStoryboard(storyboard.filter(f => f.id !== id)); deleteNetDoc('storyboard', id); } });
 
-                      // ЧИПЫ СВЯЗЕЙ. Один и тот же чип сцены/объекта/доски
-                      // ведёт в одно и то же место откуда угодно — это и была
-                      // главная боль: связи между модулями существовали
-                      // в голове, а не в интерфейсе.
-                      const linkChips = (
-                        <div className="flex flex-wrap gap-2 mt-4">
-                          {sceneLocs.map(l => (
-                            <button key={l.id} onClick={() => { setActiveLocationId(l.id); setCurrentView('locations'); }}
-                                    className="cf-chip cf-chip-accent" title="Открыть объект: фото, карта, солнце">
-                              Объект · {l.name || 'без названия'}
-                            </button>
-                          ))}
-                          <button onClick={() => setSceneToBoard(s.id)} className="cf-chip"
-                                  title="Выложить сцену и все её референсы на доску">
-                            Доска сцены{sceneRefs.length ? ` · ${sceneRefs.length}` : ''}
-                          </button>
-                          {scheme && (
-                            <button onClick={() => { setActiveSchemeId(scheme.id); setActiveDocId(null); setCurrentView('docs'); }}
-                                    className="cf-chip" title="Открыть интерактивную схему света">
-                              {scheme.title || 'Схема света'}
-                            </button>
-                          )}
-                        </div>
-                      );
 
 
                       // ================= ТЕЛЕФОН =================
@@ -11446,26 +11436,14 @@
                             {duplicateNumbers[String(s.number || '').trim()] && (
                               <span className="cf-chip shrink-0" style={{ color: 'var(--warn)', borderColor: 'var(--warn)' }}>номер занят</span>
                             )}
-                            {/* Дата и «···» стоят СЛЕВА, у номера, а не у правого
-                                края: правая панель разворачивается поверх
-                                содержимого, и всё, что прижато вправо,
-                                оказывалось под ней. */}
+                            {/* Дата стоит СЛЕВА, у номера, а не у правого края:
+                                правая панель разворачивается поверх содержимого,
+                                и всё, что прижато вправо, оказывалось под ней.
+                                Действия сцены («на доску», PDF, «удалить») уехали
+                                в рельс у правого края — там их видно всегда, а не
+                                после раскрытия меню. */}
                             <input type="date" value={s.date || ''} onChange={(e) => updateScene(s.id, 'date', e.target.value)}
                                    className="bg-transparent focus:outline-none shrink-0 cf-meta" style={{ colorScheme: 'dark' }} />
-                            <div className="relative shrink-0" ref={sceneMenuRef} style={{ marginLeft: 2 }}>
-                              <button onClick={() => setSceneMenu(v => !v)} title="Собрать на доске, PDF, удалить"
-                                      className="flex items-center justify-center transition-colors hover:bg-white/5"
-                                      style={{ width: 26, height: 22, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--muted-2)', fontSize: 'var(--fs-3)', letterSpacing: 1 }}>···</button>
-                              {sceneMenu && (
-                                <div className="cf-menu cf-menu-left">
-                                  <button className="cf-edit-only" onClick={() => { setSceneMenu(false); setSceneToBoard(s.id); }}><Icons.Board /> Собрать на доске</button>
-                                  <button onClick={() => { setSceneMenu(false); setPrintScene(s.id); requestPrint('scene'); }}><Icons.Print /> Экспорт сцены в PDF</button>
-                                  <hr className="cf-edit-only" />
-                                  <button className="cf-edit-only" onClick={() => { setSceneMenu(false); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => deleteScene(s.id) }); }}
-                                          style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить сцену</button>
-                                </div>
-                              )}
-                            </div>
                           </div>
                           {/* ЗАГОЛОВОК — САМОЕ КРУПНОЕ НА ЭКРАНЕ, и он один
                               в своей строке. Раньше рядом с ним стояли чипы,
@@ -11618,7 +11596,6 @@
                                   ))}
                             </div>
                           </div>
-                          {linkChips}
                         </main>
                       );
 
@@ -11672,7 +11649,6 @@
                               <div style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', marginTop: 6 }}>{gearLine(s.lightGear, lightGearTypes)}</div>
                             </div>
                           )}
-                          {linkChips}
                         </main>
                       );
 
@@ -11909,7 +11885,6 @@
                               </div>
                             )}
                           </div>
-                          {linkChips}
                         </main>
                       );
 
@@ -11932,6 +11907,20 @@
                           {sceneList}
                           {sceneMode === 'scout' ? scoutMain : sceneMode === 'shoot' ? shootMain : creativeMain}
 
+                          {/* РЕЛЬС У КРАЯ — ОДИН, и он же несёт действия сцены.
+                              Полоса вкладок инспектора тут стояла и раньше;
+                              второй рельс рядом с ней означал бы две вертикальные
+                              полосы на одном экране и ещё 44 точки чужой ширины.
+                              Ниже разделителя — то, что раньше лежало ЧИПАМИ
+                              В САМОМ НИЗУ длинного свитка (объект, доска сцены,
+                              схема света) и в «···» у номера (PDF, удалить):
+                              чтобы попасть на объект, надо было пролистать
+                              раскадровку, текст и заметки. Связи между модулями
+                              и так существовали больше в голове, чем на экране, —
+                              и лежали они там, куда не смотрят.
+                              Подписи в вертикальную полосу не ставят, поэтому имя
+                              объекта осталось в строке меты под заголовком, а на
+                              кнопке живёт подсказкой. */}
                           <div className="flex flex-col items-center shrink-0 gap-1.5"
                                style={{ order: 2, width: 40, background: 'var(--panel-2)', borderLeft: '1px solid var(--border)', padding: '10px 0' }}>
                             {PANEL_TABS.map(t => (
@@ -11941,6 +11930,40 @@
                                                background: scenePanel === t.id ? 'var(--raised)' : 'transparent',
                                                color: scenePanel === t.id ? 'var(--accent)' : 'var(--muted)' }}>{t.icon}</button>
                             ))}
+                            {s && (
+                              <React.Fragment>
+                                <span className="cf-tool-sep" style={{ width: 22 }} />
+                                {loc && (
+                                  <button onClick={() => { setActiveLocationId(loc.id); setCurrentView('locations'); }}
+                                          className="cf-tool" title={`Объект · ${loc.name || 'без названия'} — фото, карта, солнце`}><Icons.Place /></button>
+                                )}
+                                <button onClick={() => setSceneToBoard(s.id)} className="cf-tool cf-edit-only"
+                                        title={`Выложить сцену и её референсы на доску${sceneRefs.length ? ` · ${sceneRefs.length}` : ''}`}><Icons.Board /></button>
+                                {scheme && (
+                                  <button onClick={() => { setActiveSchemeId(scheme.id); setActiveDocId(null); setCurrentView('docs'); }}
+                                          className="cf-tool" title={`Схема света · ${scheme.title || 'без названия'}`}><Icons.Lightbulb /></button>
+                                )}
+                                <span className="cf-tool-sep" style={{ width: 22 }} />
+                                <button onClick={() => { setPrintScene(s.id); requestPrint('scene'); }}
+                                        className="cf-tool" title="Экспорт сцены в PDF"><Icons.Print /></button>
+                                {/* Редкое и опасное — за «···», а не голой кнопкой
+                                    в рельсе: промах по соседней иконке не должен
+                                    стоить сцены. Меню прижато к правому краю своей
+                                    кнопки, а кнопка стоит у правого края экрана —
+                                    значит, раскроется внутрь, и класс cf-menu-left
+                                    ему не нужен. */}
+                                <div className="relative cf-edit-only" ref={sceneMenuRef}>
+                                  <button onClick={() => setSceneMenu(v => !v)} className={`cf-tool ${sceneMenu ? 'on' : ''}`}
+                                          title="Ещё: удалить сцену">···</button>
+                                  {sceneMenu && (
+                                    <div className="cf-menu" style={{ top: 'auto', bottom: 'calc(100% + 4px)' }}>
+                                      <button onClick={() => { setSceneMenu(false); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => deleteScene(s.id) }); }}
+                                              style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить сцену</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </React.Fragment>
+                            )}
                           </div>
 
                           {scenePanel && (
@@ -15060,6 +15083,32 @@
                                     {sceneMode === m.id ? '●' : '○'} {m.label}
                                   </button>
                                 ))}
+                                {/* ЭКСПОРТ СЦЕНЫ И УДАЛЕНИЕ С ТЕЛЕФОНА БЫЛИ
+                                    НЕДОСТУПНЫ ВОВСЕ. Они жили в «···» у номера
+                                    сцены, а «···» рисуется только в планшетной
+                                    разметке — на телефоне её нет. То есть сцену,
+                                    заведённую по ошибке, с телефона нельзя было
+                                    ни удалить, ни выгрузить. Здесь они потому,
+                                    что это та же «Ещё», куда уехали и режимы. */}
+                                {phoneSceneOpen && (() => {
+                                  const sc = scenes.find(x => x.id === activeSceneId);
+                                  if (!sc) return null;
+                                  return (
+                                    <React.Fragment>
+                                      <span className="cf-meta block px-3 pt-2 pb-1.5">Сцена «{sc.title || 'без названия'}»</span>
+                                      <button onClick={() => { setPhoneSheet(null); setPrintScene(sc.id); requestPrint('scene'); }}
+                                              className="w-full flex items-center gap-3 px-3 rounded-lg"
+                                              style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>
+                                        <Icons.Print /> Экспорт сцены в PDF
+                                      </button>
+                                      <button onClick={() => { setPhoneSheet(null); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => { deleteScene(sc.id); setPhoneSceneOpen(false); } }); }}
+                                              className="w-full flex items-center gap-3 px-3 rounded-lg"
+                                              style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: 'var(--danger)' }}>
+                                        <Icons.Trash /> Удалить сцену
+                                      </button>
+                                    </React.Fragment>
+                                  );
+                                })()}
                                 <div style={{ borderTop: '1px solid var(--line)', margin: '6px 3px' }} />
                               </React.Fragment>
                             )}
