@@ -448,6 +448,20 @@
            в которую попадают пальцем, и колонка, которая помещается
            на экран планшета. У полосы свой скролл (её высота фиксирована
            по холсту), поэтому ничего не срезается снизу. */
+        /* ---------- КАРТИНКА, КОТОРАЯ НЕ ЗАГРУЗИЛАСЬ ----------
+           Битая ссылка давала ПУСТОЕ МЕСТО без единого слова: на площадке
+           это читается как «фотография пропала из проекта», хотя пропала
+           только связь с облаком. Штриховка и подпись говорят, что кадр
+           есть, а показать его сейчас нечем. */
+        .cf-img-bad {
+          /* !important здесь обязателен и не от лени: почти у каждой
+             картинки в файле свой инлайновый background (чаще var(--bg),
+             чтобы не просвечивала подложка), а инлайн бьёт любой класс.
+             Без него метка ставилась бы, а видно её не было. */
+          background: repeating-linear-gradient(45deg, var(--card), var(--card) 7px, var(--raised) 7px, var(--raised) 14px) !important;
+          color: var(--muted-2); font-size: var(--fs-1); font-family: var(--font-ui);
+          object-fit: contain !important; min-height: 44px;
+        }
         .cf-tool { width: 32px; height: 32px; flex-shrink: 0; border-radius: var(--r-sm); color: var(--muted);
                    display: flex; align-items: center; justify-content: center; transition: background .12s, color .12s; }
         .cf-tool:hover { background: var(--raised); color: var(--accent); }
@@ -2823,6 +2837,17 @@
                             </span>
                         )}
                         {scopeLabel && <span className="glass-panel rounded-full px-4 py-2 text-xs font-semibold shrink-0 hidden sm:block" style={{ color: 'var(--accent)' }}>{scopeLabel}</span>}
+                        {/* ИМЯ ФАЙЛА — ЗДЕСЬ, И БОЛЬШЕ НИГДЕ. Раньше оно
+                            стояло подписью на каждой карточке галереи,
+                            и лукбук читался списком файлов. Но выбросить
+                            его нельзя: по нему узнают, какой это дубль
+                            и что прислали, — поэтому оно осталось, только
+                            там, где кадр уже открыт и место есть. */}
+                        {currentRef.file && (
+                          <span className="glass-panel rounded-full px-3 py-1.5 shrink-0 hidden md:block truncate"
+                                style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)', maxWidth: 220 }}
+                                title={currentRef.file}>{currentRef.file}</span>
+                        )}
                         {/* ПОДПИСЬ ПРАВИТСЯ ЗДЕСЬ, а не на карточке галереи:
                             назвать кадр можно, только когда его видишь. Гостю
                             это обычный текст — поле ввода с пустой подписью
@@ -10264,6 +10289,33 @@
             try { localStorage.setItem('cf_ratio', String(projectRatio)); } catch (e) {}
           }, [projectRatio]);
 
+          // --- БИТЫЕ КАРТИНКИ ЛОВИМ ОДНИМ МЕСТОМ ---
+          // Тегов <img> в файле под три десятка, и вешать onError на
+          // каждый значит однажды забыть один и не узнать об этом:
+          // отказ картинки ничего не пишет в консоль, он просто оставляет
+          // пустое место. Событие error по дереву НЕ всплывает, но в фазе
+          // ПЕРЕХВАТА доходит до документа — поэтому слушатель один, и он
+          // накрывает и то, что нарисовано порталом (полноэкранный
+          // просмотр, меню), и всё, что появится потом.
+          useEffect(() => {
+            const bad = (e) => {
+              const el = e.target;
+              if (!el || el.tagName !== 'IMG') return;
+              el.classList.add('cf-img-bad');
+              if (!el.alt) el.alt = 'кадр не загрузился';
+            };
+            // Связь вернулась — картинка догрузилась, и метку надо снять:
+            // иначе штриховка осталась бы поверх целого кадра до
+            // перезагрузки страницы.
+            const good = (e) => {
+              const el = e.target;
+              if (el && el.tagName === 'IMG' && el.classList.contains('cf-img-bad')) el.classList.remove('cf-img-bad');
+            };
+            document.addEventListener('error', bad, true);
+            document.addEventListener('load', good, true);
+            return () => { document.removeEventListener('error', bad, true); document.removeEventListener('load', good, true); };
+          }, []);
+
           // --- КЛАССЫ ШИРИНЫ ---
           // Объявлены ВЫШЕ всего, что от них зависит: обращение к ним
           // из строки над объявлением — это обращение к ещё не созданной
@@ -12272,6 +12324,32 @@
                         {/* align-items:start обязателен: без него ячейки сетки
                             растягиваются до высоты самой высокой в ряду,
                             и под невысокой картинкой зияет пустая карточка. */}
+                        {/* ПУСТОЙ ЭКРАН ОБЯЗАН ГОВОРИТЬ, ЧТО ДЕЛАТЬ.
+                            При нуле референсов не показывалось ничего, кроме
+                            строки «Все референсы · 0 из 0» — то есть человек
+                            видел пустоту и не знал, сломалось оно или так и
+                            надо. Различаем два случая: пусто ВООБЩЕ и пусто
+                            ПОСЛЕ ФИЛЬТРА — это разные беды и выходы из них
+                            тоже разные. */}
+                        {currentView === 'gallery' && visibleRefs.length === 0 && (
+                          <div className="rounded-lg text-center"
+                               style={{ border: '1px dashed var(--border)', padding: '38px 24px', maxWidth: 520, margin: '10px auto 0' }}>
+                            <div style={{ color: 'var(--muted-2)', marginBottom: 10 }}><Icons.Gallery /></div>
+                            <span className="block" style={{ fontSize: 'var(--fs-4)', fontWeight: 600, color: 'var(--text)' }}>
+                              {references.length === 0 ? 'В галерее пока пусто' : 'Под фильтр ничего не попало'}
+                            </span>
+                            <span className="block" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', lineHeight: 1.6, marginTop: 6 }}>
+                              {references.length === 0
+                                ? 'Сюда складывают референсы, фотографии со скаута и страницы PDF. Кадры из объектов попадают в галерею сами — с папкой по имени объекта и тегом «скаут».'
+                                : `В проекте ${references.length} ${plur(references.length, 'кадр', 'кадра', 'кадров')}, но ни один не подходит под выбранные папку, теги или поиск.`}
+                            </span>
+                            {references.length > 0 && (
+                              <button onClick={() => { setActiveFolder(''); setTagSearch(''); }}
+                                      className="cf-chip" style={{ marginTop: 14 }}>Показать все</button>
+                            )}
+                          </div>
+                        )}
+
                         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(212px, 100%), 1fr))', alignItems: 'start' }}>
                             {currentView === 'gallery' && visibleRefs.map(ref => {
                               const isSel = selectedRefIds.includes(ref.id);
