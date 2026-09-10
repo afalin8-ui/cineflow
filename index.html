@@ -314,8 +314,17 @@
         /* ---------- утилиты редизайна ---------- */
         :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
-        /* метка раздела над блоком */
-        .cf-eyebrow { font-size: var(--fs-1); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+        /* ---------- ЗАГОЛОВОК РАЗДЕЛА ----------
+           Был капсом в одиннадцать точек с разрядкой — так подписывают
+           колонки в бухгалтерской программе, и экран из шести таких
+           подписей читался анкетой, которую надо заполнить.
+           Капс вдобавок нельзя прочесть одним взглядом: у прописных букв
+           нет верхних и нижних выносных, по которым глаз узнаёт слово
+           целиком, и «РАСКАДРОВКА» приходится разбирать по буквам.
+           Заголовок отличает ВЕС и РАЗМЕР, а не крик. */
+        .cf-eyebrow { font-size: var(--fs-3); font-weight: 600; letter-spacing: -.01em; color: var(--text); }
+        /* Счётчик и «пусто» рядом с заголовком: та же строка, но не спорит */
+        .cf-sub { font-size: var(--fs-2); color: var(--muted-2); font-weight: 400; letter-spacing: 0; }
 
         /* служебная моно-подпись: слаглайн, дата, счётчики */
         .cf-meta { font-family: var(--font-mono); font-size: var(--fs-1); letter-spacing: .04em; color: var(--muted-2); }
@@ -336,7 +345,7 @@
 
         /* свёрнутая боковая панель */
         .cf-strip { width: var(--panel-strip); background: var(--panel-3); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; cursor: pointer; }
-        .cf-strip span { font-size: var(--fs-1); letter-spacing: .14em; text-transform: uppercase; color: var(--muted-2); writing-mode: vertical-rl; }
+        .cf-strip span { font-size: var(--fs-2); letter-spacing: 0; color: var(--muted-2); writing-mode: vertical-rl; }
 
         /* холст доски */
         /* точки намеренно еле заметны: сетка нужна как ориентир при
@@ -362,12 +371,18 @@
         body.cf-readonly select { pointer-events: none !important; user-select: none; }
         body.cf-readonly .cf-edit-only { display: none !important; }
         .cf-ro-badge { position: fixed; top: 8px; right: 8px; z-index: 300; font-size: var(--fs-1);
-                       letter-spacing: .08em; text-transform: uppercase; padding: 4px 10px;
+                       padding: 5px 11px;
                        border-radius: var(--r-pill); background: var(--panel); color: var(--muted);
                        border: 1px solid var(--border); pointer-events: none; }
 
         /* метка поверх превью кадра */
-        .cf-overlay { font-family: var(--font-mono); font-size: var(--fs-1); letter-spacing: .06em; text-transform: uppercase; color: var(--text); background: rgba(26,25,24,.72); padding: 3px 6px; border-radius: var(--r-sm); }
+        /* Подпись поверх кадра. Была капсом моношириной — то есть
+           нечитаема ровно там, где она и нужна. И подложка теперь
+           не плашка, а ГРАДИЕНТ по нижнему краю: плашка вырезала
+           из фотографии прямоугольник, а фотография здесь главнее. */
+        .cf-overlay { font-size: var(--fs-2); color: var(--text); padding: 16px 10px 7px;
+                      background: linear-gradient(to top, rgba(0,0,0,.88), rgba(0,0,0,0));
+                      pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* ---------- навигация: одна строка, в шапке ----------
            Левого рельса больше нет. Он был второй навигацией рядом со
@@ -2778,7 +2793,7 @@
                         </div>
                         {selectedId && elements.find(e=>e.id===selectedId) && (
                             <div className="w-64 glass-panel border-l border-white/10 p-4 space-y-4 shrink-0 flex flex-col">
-                                <span className="text-xs font-bold text-zinc-400 uppercase">Свойства прибора / формы</span>
+                                <span className="text-xs font-bold text-zinc-400 ">Свойства прибора / формы</span>
                                 <div className="space-y-2">
                                     <label className="text-[length:var(--fs-1)] text-zinc-400">Маркировка (Модель/Прибор)</label>
                                     <input type="text" value={elements.find(e=>e.id===selectedId).label || ''} onChange={e=>updateSelected({label: e.target.value})} className="w-full glass-input rounded px-2 py-1.5 text-xs" placeholder="Напр: ARRI SkyPanel S60" />
@@ -3133,7 +3148,7 @@
                     <div className="cf-sheet" style={{ zIndex: 301 }} {...stop}>
                       <div className="cf-sheet-grip" />
                       <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
-                        <span style={{ fontSize: 'var(--fs-2)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>Откуда взять фото</span>
+                        <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>Откуда взять фото</span>
                         <button onClick={() => setMenu(null)} className="ml-auto flex items-center justify-center"
                                 style={{ width: 44, height: 44, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-3)' }}>✕</button>
                       </div>
@@ -10727,7 +10742,12 @@
                       const locCoords = loc ? parseCoords(loc.coords) : null;
                       const locPhotos = loc ? references.filter(r => r.locationId === loc.id) : [];
                       const scheme = s && s.lightSchemeId ? lightSchemes.find(x => x.id === s.lightSchemeId) : null;
-                      const eyebrow = { fontSize: 'var(--fs-2)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' };
+                      // Оптика сцены — из кадров раскадровки, без повторов.
+                      // «35mm · 50mm» отвечает на вопрос быстрее, чем список
+                      // кадров, а спрашивают об этом на площадке каждый день.
+                      const sceneLenses = Array.from(new Set(frames.map(f => String(f.lens || '').trim()).filter(Boolean))).slice(0, 3).join(' · ');
+
+                      const eyebrow = { fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' };
                       const cardBox = { background: 'var(--card)', borderRadius: 'var(--r-md)' };
                       const linkish = { fontSize: 'var(--fs-2)', color: 'var(--accent)', cursor: 'pointer' };
 
@@ -10742,7 +10762,7 @@
                         f.image
                           ? <img src={f.image} style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', display: 'block' }} draggable="false" />
                           : <div className="flex items-center justify-center cf-meta"
-                                 style={{ width: '100%', aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 'var(--r-sm)', boxSizing: 'border-box', textTransform: 'uppercase' }}>
+                                 style={{ width: '100%', aspectRatio: SHOT_RATIO, border: '1px dashed var(--border)', borderRadius: 'var(--r-sm)', boxSizing: 'border-box' }}>
                                без картинки · текст
                              </div>
                       );
@@ -10841,7 +10861,7 @@
                                 )}
                                 {groups.map(g => (
                                   <React.Fragment key={g.key}>
-                                    <div className="px-4 pt-2.5 pb-1 cf-meta" style={{ letterSpacing: '.1em', textTransform: 'uppercase' }}>{g.key}</div>
+                                    <div className="px-4 pt-2.5 pb-1 cf-meta" style={{ letterSpacing: '.1em' }}>{g.key}</div>
                                     {g.items.map(sc => {
                                       const on = sc.id === (s && s.id);
                                       const cover = references.find(r => r.sceneId === sc.id && r.url)
@@ -11028,7 +11048,7 @@
                                 весь экран, и до раскадровки не долистать. */}
                             <div style={{ ...cardBox, padding: '13px 14px', marginTop: 14 }}>
                               <div className="flex items-baseline">
-                                <span style={{ fontSize: 'var(--fs-1)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Текст сцены</span>
+                                <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>Текст сцены</span>
                                 <span className="ml-auto cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>
                               </div>
                               {phoneTextOpen ? (
@@ -11049,7 +11069,7 @@
                             </div>
 
                             <div className="flex items-center mt-4">
-                              <span style={{ fontSize: 'var(--fs-1)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Раскадровка · {frames.length}</span>
+                              <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>Раскадровка · {frames.length}</span>
                               <button onClick={addFrame} className="cf-edit-only ml-auto" style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 32 }}>+ кадр</button>
                             </div>
                             <div className="flex gap-2 mt-2 overflow-x-auto cf-bleed" style={{ paddingBottom: 4 }}>
@@ -11065,11 +11085,11 @@
                                       <PhotoSourcePicker multiple={false}
                                               onFiles={(fs) => setFrameImage(fs[0], (c) => patchFrame(f.id, { image: c }))}
                                               className="cf-edit-only flex-1 flex flex-col items-center justify-center gap-1"
-                                              style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', textTransform: 'uppercase' }}>
+                                              style={{ borderRight: '1px solid var(--line)', color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)' }}>
                                         <Icons.Image />фото
                                       </PhotoSourcePicker>
                                       <button onClick={() => setDrawingFrameId(f.id)} className="cf-edit-only flex-1 flex flex-col items-center justify-center gap-1"
-                                              style={{ color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', textTransform: 'uppercase' }}>
+                                              style={{ color: 'var(--muted-2)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)' }}>
                                         <Icons.Pen />скетч
                                       </button>
                                     </div>
@@ -11212,13 +11232,32 @@
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2.5 flex-wrap" style={{ marginTop: 2, marginBottom: 14 }}>
-                            <input type="text" value={s.title} onChange={(e) => updateSceneTitle(s.id, e.target.value)}
-                                   className="bg-transparent focus:outline-none min-w-0"
-                                   style={{ fontSize: 'var(--fs-6)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)', flex: '1 1 240px' }}
-                                   placeholder="Название сцены" />
-                            {sceneBadge(s) && <span className="cf-chip shrink-0">{sceneBadge(s)}</span>}
-                            <span className="cf-chip shrink-0">{frames.length} кадр.</span>
+                          {/* ЗАГОЛОВОК — САМОЕ КРУПНОЕ НА ЭКРАНЕ, и он один
+                              в своей строке. Раньше рядом с ним стояли чипы,
+                              то есть весил он не больше соседей, и экран
+                              читался анкетой: набор полей, у одного из которых
+                              шрифт покрупнее. */}
+                          <input type="text" value={s.title} onChange={(e) => updateSceneTitle(s.id, e.target.value)}
+                                 className="bg-transparent focus:outline-none w-full block"
+                                 style={{ fontSize: 'var(--fs-6)', fontWeight: 700, letterSpacing: '-.022em', lineHeight: 1.15, color: 'var(--text)', marginTop: 4 }}
+                                 placeholder="Название сцены" />
+                          {/* СТРОКА МЕТЫ — ОДНА, короткая, без рамок:
+                              «ИНТ·Н · 3 кадра · 35mm · Квартира на Гороховой».
+                              Раньше то же самое лежало чипами по всему экрану
+                              и в правой панели, и чтобы ответить на «что это
+                              за сцена», ответ приходилось собирать из четырёх
+                              мест. Чипы сняты намеренно: у строки, которую
+                              читают одним движением глаз, рамки между словами
+                              только мешают. */}
+                          <div className="flex items-baseline gap-2 flex-wrap cf-meta"
+                               style={{ marginTop: 8, marginBottom: 22, fontFamily: 'var(--font-ui)', fontSize: 'var(--fs-2)' }}>
+                            {sceneBadge(s) && <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{sceneBadge(s).replace('·', ' · ')}</span>}
+                            {sceneBadge(s) && <span style={{ opacity: .4 }}>·</span>}
+                            <span>{frames.length} {plur(frames.length, 'кадр', 'кадра', 'кадров')}</span>
+                            {sceneLenses && <React.Fragment><span style={{ opacity: .4 }}>·</span>
+                              <span style={{ fontFamily: 'var(--font-mono)' }}>{sceneLenses}</span></React.Fragment>}
+                            {loc && <React.Fragment><span style={{ opacity: .4 }}>·</span>
+                              <button onClick={() => setScenePanel('sun')} style={{ color: 'var(--muted)' }}>{loc.name}</button></React.Fragment>}
                           </div>
                         </React.Fragment>
                       );
@@ -11356,7 +11395,7 @@
                       const shootMain = (
                         <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '16px 18px 36px' }}>
                           <div className="flex items-baseline gap-2.5 flex-wrap">
-                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--accent)', fontWeight: 500 }}>СЦ {s.number} · СМЕНА</span>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--accent)', fontWeight: 500 }}>СЦ {s.number} · смена</span>
                             <span style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)' }}>снято {shotDone} из {frames.length}</span>
                             {locCoords && s.date && (() => {
                               const t = sunTimes(locCoords.lat, locCoords.lon, s.date);
@@ -11402,94 +11441,24 @@
                         </main>
                       );
 
+                      // Экспликация и замысел живут в правой панели, а «развернуть
+                      // все» раскрывает референсы НА МЕСТЕ — вдоль текста
+                      // в одну колонку и под текстом в две.
                       // ---------- РЕЖИМ «ТВОРЧЕСКИЙ» ----------
-                      // В центре — ТЕКСТ СЦЕНЫ. Экспликация и замысел уехали
-                      // в правую панель: за столом сначала читают сцену,
-                      // а уже потом разбирают её. Референсы стоят рядом,
-                      // и «развернуть все» раскрывает их НА МЕСТЕ — вдоль
-                      // текста в одну колонку и под текстом в две.
+                      // СНАЧАЛА КАДР, ПОТОМ АНКЕТА. Экран начинался с двух
+                      // полей — текста сцены и списка референсов, — то есть
+                      // с анкеты, а кадры лежали под ней, за сгибом. Но сцену
+                      // для оператора определяет КАДР: открыв её, он хочет
+                      // увидеть, что снимаем, а не прочитать, что написано.
+                      // Текст и техника никуда не делись — они там, где их
+                      // и читают: во вторую очередь.
                       const creativeMain = (
-                        <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '16px 18px 36px' }}>
+                        <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '18px 22px 44px' }}>
                           {sceneHead}
-                          <div style={{ display: refsExpanded ? 'block' : 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 16, alignItems: 'start', overflow: 'hidden' }}>
-                            <div style={{ float: refsExpanded ? 'left' : 'none', width: refsExpanded ? 'min(46%, 560px)' : 'auto',
-                                          margin: refsExpanded ? '0 16px 4px 0' : 0, boxSizing: 'border-box', ...cardBox, padding: '14px 16px' }}>
-                              <div className="flex items-baseline gap-2">
-                                <span style={eyebrow}>Текст сцены</span>
-                                <span className="ml-auto cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>
-                              </div>
-                              {/* Тянется за нижний правый угол и крупнее, чем
-                                  было: сценарий читают глазами, а не проверяют
-                                  по диагонали. Моноширинный шрифт здесь убран
-                                  намеренно — он делает длинный текст тяжелее. */}
-                              <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
-                                        className="w-full bg-transparent focus:outline-none"
-                                        style={{ fontSize: 'var(--fs-4)', lineHeight: 1.7, color: '#e3e0d7', marginTop: 10, resize: 'vertical', minHeight: 170, maxHeight: '70vh', border: 'none', padding: 0 }}
-                                        placeholder="Текст сцены из сценария. Можно вставить вручную или загрузить весь сценарий разом — «···» → «Агент КПП»." />
-                            </div>
-                            <div>
-                              <div className="flex items-baseline gap-2">
-                                <span style={eyebrow}>Референсы · {sceneRefs.length}</span>
-                                {sceneRefs.length > 0 && (
-                                  <button onClick={() => setRefsExpanded(v => !v)} className="ml-auto" style={linkish}>
-                                    {refsExpanded ? 'свернуть ⤡' : 'развернуть все ⤢'}
-                                  </button>
-                                )}
-                              </div>
-                              {!refsExpanded ? (
-                                <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
-                                  {sceneRefs.map(r => (
-                                    <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
-                                         className="relative shrink-0 cursor-pointer group"
-                                         style={{ width: 210, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                      <img src={r.url} style={{ width: '100%', height: 118, objectFit: 'cover', display: 'block' }} draggable="false" />
-                                      {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
-                                      <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
-                                              title="Убрать из сцены — картинка останется в галерее"
-                                              className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
-                                              style={{ top: 6, right: 6, width: 24, height: 24, borderRadius: 'var(--r-sm)', background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
-                                    </div>
-                                  ))}
-                                  <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, s.id)}
-                                         className="cf-edit-only shrink-0 flex flex-col items-center justify-center"
-                                         style={{ width: 110, height: 118, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-5)', boxSizing: 'border-box' }}
-                                         title="Загрузить картинки в сцену">+
-                                  </PhotoSourcePicker>
-                                  <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
-                                          title="Взять картинку из уже загруженных"
-                                          className="cf-edit-only shrink-0 flex items-center justify-center text-center px-2"
-                                          style={{ width: 110, height: 118, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', lineHeight: 1.4, boxSizing: 'border-box' }}>
-                                    из галереи
-                                  </button>
-                                </div>
-                              ) : (
-                                // Развёрнуто — сетка НА МЕСТЕ, картинки в родных
-                                // пропорциях. Ширина в 50% контейнера значит:
-                                // рядом с текстом (там свободно ~54%) помещается
-                                // одна колонка, под текстом — две. Ровно то,
-                                // о чём просили: «вдоль текста в одну, под ним в две».
-                                <div className="mt-2">
-                                  {sceneRefs.map(r => (
-                                    <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
-                                         className="relative cursor-pointer"
-                                         style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                      <img src={r.url} style={{ width: '100%', display: 'block' }} draggable="false" />
-                                      {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
-                                    </div>
-                                  ))}
-                                  <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
-                                          className="cf-edit-only"
-                                          style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', height: 100, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
-                                    + из галереи
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
                           {/* РАСКАДРОВКА */}
-                          <div className="flex items-center gap-2.5 flex-wrap" style={{ marginTop: 20 }}>
-                            <span style={eyebrow}>Раскадровка · {frames.length}</span>
+                          <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 10 }}>
+                            <span style={eyebrow}>Раскадровка</span>
+                            <span className="cf-sub">{frames.length}</span>
                             {frames.length > 0 && (
                               <button onClick={() => setShotsExpanded(v => !v)} style={linkish}>
                                 {shotsExpanded ? 'свернуть ⤡' : 'развернуть все ⤢'}
@@ -11556,7 +11525,7 @@
                             // появляются потом. Раньше кадр без картинки
                             // выглядел как ошибка загрузки.
                             <div className="mt-2" style={{ border: '1px solid var(--line)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
-                              <div className="grid gap-2.5 px-3 py-2" style={{ gridTemplateColumns: '76px 96px minmax(160px,1fr) 32px', background: 'var(--panel-2)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted-2)' }}>
+                              <div className="grid gap-2.5 px-3 py-2" style={{ gridTemplateColumns: '76px 96px minmax(160px,1fr) 32px', background: 'var(--panel-2)', fontSize: 'var(--fs-2)', color: 'var(--muted)' }}>
                                 <span>Кадр</span><span>Оптика</span><span>Описание</span><span></span>
                               </div>
                               {frames.map(f => (
@@ -11577,6 +11546,83 @@
                               </button>
                             </div>
                           )}
+
+                          <div style={{ display: refsExpanded ? 'block' : 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 16, alignItems: 'start', overflow: 'hidden' }}>
+                            <div style={{ float: refsExpanded ? 'left' : 'none', width: refsExpanded ? 'min(46%, 560px)' : 'auto',
+                                          margin: refsExpanded ? '0 16px 4px 0' : 0, boxSizing: 'border-box', ...cardBox, padding: '14px 16px' }}>
+                              <div className="flex items-baseline gap-2">
+                                <span style={eyebrow}>Текст сцены</span>
+                                <span className="ml-auto cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>
+                              </div>
+                              {/* Тянется за нижний правый угол и крупнее, чем
+                                  было: сценарий читают глазами, а не проверяют
+                                  по диагонали. Моноширинный шрифт здесь убран
+                                  намеренно — он делает длинный текст тяжелее. */}
+                              <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
+                                        className="w-full bg-transparent focus:outline-none"
+                                        style={{ fontSize: 'var(--fs-4)', lineHeight: 1.7, color: '#e3e0d7', marginTop: 10, resize: 'vertical', minHeight: 170, maxHeight: '70vh', border: 'none', padding: 0 }}
+                                        placeholder="Текст сцены из сценария. Можно вставить вручную или загрузить весь сценарий разом — «···» → «Агент КПП»." />
+                            </div>
+                            <div>
+                              <div className="flex items-baseline gap-2">
+                                <span style={eyebrow}>Референсы</span>
+                                <span className="cf-sub">{sceneRefs.length}</span>
+                                {sceneRefs.length > 0 && (
+                                  <button onClick={() => setRefsExpanded(v => !v)} className="ml-auto" style={linkish}>
+                                    {refsExpanded ? 'свернуть ⤡' : 'развернуть все ⤢'}
+                                  </button>
+                                )}
+                              </div>
+                              {!refsExpanded ? (
+                                <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+                                  {sceneRefs.map(r => (
+                                    <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
+                                         className="relative shrink-0 cursor-pointer group"
+                                         style={{ width: 268, borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+                                      <img src={r.url} style={{ width: '100%', height: 152, objectFit: 'cover', display: 'block' }} draggable="false" />
+                                      {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                      <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
+                                              title="Убрать из сцены — картинка останется в галерее"
+                                              className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
+                                              style={{ top: 6, right: 6, width: 24, height: 24, borderRadius: 'var(--r-sm)', background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
+                                    </div>
+                                  ))}
+                                  <PhotoSourcePicker onFiles={(fs) => handleMultiFileUpload(fs, s.id)}
+                                         className="cf-edit-only shrink-0 flex flex-col items-center justify-center"
+                                         style={{ width: 110, height: 118, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-5)', boxSizing: 'border-box' }}
+                                         title="Загрузить картинки в сцену">+
+                                  </PhotoSourcePicker>
+                                  <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
+                                          title="Взять картинку из уже загруженных"
+                                          className="cf-edit-only shrink-0 flex items-center justify-center text-center px-2"
+                                          style={{ width: 110, height: 118, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', lineHeight: 1.4, boxSizing: 'border-box' }}>
+                                    из галереи
+                                  </button>
+                                </div>
+                              ) : (
+                                // Развёрнуто — сетка НА МЕСТЕ, картинки в родных
+                                // пропорциях. Ширина в 50% контейнера значит:
+                                // рядом с текстом (там свободно ~54%) помещается
+                                // одна колонка, под текстом — две. Ровно то,
+                                // о чём просили: «вдоль текста в одну, под ним в две».
+                                <div className="mt-2">
+                                  {sceneRefs.map(r => (
+                                    <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
+                                         className="relative cursor-pointer"
+                                         style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                                      <img src={r.url} style={{ width: '100%', display: 'block' }} draggable="false" />
+                                      {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                    </div>
+                                  ))}
+                                  <button onClick={() => setRefPicker({ mode: 'scene', sceneId: s.id })}
+                                          className="cf-edit-only"
+                                          style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', height: 100, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
+                                    + из галереи
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
 
                           {/* ЗАМЕТКИ И ДОКУМЕНТЫ СЦЕНЫ */}
                           {sceneDocs.length > 0 && (
@@ -11669,7 +11715,7 @@
                                      : { position: 'absolute', top: 0, right: 40, bottom: 0, width: 300, zIndex: 30,
                                          background: 'var(--panel-2)', borderLeft: '1px solid var(--border)', boxShadow: 'var(--shadow-2)' }}>
                               <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-                                <span style={{ ...eyebrow, color: 'var(--text)' }}>{panelTitle}</span>
+                                <span style={eyebrow}>{panelTitle}</span>
                                 <button onClick={() => setScenePanel(null)} title="Свернуть панель"
                                         className="ml-auto flex items-center justify-center"
                                         style={{ width: 22, height: 22, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>✕</button>
@@ -12195,7 +12241,7 @@
                   <div className={`h-full w-full ${currentView === 'locations' ? 'flex' : 'hidden'}`}>
                     {currentView === 'locations' && (() => {
                       const l = locations.find(x => x.id === activeLocationId) || sortedLocations[0] || null;
-                      const eyebrow = { fontSize: 'var(--fs-2)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' };
+                      const eyebrow = { fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' };
                       const cardBox = { background: 'var(--card)', borderRadius: 'var(--r-md)' };
                       const linkish = { fontSize: 'var(--fs-2)', color: 'var(--accent)', cursor: 'pointer' };
 
@@ -13390,7 +13436,7 @@
                             {boardScenes.map(s => (
                             <div key={s.id} data-scene-id={s.id} data-card-id={s.id} onPointerDown={(e) => handleElementPointerDown(e, s.id, 'scene')} style={{ left: `${s.x}px`, top: `${s.y}px`, position: 'absolute' }} className={`w-72 glass-panel rounded-lg cursor-move pointer-events-auto hover:border-indigo-500/50 group ${isDragging(s.id) ? '' : 'transition-all'} ${selectedWbItems.includes(s.id) ? 'ring-2 ring-indigo-500 scale-[1.02]' : 'border-t border-[var(--border)]'} ${hoveredSceneId === s.id ? 'scene-drop-target' : ''}`}>
                                 <div className="bg-[var(--panel)] px-4 py-2.5 border-b border-[var(--border)] flex justify-between items-center" style={{ borderTopLeftRadius: 11, borderTopRightRadius: 11 }}>
-                                  <span className="text-[length:var(--fs-1)] font-mono text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1"><Icons.Scene/> Сцена #{s.number}</span>
+                                  <span className="text-[length:var(--fs-1)] font-mono text-zinc-400 font-bold flex items-center gap-1"><Icons.Scene/> Сцена #{s.number}</span>
                                   {/* Убирает карточку с доски, а не сцену из проекта */}
                                   <button onClick={(e) => { e.stopPropagation(); removeSceneFromBoard(s.id); }}
                                           title="Убрать с доски — сцена и её связи останутся в проекте"
@@ -13942,7 +13988,7 @@
                         const anyRect = kinds.some(k => k === 'rect');
                         const row = "flex bg-[var(--scrim)] p-1 rounded-lg border border-[var(--line)] gap-1";
                         const cell = (on) => `flex-1 py-1 rounded-md text-[length:var(--fs-1)] font-bold transition-all ${on ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`;
-                        const cap = "text-[length:var(--fs-1)] text-zinc-500 font-bold uppercase tracking-wider block";
+                        const cap = "text-[length:var(--fs-1)] text-zinc-500 font-bold  block";
                         return (
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-3 rounded-lg flex flex-col space-y-2 z-30 w-52 border-t border-[var(--border)] max-h-[calc(100%-3rem)] overflow-y-auto hide-scrollbar">
                           {panelFold(wbMode === 'shape' ? 'Фигура' : 'Свойства')}
@@ -14140,11 +14186,11 @@
                               <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
                           </div>
                           <div className="space-y-2">
-                            <div className="flex justify-between text-[length:var(--fs-1)] text-zinc-400 font-bold uppercase tracking-wider"><span>Размер</span><span>{brushSize}px</span></div>
+                            <div className="flex justify-between text-[length:var(--fs-1)] text-zinc-400 font-bold "><span>Размер</span><span>{brushSize}px</span></div>
                             <input type="range" min="2" max="32" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-full accent-indigo-500 h-1.5 rounded-full appearance-none outline-none bg-[var(--raised)]" />
                           </div>
                           <div className="space-y-2">
-                            <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold uppercase tracking-wider block">Цвет</span>
+                            <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold block">Цвет</span>
                             <div className="grid grid-cols-6 gap-2 items-center">
                               {['#d97757', '#fbbf24', '#fb7185', '#34d399', '#38bdf8', '#f4f4f5'].map(color => (<button key={color} onClick={() => setBrushColor(color)} style={{ backgroundColor: color }} className={`w-6 h-6 rounded-full border-2 ${brushColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} />))}
                               <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} title="Свой цвет" className="wb-color-well w-6 h-6 rounded-full border-2 border-[var(--border)] cursor-pointer bg-transparent" />
@@ -14266,7 +14312,7 @@
                             return (
                               <div key={s.id} className="glass-panel p-6 md:p-8 rounded-lg space-y-5">
                                 <div className="flex justify-between items-center border-b border-[var(--border)] pb-4 relative z-10 gap-3">
-                                  <span className="font-mono text-white font-extrabold text-sm md:text-lg">СЦЕНА #{s.number} | {s.title}</span>
+                                  <span className="text-white font-bold text-sm md:text-lg"><span className="font-mono" style={{ color: 'var(--accent)' }}>{s.number}</span>  {s.title}</span>
                                   <span className="text-[length:var(--fs-1)] md:text-xs text-zinc-400 font-mono bg-[var(--scrim)] px-3 py-1 rounded-lg border border-[var(--border)] font-semibold shrink-0">{s.date ? formatDateDisplay(s.date) : 'Дата не назначена'}</span>
                                 </div>
                                 <p className="text-sm text-zinc-300 bg-[var(--scrim)] p-4 rounded-lg border border-[var(--line)] leading-relaxed relative z-10 font-medium" style={{ whiteSpace: 'pre-wrap' }}>{s.content || 'Описание отсутствует'}</p>
@@ -14277,7 +14323,7 @@
                                 {hasScript && (
                                   <div className="relative z-10">
                                     <button onClick={() => setOpenScript(prev => ({ ...prev, [s.id]: !prev[s.id] }))}
-                                            className="flex items-center gap-2 text-[length:var(--fs-1)] font-bold uppercase tracking-widest text-zinc-400 hover:text-white bg-[var(--panel)] hover:bg-[var(--raised)] border border-[var(--border)] px-4 py-2.5 rounded-lg transition-colors">
+                                            className="flex items-center gap-2 text-[length:var(--fs-1)] font-bold text-zinc-400 hover:text-white bg-[var(--panel)] hover:bg-[var(--raised)] border border-[var(--border)] px-4 py-2.5 rounded-lg transition-colors">
                                       <Icons.Docs/> <span>{scriptOpen ? 'Скрыть текст сцены' : 'Текст сцены из сценария'}</span>
                                       <span className="text-zinc-500">{scriptOpen ? '▲' : '▼'}</span>
                                     </button>
@@ -14289,7 +14335,7 @@
 
                                 {sceneFrames.length > 0 && (
                                   <div className="space-y-3 pt-3 relative z-10">
-                                    <span className="text-[length:var(--fs-1)] md:text-xs font-bold text-zinc-500 uppercase tracking-widest block ml-1">Раскадровка / План смены:</span>
+                                    <span className="text-[length:var(--fs-1)] md:text-xs font-bold text-zinc-500 block ml-1">Раскадровка и план смены</span>
                                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                                       {sceneFrames.map(frame => (
                                         <div key={frame.id} className="bg-[var(--scrim)] rounded-lg border border-[var(--border)] p-2.5 flex flex-col space-y-2">
@@ -14333,20 +14379,20 @@
                                 <div key={dateKey || 'unassigned'} className="glass-panel rounded-lg overflow-hidden border-t border-[var(--border)]">
                                   <div className="bg-[var(--panel)] px-6 py-4 border-b border-[var(--border)] flex flex-col md:flex-row md:items-center justify-between gap-4">
                                     <div className="flex items-center space-x-4">
-                                      <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `СМЕНА: ${formatDateDisplay(dateKey)}` : 'СЦЕНЫ ВНЕ СМЕН'}</span>
+                                      <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `Смена · ${formatDateDisplay(dateKey)}` : 'Сцены вне смен'}</span>
                                       <span className="text-zinc-600">|</span>
                                       <span className="text-xs font-bold text-zinc-300 bg-[var(--scrim)] px-3 py-1 rounded-full border border-[var(--border)]">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
                                     </div>
                                     <div className="flex flex-col gap-2 md:items-end">
                                       {Object.keys(camSum).length > 0 && (
                                         <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[length:var(--fs-1)] text-zinc-400 uppercase font-bold tracking-wider mr-1">Итого техника:</span>
+                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">Итого техника</span>
                                           {totalChips(camSum, gearTypes || DEFAULT_GEAR, { chip: 'bg-indigo-950/60 text-indigo-200', num: 'bg-indigo-600' })}
                                         </div>
                                       )}
                                       {Object.keys(lightSum).length > 0 && (
                                         <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[length:var(--fs-1)] text-zinc-400 uppercase font-bold tracking-wider mr-1">Итого свет:</span>
+                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">Итого свет</span>
                                           {totalChips(lightSum, lightGearTypes || DEFAULT_LIGHT_GEAR, { chip: 'bg-amber-950/60 text-amber-200', num: 'bg-amber-700' })}
                                         </div>
                                       )}
@@ -14376,8 +14422,8 @@
                                               <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || '...'}</p>
                                               {(cam || lig) && (
                                                 <div className="flex flex-col gap-1 pt-1">
-                                                  {cam && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-indigo-400 font-bold uppercase">камера: </span>{cam}</span>)}
-                                                  {lig && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-amber-400 font-bold uppercase">свет: </span>{lig}</span>)}
+                                                  {cam && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-indigo-400 font-bold ">камера: </span>{cam}</span>)}
+                                                  {lig && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-amber-400 font-bold ">свет: </span>{lig}</span>)}
                                                 </div>
                                               )}
                                             </div>
@@ -14408,7 +14454,7 @@
                       <div className="w-full lg:w-72 glass-panel p-5 rounded-lg flex flex-col shrink-0 relative border-t border-[var(--border)] overflow-hidden">
                         <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
                           <div>
-                              <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Операторские Гайды</span>
+                              <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские Гайды</span>
                               {docs.map(doc => (
                                 <div key={doc.id} className="group relative mb-2">
                                   <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
@@ -14427,7 +14473,7 @@
                               <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
                           </div>
                           <div className="pt-4 border-t border-[var(--border)]">
-                              <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 uppercase tracking-widest block mb-3 ml-2">Схемы Света</span>
+                              <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы Света</span>
                               {lightSchemes.map(sch => (
                                 <div key={sch.id} className="group relative mb-2">
                                   <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
@@ -14495,12 +14541,12 @@
                             
                             <div className="space-y-4 border-t border-[var(--border)] pt-6">
                               <div className="flex justify-between items-center px-1">
-                                <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
+                                <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съемочной группы</span>
                                 <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); syncDoc('crew', nc.id, nc); }} className="cf-edit-only text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
                               </div>
                               <div className="glass-panel rounded-lg overflow-x-auto border border-[var(--line)]">
                                 <table className="w-full min-w-[500px] text-left text-sm border-collapse">
-                                  <thead><tr className="bg-[var(--panel)] text-zinc-400 text-[length:var(--fs-1)] uppercase tracking-widest font-bold border-b border-[var(--border)]"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
+                                  <thead><tr className="bg-[var(--panel)] text-zinc-400 text-[length:var(--fs-1)] font-bold border-b border-[var(--border)]"><th className="p-4 w-1/3">Имя Фамилия</th><th className="p-4 w-1/3">Цех / Должность</th><th className="p-4">Телефон / Контакт</th><th className="p-4 w-14"></th></tr></thead>
                                   <tbody className="divide-y divide-white/5 text-zinc-200">
                                     {crew.map(c => (
                                       <tr key={c.id} className="hover:bg-[var(--raised)] transition-colors">
@@ -14554,7 +14600,7 @@
                           <button onClick={() => setPrintPanelOpen(v => !v)}
                                   title="Выбрать, что печатать"
                                   className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-lg glass-panel border border-[var(--border)] hover:bg-[var(--raised)] transition-colors">
-                            <span className="flex items-center gap-2 text-[length:var(--fs-1)] font-bold text-zinc-300 uppercase tracking-widest"><Icons.Print/> Печать и экспорт</span>
+                            <span className="flex items-center gap-2 text-[length:var(--fs-1)] font-bold text-zinc-300 "><Icons.Print/> Печать и экспорт</span>
                             <span className="text-zinc-500 text-[length:var(--fs-1)] font-bold">{printPanelOpen ? '▲' : '▼'}</span>
                           </button>
                           {printPanelOpen && (() => {
@@ -14584,7 +14630,7 @@
                           })()}
                         </div>
                         <div className="space-y-4 pt-6 border-t border-[var(--border)]">
-                          <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 uppercase tracking-widest block ml-1">Файлы и документы проекта</span>
+                          <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block ml-1">Файлы и документы проекта</span>
                           <div className="cf-edit-only border border-dashed border-[var(--border)] hover:border-indigo-500/50 rounded-lg p-6 text-center bg-[var(--scrim)] hover:bg-indigo-500/10 transition-all group">
                             <label className="text-xs font-bold text-zinc-400 group-hover:text-indigo-300 cursor-pointer block w-full h-full flex flex-col items-center gap-2">
                               <span className="opacity-60 group-hover:opacity-100 transition-opacity"><Icons.Folder/></span>
@@ -14632,7 +14678,7 @@
                   
                   <div className="p-5 border-b border-[var(--border)] space-y-4 bg-[var(--panel)] relative">
                     <button onClick={() => setShowChat(false)} className="md:hidden absolute top-4 right-4 w-8 h-8 flex items-center justify-center glass-panel rounded-full text-zinc-400 font-bold">✕</button>
-                    <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 uppercase tracking-widest block">Профиль участника</span>
+                    <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block">Профиль участника</span>
                     <div className="flex flex-col gap-3">
                       <div className="glass-panel rounded-lg px-4 py-3 flex items-center border border-[var(--border)]">
                         <span className="text-zinc-300 mr-3"><Icons.User/></span>
@@ -14663,7 +14709,7 @@
                     {messages.length === 0 && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-600">
                             <span className="mb-2"><Icons.Chat/></span>
-                            <span className="text-xs font-bold uppercase tracking-widest">Чат цеха</span>
+                            <span className="text-xs font-bold ">Чат цеха</span>
                         </div>
                     )}
                   </div>
@@ -14727,7 +14773,7 @@
                   <div className="cf-sheet">
                     <div className="cf-sheet-grip" />
                     <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
-                      <span style={{ fontSize: 'var(--fs-2)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text)' }}>
+                      <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>
                         {phoneSheet === 'more' ? 'Ещё' : phoneSheet === 'gear' ? 'Камера и техника'
                           : phoneSheet === 'light' ? 'Свет' : phoneSheet === 'sun' ? 'Объект и солнце' : 'Экспликация и замысел'}
                       </span>
