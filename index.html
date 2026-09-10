@@ -2,7 +2,14 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- viewport-fit=cover ОБЯЗАТЕЛЕН, и без него не работает то, чего
+         код уже ждёт. Строкой ниже стоит black-translucent: строка
+         состояния прозрачная, то есть содержимое уезжает под чёлку.
+         А env(safe-area-inset-*) без viewport-fit=cover возвращает НОЛЬ —
+         таб-бар телефона и шторка снизу просили у него отступ и получали
+         ничего. Ошибок при этом нет, просто последняя строка списка
+         оказывается под системной полосой. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
@@ -468,8 +475,9 @@
         .cf-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 260;
                     background: var(--card); border-top: 1px solid var(--border); border-radius: var(--r-xl) var(--r-xl) 0 0;
                     max-height: 80vh; max-height: 80dvh; overflow-y: auto; overscroll-behavior: contain;
-                    box-shadow: var(--shadow-2); padding-bottom: env(safe-area-inset-bottom, 0px); }
-        .cf-sheet-grip { width: 36px; height: 4px; border-radius: var(--r-sm); background: var(--border); margin: 8px auto 0; }
+                    box-shadow: var(--shadow-2); padding-bottom: env(safe-area-inset-bottom, 0px);
+                    transition: transform .18s ease-out; touch-action: pan-y; }
+        .cf-sheet-grip { width: 36px; height: 4px; border-radius: var(--r-sm); background: var(--border); margin: 8px auto 0; cursor: grab; }
         /* Плитка вместо вкладки правой панели */
         .cf-tile { display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: var(--r-md);
                    padding: 11px 12px; font-size: var(--fs-2); color: var(--text-2); min-height: 44px; text-align: left; }
@@ -1758,21 +1766,224 @@
           );
         };
 
+        /* ---------- ДВА КЛАССА ШИРИНЫ ----------
+           Порогов было три, и первые два стояли рядом без причины:
+           разметка переключалась на телефонную ниже 700, а стили —
+           ниже 768. В щели 700–767 (это, например, iPad mini в
+           портрете) получалось смешанное: планшетная разметка
+           с телефонными правилами поверх неё. Apple советует не
+           городить раскладку под каждое положение устройства,
+           а держать ДВА класса ширины. Остаётся 768 — граница
+           классов, и 1200 — единственный вопрос, на который она
+           не отвечает: панель сцены встаёт РЯДОМ или ПОВЕРХ.
+
+           Отвечает на вопрос ЖИВОЙ ЗАМЕР, а не однократное чтение
+           window.innerWidth при запуске. Замерено: iPad mini 744
+           в портрете держит список сцен полоской в 40 точек, и
+           после поворота в ландшафт 1133 он ОСТАВАЛСЯ полоской —
+           хотя на такой ширине список должен стоять открытым.
+           Человек разворачивал его руками после каждого поворота. */
+        const useMedia = (query) => {
+            const [on, setOn] = React.useState(
+                () => typeof window !== 'undefined' && window.matchMedia
+                      ? window.matchMedia(query).matches : false);
+            React.useEffect(() => {
+                if (typeof window === 'undefined' || !window.matchMedia) return;
+                const mq = window.matchMedia(query);
+                const fire = () => setOn(mq.matches);
+                fire();
+                // Safari до 14 не знает addEventListener у MediaQueryList.
+                if (mq.addEventListener) { mq.addEventListener('change', fire); return () => mq.removeEventListener('change', fire); }
+                mq.addListener(fire); return () => mq.removeListener(fire);
+            }, [query]);
+            return on;
+        };
+
+        /* ---------- ШТОРКА ЗАКРЫВАЕТСЯ СВАЙПОМ ВНИЗ ----------
+           Ручка сверху (`.cf-sheet-grip`) обещала жест, которого не было:
+           шторка закрывалась только крестиком в её углу и нажатием по
+           затемнению. Полоска, за которую нельзя потянуть, — это враньё
+           разметки, и на телефоне за неё тянут первым делом.
+
+           Тащим НАПРЯМУЮ за узел, а не через состояние React: за один
+           жест прилетают десятки событий, и перерисовывать на каждое
+           весь экран сцены незачем — то же правило, что у панорамы доски.
+
+           Жест начинается ТОЛЬКО от верха прокрутки (`scrollTop <= 0`):
+           внутри длинного списка техники движение вниз — это прокрутка,
+           а не «закрой меня». И только после 6 точек, иначе обычное
+           нажатие по строке списка утаскивало бы шторку. */
+        const SHEET_CLOSE_PX = 90;
+        const useSheetSwipe = (onClose) => {
+            const ref = React.useRef(null);
+            const st = React.useRef(null);
+            const shift = (dy) => { const el = ref.current; if (el) el.style.transform = dy ? `translateY(${dy}px)` : ''; };
+            const down = (e) => {
+                e.stopPropagation();
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                const el = ref.current;
+                if (!el || el.scrollTop > 0) return;
+                st.current = { y: e.clientY, t: Date.now(), dy: 0, on: false, id: e.pointerId };
+            };
+            const move = (e) => {
+                e.stopPropagation();
+                const s = st.current; if (!s || e.pointerId !== s.id) return;
+                const dy = e.clientY - s.y;
+                if (!s.on) {
+                    if (dy < -2) { st.current = null; return; }   // повели вверх — это прокрутка
+                    if (dy < 6) return;
+                    s.on = true;
+                    const el = ref.current;
+                    if (el) { el.style.transition = 'none'; try { el.setPointerCapture(e.pointerId); } catch (err) {} }
+                }
+                s.dy = Math.max(0, dy);
+                shift(s.dy);
+            };
+            const up = (e) => {
+                e.stopPropagation();
+                const s = st.current; st.current = null;
+                const el = ref.current;
+                if (!el) return;
+                el.style.transition = '';
+                if (!s || !s.on) return;
+                // Быстрый короткий бросок — тоже «закрой»: на телефоне
+                // шторку смахивают, а не выводят её на девяносто точек.
+                const quick = (Date.now() - s.t) < 300 && s.dy > 40;
+                if (s.dy > SHEET_CLOSE_PX || quick) {
+                    el.style.transform = 'translateY(100%)';
+                    setTimeout(() => { if (onClose) onClose(); }, 150);
+                } else shift(0);
+            };
+            return { ref, onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: up };
+        };
+
+        /* ---------- ОДНА ОБЁРТКА НА ВСЕ ВСПЛЫВАЮЩИЕ ОКНА ----------
+           Окон восемь, и каждое было написано заново: фон, коробка,
+           крестик. Из-за этого расходились не только отступы:
+           — Escape не закрывал НИ ОДНО окно, хотя это первое, что
+             человек нажимает;
+           — нажатие по фону закрывало ровно одно окно из восьми
+             («На какую доску»), и в остальных это выглядело поломкой:
+             ткнул мимо — ничего не произошло;
+           — табуляция уходила ЗА окно, в список сцен под ним: с
+             клавиатуры можно было напечатать в поле, которого не
+             видно. Это та же дверь, что уже чинили в режиме просмотра;
+           — экранный диктор не знал, что это окно (`role="dialog"`).
+           Теперь фон, коробка, крестик и всё это поведение живут
+           в одном месте. Содержимое окон не тронуто — оно приходит
+           детьми как было. */
+        // open по умолчанию true: окна и так рисуются условием снаружи
+        // ({showProjectModal && <Modal…>}), и второе такое же условие
+        // внутри было бы двумя правдами об одном.
+        const Modal = ({ open = true, onClose, z = 200, box = 'p-8 max-w-md', boxStyle, label, hideX, children }) => {
+            const boxRef = React.useRef(null);
+            // Обработчик закрытия живёт в ссылке, а эффект зависит ТОЛЬКО
+            // от open. Иначе так: onClose — это новая стрелка на каждую
+            // отрисовку приложения, эффект переустанавливался бы на каждую
+            // набранную в окне букву, а он на выходе возвращает фокус туда,
+            // откуда окно открыли, — и фокус выпрыгивал бы из поля.
+            const closeRef = React.useRef(onClose);
+            closeRef.current = onClose;
+            React.useEffect(() => {
+                if (!open) return;
+                const prev = document.activeElement;
+                // ВЕРХНЕЕ ОКНО ОПРЕДЕЛЯЕТСЯ ПО РАЗМЕТКЕ, А НЕ ПО ПОРЯДКУ
+                // ОТКРЫТИЯ. Стопку «кто открылся позже» пробовали и она
+                // ВРАЛА: «Удалить …?» лежит в дереве ВЫШЕ «Проекта»,
+                // из которого его вызвали, и при любой перерисовке
+                // приложения эффекты переустанавливались в порядке
+                // дерева — стопка переворачивалась. Замерено: Escape
+                // закрывал «Проект» ПОД вопросом, а сам вопрос оставался
+                // висеть. Слой на экране задаёт z, поэтому его и спрашиваем;
+                // при равном z верхнее то, что позже в разметке.
+                const isTop = () => {
+                    const all = [...document.querySelectorAll('[data-cf-modal]')];
+                    if (all.length < 2 || !boxRef.current) return true;
+                    const zOf = (el) => Number(el.getAttribute('data-cf-modal')) || 0;
+                    return all.reduce((a, b) => (zOf(b) >= zOf(a) ? b : a)) === boxRef.current;
+                };
+                const focusable = () => {
+                    if (!boxRef.current) return [];
+                    return [...boxRef.current.querySelectorAll(
+                        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+                        .filter(el => el.offsetWidth > 0 || el.offsetHeight > 0);
+                };
+                const onKey = (e) => {
+                    if (!isTop()) return;
+                    if (e.key === 'Escape') {
+                        // Пока курсор в поле, Escape СНАЧАЛА выходит из поля
+                        // и только вторым нажатием закрывает окно — то же
+                        // правило, что у тегов в полноэкранном просмотре.
+                        // Иначе набранное сообщение агенту пропадает от
+                        // одного случайного нажатия.
+                        const a = document.activeElement;
+                        if (a && boxRef.current && boxRef.current.contains(a) &&
+                            /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { a.blur(); e.preventDefault(); return; }
+                        e.preventDefault();
+                        if (closeRef.current) closeRef.current();
+                        return;
+                    }
+                    if (e.key !== 'Tab') return;
+                    // Ловушка фокуса. Без неё табуляция уходила ЗА окно —
+                    // в список сцен под ним, где с клавиатуры можно было
+                    // напечатать в поле, которого не видно.
+                    const f = focusable();
+                    if (!f.length) return;
+                    const first = f[0], last = f[f.length - 1];
+                    const a = document.activeElement;
+                    if (!boxRef.current || !boxRef.current.contains(a)) { e.preventDefault(); first.focus(); return; }
+                    if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+                    else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+                };
+                // Ловим В ФАЗЕ ПЕРЕХВАТА: Escape на доске и в полях уже
+                // занят своими обработчиками, а открытое окно главнее.
+                document.addEventListener('keydown', onKey, true);
+                return () => {
+                    document.removeEventListener('keydown', onKey, true);
+                    // Фокус возвращается туда, откуда окно открыли:
+                    // иначе следующее нажатие Tab уводит в начало страницы.
+                    try { if (prev && prev.focus && document.contains(prev)) prev.focus(); } catch (err) {}
+                };
+            }, [open]);
+            if (!open) return null;
+            return (
+                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center p-4"
+                     style={{ zIndex: z }}
+                     onPointerDown={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
+                    <div ref={boxRef} data-cf-modal={z} role="dialog" aria-modal="true"
+                         aria-label={label || undefined} tabIndex={-1}
+                         className={`cf-modal-box glass-panel rounded-lg w-full relative ${box}`}
+                         style={{ outline: 'none', ...(boxStyle || {}) }}>
+                        {onClose && !hideX && (
+                            <button onClick={onClose} aria-label="Закрыть"
+                                    className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                        )}
+                        {children}
+                    </div>
+                </div>
+            );
+        };
+
+        // «Удалить …?» — тоже окно, и оно лежит ПОВЕРХ другого: вопрос
+        // задают из «Проекта» или из карточки. Поэтому оно на той же
+        // обёртке, что и остальные, — иначе Escape закрывал бы окно ПОД
+        // вопросом, а сам вопрос оставался висеть. Крестика здесь нет
+        // намеренно: у вопроса уже есть «Отмена», и два способа сказать
+        // «нет» рядом только сбивают.
         const ConfirmModal = ({ action, onCancel }) => {
             if (!action) return null;
             return (
-                <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-                    <div className="cf-modal-box glass-panel p-6 rounded-lg max-w-sm w-full text-center border-t border-red-500/50">
-                        <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
-                        <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
-                        {/* pre-line — чтобы в длинных предупреждениях работал абзац */}
-                        <p className="text-sm text-zinc-400 mb-6" style={{ whiteSpace: 'pre-line' }}>{action.message}</p>
-                        <div className="flex gap-3">
-                            <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors">Отмена</button>
-                            <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold transition-colors">Подтвердить</button>
-                        </div>
+                <Modal onClose={onCancel} z={400} label={action.title}
+                       box="p-6 max-w-sm text-center border-t border-red-500/50" hideX>
+                    <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
+                    <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
+                    {/* pre-line — чтобы в длинных предупреждениях работал абзац */}
+                    <p className="text-sm text-zinc-400 mb-6" style={{ whiteSpace: 'pre-line' }}>{action.message}</p>
+                    <div className="flex gap-3">
+                        <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors">Отмена</button>
+                        <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold transition-colors">Подтвердить</button>
                     </div>
-                </div>
+                </Modal>
             );
         };
 
@@ -2864,81 +3075,77 @@
           const done = () => { if (sel.length) onPick(sel.map(id => refs.find(r => r.id === id)).filter(Boolean)); onClose(); };
 
           return ReactDOM.createPortal(
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[240] p-4"
-                 onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-              {/* cf-modal-box и cf-modal-x обязательны: на телефоне окно выше
-                  экрана, и без них крестик уезжает выше видимой части. */}
-              <div className="cf-modal-box glass-panel rounded-lg w-full max-w-3xl relative flex flex-col" style={{ padding: 0 }}>
-                <div className="p-5 pb-3 shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
-                  <button onClick={onClose} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                  <h3 className="text-lg font-extrabold text-white mb-1 flex items-center gap-2"><Icons.Gallery /> {title}</h3>
-                  {hint && <p className="text-[length:var(--fs-2)] text-zinc-500 leading-relaxed mb-3">{hint}</p>}
-                  <input data-ro-ok type="text" value={q} onChange={e => setQ(e.target.value)}
-                         placeholder="Поиск по подписи и тегам..."
-                         className="glass-input w-full rounded-lg px-3 py-2.5 text-sm" />
-                  {folders.length > 0 && (
-                    <div className="flex gap-2 overflow-x-auto hide-scrollbar mt-2.5 pb-1">
-                      <button onClick={() => setFolder('')} className={`cf-chip shrink-0 ${folder === '' ? 'cf-chip-accent' : ''}`}>Все · {refs.length}</button>
-                      {folders.map(([f, n]) => (
-                        <button key={f} onClick={() => setFolder(folder === f ? '' : f)}
-                                className={`cf-chip shrink-0 flex items-center gap-1.5 ${folder === f ? 'cf-chip-accent' : ''}`}>
-                          <Icons.Folder /> {f} · {n}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 160 }}>
-                  {refs.length === 0 ? (
-                    <p className="text-[length:var(--fs-3)] text-zinc-500 px-1 py-6 text-center leading-relaxed">
-                      Свободных референсов нет — все уже здесь.<br />Загрузить новые можно во вкладке «Галерея».
-                    </p>
-                  ) : shown.length === 0 ? (
-                    <p className="text-[length:var(--fs-3)] text-zinc-500 px-1 py-6 text-center">По запросу ничего не нашлось.</p>
-                  ) : (
-                    <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))' }}>
-                      {shown.map(r => {
-                        const on = sel.includes(r.id);
-                        return (
-                          <button key={r.id} onClick={() => toggle(r.id)} title={r.label || ''}
-                                  className="cf-ref-card rounded-lg overflow-hidden relative text-left transition-all"
-                                  style={{ aspectRatio: '1 / 1', containIntrinsicSize: 'auto 118px',
-                                           border: on ? '2px solid var(--accent)' : '1px solid var(--border)' }}>
-                            <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={bgStyle(r.id, r.url)}></div>
-                            {r.url
-                              ? <img src={r.url} alt="" className="w-full h-full object-contain relative z-10 pointer-events-none" draggable="false" />
-                              : <span className="absolute inset-0 flex items-center justify-center text-zinc-600 text-[length:var(--fs-1)]">без картинки</span>}
-                            {on && (
-                              <span className="absolute top-1.5 left-1.5 z-20 rounded-full flex items-center justify-center font-bold"
-                                    style={{ width: 20, height: 20, background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-2)' }}>
-                                {sel.indexOf(r.id) + 1}
-                              </span>
-                            )}
-                            <span className="absolute bottom-0 left-0 right-0 z-20 px-1.5 py-1 truncate"
-                                  style={{ background: 'rgba(0,0,0,.82)', fontSize: 'var(--fs-1)', color: 'var(--text-2)' }}>
-                              {r.label || 'без подписи'}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="p-4 flex items-center justify-between gap-3 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
-                  <span className="cf-meta">{sel.length ? `выбрано ${sel.length}` : `показано ${shown.length} из ${refs.length}`}</span>
-                  <div className="flex gap-2">
-                    {sel.length > 0 && <button onClick={() => setSel([])} className="cf-chip shrink-0">Снять</button>}
-                    <button onClick={done} disabled={!sel.length}
-                            className="rounded-lg px-4 py-2 text-sm font-bold transition-colors disabled:opacity-40"
-                            style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
-                      {actionLabel}{sel.length ? ` · ${sel.length}` : ''}
-                    </button>
+            <Modal onClose={onClose} z={240} box="max-w-3xl flex flex-col"
+                   boxStyle={{ padding: 0 }} label={title} hideX>
+              <div className="p-5 pb-3 shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+                <button onClick={onClose} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
+                <h3 className="text-lg font-extrabold text-white mb-1 flex items-center gap-2"><Icons.Gallery /> {title}</h3>
+                {hint && <p className="text-[length:var(--fs-2)] text-zinc-500 leading-relaxed mb-3">{hint}</p>}
+                <input data-ro-ok type="text" value={q} onChange={e => setQ(e.target.value)}
+                       placeholder="Поиск по подписи и тегам..."
+                       className="glass-input w-full rounded-lg px-3 py-2.5 text-sm" />
+                {folders.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto hide-scrollbar mt-2.5 pb-1">
+                    <button onClick={() => setFolder('')} className={`cf-chip shrink-0 ${folder === '' ? 'cf-chip-accent' : ''}`}>Все · {refs.length}</button>
+                    {folders.map(([f, n]) => (
+                      <button key={f} onClick={() => setFolder(folder === f ? '' : f)}
+                              className={`cf-chip shrink-0 flex items-center gap-1.5 ${folder === f ? 'cf-chip-accent' : ''}`}>
+                        <Icons.Folder /> {f} · {n}
+                      </button>
+                    ))}
                   </div>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 160 }}>
+                {refs.length === 0 ? (
+                  <p className="text-[length:var(--fs-3)] text-zinc-500 px-1 py-6 text-center leading-relaxed">
+                    Свободных референсов нет — все уже здесь.<br />Загрузить новые можно во вкладке «Галерея».
+                  </p>
+                ) : shown.length === 0 ? (
+                  <p className="text-[length:var(--fs-3)] text-zinc-500 px-1 py-6 text-center">По запросу ничего не нашлось.</p>
+                ) : (
+                  <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))' }}>
+                    {shown.map(r => {
+                      const on = sel.includes(r.id);
+                      return (
+                        <button key={r.id} onClick={() => toggle(r.id)} title={r.label || ''}
+                                className="cf-ref-card rounded-lg overflow-hidden relative text-left transition-all"
+                                style={{ aspectRatio: '1 / 1', containIntrinsicSize: 'auto 118px',
+                                         border: on ? '2px solid var(--accent)' : '1px solid var(--border)' }}>
+                          <div className="absolute inset-0 bg-cover bg-center blur-md opacity-40" style={bgStyle(r.id, r.url)}></div>
+                          {r.url
+                            ? <img src={r.url} alt="" className="w-full h-full object-contain relative z-10 pointer-events-none" draggable="false" />
+                            : <span className="absolute inset-0 flex items-center justify-center text-zinc-600 text-[length:var(--fs-1)]">без картинки</span>}
+                          {on && (
+                            <span className="absolute top-1.5 left-1.5 z-20 rounded-full flex items-center justify-center font-bold"
+                                  style={{ width: 20, height: 20, background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-2)' }}>
+                              {sel.indexOf(r.id) + 1}
+                            </span>
+                          )}
+                          <span className="absolute bottom-0 left-0 right-0 z-20 px-1.5 py-1 truncate"
+                                style={{ background: 'rgba(0,0,0,.82)', fontSize: 'var(--fs-1)', color: 'var(--text-2)' }}>
+                            {r.label || 'без подписи'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 flex items-center justify-between gap-3 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+                <span className="cf-meta">{sel.length ? `выбрано ${sel.length}` : `показано ${shown.length} из ${refs.length}`}</span>
+                <div className="flex gap-2">
+                  {sel.length > 0 && <button onClick={() => setSel([])} className="cf-chip shrink-0">Снять</button>}
+                  <button onClick={done} disabled={!sel.length}
+                          className="rounded-lg px-4 py-2 text-sm font-bold transition-colors disabled:opacity-40"
+                          style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                    {actionLabel}{sel.length ? ` · ${sel.length}` : ''}
+                  </button>
                 </div>
               </div>
-            </div>, document.body);
+            </Modal>, document.body);
         };
 
         const TagInput = ({ ref_, hints, onAdd, narrow }) => {
@@ -3117,6 +3324,7 @@
           // прилетало карточке доски, та забирала указатель себе — и до самой
           // строки доходил только pointerdown, а click доставался карточке.
           // Меню обязано глушить всё указательное у себя.
+          const sheet = useSheetSwipe(() => setMenu(null));
           const stop = {
             onPointerDown: (e) => e.stopPropagation(),
             onPointerMove: (e) => e.stopPropagation(),
@@ -3145,7 +3353,7 @@
                   <React.Fragment>
                     <div className="fixed inset-0" style={{ zIndex: 300, background: 'rgba(0,0,0,.5)' }}
                          {...stop} onClick={(e) => { e.stopPropagation(); setMenu(null); }} />
-                    <div className="cf-sheet" style={{ zIndex: 301 }} {...stop}>
+                    <div className="cf-sheet" style={{ zIndex: 301 }} {...stop} {...sheet}>
                       <div className="cf-sheet-grip" />
                       <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
                         <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>Откуда взять фото</span>
@@ -10035,9 +10243,27 @@
             try { localStorage.setItem('cf_ratio', String(projectRatio)); } catch (e) {}
           }, [projectRatio]);
 
+          // --- КЛАССЫ ШИРИНЫ ---
+          // Объявлены ВЫШЕ всего, что от них зависит: обращение к ним
+          // из строки над объявлением — это обращение к ещё не созданной
+          // переменной, то есть белый экран при запуске.
+          // compact — телефон и узкое окно; regular — планшет и десктоп.
+          const isPhone = useMedia('(max-width: 767px)');
+          // Единственный порог сверх классов ширины: панель сцены рядом
+          // или поверх. Задумывалась она плавающей — чтобы не переливать
+          // текст сцены при каждом взгляде на технику. Но «поверх» на
+          // широком экране означало, что правые 300 точек становятся
+          // недоступны: галочка «снято» в режиме съёмки уходила ПОД
+          // панель и не нажималась. Поэтому пополам.
+          const panelSideBySide = useMedia('(min-width: 1200px)');
+
           // --- Экран объекта ---
           const [locListOpen, setLocListOpen] = useState(
             () => typeof window === 'undefined' || window.innerWidth >= 768);
+          // Поворот планшета переставляет список заново: в ландшафте место
+          // под него есть, в портрете нет. Это и есть то, ради чего класс
+          // ширины живой, а не прочитанный один раз при запуске.
+          useEffect(() => { setLocListOpen(!isPhone); }, [isPhone]);
           // Список сцен для привязки открывается по требованию: сам по себе
           // он длинный, а привязывают сцены к объекту один раз.
           const [locScenePicker, setLocScenePicker] = useState(false);
@@ -10070,6 +10296,7 @@
           // это разница между «текст сцены в одну колонку» и «в полторы».
           const [sceneListOpen, setSceneListOpen] = useState(
             () => typeof window === 'undefined' || window.innerWidth >= 768);
+          useEffect(() => { setSceneListOpen(!isPhone); }, [isPhone]);
           // Правая панель — вкладками, как в Blender: узкая полоса иконок,
           // активная разворачивает панель ПОВЕРХ содержимого, а не сжимает
           // его. Сжатие означало бы, что текст сцены переливается при каждом
@@ -10080,27 +10307,15 @@
           // ничего — там она открывается по нажатию и так же закрывается.
           const [scenePanel, setScenePanel] = useState(() =>
             (typeof window !== 'undefined' && window.innerWidth >= 1200) ? 'expl' : null);
-          // Панель задумывалась плавающей — чтобы не переливать текст сцены
-          // при каждом взгляде на технику. Но «поверх» на широком экране
-          // означало, что правые 300 точек становятся недоступны: галочка
-          // «снято» в режиме съёмки и всё, что прижато вправо, оказывалось
-          // ПОД панелью и не нажималось вовсе. Поэтому пополам: на широком
-          // экране панель стоит РЯДОМ (места хватает обоим и ничего не
-          // прячется), на узком — по-прежнему поверх, там её открывают
-          // на минуту и сразу закрывают.
+          // Повернули планшет в портрет — панель перестала стоять рядом
+          // и легла ПОВЕРХ содержимого. Открытой её там не держат: она
+          // закрывает правые 300 точек, и то, что под ней, не нажимается.
+          // То же правило, что у Escape ниже. Обратно сама не открывается:
+          // человек закрыл её намеренно, и поворот — не повод возражать.
+          useEffect(() => { if (!panelSideBySide) setScenePanel(null); }, [panelSideBySide]);
           // --- ТЕЛЕФОН ---
-          // Порог 700 точек. Ниже него это уже не «узкий планшет», а другой
-          // прибор: навигация внизу, панели шторками, ленты до краёв.
-          const [isPhone, setIsPhone] = useState(
-            () => typeof window !== 'undefined' && window.innerWidth < 700);
-          useEffect(() => {
-            if (!window.matchMedia) return;
-            const mq = window.matchMedia('(max-width: 699px)');
-            const on = () => setIsPhone(mq.matches);
-            on();
-            if (mq.addEventListener) { mq.addEventListener('change', on); return () => mq.removeEventListener('change', on); }
-            mq.addListener(on); return () => mq.removeListener(on);
-          }, []);
+          // Класс ширины compact объявлен выше, вместе с regular: там же
+          // сказано, почему порог именно 768, а не прежние 700.
           // На телефоне «Сцены» — это два экрана: список и карточка.
           // Одновременно они не помещаются, и притворяться, что помещаются,
           // значит сделать нечитаемым и то и другое.
@@ -10108,6 +10323,8 @@
           // Что открыто шторкой снизу: техника, свет, солнце, экспликация,
           // «Ещё» с остальными модулями.
           const [phoneSheet, setPhoneSheet] = useState(null);
+          // Шторку смахивают вниз — за ручку или за любое её место сверху.
+          const phoneSheetSwipe = useSheetSwipe(() => setPhoneSheet(null));
           // Фильтр списка сцен пилюлями. По умолчанию — ближайшая смена:
           // на площадке спрашивают «что сегодня», а не «что вообще есть».
           const [phoneFilter, setPhoneFilter] = useState('shift');
@@ -10126,17 +10343,6 @@
             return shiftDates.find(d => d >= today) || shiftDates[shiftDates.length - 1];
           }, [shiftDates]);
 
-          const [panelSideBySide, setPanelSideBySide] = useState(
-            () => typeof window !== 'undefined' && window.innerWidth >= 1200);
-          useEffect(() => {
-            if (!window.matchMedia) return;
-            const mq = window.matchMedia('(min-width: 1200px)');
-            const on = () => setPanelSideBySide(mq.matches);
-            on();
-            // Safari до 14 не знает addEventListener у MediaQueryList.
-            if (mq.addEventListener) { mq.addEventListener('change', on); return () => mq.removeEventListener('change', on); }
-            mq.addListener(on); return () => mq.removeListener(on);
-          }, []);
           // «развернуть все» у референсов и раскадровки раскрывает сетку
           // НА МЕСТЕ, вдоль текста и вниз. Никаких всплывающих окон:
           // человек просил «чтобы шло смещение вниз, не появлялось новых окон».
@@ -10473,8 +10679,15 @@
           // сюда же, ниже последнего useState/useEffect.
           if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
+          // ВЫСОТА ПО ВИДИМОЙ ЧАСТИ, а не по h-screen. В мобильном Safari
+          // 100vh больше того, что человек видит: панели браузера то
+          // появляются, то исчезают, и приложение оказывается выше экрана —
+          // нижняя навигация уезжает под адресную строку. dvh считает ровно
+          // видимое. vh оставлен ПЕРВЫМ как запасной: где dvh не понимают,
+          // работает он.
           return (
-            <div className="flex h-screen w-screen relative overflow-hidden bg-transparent">
+            <div className="flex w-screen relative overflow-hidden bg-transparent"
+                 style={{ height: '100vh', maxHeight: '100dvh', minHeight: '100dvh' }}>
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
               {showSearch && (
                 <SearchPalette
@@ -14770,7 +14983,7 @@
               {isPhone && phoneSheet && (
                 <React.Fragment>
                   <div className="fixed inset-0 z-[255]" style={{ background: 'rgba(0,0,0,.5)' }} onClick={() => setPhoneSheet(null)} />
-                  <div className="cf-sheet">
+                  <div className="cf-sheet" {...phoneSheetSwipe}>
                     <div className="cf-sheet-grip" />
                     <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
                       <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>
@@ -14833,74 +15046,69 @@
                   и поправить одно слово здесь проще, чем потом искать его
                   в готовом документе. */}
               {ocrResult && (
-                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[420] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-6 max-w-lg w-full relative">
-                    <button onClick={() => setOcrResult(null)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-lg font-bold text-white mb-1">Рукопись прочитана</h3>
-                    <p className="text-sm text-zinc-400 mb-3 leading-relaxed">Проверьте и поправьте прямо здесь — потом положите в гайд.</p>
-                    <textarea value={ocrResult.text}
-                              onChange={e => setOcrResult({ ...ocrResult, text: e.target.value })}
-                              rows={10}
-                              className="w-full glass-input rounded-lg px-4 py-3 text-sm leading-relaxed resize-y mb-4" />
-                    <div className="flex flex-col gap-2">
-                      <button onClick={ocrToDoc} className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
-                              style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
-                        Новым гайдом на доску
-                      </button>
-                      {docs.length > 0 && (
-                        <div className="flex gap-2">
-                          <select value={ocrResult.into} onChange={e => setOcrResult({ ...ocrResult, into: e.target.value })}
-                                  className="glass-input rounded-lg px-3 py-2.5 text-sm flex-1 bg-zinc-900">
-                            {docs.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
-                          </select>
-                          <button onClick={ocrAppend}
-                                  className="px-4 py-2.5 glass-panel hover:bg-[var(--raised)] text-zinc-200 rounded-lg text-sm font-bold transition-colors whitespace-nowrap">
-                            Дописать
-                          </button>
-                        </div>
-                      )}
-                      <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(ocrResult.text); showToast('Текст скопирован'); }}
-                              className="w-full py-2.5 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-xs font-bold transition-colors">
-                        Скопировать текст
-                      </button>
-                    </div>
+                <Modal onClose={() => setOcrResult(null)} z={420} box="p-6 max-w-lg" label="Рукопись прочитана">
+                  <h3 className="text-lg font-bold text-white mb-1">Рукопись прочитана</h3>
+                  <p className="text-sm text-zinc-400 mb-3 leading-relaxed">Проверьте и поправьте прямо здесь — потом положите в гайд.</p>
+                  <textarea value={ocrResult.text}
+                            onChange={e => setOcrResult({ ...ocrResult, text: e.target.value })}
+                            rows={10}
+                            className="w-full glass-input rounded-lg px-4 py-3 text-sm leading-relaxed resize-y mb-4" />
+                  <div className="flex flex-col gap-2">
+                    <button onClick={ocrToDoc} className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
+                            style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                      Новым гайдом на доску
+                    </button>
+                    {docs.length > 0 && (
+                      <div className="flex gap-2">
+                        <select value={ocrResult.into} onChange={e => setOcrResult({ ...ocrResult, into: e.target.value })}
+                                className="glass-input rounded-lg px-3 py-2.5 text-sm flex-1 bg-zinc-900">
+                          {docs.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
+                        </select>
+                        <button onClick={ocrAppend}
+                                className="px-4 py-2.5 glass-panel hover:bg-[var(--raised)] text-zinc-200 rounded-lg text-sm font-bold transition-colors whitespace-nowrap">
+                          Дописать
+                        </button>
+                      </div>
+                    )}
+                    <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(ocrResult.text); showToast('Текст скопирован'); }}
+                            className="w-full py-2.5 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-xs font-bold transition-colors">
+                      Скопировать текст
+                    </button>
                   </div>
-                </div>
+                </Modal>
               )}
 
               {/* ПОВТОРНАЯ ЗАГРУЗКА КАРТИНОК */}
               {dupPrompt && (
-                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[420] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-6 max-w-md w-full relative">
-                    <h3 className="text-lg font-bold text-white mb-2">Такие картинки уже есть</h3>
-                    <p className="text-sm text-zinc-400 mb-3 leading-relaxed">
-                      {dupPrompt.names.length === dupPrompt.total
-                        ? `Все ${dupPrompt.total} выбранных файлов уже загружены в проект под теми же именами.`
-                        : `${dupPrompt.names.length} из ${dupPrompt.total} файлов уже есть в проекте под теми же именами.`}
-                    </p>
-                    <div className="rounded-md p-3 mb-4 max-h-40 overflow-y-auto"
-                         style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-                      {dupPrompt.names.map((n, i) => (
-                        <div key={i} className="truncate" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>{n}</div>
-                      ))}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <button onClick={() => dupPrompt.onResolve('skip')}
-                              className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
-                              style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
-                        Пропустить повторы{dupPrompt.names.length < dupPrompt.total ? ` · загрузить ${dupPrompt.total - dupPrompt.names.length}` : ''}
-                      </button>
-                      <button onClick={() => dupPrompt.onResolve('all')}
-                              className="w-full py-3 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-sm font-bold transition-colors">
-                        Загрузить всё равно
-                      </button>
-                      <button onClick={() => dupPrompt.onResolve('cancel')}
-                              className="w-full py-2 text-zinc-500 hover:text-zinc-300 rounded-lg text-xs font-semibold transition-colors">
-                        Отмена
-                      </button>
-                    </div>
+                <Modal onClose={() => dupPrompt.onResolve('cancel')} z={420} box="p-6 max-w-md" label="Такие картинки уже есть">
+                  <h3 className="text-lg font-bold text-white mb-2">Такие картинки уже есть</h3>
+                  <p className="text-sm text-zinc-400 mb-3 leading-relaxed">
+                    {dupPrompt.names.length === dupPrompt.total
+                      ? `Все ${dupPrompt.total} выбранных файлов уже загружены в проект под теми же именами.`
+                      : `${dupPrompt.names.length} из ${dupPrompt.total} файлов уже есть в проекте под теми же именами.`}
+                  </p>
+                  <div className="rounded-md p-3 mb-4 max-h-40 overflow-y-auto"
+                       style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                    {dupPrompt.names.map((n, i) => (
+                      <div key={i} className="truncate" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>{n}</div>
+                    ))}
                   </div>
-                </div>
+                  <div className="flex flex-col gap-2">
+                    <button onClick={() => dupPrompt.onResolve('skip')}
+                            className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
+                            style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                      Пропустить повторы{dupPrompt.names.length < dupPrompt.total ? ` · загрузить ${dupPrompt.total - dupPrompt.names.length}` : ''}
+                    </button>
+                    <button onClick={() => dupPrompt.onResolve('all')}
+                            className="w-full py-3 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-sm font-bold transition-colors">
+                      Загрузить всё равно
+                    </button>
+                    <button onClick={() => dupPrompt.onResolve('cancel')}
+                            className="w-full py-2 text-zinc-500 hover:text-zinc-300 rounded-lg text-xs font-semibold transition-colors">
+                      Отмена
+                    </button>
+                  </div>
+                </Modal>
               )}
 
               {/* МОДАЛЬНЫЕ ОКНА */}
@@ -14943,188 +15151,185 @@
                   </div>
                 );
                 return (
-                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-6 md:p-8 max-w-lg w-full relative">
-                    <button onClick={() => setShowCloudModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Gallery /> Где хранить фотографии</h3>
+                <Modal onClose={() => setShowCloudModal(false)} z={200} box="p-6 md:p-8 max-w-lg" label="Где хранить фотографии">
+                  <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Gallery /> Где хранить фотографии</h3>
 
-                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
-                      <p>Обычно фотографии лежат внутри самого проекта. Это удобно, пока их немного: примерно после сотни проект становится тяжёлым и начинает медленно открываться.</p>
-                      <p>Можно хранить их в своём облаке. Тогда в проекте останется только маленькое превью — галерея и доска будут открываться быстро и без интернета, а полный размер подтянется, когда откроете фотографию на весь экран.</p>
-                      {/* Раньше тут стояло «настройка запоминается на этом
-                          устройстве, на другом её надо повторить» — и это
-                          было главной причиной, по которой с планшета
-                          облако выглядело неподключённым. Теперь настройка
-                          живёт в комнате. */}
-                      <p className="text-[length:var(--fs-2)] text-zinc-500">
-                        {shareKeys
-                          ? 'Настройка запоминается в комнате: подключили один раз — работает на всех устройствах, где открыт этот проект, и у всей группы. Кто знает код комнаты, тот получает и доступ к этой папке в облаке — выключить общий доступ можно в меню «Проект».'
-                          : 'Сейчас настройка хранится только на этом устройстве (общие ключи выключены в меню «Проект»). На другом устройстве, откуда вы тоже загружаете фото, её придётся повторить.'}
-                        {' '}Смотреть фотографии сможет вся группа — для этого ничего настраивать не надо.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 mb-5">
-                      {[['', 'В проекте'], ['dropbox', 'Dropbox'], ['yandex', 'Яндекс.Диск'], ['nextcloud', 'Nextcloud']].map(([id, label]) => (
-                        <button key={id} onClick={() => { patchCloud({ provider: id }); setCloudError(''); }}
-                                className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-colors border ${p === id ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'bg-transparent text-zinc-400 border-[var(--border)] hover:bg-[var(--raised)]'}`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {p === '' && (
-                      <p className="text-[length:var(--fs-3)] text-zinc-400 leading-relaxed bg-[var(--scrim)] p-4 rounded-lg border border-[var(--border)]">
-                        Фотографии хранятся внутри проекта, как и раньше. Ничего настраивать не нужно.
-                      </p>
-                    )}
-
-                    {p === 'dropbox' && (
-                      <div>
-                        <details className="mb-4 bg-[var(--scrim)] rounded-lg border border-[var(--border)] p-3">
-                          <summary className="text-[length:var(--fs-3)] font-bold text-zinc-300 cursor-pointer">Как получить ключ приложения</summary>
-                          <ol className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
-                            <li>Откройте <span className="font-mono text-zinc-300">dropbox.com/developers/apps</span> и нажмите Create app.</li>
-                            <li>Выберите Scoped access, затем App folder — приложение будет видеть только свою папку, а не весь ваш Dropbox.</li>
-                            <li>На вкладке Permissions отметьте <span className="font-mono">files.content.write</span>, <span className="font-mono">files.content.read</span>, <span className="font-mono">sharing.write</span> и нажмите Submit.</li>
-                            <li>На вкладке Settings в поле Redirect URIs впишите ровно этот адрес и нажмите Add:{redirectRow}</li>
-                            <li>Оттуда же скопируйте App key и вставьте ниже.</li>
-                          </ol>
-                        </details>
-                        {field('Ключ приложения (App key)', 'appKey', { placeholder: 'например, a1b2c3d4e5f6g7h' })}
-                        {field('Папка в облаке', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
-                        <button onClick={connectDropbox}
-                                className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
-                          {connected ? 'Подключить заново' : 'Подключить Dropbox'}
-                        </button>
-                      </div>
-                    )}
-
-                    {p === 'yandex' && (
-                      <div>
-                        <details className="mb-4 bg-[var(--scrim)] rounded-lg border border-[var(--border)] p-3">
-                          <summary className="text-[length:var(--fs-3)] font-bold text-zinc-300 cursor-pointer">Как получить ClientID</summary>
-                          <ol className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
-                            <li>Откройте <span className="font-mono text-zinc-300">oauth.yandex.ru/client/new</span>.</li>
-                            <li>Платформа — «Веб-сервисы». В поле Redirect URI впишите ровно этот адрес:{redirectRow}</li>
-                            <li>В доступах отметьте «Яндекс.Диск REST API»: запись, чтение и информация о диске.</li>
-                            <li>Скопируйте ClientID и вставьте ниже.</li>
-                          </ol>
-                        </details>
-                        {field('ClientID приложения', 'clientId', { placeholder: '32 знака из кабинета Яндекса' })}
-                        {field('Папка на Диске', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
-                        <button onClick={connectYandex}
-                                className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
-                          {connected ? 'Подключить заново' : 'Подключить Яндекс.Диск'}
-                        </button>
-                      </div>
-                    )}
-
-                    {p === 'nextcloud' && (
-                      <div>
-                        <div className="mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                          <p className="text-[length:var(--fs-2)] text-amber-200 leading-relaxed">
-                            Nextcloud по умолчанию не разрешает загрузку из браузера с чужого адреса. Если проверка связи не проходит, покажите администратору сервера эту строку: нужно разрешить запросы с <span className="font-mono break-all">{location.origin}</span> (заголовки CORS для WebDAV и OCS). У Dropbox и Яндекс.Диска такого ограничения нет.
-                          </p>
-                        </div>
-                        {field('Адрес сервера', 'server', { placeholder: 'https://cloud.example.com' })}
-                        {/* Показываем адрес, по которому приложение реально
-                            пойдёт. Без «https://» адрес считается путём внутри
-                            сайта, запрос уходит не туда, и ответ приходит
-                            чужой — по нему причину не понять. */}
-                        {(cloudCfg.server || '').trim() && (
-                          <p className="text-[length:var(--fs-1)] text-zinc-500 -mt-1 mb-3 ml-1 break-all">
-                            Обращаться будем к: <span className="font-mono text-zinc-400">{ncBase(cloudCfg)}</span>
-                          </p>
-                        )}
-                        {field('Логин', 'user', { placeholder: 'ваш логин' })}
-                        {field('Пароль приложения', 'pass', { secret: true, hint: 'Не основной пароль! Настройки → Безопасность → «Пароль приложения». Его можно отозвать, не меняя свой.' })}
-                        {field('Папка', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
-                      </div>
-                    )}
-
-                    {p && (
-                      <React.Fragment>
-                        <div className="flex flex-wrap gap-2 mb-3">
-                          <button onClick={checkCloud} disabled={!!cloudBusy}
-                                  className="flex-1 py-2.5 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-sm font-bold transition-colors border border-[var(--border)] disabled:opacity-40"
-                                  style={{ minWidth: 130 }}>
-                            {cloudBusy === 'check' ? 'Проверяю...' : 'Проверить связь'}
-                          </button>
-                          <button onClick={runCloudTest} disabled={!!cloudBusy || !connected}
-                                  title="Отправит пробную картинку и попробует открыть её по ссылке — как это сделает группа"
-                                  className="flex-1 py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-colors disabled:opacity-40"
-                                  style={{ minWidth: 130 }}>
-                            {cloudBusy === 'test' ? 'Проверяю...' : 'Проверить загрузку'}
-                          </button>
-                          {connected && (
-                            <button onClick={disconnectCloud} disabled={!!cloudBusy}
-                                    className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-500/20 rounded-lg text-sm font-bold transition-colors border border-transparent disabled:opacity-40">
-                              Отключить
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Результат проверки по шагам: видно, где именно встало */}
-                        {cloudTest && cloudTest.length > 0 && (
-                          <div className="mb-3 bg-[var(--scrim)] border border-[var(--border)] rounded-lg p-3 space-y-2">
-                            {cloudTest.map((s, i) => (
-                              <div key={i} className="flex items-start gap-2">
-                                <span className="shrink-0 font-bold" style={{ color: s.ok ? '#10b981' : '#f87171', lineHeight: 1.5 }}>
-                                  {s.ok ? '✓' : '✕'}
-                                </span>
-                                <span className="min-w-0">
-                                  <span className="block text-[length:var(--fs-3)] font-semibold text-zinc-200">{s.name}</span>
-                                  {s.note && <span className="block text-[length:var(--fs-1)] text-zinc-500 break-all leading-relaxed">{s.note}</span>}
-                                </span>
-                              </div>
-                            ))}
-                            {cloudTest.length === 3 && cloudTest.every(s => s.ok) && (
-                              <p className="text-[length:var(--fs-2)] text-emerald-300 pt-1">
-                                Всё работает. Пробный файл <span className="font-mono">cineflow-test.jpg</span> остался в папке — его можно удалить, он больше не нужен.
-                              </p>
-                            )}
-                          </div>
-                        )}
-
-                        {cloudError && (
-                          <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                            <p className="text-[length:var(--fs-2)] text-red-200 leading-relaxed break-all">
-                              <b>Что ответило облако:</b><br />{cloudError}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Перенос уже загруженного */}
-                        <div className="bg-[var(--scrim)] p-4 rounded-lg border border-[var(--border)]">
-                          <p className="text-[length:var(--fs-3)] font-bold text-zinc-200 mb-1">Уже загруженные фотографии</p>
-                          <p className="text-[length:var(--fs-2)] text-zinc-500 leading-relaxed mb-3">
-                            {localRefs.length
-                              ? `Внутри проекта лежит ${localRefs.length} шт. Их можно перенести в облако — в проекте останется превью, а сами файлы уедут в вашу папку. Фотографии при этом никуда не пропадают.`
-                              : 'Всё, что есть в проекте, уже перенесено в облако.'}
-                          </p>
-                          {migrate ? (
-                            <div>
-                              <div className="h-1.5 rounded-full bg-[var(--raised)] overflow-hidden mb-2">
-                                <div className="h-full transition-all" style={{ width: `${Math.round(migrate.done / Math.max(1, migrate.total) * 100)}%`, background: 'var(--accent)' }} />
-                              </div>
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="cf-meta">Перенесено {migrate.done} из {migrate.total}{migrate.failed ? ` · не вышло ${migrate.failed}` : ''}</span>
-                                <button onClick={() => { migrateStop.current = true; }}
-                                        className="text-xs text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-[var(--border)]">Остановить</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button onClick={migrateToCloud} disabled={!localRefs.length || !connected}
-                                    className="w-full py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-all disabled:opacity-40">
-                              Перенести в облако ({localRefs.length})
-                            </button>
-                          )}
-                        </div>
-                      </React.Fragment>
-                    )}
+                  <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-2 mb-5">
+                    <p>Обычно фотографии лежат внутри самого проекта. Это удобно, пока их немного: примерно после сотни проект становится тяжёлым и начинает медленно открываться.</p>
+                    <p>Можно хранить их в своём облаке. Тогда в проекте останется только маленькое превью — галерея и доска будут открываться быстро и без интернета, а полный размер подтянется, когда откроете фотографию на весь экран.</p>
+                    {/* Раньше тут стояло «настройка запоминается на этом
+                        устройстве, на другом её надо повторить» — и это
+                        было главной причиной, по которой с планшета
+                        облако выглядело неподключённым. Теперь настройка
+                        живёт в комнате. */}
+                    <p className="text-[length:var(--fs-2)] text-zinc-500">
+                      {shareKeys
+                        ? 'Настройка запоминается в комнате: подключили один раз — работает на всех устройствах, где открыт этот проект, и у всей группы. Кто знает код комнаты, тот получает и доступ к этой папке в облаке — выключить общий доступ можно в меню «Проект».'
+                        : 'Сейчас настройка хранится только на этом устройстве (общие ключи выключены в меню «Проект»). На другом устройстве, откуда вы тоже загружаете фото, её придётся повторить.'}
+                      {' '}Смотреть фотографии сможет вся группа — для этого ничего настраивать не надо.
+                    </p>
                   </div>
-                </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-5">
+                    {[['', 'В проекте'], ['dropbox', 'Dropbox'], ['yandex', 'Яндекс.Диск'], ['nextcloud', 'Nextcloud']].map(([id, label]) => (
+                      <button key={id} onClick={() => { patchCloud({ provider: id }); setCloudError(''); }}
+                              className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-colors border ${p === id ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'bg-transparent text-zinc-400 border-[var(--border)] hover:bg-[var(--raised)]'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {p === '' && (
+                    <p className="text-[length:var(--fs-3)] text-zinc-400 leading-relaxed bg-[var(--scrim)] p-4 rounded-lg border border-[var(--border)]">
+                      Фотографии хранятся внутри проекта, как и раньше. Ничего настраивать не нужно.
+                    </p>
+                  )}
+
+                  {p === 'dropbox' && (
+                    <div>
+                      <details className="mb-4 bg-[var(--scrim)] rounded-lg border border-[var(--border)] p-3">
+                        <summary className="text-[length:var(--fs-3)] font-bold text-zinc-300 cursor-pointer">Как получить ключ приложения</summary>
+                        <ol className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
+                          <li>Откройте <span className="font-mono text-zinc-300">dropbox.com/developers/apps</span> и нажмите Create app.</li>
+                          <li>Выберите Scoped access, затем App folder — приложение будет видеть только свою папку, а не весь ваш Dropbox.</li>
+                          <li>На вкладке Permissions отметьте <span className="font-mono">files.content.write</span>, <span className="font-mono">files.content.read</span>, <span className="font-mono">sharing.write</span> и нажмите Submit.</li>
+                          <li>На вкладке Settings в поле Redirect URIs впишите ровно этот адрес и нажмите Add:{redirectRow}</li>
+                          <li>Оттуда же скопируйте App key и вставьте ниже.</li>
+                        </ol>
+                      </details>
+                      {field('Ключ приложения (App key)', 'appKey', { placeholder: 'например, a1b2c3d4e5f6g7h' })}
+                      {field('Папка в облаке', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                      <button onClick={connectDropbox}
+                              className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
+                        {connected ? 'Подключить заново' : 'Подключить Dropbox'}
+                      </button>
+                    </div>
+                  )}
+
+                  {p === 'yandex' && (
+                    <div>
+                      <details className="mb-4 bg-[var(--scrim)] rounded-lg border border-[var(--border)] p-3">
+                        <summary className="text-[length:var(--fs-3)] font-bold text-zinc-300 cursor-pointer">Как получить ClientID</summary>
+                        <ol className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mt-2 ml-4 list-decimal space-y-1">
+                          <li>Откройте <span className="font-mono text-zinc-300">oauth.yandex.ru/client/new</span>.</li>
+                          <li>Платформа — «Веб-сервисы». В поле Redirect URI впишите ровно этот адрес:{redirectRow}</li>
+                          <li>В доступах отметьте «Яндекс.Диск REST API»: запись, чтение и информация о диске.</li>
+                          <li>Скопируйте ClientID и вставьте ниже.</li>
+                        </ol>
+                      </details>
+                      {field('ClientID приложения', 'clientId', { placeholder: '32 знака из кабинета Яндекса' })}
+                      {field('Папка на Диске', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                      <button onClick={connectYandex}
+                              className="w-full py-3 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all mb-2">
+                        {connected ? 'Подключить заново' : 'Подключить Яндекс.Диск'}
+                      </button>
+                    </div>
+                  )}
+
+                  {p === 'nextcloud' && (
+                    <div>
+                      <div className="mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                        <p className="text-[length:var(--fs-2)] text-amber-200 leading-relaxed">
+                          Nextcloud по умолчанию не разрешает загрузку из браузера с чужого адреса. Если проверка связи не проходит, покажите администратору сервера эту строку: нужно разрешить запросы с <span className="font-mono break-all">{location.origin}</span> (заголовки CORS для WebDAV и OCS). У Dropbox и Яндекс.Диска такого ограничения нет.
+                        </p>
+                      </div>
+                      {field('Адрес сервера', 'server', { placeholder: 'https://cloud.example.com' })}
+                      {/* Показываем адрес, по которому приложение реально
+                          пойдёт. Без «https://» адрес считается путём внутри
+                          сайта, запрос уходит не туда, и ответ приходит
+                          чужой — по нему причину не понять. */}
+                      {(cloudCfg.server || '').trim() && (
+                        <p className="text-[length:var(--fs-1)] text-zinc-500 -mt-1 mb-3 ml-1 break-all">
+                          Обращаться будем к: <span className="font-mono text-zinc-400">{ncBase(cloudCfg)}</span>
+                        </p>
+                      )}
+                      {field('Логин', 'user', { placeholder: 'ваш логин' })}
+                      {field('Пароль приложения', 'pass', { secret: true, hint: 'Не основной пароль! Настройки → Безопасность → «Пароль приложения». Его можно отозвать, не меняя свой.' })}
+                      {field('Папка', 'folder', { placeholder: 'CineFlow', hint: 'Если оставить пустым — папка CineFlow.' })}
+                    </div>
+                  )}
+
+                  {p && (
+                    <React.Fragment>
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        <button onClick={checkCloud} disabled={!!cloudBusy}
+                                className="flex-1 py-2.5 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-sm font-bold transition-colors border border-[var(--border)] disabled:opacity-40"
+                                style={{ minWidth: 130 }}>
+                          {cloudBusy === 'check' ? 'Проверяю...' : 'Проверить связь'}
+                        </button>
+                        <button onClick={runCloudTest} disabled={!!cloudBusy || !connected}
+                                title="Отправит пробную картинку и попробует открыть её по ссылке — как это сделает группа"
+                                className="flex-1 py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-colors disabled:opacity-40"
+                                style={{ minWidth: 130 }}>
+                          {cloudBusy === 'test' ? 'Проверяю...' : 'Проверить загрузку'}
+                        </button>
+                        {connected && (
+                          <button onClick={disconnectCloud} disabled={!!cloudBusy}
+                                  className="px-4 py-2.5 text-red-400 hover:text-white hover:bg-red-500/20 rounded-lg text-sm font-bold transition-colors border border-transparent disabled:opacity-40">
+                            Отключить
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Результат проверки по шагам: видно, где именно встало */}
+                      {cloudTest && cloudTest.length > 0 && (
+                        <div className="mb-3 bg-[var(--scrim)] border border-[var(--border)] rounded-lg p-3 space-y-2">
+                          {cloudTest.map((s, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <span className="shrink-0 font-bold" style={{ color: s.ok ? '#10b981' : '#f87171', lineHeight: 1.5 }}>
+                                {s.ok ? '✓' : '✕'}
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block text-[length:var(--fs-3)] font-semibold text-zinc-200">{s.name}</span>
+                                {s.note && <span className="block text-[length:var(--fs-1)] text-zinc-500 break-all leading-relaxed">{s.note}</span>}
+                              </span>
+                            </div>
+                          ))}
+                          {cloudTest.length === 3 && cloudTest.every(s => s.ok) && (
+                            <p className="text-[length:var(--fs-2)] text-emerald-300 pt-1">
+                              Всё работает. Пробный файл <span className="font-mono">cineflow-test.jpg</span> остался в папке — его можно удалить, он больше не нужен.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {cloudError && (
+                        <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                          <p className="text-[length:var(--fs-2)] text-red-200 leading-relaxed break-all">
+                            <b>Что ответило облако:</b><br />{cloudError}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Перенос уже загруженного */}
+                      <div className="bg-[var(--scrim)] p-4 rounded-lg border border-[var(--border)]">
+                        <p className="text-[length:var(--fs-3)] font-bold text-zinc-200 mb-1">Уже загруженные фотографии</p>
+                        <p className="text-[length:var(--fs-2)] text-zinc-500 leading-relaxed mb-3">
+                          {localRefs.length
+                            ? `Внутри проекта лежит ${localRefs.length} шт. Их можно перенести в облако — в проекте останется превью, а сами файлы уедут в вашу папку. Фотографии при этом никуда не пропадают.`
+                            : 'Всё, что есть в проекте, уже перенесено в облако.'}
+                        </p>
+                        {migrate ? (
+                          <div>
+                            <div className="h-1.5 rounded-full bg-[var(--raised)] overflow-hidden mb-2">
+                              <div className="h-full transition-all" style={{ width: `${Math.round(migrate.done / Math.max(1, migrate.total) * 100)}%`, background: 'var(--accent)' }} />
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="cf-meta">Перенесено {migrate.done} из {migrate.total}{migrate.failed ? ` · не вышло ${migrate.failed}` : ''}</span>
+                              <button onClick={() => { migrateStop.current = true; }}
+                                      className="text-xs text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-[var(--border)]">Остановить</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button onClick={migrateToCloud} disabled={!localRefs.length || !connected}
+                                  className="w-full py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-bold transition-all disabled:opacity-40">
+                            Перенести в облако ({localRefs.length})
+                          </button>
+                        )}
+                      </div>
+                    </React.Fragment>
+                  )}
+                </Modal>
                 );
               })()}
 
@@ -15133,179 +15338,173 @@
                   которому прислали ссылку для просмотра, больше некуда
                   нажать, а «пустой проект без кнопок» выглядит поломкой. */}
               {showViewInfo && (
-                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-6 md:p-8 max-w-md w-full relative">
-                    <button onClick={() => setShowViewInfo(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-xl font-extrabold text-white mb-4">Это режим просмотра</h3>
-                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
-                      {CF_SNAPSHOT ? (
-                        <React.Fragment>
-                          <p>Вы открыли файл-снимок — копию проекта, сохранённую на один раз. Менять в нём ничего нельзя, и с облаком он не связан.</p>
-                          <p>Чтобы вести свой проект, откройте само приложение: <span className="font-mono text-[length:var(--fs-2)] text-indigo-300 break-all">afalin8-ui.github.io/cineflow/</span></p>
-                        </React.Fragment>
-                      ) : (
-                        <React.Fragment>
-                          <p>Ссылку, по которой вы пришли, дали <b>для просмотра</b>: показать материалы, не давая их менять. Поэтому кнопок «Проект» и «Доступ» здесь нет, а поля не набираются — это не поломка.</p>
-                          <p>Если вы хотели вести <b>свой</b> проект, откройте приложение по обычному адресу. Вы начнёте с чистого листа: свои сцены, своё облако для фотографий, свой ключ ИИ.</p>
-                        </React.Fragment>
-                      )}
-                    </div>
-                    {!CF_SNAPSHOT && (
-                      <button onClick={() => { location.href = plainLink; }}
-                              className="w-full py-3.5 rounded-lg text-sm font-extrabold transition-all"
-                              style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
-                        Открыть своё приложение
-                      </button>
+                <Modal onClose={() => setShowViewInfo(false)} z={200} box="p-6 md:p-8 max-w-md" label="Это режим просмотра">
+                  <h3 className="text-xl font-extrabold text-white mb-4">Это режим просмотра</h3>
+                  <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
+                    {CF_SNAPSHOT ? (
+                      <React.Fragment>
+                        <p>Вы открыли файл-снимок — копию проекта, сохранённую на один раз. Менять в нём ничего нельзя, и с облаком он не связан.</p>
+                        <p>Чтобы вести свой проект, откройте само приложение: <span className="font-mono text-[length:var(--fs-2)] text-indigo-300 break-all">afalin8-ui.github.io/cineflow/</span></p>
+                      </React.Fragment>
+                    ) : (
+                      <React.Fragment>
+                        <p>Ссылку, по которой вы пришли, дали <b>для просмотра</b>: показать материалы, не давая их менять. Поэтому кнопок «Проект» и «Доступ» здесь нет, а поля не набираются — это не поломка.</p>
+                        <p>Если вы хотели вести <b>свой</b> проект, откройте приложение по обычному адресу. Вы начнёте с чистого листа: свои сцены, своё облако для фотографий, свой ключ ИИ.</p>
+                      </React.Fragment>
                     )}
-                    <p className="text-[length:var(--fs-1)] text-zinc-500 mt-3 leading-relaxed">
-                      Тому, кто прислал ссылку: чтобы дать человеку само приложение, нужна ссылка из окна «Доступ» → «Дать человеку само приложение» — она без кода комнаты.
-                    </p>
                   </div>
-                </div>
+                  {!CF_SNAPSHOT && (
+                    <button onClick={() => { location.href = plainLink; }}
+                            className="w-full py-3.5 rounded-lg text-sm font-extrabold transition-all"
+                            style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
+                      Открыть своё приложение
+                    </button>
+                  )}
+                  <p className="text-[length:var(--fs-1)] text-zinc-500 mt-3 leading-relaxed">
+                    Тому, кто прислал ссылку: чтобы дать человеку само приложение, нужна ссылка из окна «Доступ» → «Дать человеку само приложение» — она без кода комнаты.
+                  </p>
+                </Modal>
               )}
 
               {showShareModal && (
-                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-md w-full relative">
-                    <button onClick={() => setShowShareModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
-                    <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
-                      <p>Проект живёт в «комнате». Кто открыл ссылку с кодом комнаты — тот работает вместе с вами; кто открыл адрес без кода — получает свой пустой проект и ваших данных не видит.</p>
-                      <p className="text-[length:var(--fs-2)] text-zinc-500">Значит, для бетатеста давайте людям адрес <span className="font-mono">без</span> кода — каждый начнёт с чистого листа. А своей группе присылайте ссылку-приглашение ниже.</p>
+                <Modal onClose={() => setShowShareModal(false)} z={200} box="p-8 max-w-md" label="Совместный доступ">
+                  <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
+                  <div className="text-sm font-medium text-zinc-300 leading-relaxed space-y-3 mb-6">
+                    <p>Проект живёт в «комнате». Кто открыл ссылку с кодом комнаты — тот работает вместе с вами; кто открыл адрес без кода — получает свой пустой проект и ваших данных не видит.</p>
+                    <p className="text-[length:var(--fs-2)] text-zinc-500">Значит, для бетатеста давайте людям адрес <span className="font-mono">без</span> кода — каждый начнёт с чистого листа. А своей группе присылайте ссылку-приглашение ниже.</p>
+                  </div>
+                  <div className="mb-4">
+                    <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Код комнаты проекта</label>
+                    <div className="flex gap-2">
+                      <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
+                      <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 rounded-lg transition-colors">Войти</button>
                     </div>
-                    <div className="mb-4">
-                      <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Код комнаты проекта</label>
-                      <div className="flex gap-2">
-                        <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
-                        <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 rounded-lg transition-colors">Войти</button>
-                      </div>
-                      <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">Код — это и есть замок: кто его знает, тот видит проект. Простой код вроде «cineflow-room-3» можно угадать — если делитесь приложением с посторонними, поменяйте его на что-то своё и разошлите группе новую ссылку.</p>
-                      <button onClick={() => {
-                                const v = 'room-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-                                setConfirmAction({ title: 'Начать новый проект в новой комнате?',
-                                  message: `Текущий проект в комнате «${appId}» никуда не денется — вернуться в него можно, введя этот код обратно.\n\nНовая комната: ${v}`,
-                                  onConfirm: () => { try { localStorage.setItem('cf_room', v); } catch (e) {} window.location.reload(); } });
-                              }}
-                              className="mt-2 cf-chip">+ Новая пустая комната</button>
-                    </div>
-                    {/* Ссылок в этом окне ТРИ, и они делают разное. Раньше
-                        подписана была только третья, и «дать человеку
-                        приложение» легко было спутать с «показать проект». */}
-                    <h4 className="text-sm font-bold text-white mb-1.5 mt-5">Позвать в этот проект</h4>
+                    <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">Код — это и есть замок: кто его знает, тот видит проект. Простой код вроде «cineflow-room-3» можно угадать — если делитесь приложением с посторонними, поменяйте его на что-то своё и разошлите группе новую ссылку.</p>
+                    <button onClick={() => {
+                              const v = 'room-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+                              setConfirmAction({ title: 'Начать новый проект в новой комнате?',
+                                message: `Текущий проект в комнате «${appId}» никуда не денется — вернуться в него можно, введя этот код обратно.\n\nНовая комната: ${v}`,
+                                onConfirm: () => { try { localStorage.setItem('cf_room', v); } catch (e) {} window.location.reload(); } });
+                            }}
+                            className="mt-2 cf-chip">+ Новая пустая комната</button>
+                  </div>
+                  {/* Ссылок в этом окне ТРИ, и они делают разное. Раньше
+                      подписана была только третья, и «дать человеку
+                      приложение» легко было спутать с «показать проект». */}
+                  <h4 className="text-sm font-bold text-white mb-1.5 mt-5">Позвать в этот проект</h4>
+                  <p className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mb-2">
+                    Человек будет работать вместе с вами: видит ваши сцены и фотографии и может их править.
+                  </p>
+                  <div className="bg-[var(--scrim)] p-2 pl-4 rounded-lg border border-[var(--border)] flex items-center justify-between gap-3">
+                    {/* Ссылка ОБЯЗАНА нести код комнаты: без него получатель
+                        заведёт себе пустой проект, а не присоединится к нашему */}
+                    <span className="text-[length:var(--fs-1)] text-zinc-400 font-mono font-semibold truncate select-all">{inviteLink}</span>
+                    <button onClick={() => copyText(inviteLink, 'Ссылка-приглашение скопирована')}
+                            className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
+                  </div>
+
+                  {/* Вторая ссылка — БЕЗ кода комнаты. Она нужна, чтобы дать
+                      человеку само приложение, а не свой проект. Отдельной
+                      кнопкой намеренно: вырезать «?room=...» из приглашения
+                      руками — ровно тот промах, после которого посторонний
+                      оказывается внутри вашего проекта и может там править. */}
+                  <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+                    <h4 className="text-sm font-bold text-white mb-1.5">Дать человеку само приложение</h4>
                     <p className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mb-2">
-                      Человек будет работать вместе с вами: видит ваши сцены и фотографии и может их править.
+                      Он начнёт с чистого листа: свой пустой проект, своё облако для фотографий, свой ключ ИИ.
+                      Ваших сцен, фотографий и настроек он не увидит.
                     </p>
                     <div className="bg-[var(--scrim)] p-2 pl-4 rounded-lg border border-[var(--border)] flex items-center justify-between gap-3">
-                      {/* Ссылка ОБЯЗАНА нести код комнаты: без него получатель
-                          заведёт себе пустой проект, а не присоединится к нашему */}
-                      <span className="text-[length:var(--fs-1)] text-zinc-400 font-mono font-semibold truncate select-all">{inviteLink}</span>
-                      <button onClick={() => copyText(inviteLink, 'Ссылка-приглашение скопирована')}
-                              className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors">Скопировать</button>
-                    </div>
-
-                    {/* Вторая ссылка — БЕЗ кода комнаты. Она нужна, чтобы дать
-                        человеку само приложение, а не свой проект. Отдельной
-                        кнопкой намеренно: вырезать «?room=...» из приглашения
-                        руками — ровно тот промах, после которого посторонний
-                        оказывается внутри вашего проекта и может там править. */}
-                    <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-                      <h4 className="text-sm font-bold text-white mb-1.5">Дать человеку само приложение</h4>
-                      <p className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mb-2">
-                        Он начнёт с чистого листа: свой пустой проект, своё облако для фотографий, свой ключ ИИ.
-                        Ваших сцен, фотографий и настроек он не увидит.
-                      </p>
-                      <div className="bg-[var(--scrim)] p-2 pl-4 rounded-lg border border-[var(--border)] flex items-center justify-between gap-3">
-                        <span className="text-[length:var(--fs-1)] text-zinc-400 font-mono font-semibold truncate select-all">{plainLink}</span>
-                        <button onClick={() => copyText(plainLink, 'Ссылка на приложение скопирована')}
-                                className="glass-panel hover:bg-[var(--raised)] text-zinc-300 text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors border border-[var(--border)]">Скопировать</button>
-                      </div>
-                    </div>
-
-                    {/* ТОЛЬКО ПРОСМОТР */}
-                    <div className="mt-6 pt-5" style={{ borderTop: '1px solid var(--border)' }}>
-                      <h4 className="text-sm font-bold text-white mb-1.5">Показать этот проект, не давая менять</h4>
-                      <p className="text-[length:var(--fs-2)] text-amber-200/80 leading-relaxed mb-2">
-                        Это НЕ способ дать человеку приложение: по такой ссылке кнопок «Проект» и «Доступ» у него не будет.
-                      </p>
-                      <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-3">
-                        Ссылка показывает живые данные — вы правите, человек видит обновления.
-                        Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
-                      </p>
-                      {/* Ссылка на ОТДЕЛЬНУЮ страницу, а не «весь проект или
-                          ничего». Умели три случая, и позвать посмотреть одни
-                          объекты — «вот куда едем» — было нечем. Названия здесь
-                          те же, что у страниц в шапке: человек ищет ссылку
-                          по тому слову, которое видит на экране. */}
-                      <div className="flex flex-col gap-2 mb-5">
-                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'],
-                          ['scenes', 'Сцены'], ['table', 'КПП'], ['docs', 'Экспликации'],
-                          ['all', 'Весь проект']].map(([scope, label]) => {
-                          const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
-                          return (
-                            <div key={scope} className="flex items-center gap-2">
-                              <span className="text-xs text-zinc-300 w-32 shrink-0">{label}</span>
-                              <button onClick={() => {
-                                        navigator.clipboard.writeText(link)
-                                          .then(() => showToast('Ссылка «' + label.toLowerCase() + '» скопирована'))
-                                          .catch(() => showToast(link));
-                                      }}
-                                      className="cf-chip shrink-0">Скопировать ссылку</button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-5 -mt-3">
-                        Нужны две страницы разом — впишите их в адрес через запятую:
-                        <span className="font-mono"> ?view=locations,gallery</span>
-                      </p>
-
-                      {/* ОДНА ДОСКА, А НЕ ВСЕ СРАЗУ. Ссылка «Доска» открывала
-                          все доски проекта: позвать художника посмотреть
-                          раскадровку значило показать ему заодно и разбор
-                          с продюсером на соседней вкладке. Здесь ссылка
-                          ведёт ровно на одну доску — соседних вкладок и
-                          схем света у неё нет. */}
-                      <h4 className="text-sm font-bold text-white mb-1.5">Показать ОДНУ доску</h4>
-                      <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-3">
-                        Ссылка открывает только выбранную доску: ни соседних вкладок, ни схем света.
-                        Но код комнаты в ней тот же, и по нему при желании доберутся и до остального —
-                        прячется экран, а не данные. Кому проект показывать нельзя совсем, отправьте
-                        файл-снимок: в нём других досок нет физически.
-                      </p>
-                      <div className="flex flex-col gap-2 mb-5">
-                        {sortedBoards.map(b => {
-                          const link = location.origin + location.pathname + '?view=board&board='
-                                     + encodeURIComponent(b.id) + '&room=' + encodeURIComponent(appId);
-                          return (
-                            <div key={b.id} className="flex items-center gap-2">
-                              <span className="text-xs text-zinc-300 truncate" style={{ minWidth: 0, flex: 1 }}>{b.title}</span>
-                              <button onClick={() => copyText(link, 'Ссылка на доску «' + b.title + '» скопирована')}
-                                      className="cf-chip shrink-0">Ссылка</button>
-                              <button onClick={() => exportSnapshot('board', b.id)} disabled={snapshotBusy}
-                                      title="Отдельный файл только с этой доской"
-                                      className="cf-chip shrink-0">{snapshotBusy ? 'Собираю…' : 'Файл'}</button>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <h4 className="text-sm font-bold text-white mb-1.5">Файл-снимок</h4>
-                      <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-3">
-                        Отдельный HTML со вшитыми данными: открывается без интернета,
-                        изменить нельзя вообще. Не обновляется — при правках пришлите новый.
-                        Файл тяжёлый, в нём лежат сами картинки.
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'], ['all', 'Весь проект']].map(([scope, label]) => (
-                          <button key={scope} onClick={() => exportSnapshot(scope)} disabled={snapshotBusy}
-                                  className="cf-chip shrink-0">
-                            {snapshotBusy ? 'Собираю…' : 'Скачать · ' + label}
-                          </button>
-                        ))}
-                      </div>
+                      <span className="text-[length:var(--fs-1)] text-zinc-400 font-mono font-semibold truncate select-all">{plainLink}</span>
+                      <button onClick={() => copyText(plainLink, 'Ссылка на приложение скопирована')}
+                              className="glass-panel hover:bg-[var(--raised)] text-zinc-300 text-xs font-bold px-4 py-2.5 rounded-lg shrink-0 transition-colors border border-[var(--border)]">Скопировать</button>
                     </div>
                   </div>
-                </div>
+
+                  {/* ТОЛЬКО ПРОСМОТР */}
+                  <div className="mt-6 pt-5" style={{ borderTop: '1px solid var(--border)' }}>
+                    <h4 className="text-sm font-bold text-white mb-1.5">Показать этот проект, не давая менять</h4>
+                    <p className="text-[length:var(--fs-2)] text-amber-200/80 leading-relaxed mb-2">
+                      Это НЕ способ дать человеку приложение: по такой ссылке кнопок «Проект» и «Доступ» у него не будет.
+                    </p>
+                    <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-3">
+                      Ссылка показывает живые данные — вы правите, человек видит обновления.
+                      Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
+                    </p>
+                    {/* Ссылка на ОТДЕЛЬНУЮ страницу, а не «весь проект или
+                        ничего». Умели три случая, и позвать посмотреть одни
+                        объекты — «вот куда едем» — было нечем. Названия здесь
+                        те же, что у страниц в шапке: человек ищет ссылку
+                        по тому слову, которое видит на экране. */}
+                    <div className="flex flex-col gap-2 mb-5">
+                      {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'],
+                        ['scenes', 'Сцены'], ['table', 'КПП'], ['docs', 'Экспликации'],
+                        ['all', 'Весь проект']].map(([scope, label]) => {
+                        const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
+                        return (
+                          <div key={scope} className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-300 w-32 shrink-0">{label}</span>
+                            <button onClick={() => {
+                                      navigator.clipboard.writeText(link)
+                                        .then(() => showToast('Ссылка «' + label.toLowerCase() + '» скопирована'))
+                                        .catch(() => showToast(link));
+                                    }}
+                                    className="cf-chip shrink-0">Скопировать ссылку</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-5 -mt-3">
+                      Нужны две страницы разом — впишите их в адрес через запятую:
+                      <span className="font-mono"> ?view=locations,gallery</span>
+                    </p>
+
+                    {/* ОДНА ДОСКА, А НЕ ВСЕ СРАЗУ. Ссылка «Доска» открывала
+                        все доски проекта: позвать художника посмотреть
+                        раскадровку значило показать ему заодно и разбор
+                        с продюсером на соседней вкладке. Здесь ссылка
+                        ведёт ровно на одну доску — соседних вкладок и
+                        схем света у неё нет. */}
+                    <h4 className="text-sm font-bold text-white mb-1.5">Показать ОДНУ доску</h4>
+                    <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-3">
+                      Ссылка открывает только выбранную доску: ни соседних вкладок, ни схем света.
+                      Но код комнаты в ней тот же, и по нему при желании доберутся и до остального —
+                      прячется экран, а не данные. Кому проект показывать нельзя совсем, отправьте
+                      файл-снимок: в нём других досок нет физически.
+                    </p>
+                    <div className="flex flex-col gap-2 mb-5">
+                      {sortedBoards.map(b => {
+                        const link = location.origin + location.pathname + '?view=board&board='
+                                   + encodeURIComponent(b.id) + '&room=' + encodeURIComponent(appId);
+                        return (
+                          <div key={b.id} className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-300 truncate" style={{ minWidth: 0, flex: 1 }}>{b.title}</span>
+                            <button onClick={() => copyText(link, 'Ссылка на доску «' + b.title + '» скопирована')}
+                                    className="cf-chip shrink-0">Ссылка</button>
+                            <button onClick={() => exportSnapshot('board', b.id)} disabled={snapshotBusy}
+                                    title="Отдельный файл только с этой доской"
+                                    className="cf-chip shrink-0">{snapshotBusy ? 'Собираю…' : 'Файл'}</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <h4 className="text-sm font-bold text-white mb-1.5">Файл-снимок</h4>
+                    <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mb-3">
+                      Отдельный HTML со вшитыми данными: открывается без интернета,
+                      изменить нельзя вообще. Не обновляется — при правках пришлите новый.
+                      Файл тяжёлый, в нём лежат сами картинки.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'], ['all', 'Весь проект']].map(([scope, label]) => (
+                        <button key={scope} onClick={() => exportSnapshot(scope)} disabled={snapshotBusy}
+                                className="cf-chip shrink-0">
+                          {snapshotBusy ? 'Собираю…' : 'Скачать · ' + label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </Modal>
               )}
 
               {/* Выбор референсов из уже загруженных. Одно окно на два
@@ -15348,382 +15547,372 @@
                 if (!sc) return null;
                 const cnt = references.filter(r => r.sceneId === sceneToBoard).length;
                 return (
-                  <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[240] p-4"
-                       onClick={(e) => { if (e.target === e.currentTarget) setSceneToBoard(null); }}>
-                    <div className="cf-modal-box glass-panel rounded-lg p-6 max-w-sm w-full relative">
-                      <button onClick={() => setSceneToBoard(null)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                      <h3 className="text-lg font-extrabold text-white mb-1.5 flex items-center gap-2"><Icons.Board /> На какую доску</h3>
-                      <p className="text-[length:var(--fs-2)] text-zinc-500 leading-relaxed mb-4">
-                        Сцена #{sc.number} {cnt ? `и ${cnt} привязанных к ней референсов лягут` : 'ляжет'} на выбранную доску,
-                        на свободное место снизу. Из галереи и из проекта ничего не пропадёт.
-                      </p>
-                      <div className="space-y-1.5 max-h-[45vh] overflow-y-auto -mx-1 px-1">
-                        {sortedBoards.map(b => (
-                          <button key={b.id} onClick={() => spreadSceneOnBoard(sceneToBoard, b.id)}
-                                  className="w-full text-left px-3 rounded-lg transition-colors hover:bg-[var(--raised)] flex items-center justify-between gap-2"
-                                  style={{ minHeight: 44, border: '1px solid var(--border)', background: 'var(--panel-2)' }}>
-                            <span className="truncate text-sm text-zinc-200 font-semibold">{b.title}</span>
-                            {b.id === activeBoardId && <span className="cf-meta shrink-0">открыта</span>}
-                          </button>
-                        ))}
-                        <button onClick={() => {
-                                  const nb = { id: `board-${Date.now()}`, title: `Сцена ${sc.number || ''}`.trim() || `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
-                                  setBoards([...boards, nb]); syncDoc('boards', nb.id, nb);
-                                  spreadSceneOnBoard(sceneToBoard, nb.id);
-                                }}
-                                className="w-full text-left px-3 rounded-lg transition-colors hover:bg-[var(--raised)] text-sm font-semibold"
-                                style={{ minHeight: 44, border: '1px dashed var(--border)', color: 'var(--accent)' }}>
-                          + Новая доска «Сцена {sc.number || ''}»
+                  <Modal onClose={() => setSceneToBoard(null)} z={240} box="p-6 max-w-sm" label="На какую доску">
+                    <h3 className="text-lg font-extrabold text-white mb-1.5 flex items-center gap-2"><Icons.Board /> На какую доску</h3>
+                    <p className="text-[length:var(--fs-2)] text-zinc-500 leading-relaxed mb-4">
+                      Сцена #{sc.number} {cnt ? `и ${cnt} привязанных к ней референсов лягут` : 'ляжет'} на выбранную доску,
+                      на свободное место снизу. Из галереи и из проекта ничего не пропадёт.
+                    </p>
+                    <div className="space-y-1.5 max-h-[45vh] overflow-y-auto -mx-1 px-1">
+                      {sortedBoards.map(b => (
+                        <button key={b.id} onClick={() => spreadSceneOnBoard(sceneToBoard, b.id)}
+                                className="w-full text-left px-3 rounded-lg transition-colors hover:bg-[var(--raised)] flex items-center justify-between gap-2"
+                                style={{ minHeight: 44, border: '1px solid var(--border)', background: 'var(--panel-2)' }}>
+                          <span className="truncate text-sm text-zinc-200 font-semibold">{b.title}</span>
+                          {b.id === activeBoardId && <span className="cf-meta shrink-0">открыта</span>}
                         </button>
-                      </div>
+                      ))}
+                      <button onClick={() => {
+                                const nb = { id: `board-${Date.now()}`, title: `Сцена ${sc.number || ''}`.trim() || `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
+                                setBoards([...boards, nb]); syncDoc('boards', nb.id, nb);
+                                spreadSceneOnBoard(sceneToBoard, nb.id);
+                              }}
+                              className="w-full text-left px-3 rounded-lg transition-colors hover:bg-[var(--raised)] text-sm font-semibold"
+                              style={{ minHeight: 44, border: '1px dashed var(--border)', color: 'var(--accent)' }}>
+                        + Новая доска «Сцена {sc.number || ''}»
+                      </button>
                     </div>
-                  </div>
+                  </Modal>
                 );
               })()}
 
               {showProjectModal && (
-                <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-md w-full relative">
-                    <button onClick={() => setShowProjectModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-xl font-extrabold text-white mb-6 flex items-center gap-2"><Icons.Folder/> Управление проектом</h3>
-                    <div className="space-y-3">
-                      <div className="mb-2">
-                        <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Ключ Gemini API (для ИИ-функций)</label>
-                        <div className="relative">
-                          <input type={showGeminiKey ? "text" : "password"} value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" data-lpignore="true" data-1p-ignore="true" name="cf-gemini-api-key" className="w-full glass-input rounded-lg px-4 py-3 pr-12 text-sm font-mono" />
-                          <button type="button" onClick={() => setShowGeminiKey(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-[var(--raised)] transition-colors">{showGeminiKey ? "Скрыть" : "Показать"}</button>
-                        </div>
-                        <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
-                          <p className="text-[length:var(--fs-1)] mt-1 ml-1" style={{ color: shareKeys ? 'var(--accent)' : 'var(--muted-2)' }}>
-                            {shareKeys
-                              ? 'Ключ запоминается в комнате — вводить его на планшете и телефоне заново не нужно.'
-                              : 'Ключ хранится только на этом устройстве.'}
-                          </p>
+                <Modal onClose={() => setShowProjectModal(false)} z={200} box="p-8 max-w-md" label="Управление проектом">
+                  <h3 className="text-xl font-extrabold text-white mb-6 flex items-center gap-2"><Icons.Folder/> Управление проектом</h3>
+                  <div className="space-y-3">
+                    <div className="mb-2">
+                      <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Ключ Gemini API (для ИИ-функций)</label>
+                      <div className="relative">
+                        <input type={showGeminiKey ? "text" : "password"} value={geminiKey} onChange={e => saveGeminiKey(e.target.value)} placeholder="AIza..." autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" data-lpignore="true" data-1p-ignore="true" name="cf-gemini-api-key" className="w-full glass-input rounded-lg px-4 py-3 pr-12 text-sm font-mono" />
+                        <button type="button" onClick={() => setShowGeminiKey(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-[var(--raised)] transition-colors">{showGeminiKey ? "Скрыть" : "Показать"}</button>
                       </div>
-
-                      {/* Выключатель общий на ОБА ключа — и на ИИ, и на
-                          облако: разделять их значило бы завести две настройки
-                          там, где человек думает одну мысль («мои ключи для
-                          этого проекта»). По умолчанию включён — ради этого
-                          всё и делалось. */}
-                      <label className="flex items-start justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
-                             style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-zinc-200">Ключи общие для комнаты</span>
-                          <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
-                            Ключ ИИ и подключённое хранилище фотографий запоминаются вместе с проектом:
-                            ввели один раз — работает на всех ваших устройствах и у всей группы.
-                            Обратная сторона — кто знает код комнаты, тот получает и эти ключи.
-                            Раздаёте код широко? Выключите, и они останутся только здесь.
-                          </span>
-                        </span>
-                        <input type="checkbox" checked={shareKeys} onChange={(e) => setShareKeys(e.target.checked)}
-                               className="shrink-0 mt-0.5" style={{ width: 20, height: 20, accentColor: 'var(--accent)' }} />
-                      </label>
-
-                      <button onClick={() => { setShowProjectModal(false); setShowCloudModal(true); }}
-                              className="w-full flex items-center justify-between gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-[var(--raised)] mb-2 text-left"
-                              style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-zinc-200">Где хранить фотографии</span>
-                          <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
-                            {cloudCfg.provider
-                              ? `Сейчас: ${CLOUD_NAMES[cloudCfg.provider]}${localRefs.length ? ` · в проекте ещё ${localRefs.length} шт.` : ''}`
-                              : 'Сейчас: внутри проекта. Можно перенести в Dropbox, на Яндекс.Диск или Nextcloud.'}
-                          </span>
-                        </span>
-                        <span className="shrink-0 text-zinc-500">›</span>
-                      </button>
-                      {/* Прибор для замеров на своём устройстве. Галочкой, а не
-                          адресом: в установленном приложении адресной строки нет */}
-                      <label className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
-                             style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-zinc-200">Показывать плавность</span>
-                          <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
-                            Счётчик внизу экрана: сколько раз в секунду успевает перерисоваться картинка.
-                            60 — идеал, ниже 30 — заметно дёргается. Это не про раскадровку.
-                          </span>
-                        </span>
-                        <input type="checkbox" checked={fpsOn} onChange={toggleFps}
-                               className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
-                      </label>
-
-                      <StorageInfo />
-
-                      <button onClick={() => {
-                        // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
-                        // Раньше бэкап брал один старый общий ключ и уносил пустоту.
-                        const canvases = {}, inks = {}, figs = {};
-                        sortedBoards.forEach(b => {
-                          const dd = localStorage.getItem('cf_canvas_draw_' + b.id); if (dd) canvases[b.id] = dd;
-                          // Штрихи и фигуры с ОТКРЫТОЙ доски берём из памяти:
-                          // в localStorage они попадают с задержкой, и последнее
-                          // изменение могло не успеть.
-                          const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
-                          if (kk && kk !== '[]') inks[b.id] = kk;
-                          const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
-                          if (ff && ff !== '[]') figs[b.id] = ff;
-                        });
-                        const d = { scenes, storyboard, references, stickies, boards, docs, crew, locations, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs };
-                        const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                        showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks), Object.keys(figs))).size}`);
-                      }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
-
-                      {/* СПАСЕНИЕ ПРОПАВШЕГО РИСУНКА. Рисунок какое-то время
-                          раскладывался в облаке по частям, а читалась только
-                          первая — на доске оставался огрызок. Части при этом
-                          целы. Инструмент их ищет и показывает; класть на
-                          доску — отдельное нажатие. Ничего не стирает. */}
-                      <div className="rounded-lg p-4" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
-                        <h4 className="text-sm font-bold text-white mb-1.5">Пропал рисунок доски?</h4>
-                        <p className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mb-3">
-                          Поищу его во всех местах, где он мог остаться, — на этом устройстве
-                          и в облаке, включая части, которые приложение перестало читать.
-                          Ничего не удаляю: просто покажу, что нашлось.
-                          Ищу для доски, открытой сейчас: <span className="font-mono">{(sortedBoards.find(b => b.id === activeBoardId) || {}).title || activeBoardId}</span>
+                      <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" className="text-indigo-400 hover:underline">aistudio.google.com/apikey</a></p>
+                        <p className="text-[length:var(--fs-1)] mt-1 ml-1" style={{ color: shareKeys ? 'var(--accent)' : 'var(--muted-2)' }}>
+                          {shareKeys
+                            ? 'Ключ запоминается в комнате — вводить его на планшете и телефоне заново не нужно.'
+                            : 'Ключ хранится только на этом устройстве.'}
                         </p>
-                        <button onClick={findLostInk} disabled={rescue && rescue.busy}
-                                className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
-                                style={{ background: 'var(--raised)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-                          {rescue && rescue.busy ? 'Ищу…' : '🔎 Найти рисунок этой доски'}
-                        </button>
-                        {rescue && !rescue.busy && (
-                          <div className="mt-3 space-y-2">
-                            {rescue.same && (
-                              <p className="text-[length:var(--fs-2)] rounded-lg px-3 py-2" style={{ color: 'var(--ok)', background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
-                                В облаке нет ничего сверх того, что уже лежит на этом устройстве —
-                                восстанавливать нечего, весь рисунок и так на доске. Скачайте его
-                                «Файлом»: в облако он не влезает, и другой копии у него нет.
-                              </p>
-                            )}
-                            {rescue.found.length === 0 && (
-                              <p className="text-[length:var(--fs-2)]" style={{ color: 'var(--warn)' }}>
-                                Ничего не нашлось. Проверьте, что открыта та самая доска, и что есть связь с облаком.
-                              </p>
-                            )}
-                            {rescue.found.map(item => (
-                              <div key={item.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
-                                   style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
-                                <span className="text-xs" style={{ color: 'var(--text-2)' }}>
-                                  {item.where}: <b style={{ color: 'var(--text)' }}>{item.n}</b> штрихов
-                                  {item.kb ? <span className="text-zinc-500"> · {item.kb}</span> : null}
-                                  {item.dup ? <span className="text-zinc-500"> · повторов {item.dup} не считал</span> : null}
-                                  {item.union ? <span style={{ color: 'var(--warn)' }}> · вернёт и стёртое</span> : null}
-                                  {item.n > INK_HEAVY ? <span style={{ color: 'var(--warn)' }}> · тяжёлый</span> : null}
-                                </span>
-                                <span className="flex items-center gap-1.5 shrink-0">
-                                  <button onClick={() => downloadRescued(item)} className="cf-chip shrink-0" title="Скачать файлом — оттуда рисунок уже не потеряется">⬇ Файлом</button>
-                                  <button onClick={() => putRescued(item)} className="cf-chip shrink-0">Положить на доску</button>
-                                </span>
-                              </div>
-                            ))}
-                            {rescue.found.length > 0 && (
-                              <div className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed space-y-1.5">
-                                <p>
-                                  Части — это снимки РАЗНОГО времени, а не куски одного целого.
-                                  Строки «Всё из облака» и «Всё вместе» складывают их и возвращают
-                                  в том числе стёртое когда-то — рисунок выходит больше, чем был.
-                                  Сначала «Файлом»: оттуда он уже не потеряется и возвращается
-                                  кнопкой «Импортировать из JSON» ниже.
-                                </p>
-                                <p>
-                                  Если после этого доска перестанет отзываться — откройте её
-                                  адресом <span className="font-mono">?inkoff=1</span>: доска
-                                  откроется без рисунка, и ничего при этом не сотрётся.
-                                </p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  <button onClick={pushInkToCloud} className="cf-chip">Отправить рисунок этой доски в облако</button>
-                                  <button onClick={clearBoardInk} className="cf-chip">Снять рисунок с этой доски</button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      
-                      <label className="w-full py-4 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-[var(--border)]">
-                        <span>📂 Импортировать из JSON</span>
-                        <input type="file" accept=".json" onChange={(e) => {
-                          const f = e.target.files[0]; if (!f) return; const r = new FileReader();
-                          r.onload = (ev) => {
-                            try {
-                              const d = JSON.parse(ev.target.result);
-                              if (d.scenes) setScenes(d.scenes); if (d.storyboard) setStoryboard(d.storyboard);
-                              if (d.references) setReferences(d.references); if (d.stickies) setStickies(d.stickies);
-                              if (d.boards && d.boards.length) { setBoards(d.boards); d.boards.forEach(b => syncDoc('boards', b.id, b)); }
-                              if (d.docs) setDocs(d.docs); if (d.crew) setCrew(d.crew);
-                              if (d.locations) { setLocations(d.locations); d.locations.forEach(l => syncDoc('locations', l.id, l)); }
-                              if (d.gearTypes) setGearTypes(d.gearTypes); if(d.lightGearTypes) setLightGearTypes(d.lightGearTypes);
-                              if(d.lightSchemes) setLightSchemes(d.lightSchemes); if (d.projectFiles) setProjectFiles(d.projectFiles);
-                              // Новый формат — рисунок по каждой доске; старые бэкапы
-                              // хранили один общий, он ложится на основную доску.
-                              const canv = d.canvases || (d.canvasData ? { [DEFAULT_BOARD.id]: d.canvasData } : null);
-                              if (canv) Object.entries(canv).forEach(([bid, dataUrl]) => saveCanvas(bid, dataUrl));
-                              if (d.inks) Object.entries(d.inks).forEach(([bid, json]) => {
-                                let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
-                                saveStrokes(bid, list);
-                              });
-                              if (d.shapes) Object.entries(d.shapes).forEach(([bid, json]) => {
-                                let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
-                                saveShapes(bid, list);
-                              });
-                              if (canv || d.inks || d.shapes) {
-                                strokesRef.current = []; shapesRef.current = []; setSelShapes([]);
-                                if (d.inks && d.inks[activeBoardId]) { try { strokesRef.current = JSON.parse(d.inks[activeBoardId]) || []; } catch (err) {} }
-                                if (d.shapes && d.shapes[activeBoardId]) { try { shapesRef.current = JSON.parse(d.shapes[activeBoardId]) || []; } catch (err) {} }
-                                loadLegacy((canv && canv[activeBoardId]) || null);
-                                undoStack.current = []; redoStack.current = [];
-                                setCanUndo(false); setCanRedo(false);
-                                bumpInk();
-                              }
-                              setShowProjectModal(false); showToast("Проект успешно восстановлен!");
-                            } catch (err) { showToast("Ошибка структуры файла JSON!"); }
-                          }; r.readAsText(f);
-                        }} className="hidden" />
-                      </label>
-                      
-                      <button onClick={() => setConfirmAction({
-                        title: 'Начать новый проект?',
-                        message: `Из комнаты «${appId}» исчезнут все сцены, кадры, референсы, заметки, доски с рисунками, схемы света, документы, состав группы, файлы и переписка в чате.\n\nЭто увидят все, у кого открыт такой же код комнаты. Отменить нельзя — если данные ещё нужны, сначала сохраните бэкап кнопкой выше.`,
-                        onConfirm: resetProject
-                      })} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-lg text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
                     </div>
+
+                    {/* Выключатель общий на ОБА ключа — и на ИИ, и на
+                        облако: разделять их значило бы завести две настройки
+                        там, где человек думает одну мысль («мои ключи для
+                        этого проекта»). По умолчанию включён — ради этого
+                        всё и делалось. */}
+                    <label className="flex items-start justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
+                           style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-zinc-200">Ключи общие для комнаты</span>
+                        <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
+                          Ключ ИИ и подключённое хранилище фотографий запоминаются вместе с проектом:
+                          ввели один раз — работает на всех ваших устройствах и у всей группы.
+                          Обратная сторона — кто знает код комнаты, тот получает и эти ключи.
+                          Раздаёте код широко? Выключите, и они останутся только здесь.
+                        </span>
+                      </span>
+                      <input type="checkbox" checked={shareKeys} onChange={(e) => setShareKeys(e.target.checked)}
+                             className="shrink-0 mt-0.5" style={{ width: 20, height: 20, accentColor: 'var(--accent)' }} />
+                    </label>
+
+                    <button onClick={() => { setShowProjectModal(false); setShowCloudModal(true); }}
+                            className="w-full flex items-center justify-between gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-[var(--raised)] mb-2 text-left"
+                            style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-zinc-200">Где хранить фотографии</span>
+                        <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
+                          {cloudCfg.provider
+                            ? `Сейчас: ${CLOUD_NAMES[cloudCfg.provider]}${localRefs.length ? ` · в проекте ещё ${localRefs.length} шт.` : ''}`
+                            : 'Сейчас: внутри проекта. Можно перенести в Dropbox, на Яндекс.Диск или Nextcloud.'}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-zinc-500">›</span>
+                    </button>
+                    {/* Прибор для замеров на своём устройстве. Галочкой, а не
+                        адресом: в установленном приложении адресной строки нет */}
+                    <label className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
+                           style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-zinc-200">Показывать плавность</span>
+                        <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
+                          Счётчик внизу экрана: сколько раз в секунду успевает перерисоваться картинка.
+                          60 — идеал, ниже 30 — заметно дёргается. Это не про раскадровку.
+                        </span>
+                      </span>
+                      <input type="checkbox" checked={fpsOn} onChange={toggleFps}
+                             className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
+                    </label>
+
+                    <StorageInfo />
+
+                    <button onClick={() => {
+                      // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
+                      // Раньше бэкап брал один старый общий ключ и уносил пустоту.
+                      const canvases = {}, inks = {}, figs = {};
+                      sortedBoards.forEach(b => {
+                        const dd = localStorage.getItem('cf_canvas_draw_' + b.id); if (dd) canvases[b.id] = dd;
+                        // Штрихи и фигуры с ОТКРЫТОЙ доски берём из памяти:
+                        // в localStorage они попадают с задержкой, и последнее
+                        // изменение могло не успеть.
+                        const kk = b.id === activeBoardId ? packInk(strokesRef.current) : localStorage.getItem('cf_ink_' + b.id);
+                        if (kk && kk !== '[]') inks[b.id] = kk;
+                        const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
+                        if (ff && ff !== '[]') figs[b.id] = ff;
+                      });
+                      const d = { scenes, storyboard, references, stickies, boards, docs, crew, locations, gearTypes, lightGearTypes, lightSchemes, projectFiles, canvases, inks, shapes: figs };
+                      const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `CineFlow_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                      showToast(`Резервная копия сохранена · досок с рисунками: ${new Set(Object.keys(canvases).concat(Object.keys(inks), Object.keys(figs))).size}`);
+                    }} className="w-full py-4 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-sm font-extrabold transition-all">💾 Экспортировать бэкап (JSON)</button>
+
+                    {/* СПАСЕНИЕ ПРОПАВШЕГО РИСУНКА. Рисунок какое-то время
+                        раскладывался в облаке по частям, а читалась только
+                        первая — на доске оставался огрызок. Части при этом
+                        целы. Инструмент их ищет и показывает; класть на
+                        доску — отдельное нажатие. Ничего не стирает. */}
+                    <div className="rounded-lg p-4" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+                      <h4 className="text-sm font-bold text-white mb-1.5">Пропал рисунок доски?</h4>
+                      <p className="text-[length:var(--fs-2)] text-zinc-400 leading-relaxed mb-3">
+                        Поищу его во всех местах, где он мог остаться, — на этом устройстве
+                        и в облаке, включая части, которые приложение перестало читать.
+                        Ничего не удаляю: просто покажу, что нашлось.
+                        Ищу для доски, открытой сейчас: <span className="font-mono">{(sortedBoards.find(b => b.id === activeBoardId) || {}).title || activeBoardId}</span>
+                      </p>
+                      <button onClick={findLostInk} disabled={rescue && rescue.busy}
+                              className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
+                              style={{ background: 'var(--raised)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                        {rescue && rescue.busy ? 'Ищу…' : '🔎 Найти рисунок этой доски'}
+                      </button>
+                      {rescue && !rescue.busy && (
+                        <div className="mt-3 space-y-2">
+                          {rescue.same && (
+                            <p className="text-[length:var(--fs-2)] rounded-lg px-3 py-2" style={{ color: 'var(--ok)', background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                              В облаке нет ничего сверх того, что уже лежит на этом устройстве —
+                              восстанавливать нечего, весь рисунок и так на доске. Скачайте его
+                              «Файлом»: в облако он не влезает, и другой копии у него нет.
+                            </p>
+                          )}
+                          {rescue.found.length === 0 && (
+                            <p className="text-[length:var(--fs-2)]" style={{ color: 'var(--warn)' }}>
+                              Ничего не нашлось. Проверьте, что открыта та самая доска, и что есть связь с облаком.
+                            </p>
+                          )}
+                          {rescue.found.map(item => (
+                            <div key={item.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
+                                 style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                              <span className="text-xs" style={{ color: 'var(--text-2)' }}>
+                                {item.where}: <b style={{ color: 'var(--text)' }}>{item.n}</b> штрихов
+                                {item.kb ? <span className="text-zinc-500"> · {item.kb}</span> : null}
+                                {item.dup ? <span className="text-zinc-500"> · повторов {item.dup} не считал</span> : null}
+                                {item.union ? <span style={{ color: 'var(--warn)' }}> · вернёт и стёртое</span> : null}
+                                {item.n > INK_HEAVY ? <span style={{ color: 'var(--warn)' }}> · тяжёлый</span> : null}
+                              </span>
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                <button onClick={() => downloadRescued(item)} className="cf-chip shrink-0" title="Скачать файлом — оттуда рисунок уже не потеряется">⬇ Файлом</button>
+                                <button onClick={() => putRescued(item)} className="cf-chip shrink-0">Положить на доску</button>
+                              </span>
+                            </div>
+                          ))}
+                          {rescue.found.length > 0 && (
+                            <div className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed space-y-1.5">
+                              <p>
+                                Части — это снимки РАЗНОГО времени, а не куски одного целого.
+                                Строки «Всё из облака» и «Всё вместе» складывают их и возвращают
+                                в том числе стёртое когда-то — рисунок выходит больше, чем был.
+                                Сначала «Файлом»: оттуда он уже не потеряется и возвращается
+                                кнопкой «Импортировать из JSON» ниже.
+                              </p>
+                              <p>
+                                Если после этого доска перестанет отзываться — откройте её
+                                адресом <span className="font-mono">?inkoff=1</span>: доска
+                                откроется без рисунка, и ничего при этом не сотрётся.
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <button onClick={pushInkToCloud} className="cf-chip">Отправить рисунок этой доски в облако</button>
+                                <button onClick={clearBoardInk} className="cf-chip">Снять рисунок с этой доски</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <label className="w-full py-4 glass-panel hover:bg-[var(--raised)] text-zinc-300 rounded-lg text-sm font-extrabold transition-colors cursor-pointer text-center block border border-[var(--border)]">
+                      <span>📂 Импортировать из JSON</span>
+                      <input type="file" accept=".json" onChange={(e) => {
+                        const f = e.target.files[0]; if (!f) return; const r = new FileReader();
+                        r.onload = (ev) => {
+                          try {
+                            const d = JSON.parse(ev.target.result);
+                            if (d.scenes) setScenes(d.scenes); if (d.storyboard) setStoryboard(d.storyboard);
+                            if (d.references) setReferences(d.references); if (d.stickies) setStickies(d.stickies);
+                            if (d.boards && d.boards.length) { setBoards(d.boards); d.boards.forEach(b => syncDoc('boards', b.id, b)); }
+                            if (d.docs) setDocs(d.docs); if (d.crew) setCrew(d.crew);
+                            if (d.locations) { setLocations(d.locations); d.locations.forEach(l => syncDoc('locations', l.id, l)); }
+                            if (d.gearTypes) setGearTypes(d.gearTypes); if(d.lightGearTypes) setLightGearTypes(d.lightGearTypes);
+                            if(d.lightSchemes) setLightSchemes(d.lightSchemes); if (d.projectFiles) setProjectFiles(d.projectFiles);
+                            // Новый формат — рисунок по каждой доске; старые бэкапы
+                            // хранили один общий, он ложится на основную доску.
+                            const canv = d.canvases || (d.canvasData ? { [DEFAULT_BOARD.id]: d.canvasData } : null);
+                            if (canv) Object.entries(canv).forEach(([bid, dataUrl]) => saveCanvas(bid, dataUrl));
+                            if (d.inks) Object.entries(d.inks).forEach(([bid, json]) => {
+                              let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
+                              saveStrokes(bid, list);
+                            });
+                            if (d.shapes) Object.entries(d.shapes).forEach(([bid, json]) => {
+                              let list = []; try { list = JSON.parse(json) || []; } catch (err) {}
+                              saveShapes(bid, list);
+                            });
+                            if (canv || d.inks || d.shapes) {
+                              strokesRef.current = []; shapesRef.current = []; setSelShapes([]);
+                              if (d.inks && d.inks[activeBoardId]) { try { strokesRef.current = JSON.parse(d.inks[activeBoardId]) || []; } catch (err) {} }
+                              if (d.shapes && d.shapes[activeBoardId]) { try { shapesRef.current = JSON.parse(d.shapes[activeBoardId]) || []; } catch (err) {} }
+                              loadLegacy((canv && canv[activeBoardId]) || null);
+                              undoStack.current = []; redoStack.current = [];
+                              setCanUndo(false); setCanRedo(false);
+                              bumpInk();
+                            }
+                            setShowProjectModal(false); showToast("Проект успешно восстановлен!");
+                          } catch (err) { showToast("Ошибка структуры файла JSON!"); }
+                        }; r.readAsText(f);
+                      }} className="hidden" />
+                    </label>
+                    
+                    <button onClick={() => setConfirmAction({
+                      title: 'Начать новый проект?',
+                      message: `Из комнаты «${appId}» исчезнут все сцены, кадры, референсы, заметки, доски с рисунками, схемы света, документы, состав группы, файлы и переписка в чате.\n\nЭто увидят все, у кого открыт такой же код комнаты. Отменить нельзя — если данные ещё нужны, сначала сохраните бэкап кнопкой выше.`,
+                      onConfirm: resetProject
+                    })} className="w-full mt-4 py-4 bg-red-900/30 hover:bg-red-900/50 text-red-300 border border-red-500/30 rounded-lg text-sm font-extrabold transition-colors">Сбросить всё (Новый проект)</button>
                   </div>
-                </div>
+                </Modal>
               )}
 
               {showAgentModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                  <div className="cf-modal-box glass-panel rounded-lg p-8 max-w-2xl w-full relative">
-                    <button onClick={() => setShowAgentModal(false)} className="cf-modal-x w-8 h-8 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 rounded-full text-zinc-400 font-bold transition-colors">✕</button>
-                    <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> Агент импорта: КПП и сценарий</h3>
-                    
-                    <div className="space-y-6">
-                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
-                        <h4 className="text-sm font-bold text-indigo-300 mb-2">Загрузка файла таблицы (.xlsx / .csv)</h4>
-                        <p className="text-xs text-zinc-400 mb-3">Загрузите файл КПП от Второго Режиссера, и ИИ распарсит матрицу смен и сцен.</p>
-                        <label className="w-full bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
-                          {isAILoading ? '⏳ Обработка нейросетью...' : '📁 Выбрать КПП (.xlsx / .csv)'}
-                          <input type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => { handleAIAgentFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
-                        </label>
-                      </div>
+                <Modal onClose={() => setShowAgentModal(false)} z={200} box="p-8 max-w-2xl" label="Агент импорта: КПП и сценарий">
+                  <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> Агент импорта: КПП и сценарий</h3>
+                  
+                  <div className="space-y-6">
+                    <div className="bg-black/40 p-4 rounded-lg border border-white/10">
+                      <h4 className="text-sm font-bold text-indigo-300 mb-2">Загрузка файла таблицы (.xlsx / .csv)</h4>
+                      <p className="text-xs text-zinc-400 mb-3">Загрузите файл КПП от Второго Режиссера, и ИИ распарсит матрицу смен и сцен.</p>
+                      <label className="w-full bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
+                        {isAILoading ? '⏳ Обработка нейросетью...' : '📁 Выбрать КПП (.xlsx / .csv)'}
+                        <input type="file" accept=".xlsx,.xls,.csv,.txt" className="hidden" onChange={(e) => { handleAIAgentFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
+                      </label>
+                    </div>
 
-                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
-                        <h4 className="text-sm font-bold text-amber-300 mb-2">Сценарий (.txt / .fountain / .fdx)</h4>
-                        <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
-                          Разбирается по заголовкам сцен — «СЦЕНА 5. ИНТ. КАБИНЕТ — ДЕНЬ» или «5. НАТ. ДВОР — ДЕНЬ».
-                          Номер берётся из заголовка: если сцена с таким номером уже есть, текст ляжет в неё,
-                          а не создаст вторую. Текст каждой сцены попадёт в её вкладку «Текст сцены».
-                          Перед записью покажу, что нашлось.
-                        </p>
-                        <label className="w-full bg-amber-600/30 hover:bg-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
-                          {isAILoading ? '⏳ Читаю...' : '📄 Выбрать сценарий'}
-                          <input type="file" accept=".txt,.fountain,.fdx,.md,.csv,.xml" className="hidden" onChange={(e) => { handleScriptFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
-                        </label>
-                      </div>
+                    <div className="bg-black/40 p-4 rounded-lg border border-white/10">
+                      <h4 className="text-sm font-bold text-amber-300 mb-2">Сценарий (.txt / .fountain / .fdx)</h4>
+                      <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
+                        Разбирается по заголовкам сцен — «СЦЕНА 5. ИНТ. КАБИНЕТ — ДЕНЬ» или «5. НАТ. ДВОР — ДЕНЬ».
+                        Номер берётся из заголовка: если сцена с таким номером уже есть, текст ляжет в неё,
+                        а не создаст вторую. Текст каждой сцены попадёт в её вкладку «Текст сцены».
+                        Перед записью покажу, что нашлось.
+                      </p>
+                      <label className="w-full bg-amber-600/30 hover:bg-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
+                        {isAILoading ? '⏳ Читаю...' : '📄 Выбрать сценарий'}
+                        <input type="file" accept=".txt,.fountain,.fdx,.md,.csv,.xml" className="hidden" onChange={(e) => { handleScriptFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
+                      </label>
+                    </div>
 
-                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
-                        <h4 className="text-sm font-bold text-emerald-400 mb-2">Ручной импорт JSON</h4>
-                        <p className="text-xs text-zinc-400 mb-3">Скопируйте массив сцен и вставьте в поле ниже:</p>
-                        <textarea value={manualJsonInput} onChange={(e) => setManualJsonInput(e.target.value)} placeholder='[{"number":"1","title":"ИНТ. ОФИС - ДЕНЬ","date":"2026-06-29","content":"Описание..."}]' className="w-full h-24 glass-input rounded-lg p-3 text-xs resize-none mb-3 font-mono text-zinc-300" />
-                        <button 
-                          onClick={() => {
-                            try {
-                              let text = manualJsonInput.trim(); if (!text) return;
-                              const match = text.match(/\[[\s\S]*\]/); if (match) text = match[0];
-                              const parsed = JSON.parse(text);
-                              if (Array.isArray(parsed) && parsed.length > 0) {
-                                const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', boardId: '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
-                                setScenes([...scenes, ...newScenes]); newScenes.forEach(ns => syncDoc('scenes', ns.id, ns)); showToast(`✅ Импортировано ${newScenes.length} сцен!`); setShowAgentModal(false); setManualJsonInput('');
-                              } else { showToast("❌ Массив сцен пуст."); }
-                            } catch (e) { showToast("❌ Ошибка формата JSON."); }
-                          }}
-                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
-                        >Импортировать сцены</button>
-                      </div>
+                    <div className="bg-black/40 p-4 rounded-lg border border-white/10">
+                      <h4 className="text-sm font-bold text-emerald-400 mb-2">Ручной импорт JSON</h4>
+                      <p className="text-xs text-zinc-400 mb-3">Скопируйте массив сцен и вставьте в поле ниже:</p>
+                      <textarea value={manualJsonInput} onChange={(e) => setManualJsonInput(e.target.value)} placeholder='[{"number":"1","title":"ИНТ. ОФИС - ДЕНЬ","date":"2026-06-29","content":"Описание..."}]' className="w-full h-24 glass-input rounded-lg p-3 text-xs resize-none mb-3 font-mono text-zinc-300" />
+                      <button 
+                        onClick={() => {
+                          try {
+                            let text = manualJsonInput.trim(); if (!text) return;
+                            const match = text.match(/\[[\s\S]*\]/); if (match) text = match[0];
+                            const parsed = JSON.parse(text);
+                            if (Array.isArray(parsed) && parsed.length > 0) {
+                              const newScenes = parsed.map((ps, idx) => ({ id: `scene-${Date.now()}-${idx}`, number: ps.number || String(scenes.length + idx + 1), title: ps.title || 'Сцена', content: ps.content || '', boardId: '', x: (150 - canvasOffset.x) / zoom + (idx * 40), y: (150 - canvasOffset.y) / zoom + (idx * 40), date: ps.date || '', gear: {}, lightGear: {}, lightSchemeId: null }));
+                              setScenes([...scenes, ...newScenes]); newScenes.forEach(ns => syncDoc('scenes', ns.id, ns)); showToast(`✅ Импортировано ${newScenes.length} сцен!`); setShowAgentModal(false); setManualJsonInput('');
+                            } else { showToast("❌ Массив сцен пуст."); }
+                          } catch (e) { showToast("❌ Ошибка формата JSON."); }
+                        }}
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                      >Импортировать сцены</button>
+                    </div>
 
-                      {/* РАЗГОВОР С АГЕНТОМ — внизу этого же окна, а не на
-                          главном экране: главный экран занят работой, а сюда
-                          заходят именно за тем, чтобы дать задание словами.
-                          Агент ОТВЕЧАЕТ и ПРЕДЛАГАЕТ правки, но не применяет
-                          их сам: ошибку ИИ иначе увидели бы уже после того,
-                          как она разошлась по всей группе через облако. */}
-                      <div className="bg-black/40 p-4 rounded-lg border border-white/10">
-                        <div className="flex items-center justify-between mb-2 gap-2">
-                          <h4 className="text-sm font-bold text-white flex items-center gap-2"><Icons.Chat/> Задание словами</h4>
-                          {agentChat.length > 0 && (
-                            <button onClick={() => { setAgentChat([]); setAgentPlan(null); }}
-                                    className="cf-chip shrink-0">Очистить</button>
-                          )}
-                        </div>
-                        <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
-                          Агент видит ваши сцены — номера, названия, даты смен, объекты и технику.
-                          Спросите «что снимаем 29-го» или дайте задание: «перенеси сцены 4–7 на 3 июля».
-                          Правки он ПРЕДЛОЖИТ, а применять будете вы.
-                        </p>
-
+                    {/* РАЗГОВОР С АГЕНТОМ — внизу этого же окна, а не на
+                        главном экране: главный экран занят работой, а сюда
+                        заходят именно за тем, чтобы дать задание словами.
+                        Агент ОТВЕЧАЕТ и ПРЕДЛАГАЕТ правки, но не применяет
+                        их сам: ошибку ИИ иначе увидели бы уже после того,
+                        как она разошлась по всей группе через облако. */}
+                    <div className="bg-black/40 p-4 rounded-lg border border-white/10">
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2"><Icons.Chat/> Задание словами</h4>
                         {agentChat.length > 0 && (
-                          <div className="space-y-2 mb-3 overflow-y-auto" style={{ maxHeight: 260 }}>
-                            {agentChat.map((m, i) => (
-                              <div key={i} className={m.role === 'me' ? 'text-right' : ''}>
-                                <span className="inline-block text-left rounded-lg px-3 py-2 text-xs leading-relaxed"
-                                      style={{ whiteSpace: 'pre-wrap', maxWidth: '92%',
-                                               background: m.role === 'me' ? 'var(--raised)' : 'rgba(217,119,87,.12)',
-                                               color: m.role === 'me' ? 'var(--text-2)' : 'var(--text)',
-                                               border: '1px solid ' + (m.role === 'me' ? 'var(--border)' : 'var(--accent-line)') }}>
-                                  {m.text}
-                                </span>
-                              </div>
-                            ))}
-                            {agentBusy && <div className="cf-meta">агент думает…</div>}
-                          </div>
-                        )}
-
-                        {/* Предпросмотр правок: человек обязан видеть, ЧТО
-                            именно поменяется, до того как это случится. */}
-                        {agentPlan && (
-                          <div className="mb-3 rounded-lg p-3" style={{ background: 'var(--card)', border: '1px solid var(--accent-line)' }}>
-                            <span className="cf-meta block mb-2">Агент предлагает изменить:</span>
-                            <ul className="space-y-1 mb-3">
-                              {agentPlan.map((c, i) => (
-                                <li key={i} className="text-xs" style={{ color: 'var(--text-2)' }}>· {describeChange(c)}</li>
-                              ))}
-                            </ul>
-                            <div className="flex gap-2">
-                              <button onClick={applyAgentPlan}
-                                      className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2 rounded-lg transition-colors">
-                                Применить
-                              </button>
-                              <button onClick={() => setAgentPlan(null)} className="cf-chip">Не надо</button>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex gap-2">
-                          {/* Enter отправляет, Shift+Enter — новая строка:
-                              задание обычно в одну строку, и лишнее нажатие
-                              по кнопке на планшете стоит дороже. */}
-                          <textarea value={agentInput} onChange={(e) => setAgentInput(e.target.value)}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAgent(agentInput); } }}
-                                    placeholder="Что снимаем 29-го? · Перенеси сцены 4–7 на 3 июля"
-                                    rows={2}
-                                    className="flex-1 glass-input rounded-lg px-3 py-2 text-sm resize-none" />
-                          <button onClick={() => askAgent(agentInput)} disabled={agentBusy || !agentInput.trim()}
-                                  className={`shrink-0 px-4 rounded-lg text-sm font-bold transition-colors ${agentBusy || !agentInput.trim() ? 'bg-zinc-800 text-zinc-600' : 'bg-indigo-500 hover:bg-indigo-400 text-[#1a1918]'}`}
-                                  style={{ minHeight: 44 }}>
-                            {agentBusy ? '…' : 'Спросить'}
-                          </button>
-                        </div>
-                        {!geminiKey.trim() && (
-                          <p className="text-[length:var(--fs-1)] mt-2" style={{ color: 'var(--warn)' }}>
-                            Нужен ключ Gemini — впишите его в «···» → «Проект».
-                          </p>
+                          <button onClick={() => { setAgentChat([]); setAgentPlan(null); }}
+                                  className="cf-chip shrink-0">Очистить</button>
                         )}
                       </div>
+                      <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
+                        Агент видит ваши сцены — номера, названия, даты смен, объекты и технику.
+                        Спросите «что снимаем 29-го» или дайте задание: «перенеси сцены 4–7 на 3 июля».
+                        Правки он ПРЕДЛОЖИТ, а применять будете вы.
+                      </p>
+
+                      {agentChat.length > 0 && (
+                        <div className="space-y-2 mb-3 overflow-y-auto" style={{ maxHeight: 260 }}>
+                          {agentChat.map((m, i) => (
+                            <div key={i} className={m.role === 'me' ? 'text-right' : ''}>
+                              <span className="inline-block text-left rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                    style={{ whiteSpace: 'pre-wrap', maxWidth: '92%',
+                                             background: m.role === 'me' ? 'var(--raised)' : 'rgba(217,119,87,.12)',
+                                             color: m.role === 'me' ? 'var(--text-2)' : 'var(--text)',
+                                             border: '1px solid ' + (m.role === 'me' ? 'var(--border)' : 'var(--accent-line)') }}>
+                                {m.text}
+                              </span>
+                            </div>
+                          ))}
+                          {agentBusy && <div className="cf-meta">агент думает…</div>}
+                        </div>
+                      )}
+
+                      {/* Предпросмотр правок: человек обязан видеть, ЧТО
+                          именно поменяется, до того как это случится. */}
+                      {agentPlan && (
+                        <div className="mb-3 rounded-lg p-3" style={{ background: 'var(--card)', border: '1px solid var(--accent-line)' }}>
+                          <span className="cf-meta block mb-2">Агент предлагает изменить:</span>
+                          <ul className="space-y-1 mb-3">
+                            {agentPlan.map((c, i) => (
+                              <li key={i} className="text-xs" style={{ color: 'var(--text-2)' }}>· {describeChange(c)}</li>
+                            ))}
+                          </ul>
+                          <div className="flex gap-2">
+                            <button onClick={applyAgentPlan}
+                                    className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 py-2 rounded-lg transition-colors">
+                              Применить
+                            </button>
+                            <button onClick={() => setAgentPlan(null)} className="cf-chip">Не надо</button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        {/* Enter отправляет, Shift+Enter — новая строка:
+                            задание обычно в одну строку, и лишнее нажатие
+                            по кнопке на планшете стоит дороже. */}
+                        <textarea value={agentInput} onChange={(e) => setAgentInput(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAgent(agentInput); } }}
+                                  placeholder="Что снимаем 29-го? · Перенеси сцены 4–7 на 3 июля"
+                                  rows={2}
+                                  className="flex-1 glass-input rounded-lg px-3 py-2 text-sm resize-none" />
+                        <button onClick={() => askAgent(agentInput)} disabled={agentBusy || !agentInput.trim()}
+                                className={`shrink-0 px-4 rounded-lg text-sm font-bold transition-colors ${agentBusy || !agentInput.trim() ? 'bg-zinc-800 text-zinc-600' : 'bg-indigo-500 hover:bg-indigo-400 text-[#1a1918]'}`}
+                                style={{ minHeight: 44 }}>
+                          {agentBusy ? '…' : 'Спросить'}
+                        </button>
+                      </div>
+                      {!geminiKey.trim() && (
+                        <p className="text-[length:var(--fs-1)] mt-2" style={{ color: 'var(--warn)' }}>
+                          Нужен ключ Gemini — впишите его в «···» → «Проект».
+                        </p>
+                      )}
                     </div>
                   </div>
-                </div>
+                </Modal>
               )}
 
               {drawingFrameId && (
