@@ -1,0 +1,19 @@
+{
+  "name": "cinelight-ios",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Обёртка CineLight в приложение для iPad: пульт шлёт Art-Net и sACN прямо с планшета, без моста и компьютера",
+  "scripts": {
+    "prepare-www": "node prepare-www.js",
+    "sync": "npm run prepare-www && npx cap sync ios",
+    "add-ios": "npx cap add ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "capacitor-udp-socket": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

@@ -1,0 +1,69 @@
+# Сборка приложения CineLight для iPad на серверах GitHub.
+# Свой Mac не нужен — сборка идёт на их macOS-машине.
+#
+# КУДА ПОЛОЖИТЬ: этот файл должен лежать по пути .github/workflows/ios.yml
+# (в корне репозитория, а не в папке app/).
+#
+# Что делает сейчас: собирает приложение БЕЗ подписи. Это бесплатно и
+# проверяет, что всё компилируется. Установить такую сборку на iPad нельзя —
+# для этого нужен аккаунт Apple Developer, см. app/README.md.
+
+name: Сборка iPad-приложения
+
+on:
+  workflow_dispatch:        # запуск вручную кнопкой на вкладке Actions
+  push:
+    paths:
+      - 'cinelight.html'
+      - 'app/**'
+      - '.github/workflows/ios.yml'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Забрать код
+        uses: actions/checkout@v4
+
+      - name: Поставить Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Установить зависимости
+        working-directory: app
+        run: npm install
+
+      - name: Собрать содержимое приложения
+        working-directory: app
+        run: node prepare-www.js
+
+      - name: Создать нативный проект
+        working-directory: app
+        run: npx cap add ios
+
+      - name: Синхронизировать
+        working-directory: app
+        run: npx cap sync ios
+
+      - name: Собрать без подписи (проверка компиляции)
+        working-directory: app/ios/App
+        run: |
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Сохранить результат
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineLight-app-unsigned
+          path: app/ios/App/build/Build/Products/Release-iphoneos/*.app
+          if-no-files-found: warn
