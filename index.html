@@ -365,11 +365,16 @@
            одну строку высотой 42 точки вместо целой колонки в 66. */
         .cf-navtab { display: flex; align-items: center; padding: 5px 7px; border-radius: var(--r-sm); color: var(--muted); flex-shrink: 0; }
         .cf-navtab svg { width: 14px; height: 14px; }
-        html.cf-touch .cf-navtab { padding: 12px 9px; }
+        /* Цель 44 по высоте, а в ширину узко: на iPad в портрете в шапке
+           стоят семь модулей, поиск и четыре режима, и широкие кнопки
+           выдавливали чат за край. Бейдж ⌘K на касании не показываем —
+           клавиатуры там обычно нет, а места он стоит. */
+        html.cf-touch .cf-navtab { padding: 12px 6px; }
         html.cf-touch .cf-navtab svg { width: 20px; height: 20px; }
-        html.cf-touch .cf-navtab-on, html.cf-touch .cf-navtab-on:hover { padding: 8px 11px 8px 8px; }
+        html.cf-touch .cf-navtab-on, html.cf-touch .cf-navtab-on:hover { padding: 8px 10px 8px 8px; }
         html.cf-touch .cf-navtab-key { width: 26px; height: 26px; font-size: var(--fs-3); }
         html.cf-touch .cf-search { min-height: 40px; }
+        html.cf-touch .cf-kbd { display: none; }
         .cf-navtab:hover { color: var(--text-2); background: var(--raised); }
         /* Активный: лёгкий контур вместо подложки — подложка спорила
            с оранжевым квадратиком и читалась как «нажато», а не «здесь я». */
@@ -405,7 +410,7 @@
         .cf-seg { display: flex; padding: 2px; border: 1px solid var(--border); border-radius: var(--r-sm); gap: 2px; flex-shrink: 0; }
         .cf-seg > * { font-size: var(--fs-1); padding: 4px 9px; border-radius: var(--r-sm); color: var(--muted); font-weight: 600; white-space: nowrap; }
         .cf-seg > .on { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
-        html.cf-touch .cf-seg > * { padding: 7px 12px; font-size: var(--fs-2); }
+        html.cf-touch .cf-seg > * { padding: 7px 10px; font-size: var(--fs-1); }
         /* ---------- инструменты доски ----------
            Один размер на все кнопки: 32 точки внутри полосы в 44 — цель,
            в которую попадают пальцем, и колонка, которая помещается
