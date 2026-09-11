@@ -182,6 +182,8 @@
           --panel-strip: 40px;    /* свёрнутая боковая панель */
           --tool-rail: 44px;      /* панель инструментов доски */
           --tabbar-h: 49px;       /* нижняя навигация телефона (по гайду Apple), без safe-area */
+          --sat: env(safe-area-inset-top, 0px);    /* статус-бар установленного приложения */
+          --sab: env(safe-area-inset-bottom, 0px); /* полоска «домой» */
           --tap: 34px;            /* наименьшая цель мышью: поле, кнопка-текст */
           --tap-sm: 28px;         /* чип-кнопка, ссылка-действие */
           --tool: 32px;           /* кнопка-иконка в рельсе */
@@ -549,8 +551,8 @@
            заметно больше того, что человек видит. Строка с vh стоит
            первой как запасная, где dvh не понимают. */
         .cf-modal-box {
-          max-height: calc(100vh - 32px);
-          max-height: calc(100dvh - 32px);
+          max-height: calc(100vh - 32px - var(--sat) - var(--sab));
+          max-height: calc(100dvh - 32px - var(--sat) - var(--sab));
           overflow-y: auto;
           overscroll-behavior: contain;
           -webkit-overflow-scrolling: touch;
@@ -1932,7 +1934,7 @@
             if (!open) return null;
             return (
                 <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm flex items-center justify-center p-4"
-                     style={{ zIndex: z }}
+                     style={{ zIndex: z, padding: 'calc(16px + var(--sat)) 16px calc(16px + var(--sab))' }}
                      onPointerDown={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
                     <div ref={boxRef} data-cf-modal={z} role="dialog" aria-modal="true"
                          aria-label={label || undefined} tabIndex={-1}
@@ -2036,7 +2038,8 @@
             const backToName = () => { setStep('name'); setPin(''); setError(''); };
 
             return (
-                <div className="fixed inset-0 bg-black/85 backdrop-blur-lg flex items-center justify-center z-[500] p-4">
+                <div className="fixed inset-0 bg-black/85 backdrop-blur-lg flex items-center justify-center z-[500] p-4"
+                     style={{ padding: 'calc(16px + var(--sat)) 16px calc(16px + var(--sab))' }}>
                     <div className="cf-modal-box glass-panel p-8 rounded-lg w-full max-w-sm">
                         <div className="flex justify-center mb-4 text-indigo-400"><Icons.User /></div>
                         <h2 className="text-2xl font-extrabold text-white mb-2 text-center">Профиль Оператора</h2>
@@ -2153,7 +2156,7 @@
             };
 
             return (
-                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col">
+                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col" style={{ paddingTop: 'var(--sat)', paddingBottom: 'var(--sab)' }}>
                     <div className="flex justify-between items-center p-4 glass-panel border-b-0 shrink-0">
                         <div className="flex items-center gap-4">
                             <span className="text-white font-bold text-sm flex items-center gap-2"><Icons.Pen /> Модуль быстрого скетча</span>
@@ -2708,18 +2711,19 @@
             const panoMax = panoFull ? PANO_VIEW_W : PANO_THUMB_W;
 
             return (
-                <div className="fixed inset-0 z-[350] bg-[#1a1918]/95 backdrop-blur-md flex flex-col justify-center items-center p-4">
-                    <button onClick={onClose} className="absolute top-6 right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
+                <div className="fixed inset-0 z-[350] bg-[#1a1918]/95 backdrop-blur-md flex flex-col justify-center items-center p-4"
+                     style={{ padding: 'calc(16px + var(--sat)) 16px calc(16px + var(--sab))' }}>
+                    <button onClick={onClose} style={{ top: 'calc(24px + var(--sat))' }} className="absolute right-6 text-white bg-white/10 hover:bg-white/20 w-10 h-10 rounded-full flex items-center justify-center text-lg z-10 transition-colors border border-white/10">✕</button>
                     {/* Метка «это панорама» — она же переключатель.
                         Распознавание ошибается в обе стороны, и починить
                         это должно быть можно прямо здесь, где кадр виден. */}
                     {onSetPano && (
                         <button onClick={() => onSetPano(currentRef, !isPano)}
                                 title={isPano ? 'Показывать обычным плоским кадром' : 'Это панорама 360° — развернуть на сферу'}
-                                className={'cf-edit-only absolute top-6 left-6 z-20 rounded-full px-3 py-1.5 ' + chromeCls}
-                                style={isPano
+                                className={'cf-edit-only absolute left-6 z-20 rounded-full px-3 py-1.5 ' + chromeCls}
+                                style={{ top: 'calc(24px + var(--sat))', ...(isPano
                                   ? { background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-2)', fontWeight: 700 }
-                                  : { background: 'rgba(255,255,255,.08)', color: 'var(--muted-2)', border: '1px solid var(--border)', fontSize: 'var(--fs-2)', fontWeight: 700 }}>
+                                  : { background: 'rgba(255,255,255,.08)', color: 'var(--muted-2)', border: '1px solid var(--border)', fontSize: 'var(--fs-2)', fontWeight: 700 }) }}>
                             360°
                         </button>
                     )}
@@ -2737,7 +2741,7 @@
                         нижней полосой со счётчиком, чтобы не налезать на неё. */}
                     {onAddTag && (tagsOpen ? (
                         <div className={'cf-lb-tags absolute glass-panel rounded-lg z-20 border-t border-white/10 ' + chromeCls}
-                             style={{ left: 16, bottom: 76, padding: 8, width: 'max-content',
+                             style={{ left: 16, bottom: 'calc(84px + var(--sab))', padding: 8, width: 'max-content',
                                       minWidth: 150, maxWidth: 'min(320px, calc(100vw - 32px))' }}>
                             {/* Поле ввода СВЕРХУ, теги под ним. Окошко стоит внизу
                                 экрана, поэтому список подсказок разворачивается
@@ -2767,7 +2771,7 @@
                     ) : (
                         <button onClick={() => toggleTags(true)} title="Показать теги кадра"
                                 className={'absolute glass-panel rounded-full px-3 py-1.5 z-20 flex items-center gap-1.5 text-zinc-400 hover:text-white ' + chromeCls}
-                                style={{ left: 16, bottom: 76 }}>
+                                style={{ left: 16, bottom: 'calc(84px + var(--sab))' }}>
                             <Icons.Tag/>
                             <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600 }}>
                                 {(currentRef.tags || []).length || ''}
@@ -2775,7 +2779,7 @@
                         </button>
                     ))}
 
-                    <div className={'absolute bottom-4 md:bottom-6 flex items-center gap-1.5 md:gap-2 max-w-[94vw] ' + chromeCls}>
+                    <div className={'absolute flex items-center gap-1.5 md:gap-2 max-w-[94vw] ' + chromeCls} style={{ bottom: 'calc(24px + var(--sab))' }}>
                         <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-mono font-bold text-zinc-300 shrink-0">{currentIndex + 1} / {refs.length}</span>
                         {/* Подсказка нужна и в режиме просмотра: человеку,
                             которому прислали ссылку, иначе неоткуда узнать,
@@ -2895,7 +2899,7 @@
             const updateSelected = (updates) => { setElements(elements.map(el => el.id === selectedId ? {...el, ...updates} : el)); };
 
             return (
-                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col">
+                <div className="fixed inset-0 z-[300] bg-[#1a1918]/95 backdrop-blur-xl flex flex-col" style={{ paddingTop: 'var(--sat)', paddingBottom: 'var(--sab)' }}>
                     <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 p-4 glass-panel border-b-0 shrink-0">
                         <div className="flex flex-wrap items-center gap-y-2 gap-x-4">
                             <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Схема света</span>
@@ -3418,7 +3422,7 @@
 
           return (
             <div className="fixed inset-0 z-[450] flex items-start justify-center p-4 pt-[12vh]"
-                 style={{ background: 'rgba(0,0,0,.55)' }} onClick={onClose}>
+                 style={{ background: 'rgba(0,0,0,.55)', paddingTop: 'calc(12vh + var(--sat))' }} onClick={onClose}>
               <div className="w-full max-w-xl overflow-hidden cf-modal-box" onClick={e => e.stopPropagation()}
                    style={{ borderRadius: 'var(--r-md)', background: 'var(--card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-2)' }}>
                 <div className="flex items-center gap-2.5 px-4" style={{ borderBottom: '1px solid var(--line)' }}>
@@ -10773,7 +10777,7 @@
                 </div>
               )}
 
-              {toast && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
+              {toast && (<div style={{ bottom: 'calc(24px + var(--sab))' }} className="fixed left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
 
               {/* Возврат только что удалённого. Держится 15 секунд — этого
                   хватает, чтобы заметить промах, и не мешает дальше работать.
