@@ -10415,6 +10415,16 @@
             document.addEventListener('pointerdown', away);
             return () => document.removeEventListener('pointerdown', away);
           }, [locMenu]);
+          // «···» доски: выгрузка PNG/SVG и очистка рисунка. Тем, чем
+          // пользуются раз в день, не место в строке рядом с вкладками.
+          const [boardMenu, setBoardMenu] = useState(false);
+          const boardMenuRef = useRef(null);
+          useEffect(() => {
+            if (!boardMenu) return;
+            const away = (e) => { if (boardMenuRef.current && !boardMenuRef.current.contains(e.target)) setBoardMenu(false); };
+            document.addEventListener('pointerdown', away);
+            return () => document.removeEventListener('pointerdown', away);
+          }, [boardMenu]);
           // Заметка объекта — такая же бумажка, как заметка сцены, только
           // привязана к месту. Отдельной сущности не заводим по той же
           // причине, по которой фото объекта — обычные референсы: иначе
@@ -10462,6 +10472,9 @@
           const [phoneDocOpen, setPhoneDocOpen] = useState(false);
           // Строка состава группы, которую сейчас правят: остальные — текст.
           const [crewEdit, setCrewEdit] = useState(null);
+          // Объект, у которого сейчас правят справку ({id, field}: адрес,
+          // координаты, питание, комментарий); у остальных она текстом.
+          const [locEdit, setLocEdit] = useState(null);
           // Что открыто шторкой снизу: техника, свет, солнце, экспликация,
           // «Ещё» с остальными модулями.
           const [phoneSheet, setPhoneSheet] = useState(null);
@@ -11838,7 +11851,7 @@
                                       В покое кадр — картинка и текст, поля по нажатию;
                                       «Таблица» рядом остаётся для правки многих кадров подряд. */}
                                   {(!READ_ONLY && frameEdit && frameEdit.id === f.id) ? (
-                                    <div onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameEdit(null); }}>
+                                    <div onBlur={(e) => { const node = e.currentTarget; setTimeout(() => { if (!node.contains(document.activeElement)) setFrameEdit(x => x && x.id === f.id ? null : x); }, 200); }}>
                                     <div className="flex justify-between gap-2" style={{ marginTop: 7 }}>
                                       <input autoFocus={frameEdit.field !== 'description'} type="text" value={f.frameNum || ''} onChange={(e) => patchFrame(f.id, { frameNum: e.target.value })}
                                              className="bg-transparent focus:outline-none min-w-0"
@@ -12941,45 +12954,69 @@
                                        target="_blank" rel="noopener" className="ml-auto" style={linkish}>открыть карту →</a>
                                   )}
                                 </div>
-                                <input type="text" value={l.address || ''} onChange={(e) => updateLocation(l.id, 'address', e.target.value)}
-                                       placeholder="Улица, дом, как заезжать"
-                                       className="glass-input w-full rounded-lg px-2.5 mt-2.5" style={{ minHeight: 34, fontSize: 'var(--fs-2)' }} />
-                                <div className="flex gap-2 mt-2">
-                                  <input type="text" value={l.coords || ''} onChange={(e) => updateLocation(l.id, 'coords', e.target.value)}
-                                         placeholder="44.612, 33.518"
-                                         className="glass-input flex-1 min-w-0 rounded-lg px-2.5" style={{ minHeight: 34, fontSize: 'var(--fs-2)', fontFamily: 'var(--font-mono)' }} />
-                                  <button onClick={() => findCoords(l)} disabled={geoBusy === l.id || !(l.address || '').trim()}
-                                          title={(l.address || '').trim() ? 'Найти координаты по адресу' : 'Сначала впишите адрес'}
-                                          className="cf-edit-only shrink-0 rounded-lg px-3"
-                                          style={{ minHeight: 34, fontSize: 'var(--fs-2)', border: '1px solid var(--border)', color: 'var(--text-2)', opacity: (geoBusy === l.id || !(l.address || '').trim()) ? .4 : 1 }}>
-                                    {geoBusy === l.id ? 'Ищу…' : 'по адресу'}
-                                  </button>
-                                </div>
+                                {/* В ПОКОЕ — СПРАВКА, а не анкета: адрес, координаты,
+                                    питание и комментарий текстом с подписями слева, как
+                                    в «Контактах». Четыре вечно открытых поля плюс кнопка
+                                    читались формой, которую надо заполнять, а объект
+                                    открывают, чтобы узнать, куда ехать. Поля появляются
+                                    по нажатию на строку, курсор встаёт в ту, по которой
+                                    нажали (locEdit = {id, field}); уход фокуса возвращает
+                                    текст. Подписи те же, что в отчёте (locationPrintBlock).
+                                    У «Питания» и «Комментария» подсказки нет намеренно —
+                                    пример внутри читался как заполненное поле.
+                                    Уход фокуса — С ЗАДЕРЖКОЙ: на iPad кнопка «по адресу»
+                                    фокус не берёт, и без задержки строка закрылась бы
+                                    раньше, чем до кнопки дошло нажатие. */}
+                                {(() => {
+                                  const ed = !READ_ONLY && locEdit && locEdit.id === l.id;
+                                  const lab = (t) => <span className="shrink-0" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', width: 88 }}>{t}</span>;
+                                  const fieldStyle = { fontSize: 'var(--fs-2)', color: 'var(--text-2)', lineHeight: 1.5 };
+                                  if (ed) {
+                                    const inp = (field, extra) => (
+                                      <input autoFocus={locEdit.field === field} type="text" value={l[field] || ''} onChange={(e) => updateLocation(l.id, field, e.target.value)}
+                                             className="cf-inline-field flex-1 min-w-0" style={{ ...fieldStyle, ...(extra || {}) }} />
+                                    );
+                                    return (
+                                      <div onBlur={(e) => { const node = e.currentTarget; setTimeout(() => { if (!node.contains(document.activeElement)) setLocEdit(x => x && x.id === l.id ? null : x); }, 200); }}>
+                                        <div className="flex gap-2 items-center mt-2">{lab('Адрес')}{inp('address')}</div>
+                                        <div className="flex gap-2 items-center mt-2">
+                                          {lab('Координаты')}{inp('coords', { fontFamily: 'var(--font-mono)' })}
+                                          <button onClick={() => findCoords(l)} disabled={geoBusy === l.id || !(l.address || '').trim()}
+                                                  title={(l.address || '').trim() ? 'Найти координаты по адресу' : 'Сначала впишите адрес'}
+                                                  className="cf-edit-only shrink-0 rounded-lg px-3"
+                                                  style={{ minHeight: 34, fontSize: 'var(--fs-2)', border: '1px solid var(--border)', color: 'var(--text-2)', opacity: (geoBusy === l.id || !(l.address || '').trim()) ? .4 : 1 }}>
+                                            {geoBusy === l.id ? 'Ищу…' : 'по адресу'}
+                                          </button>
+                                        </div>
+                                        <div className="flex gap-2 items-center mt-2">{lab('Питание')}{inp('power')}</div>
+                                        <div className="flex gap-2 items-start mt-2">
+                                          {lab('Комментарий')}
+                                          <textarea autoFocus={locEdit.field === 'description'} value={l.description || ''} onChange={(e) => updateLocation(l.id, 'description', e.target.value)}
+                                                    className="cf-inline-field flex-1 min-w-0 resize-none" style={{ ...fieldStyle, minHeight: 34 }} />
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  const row = (field, label, ph, mono) => (
+                                    <div className="flex gap-2 items-baseline mt-2" onClick={() => { if (!READ_ONLY) setLocEdit({ id: l.id, field }); }}
+                                         style={{ cursor: READ_ONLY ? 'auto' : 'text', minHeight: 26 }}>
+                                      {lab(label)}
+                                      <span className="flex-1 min-w-0" style={{ ...fieldStyle, color: l[field] ? 'var(--text-2)' : 'var(--muted-2)', fontFamily: mono ? 'var(--font-mono)' : undefined, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                                        {l[field] || (READ_ONLY ? '—' : ph)}
+                                      </span>
+                                    </div>
+                                  );
+                                  return (
+                                    <React.Fragment>
+                                      {row('address', 'Адрес', 'Улица, дом, как заезжать')}
+                                      {row('coords', 'Координаты', 'широта, долгота', true)}
+                                      {row('power', 'Питание', '—')}
+                                      {row('description', 'Комментарий', '—')}
+                                    </React.Fragment>
+                                  );
+                                })()}
                                 {geoError && geoError.id === l.id && <p style={{ fontSize: 'var(--fs-2)', color: 'var(--warn)', marginTop: 4 }}>{geoError.text}</p>}
                                 {!c && (l.coords || '').trim() && <p style={{ fontSize: 'var(--fs-2)', color: 'var(--warn)', marginTop: 4 }}>Не разобрал координаты. Нужны два числа: широта, долгота.</p>}
-
-                                {/* Питание и одна строчка-комментарий. Всё
-                                    остальное — расстояние от базы, разрешения —
-                                    убрано: этого либо не знают на этом этапе,
-                                    либо оно живёт в договорах, а не здесь. */}
-                                <div className="flex gap-2 items-baseline mt-3">
-                                  <span className="shrink-0" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', width: 88 }}>Питание</span>
-                                  <input type="text" value={l.power || ''} onChange={(e) => updateLocation(l.id, 'power', e.target.value)}
-                                         className="flex-1 min-w-0 bg-transparent focus:outline-none" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }} />
-                                </div>
-                                {/* Была одна длинная подсказка серым, да ещё
-                                    с двоеточием внутри («строчка-комментарий:
-                                    грунтовка до обрыва…»). Она читалась как УЖЕ
-                                    заполненное поле: непонятно, это чей-то текст
-                                    или подсказка, и надо ли её стирать. Теперь
-                                    как у «Питания» — слева подпись, справа
-                                    пустое поле, и ничего стирать не надо. */}
-                                <div className="flex gap-2 items-baseline mt-2">
-                                  <span className="shrink-0" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', width: 88 }}>Комментарий</span>
-                                  <textarea value={l.description || ''} onChange={(e) => updateLocation(l.id, 'description', e.target.value)}
-                                            className="flex-1 min-w-0 bg-transparent focus:outline-none resize-none"
-                                            style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', lineHeight: 1.5, minHeight: 34 }} />
-                                </div>
 
                                 {lightSchemes.length > 0 && (
                                   <div className="flex gap-2 mt-3">
@@ -13091,9 +13128,14 @@
                   {/* ИНТЕРАКТИВНАЯ ДОСКА (WHITEBOARD) */}
                   <div className={`h-full w-full relative ${currentView === 'whiteboard' ? 'flex flex-col' : 'hidden'}`}>
 
-                    {/* ВКЛАДКИ ДОСОК */}
-                    <div className="flex items-end gap-1 px-3 shrink-0 overflow-x-auto hide-scrollbar"
+                    {/* ВКЛАДКИ ДОСОК. Прокручивается вбок ТОЛЬКО полоса вкладок,
+                        действия справа стоят снаружи неё: у прокручиваемого
+                        контейнера обрезается всё, что выходит за его край, —
+                        меню «···» под строкой срезалось целиком, и его строки
+                        не нажимались (elementFromPoint отдавал холст). */}
+                    <div className="flex items-end gap-1 px-3 shrink-0"
                          style={{ background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
+                      <div className="flex items-end gap-1 flex-1 min-w-0 overflow-x-auto hide-scrollbar">
                       {sortedBoards.map(b => {
                         const on = b.id === activeBoardId;
                         return (
@@ -13234,6 +13276,7 @@
                         <span style={{ fontSize: 'var(--fs-3)', lineHeight: 1 }}>+</span> схема
                       </button>
 
+                      </div>
                       {/* ДЕЙСТВИЯ С ДОСКОЙ — здесь, а не в панели инструментов
                           слева: девятнадцать кнопок в одну колонку не влезали
                           по высоте и молча срезались снизу. Слева рисуют,
@@ -13248,18 +13291,33 @@
                         <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); setWbMode('select'); setSelectedWbItems([nr.id]); }}
                                 className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
                         <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
-                        {/* Выгрузка доски картинкой: то, что отправляют группе.
+                        {/* Выгрузка доски картинкой — то, что отправляют группе:
                             PNG для мессенджера, SVG для печати и правки в
-                            векторном редакторе. */}
-                        <button onClick={() => exportBoard('png')} disabled={exportBusy} className="cf-tool"
-                                title="Выгрузить доску картинкой (PNG)">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
-                        </button>
-                        <button onClick={() => exportBoard('svg')} disabled={exportBusy} className="cf-tool"
-                                style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', fontWeight: 700 }}
-                                title="Выгрузить доску в SVG — вектор для печати и правки">SVG</button>
-                        <button onClick={() => setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }})}
-                                className="cf-tool cf-edit-only" style={{ color: 'var(--danger)' }} title="Очистить рисунок: линии и фигуры"><Icons.Trash/></button>
+                            векторном редакторе. Вместе с очисткой рисунка —
+                            в «···»: три кнопки в строке ради того, чем
+                            пользуются раз в день. Выгрузка остаётся и у гостя
+                            по ссылке, очистка помечена cf-edit-only. */}
+                        <div className="relative shrink-0" ref={boardMenuRef}>
+                          <button onClick={() => setBoardMenu(v => !v)} title="Выгрузить доску (PNG, SVG), очистить рисунок"
+                                  className={`cf-tool ${boardMenu ? 'on' : ''}`} style={{ letterSpacing: 1 }}>···</button>
+                          {boardMenu && (
+                            <div className="cf-menu">
+                              <button onClick={() => { setBoardMenu(false); exportBoard('png'); }} disabled={exportBusy} title="Картинка для мессенджера">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                                Выгрузить PNG
+                              </button>
+                              <button onClick={() => { setBoardMenu(false); exportBoard('svg'); }} disabled={exportBusy} title="Вектор для печати и правки">
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', fontWeight: 700, width: 16, textAlign: 'center' }}>SVG</span>
+                                Выгрузить SVG
+                              </button>
+                              <hr className="cf-edit-only" />
+                              <button className="cf-edit-only" style={{ color: 'var(--danger)' }} title="Линии и фигуры; карточки останутся"
+                                      onClick={() => { setBoardMenu(false); setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }}); }}>
+                                <Icons.Trash/> Очистить рисунок
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -15038,14 +15096,18 @@
                                           на строку — у группы из двенадцати это полсотни.
                                           Нажатие по строке открывает поля, уход фокуса — закрывает.
                                           Сведения при этом видны всегда: прячем ручки правки,
-                                          а не телефон, по которому звонят с площадки. */}
+                                          а не телефон, по которому звонят с площадки.
+                                          Уход фокуса — С ЗАДЕРЖКОЙ 200 мс и проверкой, где
+                                          курсор сейчас: на iPad кнопка фокус не берёт, и
+                                          корзина в строке закрывалась бы раньше, чем до неё
+                                          дошло нажатие (relatedTarget там пустой). */}
                                       {crew.map(c => {
                                         const ed = !READ_ONLY && crewEdit === c.id;
                                         const cell = (v, ph) => v ? v : <span style={{ opacity: .4 }}>{ph}</span>;
                                         return (
                                         <tr key={c.id} className="hover:bg-[var(--raised)] transition-colors" style={{ cursor: ed || READ_ONLY ? 'auto' : 'pointer' }}
                                             onClick={() => { if (!READ_ONLY && !ed) setCrewEdit(c.id); }}
-                                            onBlur={(e) => { if (ed && !e.currentTarget.contains(e.relatedTarget)) setCrewEdit(null); }}>
+                                            onBlur={(e) => { if (!ed) return; const node = e.currentTarget; setTimeout(() => { if (!node.contains(document.activeElement)) setCrewEdit(x => x === c.id ? null : x); }, 200); }}>
                                           {ed ? (<React.Fragment>
                                           <td className="p-2"><input autoFocus type="text" value={c.name} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,name:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-white focus:outline-none font-bold placeholder-zinc-600" placeholder="ФИО" /></td>
                                           <td className="p-2"><input type="text" value={c.role} onChange={e => { const up = crew.map(cr=>cr.id===c.id?{...cr,role:e.target.value}:cr); setCrew(up); syncDoc('crew', c.id, up.find(cr=>cr.id===c.id)); }} className="bg-transparent w-full px-3 py-2 text-zinc-400 font-medium focus:outline-none placeholder-zinc-600" placeholder="Роль" /></td>
