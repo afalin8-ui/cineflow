@@ -92,6 +92,15 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
+  // ВИДЕО И ЗВУК ИДУТ МИМО КЭША. Плеер ходит частичными запросами
+  // (заголовок Range), а caches.match заголовок Range не различает и
+  // отдал бы на такой запрос ПОЛНЫЙ ответ из кэша — Safari на iPad
+  // такое видео не играет вовсе, Chrome на столе разработчика прощает,
+  // и на стенде беды не видно. Вдобавок ответ на весь ролик (сотни МБ)
+  // лёг бы в APP_CACHE, а частичный ответ 206 cache.put отвергает
+  // с ошибкой. Поэтому без respondWith: браузер сам сходит в сеть.
+  if (req.headers.has('range') || req.destination === 'video' || req.destination === 'audio') return;
+
   let url;
   try { url = new URL(req.url); } catch (e) { return; }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
