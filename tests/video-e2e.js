@@ -106,6 +106,10 @@ const expect = (name, ok, info) => { log((ok ? '  ok  ' : '  FAIL') + ' ' + name
       isImage: [isImageFile(mk('a.heic', '')), isImageFile(mk('a.mov', 'video/quicktime'))],
       fmtDur: [fmtDur(42), fmtDur(725), fmtDur(3790)],
       cloudName: [cloudFileName('r', 'clip.MOV'), cloudFileName('r', 'Вставлено', 'video/quicktime'), cloudFileName('r', 'x', '')],
+      clipName: [cloudClipName('ref1', 'IMG_4821.MOV', 'video/quicktime'), cloudClipName('ref1', 'Съёмка двора.mp4', 'video/mp4')],
+      dlUrl: [cloudDownloadUrl({ full: 'https://www.dropbox.com/scl/fi/abc/clip.mov?rlkey=r&raw=1', cloud: { provider: 'dropbox' } }, ''),
+              cloudDownloadUrl({ full: 'https://disk.yandex.ru/i/abc', cloud: { provider: 'yandex' }, url: 'data:image/jpeg;base64,zzz' }, 'https://downloader.disk.yandex.ru/x'),
+              cloudDownloadUrl({ full: '', url: 'data:image/jpeg;base64,zzz' }, '')],
       codec: await mp4CodecOf(mp4),
       blankLen: blankPoster('x.mov', 16 / 9).length
     };
@@ -114,6 +118,10 @@ const expect = (name, ok, info) => { log((ok ? '  ok  ' : '  FAIL') + ' ' + name
   expect('isImageFile', JSON.stringify(unit.isImage) === '[true,false]');
   expect('fmtDur', JSON.stringify(unit.fmtDur) === '["0:42","12:05","1:03:10"]', JSON.stringify(unit.fmtDur));
   expect('cloudFileName с расширением по типу', JSON.stringify(unit.cloudName) === '["r.mov","r.mov","r.jpg"]', JSON.stringify(unit.cloudName));
+  expect('имя ролика в облаке несёт настоящее имя файла', JSON.stringify(unit.clipName) === '["IMG_4821-ref1.mov","ref1.mp4"]', JSON.stringify(unit.clipName));
+  expect('адрес скачивания: Dropbox с dl=1, Яндекс — прямой, без ролика — пусто',
+    /[?&]dl=1/.test(unit.dlUrl[0]) && !/raw=1/.test(unit.dlUrl[0])
+    && unit.dlUrl[1] === 'https://downloader.disk.yandex.ru/x' && unit.dlUrl[2] === '', JSON.stringify(unit.dlUrl));
   expect('mp4CodecOf читает hvc1 из stsd', unit.codec && unit.codec.video === 'hvc1', JSON.stringify(unit.codec));
   expect('blankPoster рисуется', unit.blankLen > 3000, String(unit.blankLen));
 
@@ -170,6 +178,44 @@ const expect = (name, ok, info) => { log((ok ? '  ok  ' : '  FAIL') + ' ' + name
   const lb = await page.evaluate(() => { const v = document.querySelector('video'); return { hasVideo: !!v, src: v ? (v.currentSrc || v.getAttribute('src') || '') : '', controls: v ? v.controls : null, playsInline: v ? v.playsInline : null, still: !!Array.from(document.querySelectorAll('button')).find(b => /Стоп-кадр/.test(b.textContent)) }; });
   expect('в просмотре штатный плеер с адресом из облака', lb.hasVideo && lb.controls && lb.playsInline && /raw=1/.test(lb.src), JSON.stringify(lb));
   expect('кнопка «Стоп-кадр» на месте', lb.still);
+
+  // Меню стоп-кадра: действия ролика стоят одной колонкой со «Скачать»,
+  // и проверять надо не «видно ли меню», а попадает ли нажатие в строку.
+  await page.click('button:has-text("Стоп-кадр")');
+  await page.waitForTimeout(400);
+  const menu = await page.evaluate(() => {
+    const row = Array.from(document.querySelectorAll('button')).find(b => /В референсы, рядом с видео/.test(b.textContent));
+    if (!row) return { found: false };
+    const r = row.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return { found: true, hits: !!(hit && (hit === row || row.contains(hit))), rect: [Math.round(r.left), Math.round(r.top)] };
+  });
+  expect('строки меню стоп-кадра нажимаются', menu.found && menu.hits, JSON.stringify(menu));
+  await page.click('button:has-text("Стоп-кадр")');
+  await page.waitForTimeout(300);
+
+  // СКАЧАТЬ. Проверяем не «есть ли ссылка», а попадает ли нажатие именно
+  // в неё (elementFromPoint) — и на телефоне тоже: раньше кнопка стояла
+  // под условием cantPlay и на телефоне не показывалась вовсе.
+  const dl = async () => await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll('a')).find(x => /Скачать/.test(x.textContent));
+    if (!a) return { found: false };
+    const r = a.getBoundingClientRect();
+    const cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+    const hit = document.elementFromPoint(cx, cy);
+    return { found: true, href: a.href, inside: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight,
+             hits: !!(hit && (hit === a || a.contains(hit))), rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width)] };
+  });
+  const wide = await dl();
+  expect('«Скачать» у играющего ролика: есть, попадает нажатием, адрес вложением',
+    wide.found && wide.hits && wide.inside && /[?&]dl=1/.test(wide.href) && !/raw=1/.test(wide.href), JSON.stringify(wide));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(700);
+  const phone = await dl();
+  expect('«Скачать» на телефоне: в экране и попадает нажатием', phone.found && phone.hits && phone.inside, JSON.stringify(phone));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(400);
   expect('ошибок страницы нет', errors.length === 0, errors.join(' | '));
 
   await browser.close();

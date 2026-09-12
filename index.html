@@ -1586,6 +1586,23 @@
             .replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 40);
           return `${base ? base + '-' : ''}${id}.${ext}`;
         };
+        // Имя РОЛИКА в облаке. Ролики, в отличие от фотографий, скачивают
+        // РУКАМИ — на телефон в фотоплёнку, на компьютер монтажёру, — а
+        // браузер сохранит файл ровно под тем именем, под которым он лежит
+        // в облаке (заменить его на своё сторона-получатель не может:
+        // атрибут download на чужой адрес не действует). «ref-1757….mov»
+        // в загрузках потом не найти, поэтому латиница из настоящего имени
+        // остаётся — то же правило, что у файлов проекта. А расширение
+        // по-прежнему даёт cloudFileName по ТИПУ файла: ролик под чужим
+        // расширением облако отдаст с чужим типом, и Safari его не заиграет.
+        const cloudClipName = (refId, original, mime) => {
+          const tail = cloudFileName(refId, original, mime);
+          const s = String(original || '');
+          const dot = s.lastIndexOf('.');
+          const base = (dot > 0 ? s.slice(0, dot) : s)
+            .replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 40);
+          return base ? `${base}-${tail}` : tail;
+        };
         // Заголовок HTTP не пропускает буквы вне ASCII — Dropbox требует
         // экранировать их прямо в JSON.
         const asciiJSON = (obj) => JSON.stringify(obj)
@@ -1679,6 +1696,19 @@
             const u = new URL(url);
             u.searchParams.delete('dl');
             u.searchParams.set('raw', '1');
+            return u.toString();
+          } catch (e) { return String(url); }
+        };
+        // ТА ЖЕ ссылка с dl=1 отдаёт файл ВЛОЖЕНИЕМ — и это единственный
+        // способ скачать ролик на телефон. С raw=1 Safari просто заиграет
+        // его во вкладке, и сохранить оттуда нечего; с dl=1 приходит
+        // Content-Disposition: attachment, и телефон кладёт файл в «Файлы».
+        // Тот же разбор адреса, а не вырезание строкой, и по той же причине.
+        const dropboxDl = (url) => {
+          try {
+            const u = new URL(url);
+            u.searchParams.delete('raw');
+            u.searchParams.set('dl', '1');
             return u.toString();
           } catch (e) { return String(url); }
         };
@@ -2067,6 +2097,22 @@
             if (href) { ydCache.set(full, href); return href; }
           } catch (e) { console.warn('Яндекс.Диск: не удалось получить прямую ссылку', e); }
           return ref.url || full;
+        };
+        // АДРЕС «СКАЧАТЬ». Отличается от адреса показа, и путать их нельзя:
+        // показ должен идти потоком (плеер ходит за файлом по кускам),
+        // а скачивание обязано прийти вложением, иначе телефон открывает
+        // ролик во вкладке и сохранить его оттуда нечем. Отсюда и жалоба
+        // «компьютер даёт скачать, телефон нет»: на компьютере ссылка
+        // показывалась только там, где ролик не играется вовсе.
+        //   Dropbox — своя ссылка с dl=1;
+        //   Яндекс — одноразовый адрес из cloudDirectUrl, он УЖЕ вложение;
+        //   Nextcloud — публичная ссылка кончается на /download, тоже вложение.
+        // playUrl — уже посчитанный адрес показа, чтобы не спрашивать Яндекс
+        // второй раз: у него ответ живёт недолго.
+        const cloudDownloadUrl = (ref, playUrl) => {
+          const full = (ref && ref.full) || '';
+          if (((ref || {}).cloud || {}).provider === 'dropbox' && full) return dropboxDl(full);
+          return playUrl || full || '';
         };
 
         // =====================================================================
@@ -3124,7 +3170,7 @@
         };
 
         const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano, onSetLabel,
-                            onStill, onResend, onReload, onProxy, videoStateOf, sceneOf }) => {
+                            onStill, onResend, onReload, onProxy, videoStateOf, sceneOf, onToast }) => {
             const [currentId, setCurrentId] = useState(initialId);
             const currentIndex = refs.findIndex(r => r.id === currentId);
             const currentRef = refs[currentIndex];
@@ -3296,6 +3342,13 @@
             const vst = isVideo ? (videoStateOf ? videoStateOf(currentRef) : (currentRef.full ? 'ok' : 'missing')) : '';
             const cantPlay = isVideo && isHevc(currentRef.codec) && !canPlayHevc() && !currentRef.proxy;
             const videoSrc = isVideo ? (useProxy ? proxyUrl : bigUrl) : '';
+            // Адрес для скачивания: вложение, а не поток (см. cloudDownloadUrl).
+            // bigUrl передаём затем, что у Яндекса он и есть готовый
+            // одноразовый адрес — второй раз его лучше не спрашивать.
+            // Проверка на full обязательна: у видео, которое не уехало
+            // в облако, в url лежит ПОСТЕР — и кнопка скачала бы картинку
+            // вместо ролика. Для такого случая рядом стоит «Повторить отправку».
+            const dlUrl = isVideo && currentRef.full ? cloudDownloadUrl(currentRef, bigUrl) : '';
             const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
             const sceneHint = isVideo && sceneOf ? sceneOf(currentRef) : null;
             const onVideoError = () => {
@@ -3331,10 +3384,47 @@
                             360°
                         </button>
                     )}
-                    {/* СТОП-КАДР: остановленный кадр уходит в референсы рядом с
-                        роликом или в раскадровку сцены. Это запись — cf-edit-only. */}
-                    {isVideo && onStill && vst === 'ok' && !cantPlay && (
-                        <div className={'cf-edit-only absolute top-6 left-6 z-20 flex flex-col items-start gap-2 ' + chromeCls}>
+                    {/* ДЕЙСТВИЯ РОЛИКА — столбиком в левом верхнем углу, а НЕ
+                        в нижней полосе. Замер на телефоне 390: у ролика на
+                        час нижняя полоса выносит кнопку на 572 точки, то есть
+                        далеко за край экрана, и нажатие в неё не попадает
+                        вовсе (elementFromPoint отдаёт пустоту). Здесь тесно
+                        не бывает: колонка своя и только у видео.
+                        Отступ сверху — с вставкой --sat: абсолютно
+                        расположенный слой про чёлку сам не знает, и на
+                        установленном приложении кнопка уехала бы под часы. */}
+                    {isVideo && (dlUrl || (onStill && vst === 'ok' && !cantPlay)) && (
+                      <div className={'absolute z-20 flex flex-col items-start gap-2 ' + chromeCls}
+                           style={{ top: 'calc(24px + var(--sat))', left: 24 }}>
+                        {/* СКАЧАТЬ РОЛИК — у КАЖДОГО видео, а не только там, где
+                            он не играется. Раньше кнопка стояла под условием
+                            cantPlay, то есть появлялась ровно на компьютере без
+                            декодера HEVC, а с телефона забрать ролик в фотоплёнку
+                            или отдать монтажёру было нечем.
+                            Адрес НЕ тот же, что у плеера: показ идёт потоком,
+                            а скачивание обязано прийти вложением (см.
+                            cloudDownloadUrl) — иначе телефон просто заиграет
+                            ролик во вкладке, и сохранить оттуда нечего.
+                            Пометки cf-edit-only тут нет намеренно: скачать —
+                            это чтение, и гостю по ссылке нужно не меньше. */}
+                        {dlUrl && (
+                            <a href={dlUrl} target="_blank" rel="noopener"
+                               onClick={() => { if (touchUI.current && onToast) onToast('Ролик скачивается. Он ляжет в «Файлы» → «Загрузки», оттуда «Поделиться → Сохранить видео» кладёт его в фотоплёнку'); }}
+                               title={cantPlay
+                                 ? 'Ролик не играется в этом браузере — скачайте файл и откройте плеером'
+                                 : 'Скачать ролик целиком: на телефоне он ляжет в «Файлы», на компьютере в «Загрузки»'}
+                               className="rounded-full px-3 flex items-center gap-1.5"
+                               style={{ background: cantPlay ? 'var(--accent)' : 'rgba(255,255,255,.08)',
+                                        color: cantPlay ? 'var(--bg)' : 'var(--text)',
+                                        border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 700,
+                                        minHeight: 'var(--tap)', textDecoration: 'none' }}>
+                                ⬇ Скачать{currentRef.size ? ` · ${fmtMB(currentRef.size)}` : ''}
+                            </a>
+                        )}
+                        {/* СТОП-КАДР: остановленный кадр уходит в референсы рядом с
+                            роликом или в раскадровку сцены. Это запись — cf-edit-only. */}
+                        {onStill && vst === 'ok' && !cantPlay && (
+                          <div className="cf-edit-only flex flex-col items-start gap-2">
                             <button onClick={(e) => { e.stopPropagation(); setStillMenu(v => !v); }} disabled={stillBusy || !videoSrc}
                                     className="rounded-full px-3 py-1.5 flex items-center gap-1.5"
                                     style={{ background: stillMenu ? 'var(--accent)' : 'rgba(255,255,255,.08)', color: stillMenu ? 'var(--bg)' : 'var(--text)',
@@ -3360,7 +3450,9 @@
                                     ))}
                                 </div>
                             )}
-                        </div>
+                          </div>
+                        )}
+                      </div>
                     )}
                     <div className="relative w-full h-full flex justify-center items-center max-w-[95vw] max-h-[95vh]"
                          style={isVideo ? { paddingBottom: 56 } : undefined}>
@@ -3439,8 +3531,16 @@
                             <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
                                   style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
                                 ▶ {fmtDur(currentRef.dur)}
-                                {currentRef.size ? ` · ${fmtMB(currentRef.size)}` : ''}
-                                {codecLabel(currentRef.codec) ? ` · ${codecLabel(currentRef.codec)}` : ''}
+                                {/* Вес и кодек — только на широком экране. Замер на
+                                    телефоне 390: с ними полоса разрасталась до 388
+                                    точек и выносила поле подписи на 475-ю, то есть
+                                    назвать ролик с телефона было нечем. Вес при
+                                    этом не пропал — он написан на кнопке «Скачать»,
+                                    где как раз и нужен. */}
+                                <span className="hidden sm:inline">
+                                  {currentRef.size ? ` · ${fmtMB(currentRef.size)}` : ''}
+                                  {codecLabel(currentRef.codec) ? ` · ${codecLabel(currentRef.codec)}` : ''}
+                                </span>
                                 {useProxy && <span style={{ color: 'var(--muted-2)' }}> · копия{currentRef.proxySilent ? ' без звука' : ''}</span>}
                                 {vState === 'loading' && <span style={{ color: 'var(--muted-2)' }}> · загружается…</span>}
                                 {vState === 'error' && <span style={{ color: '#e08a7c' }}> · облако не отдало ролик</span>}
@@ -3463,11 +3563,6 @@
                             <button onClick={() => onProxy(currentRef)} title="Копия в H.264: откроется и там, где HEVC не читают"
                                     className="cf-edit-only glass-panel rounded-full px-3 py-1.5 text-xs font-bold shrink-0 whitespace-nowrap"
                                     style={{ color: 'var(--text-2)' }}>Копия для Windows</button>
-                        )}
-                        {isVideo && cantPlay && (bigUrl || currentRef.full) && (
-                            <a href={bigUrl || currentRef.full} target="_blank" rel="noopener"
-                               className="glass-panel rounded-full px-3 py-1.5 text-xs font-bold shrink-0 whitespace-nowrap"
-                               style={{ color: 'var(--text)' }}>Скачать файл</a>
                         )}
                         {isPano && (
                             <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap"
@@ -9763,7 +9858,9 @@
                   lastTick = now;
                   showToast(`${cloud}: отправляю видео · ${fmtMB(sent)} из ${fmtMB(total)}`);
                 } : null;
-                const { full, path } = await cloudUpload(cfg, file, cloudFileName(ref.id, file.name, file.type), onProgress);
+                const cloudName = isV ? cloudClipName(ref.id, file.name, file.type)
+                                      : cloudFileName(ref.id, file.name, file.type);
+                const { full, path } = await cloudUpload(cfg, file, cloudName, onProgress);
                 setReferences(prev => {
                   const up = prev.map(r => r.id === ref.id ? { ...r, full, cloud: { provider: cfg.provider, path } } : r);
                   const t = up.find(r => r.id === ref.id);
@@ -17131,7 +17228,7 @@
                                    hints={tagHints} onAddTag={addTagTo} onRemoveTag={removeTagFrom}
                                    onSetPano={setRefPano} onSetLabel={setRefLabel}
                                    onStill={stillFromVideo} onResend={resendVideo} onReload={reloadVideoInto} onProxy={requestProxy}
-                                   videoStateOf={videoState}
+                                   videoStateOf={videoState} onToast={showToast}
                                    sceneOf={(r) => scenes.find(s => s.id === (lightboxData.sceneId || (r && r.sceneId) || activeSceneId)) || null} />;
               })()}
 
