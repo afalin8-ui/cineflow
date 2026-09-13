@@ -1,8 +1,14 @@
 # Тестовая версия «на посмотреть» — подпапкой, не трогая рабочее приложение.
 #
-# Зачем отдельная папка: проверить видео надо на iPad и iPhone, с живым
-# Dropbox и настоящим роликом с камеры, а рабочий адрес при этом должен
-# остаться прежним — по нему работает группа. Так уже делали с /proba/.
+# Зачем отдельная папка: проверить надо на iPad и iPhone, с живой камерой,
+# настоящим компасом и живым Dropbox, а рабочий адрес при этом должен
+# остаться прежним — по нему работает группа. Так делали с /proba/,
+# потом с /video/, теперь со /skaut/.
+#
+# СКРИПТ ОДИН НА ВСЕ ТАКИЕ ПАПКИ, и вторую копию его заводить нельзя:
+# она разошлась бы с первой при первой же правке, а заметно это стало бы
+# ровно тогда, когда копия молча поделила кэши с рабочим адресом.
+# Что у папки своё, задаётся ключами --dir и --label.
 #
 # Что важно и не видно на глаз: приложение и его копия лежат на ОДНОМ
 # адресе сайта, значит у них общий Cache Storage. Скопировав service
@@ -14,7 +20,7 @@
 #
 # Что ОБЩЕЕ и это намеренно: комната, localStorage и ключи облака. Копия
 # открывает ТОТ ЖЕ проект и ТО ЖЕ хранилище — подключать заново нечего,
-# а пробные ролики потом удаляются как обычные референсы.
+# а пробные снимки потом удаляются как обычные референсы.
 #
 # ПАПКУ НЕЛЬЗЯ ПРОСТО УДАЛИТЬ, когда проверка кончилась. У копии свой
 # service worker, и у того, кто поставил её на домашний экран, он остался
@@ -24,21 +30,30 @@
 # в рабочее приложение. Так закрыта папка /video/ — можно взять за образец.
 #
 # Запуск из корня репозитория:
-#   python3 build-video.py                       — из файлов рядом
-#   python3 build-video.py --ref <ветка>         — из файлов ветки
+#   python3 build-preview.py --dir skaut --label скаут --ref <ветка>
+#   python3 build-preview.py --dir skaut --label скаут   — из файлов рядом
 #
-# Второй вид нужен затем, что папку кладут на master (её отдаёт Pages),
-# а само видео живёт в ветке: собирать «из того, что рядом», стоя
-# на master, значило бы выложить копию БЕЗ видео и не заметить этого.
+# Ключ --ref нужен затем, что папку кладут на master (её отдаёт Pages),
+# а проверяемое живёт в ветке: собирать «из того, что рядом», стоя
+# на master, значило бы выложить копию БЕЗ того, что проверяем,
+# и не заметить этого.
 import io, os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DST = os.path.join(ROOT, 'video')
-NAME = 'CineFlow · видео'
-FAMILY = 'cineflow-video'
-REF = ''
-if '--ref' in sys.argv:
-    REF = sys.argv[sys.argv.index('--ref') + 1]
+
+def arg(key, default=''):
+    return sys.argv[sys.argv.index(key) + 1] if key in sys.argv else default
+
+# Имя папки задаёт и адрес копии, и род имён её кэшей: держать их
+# в разных местах значило бы однажды рассинхронить и снести кэш корня.
+DIR = arg('--dir', 'video')
+LABEL = arg('--label', DIR)
+REF = arg('--ref')
+DST = os.path.join(ROOT, DIR)
+NAME = f'CineFlow · {LABEL}'
+FAMILY = f'cineflow-{DIR}'
+BUILD_CACHE = f'cf-app-build-{DIR}'
+SHORT = f'CF {LABEL}'[:12]
 
 def read(p):
     if REF:
@@ -54,7 +69,7 @@ changes = []
 
 def must(cond, what):
     if not cond:
-        print('build-video: не нашлось — ' + what)
+        print('build-preview: не нашлось — ' + what)
         sys.exit(1)
     changes.append(what)
 
@@ -76,25 +91,27 @@ must(app != before, 'заголовок со счётчиком чата')
 
 # Свой кэш собранного кода (см. вводный комментарий).
 before = app
-app = app.replace("var CACHE = 'cf-app-build';", "var CACHE = 'cf-app-build-video';", 1)
+app = app.replace("var CACHE = 'cf-app-build';", f"var CACHE = '{BUILD_CACHE}';", 1)
 must(app != before, 'кэш собранного кода')
 
 # Метка «это тестовая версия». Внизу по центру, мимо пальца и мимо
 # мини-карты доски (правый низ) и панели инструментов (лево). На телефоне
 # не показывается вовсе: там внизу таб-бар, и место дороже подписи.
-mark = """
-      /* ТЕСТОВАЯ ВЕРСИЯ (подпапка /video/). Метка нужна затем, что копия
+mark = f"""
+      /* ТЕСТОВАЯ ВЕРСИЯ (подпапка /{DIR}/). Метка нужна затем, что копия
          открывает тот же проект, что и рабочий адрес: без неё человек
          не знает, где он. Нажатий не ловит и на телефоне скрыта. */
-      body::after {
-        content: 'видео · тестовая версия';
+      body::after {{
+        content: '{LABEL} · тестовая версия';
         position: fixed; left: 50%; transform: translateX(-50%); bottom: 2px;
         z-index: 90; pointer-events: none; opacity: .5;
         font: 700 8.5px/1 var(--font-mono); letter-spacing: .1em;
         color: var(--accent); background: var(--bg);
         border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px;
-      }
-      @media (max-width: 699px) { body::after { display: none } }
+      }}
+      /* Порог тот же, что у телефонной раскладки (--- 768), а не 699:
+         в щели между ними метка легла бы поверх таб-бара. */
+      @media (max-width: 767px) {{ body::after {{ display: none }} }}
     </style>"""
 before = app
 app = app.replace('\n    </style>', mark, 1)
@@ -132,7 +149,7 @@ write('sw.js', sw)
 man = read('manifest.webmanifest')
 before = man
 man = man.replace('"name": "CineFlow Prep"', f'"name": "{NAME} (тест)"', 1)
-man = man.replace('"short_name": "CineFlow"', '"short_name": "CF видео"', 1)
+man = man.replace('"short_name": "CineFlow"', f'"short_name": "{SHORT}"', 1)
 must(man != before, 'название в манифесте')
 write('manifest.webmanifest', man)
 
