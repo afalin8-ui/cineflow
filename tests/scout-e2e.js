@@ -336,11 +336,12 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     };
   });
   expect('камера отдала кадр', ar.video, `${ar.vw}×${ar.vh}`);
-  expect('по горизонтали кадр НЕ срезан — на этом держится вся накладка',
-         ar.fill && ar.fill.vidW <= ar.fill.boxW + 1, JSON.stringify(ar.fill));
-  expect('и картинка заполняет ширину, а не сидит полоской посередине',
-         ar.fill && ar.fill.vidW > ar.fill.boxW * 0.92,
-         `${ar.fill && ar.fill.vidW} из ${ar.fill && ar.fill.boxW}`);
+  // МЕНЬШЕ, ЧЕМ ЕСТЬ У КАМЕРЫ, НЕ ПОКАЗЫВАЕМ НИКОГДА: увеличение
+  // не бывает меньше единицы, и картинка всегда заполняет ширину —
+  // иначе поток 4:3 сидел бы полоской в 44% ширины экрана.
+  expect('картинка заполняет ширину — увеличение не меньше единицы',
+         ar.fill && ar.fill.vidW >= ar.fill.boxW - 1,
+         `${ar.fill && ar.fill.vidW} при экране ${ar.fill && ar.fill.boxW}`);
   expect('накладка лежит ровно по кадру', ar.overlay && ar.svgW > 0, 'ширина ' + ar.svgW);
   expect('дуга солнца нарисована', ar.polylines >= 1, ar.polylines + ' линий');
   expect('рамка объектива есть', ar.frame, `ширина ${Math.round(ar.frameW)} из ${Math.round(ar.svgW)}`);
@@ -381,7 +382,10 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   await aimAt(page, 180, 90, 0);
   await page.waitForTimeout(300);
 
-  // Рамка обязана СЖИМАТЬСЯ с ростом фокусного и упираться в «шире не покажу»
+  // РАМКА СТОИТ НА МЕСТЕ, А КАРТИНКА ЗУМИТСЯ — как во всяком визире
+  // режиссёра и как у Cadrage: в визир СМОТРЯТ, как в объектив. Раньше
+  // было наоборот, картинка стояла и менялась рамочка, и от нажатия «+»
+  // кадр не приближался вовсе.
   const setLens = (mm) => page.evaluate(async (mm) => {
     // Число читаем МЕТКОЙ, а не разбором текста кнопки: «35» и «мм»
     // лежат в разных строчках, и текст у неё слитный.
@@ -394,16 +398,41 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     await new Promise(r => setTimeout(r, 250));
     const svg = document.querySelector('[data-cf="scout-ar"]');
     const f = svg.querySelector('[data-cf="scout-frame"]');
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const box = document.querySelector('[data-cf="scout-cam"]');
     return { lens: cur(), w: f ? +f.getAttribute('width') : 0,
              wide: !!(f && f.getAttribute('data-wide')),
              arrows: svg.querySelectorAll('[data-cf="scout-wide-arrow"]').length,
-             svgW: +svg.getAttribute('viewBox').split(' ')[2] };
+             svgW: +svg.getAttribute('viewBox').split(' ')[2],
+             // во сколько раз картинка увеличена против ширины экрана
+             zoom: v ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0,
+             // и какую долю ЭКРАНА занимает рамка — она обязана стоять
+             frameOfScreen: f && v
+               ? (+f.getAttribute('width')) * (v.getBoundingClientRect().width / (+svg.getAttribute('viewBox').split(' ')[2]))
+                 / box.getBoundingClientRect().width : 0 };
   }, mm);
   const r100 = await setLens(100), r35 = await setLens(35), r12 = await setLens(12);
-  expect('100 мм даёт рамку уже, чем 35 мм', r100.lens === 100 && r35.lens === 35 && r100.w < r35.w,
-         `${Math.round(r100.w)} против ${Math.round(r35.w)} точек`);
+  expect('«+» ПРИБЛИЖАЕТ: 100 мм увеличивает картинку сильнее, чем 35 мм',
+         r100.lens === 100 && r35.lens === 35 && r100.zoom > r35.zoom * 1.5,
+         `${r35.zoom.toFixed(2)}× на 35 мм против ${r100.zoom.toFixed(2)}× на 100 мм`);
+  expect('а рамка при этом СТОИТ НА МЕСТЕ',
+         Math.abs(r100.frameOfScreen - r35.frameOfScreen) < 0.02 && r35.frameOfScreen > 0.8,
+         `${(r35.frameOfScreen * 100).toFixed(0)}% и ${(r100.frameOfScreen * 100).toFixed(0)}% ширины экрана`);
   expect('12 мм ШИРЕ камеры — рамка пунктиром и стрелки наружу',
          r12.lens === 12 && r12.wide && r12.arrows >= 2, `пунктир=${r12.wide}, стрелок=${r12.arrows}`);
+  // РАМКА ОБЯЗАНА БЫТЬ ВИДНА ЦЕЛИКОМ на любом объективе: увеличили
+  // картинку так, что её края ушли за экран, — и выбирать стало нечем.
+  const fits = await page.evaluate(() => {
+    const box = document.querySelector('[data-cf="scout-cam"]').getBoundingClientRect();
+    const svg = document.querySelector('[data-cf="scout-ar"]').getBoundingClientRect();
+    const f = document.querySelector('[data-cf="scout-frame"]');
+    const vb = +document.querySelector('[data-cf="scout-ar"]').getAttribute('viewBox').split(' ')[2];
+    const k = svg.width / vb;
+    const w = (+f.getAttribute('width')) * k, h = (+f.getAttribute('height')) * k;
+    return { w: Math.round(w), h: Math.round(h), bw: Math.round(box.width), bh: Math.round(box.height) };
+  });
+  expect('рамка целиком помещается на экране',
+         fits.w <= fits.bw + 1 && fits.h <= fits.bh + 1, JSON.stringify(fits));
   await setLens(35);
 
   // ------------------------------------- 3б. КАДР ЗАНИМАЕТ ЭКРАН ЦЕЛИКОМ
@@ -562,9 +591,12 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   log('\n4б. Пресеты камер устройств');
   const presets = await page.evaluate(async () => {
     const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    // Мерим УВЕЛИЧЕНИЕ картинки: рамка теперь стоит на месте, а зумится
+    // изображение — от смены камеры устройства меняется именно оно.
     const frameW = () => {
-      const f = document.querySelector('[data-cf="scout-frame"]');
-      return f ? +f.getAttribute('width') : 0;
+      const v = document.querySelector('[data-cf="scout-cam"] video');
+      const box = document.querySelector('[data-cf="scout-cam"]');
+      return (v && box) ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0;
     };
     document.querySelector('[data-cf="scout-setup"]').click();
     await wait(450);
@@ -612,9 +644,9 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
          `обычный ${presets.lensesIphone.join('/')} · Pro ${presets.lensesPro.join('/')}`);
   expect('у Pro объективов больше', presets.lensesPro.length > presets.lensesIphone.length,
          `${presets.lensesPro.length} против ${presets.lensesIphone.length}`);
-  expect('сверхширокая ДЕЛАЕТ рамку заметно меньше — обзор-то шире',
-         presets.wUw > 0 && presets.wMain > 0 && presets.wUw < presets.wMain * 0.75,
-         `${Math.round(presets.wMain)} -> ${Math.round(presets.wUw)} точек`);
+  expect('сверхширокая ЗАСТАВЛЯЕТ ПРИБЛИЖАТЬ сильнее — обзор-то шире',
+         presets.wUw > 0 && presets.wMain > 0 && presets.wUw > presets.wMain * 1.3,
+         `увеличение ${presets.wMain.toFixed(2)}× -> ${presets.wUw.toFixed(2)}×`);
   expect('подгонка шагает на полмиллиметра', near(presets.after - presets.before, 0.5, 0.01),
          `${presets.before} -> ${presets.after} мм`);
   expect('выбор устройства запомнился', presets.device === 'ipro', presets.device);
@@ -661,17 +693,18 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   // а вот какую долю экрана займёт эта рамка, зависит от обзора САМОГО
   // телефона. Спросить его нечем ни одним способом: Safari отдаёт странице
   // свой пресет съёмки. Поэтому обзор подвижен — щипком прямо по кадру.
-  log('\n4д. Крупность: обзор телефона сводится щипком');
+  log('\n4д. Щипок меняет ОБЪЕКТИВ, а не подгонку обзора');
   const pinch = await page.evaluate(async () => {
     const box = document.querySelector('[data-cf="scout-cam"]');
-    const fw = () => { const f = document.querySelector('[data-cf="scout-frame"]');
-                       return f ? +f.getAttribute('width') : 0; };
-    const eq = () => +(localStorage.getItem('cf_scout_deveq'));
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const fw = () => v.getBoundingClientRect().width / box.getBoundingClientRect().width;
+    const eq = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
     const ev = (type, id, x, y) => box.dispatchEvent(new PointerEvent(type, {
       pointerId: id, clientX: x, clientY: y, pointerType: 'touch', bubbles: true, cancelable: true }));
     const r = box.getBoundingClientRect();
     const cy = r.top + r.height / 2, cx = r.left + r.width / 2;
     const was = { eq: eq(), w: fw() };
+    const devEq0 = +(localStorage.getItem('cf_scout_deveq'));
     // Разводим пальцы вдвое — рамка обязана вырасти
     ev('pointerdown', 11, cx - 100, cy); ev('pointerdown', 12, cx + 100, cy);
     await new Promise(t => setTimeout(t, 60));
@@ -680,7 +713,7 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     const wide = { eq: eq(), w: fw() };
     ev('pointerup', 11, cx - 200, cy); ev('pointerup', 12, cx + 200, cy);
     await new Promise(t => setTimeout(t, 250));
-    const kept = { eq: eq(), map: JSON.parse(localStorage.getItem('cf_scout_eqmap') || '{}') };
+    const kept = { eq: eq(), devEq: +(localStorage.getItem('cf_scout_deveq')) };
     // И обратно, чтобы дальше всё было как было
     ev('pointerdown', 13, cx - 200, cy); ev('pointerdown', 14, cx + 200, cy);
     await new Promise(t => setTimeout(t, 60));
@@ -688,25 +721,27 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     await new Promise(t => setTimeout(t, 350));
     ev('pointerup', 13, cx - 100, cy); ev('pointerup', 14, cx + 100, cy);
     await new Promise(t => setTimeout(t, 250));
-    return { was, wide, kept, back: { eq: eq(), w: fw() } };
+    return { was, wide, kept, devEq0, back: { eq: eq(), w: fw() } };
   });
-  expect('щипок меняет обзор устройства', pinch.wide.eq > pinch.was.eq * 1.5,
+  expect('развели пальцы — объектив стал длиннее', pinch.wide.eq > pinch.was.eq,
          `${pinch.was.eq} → ${pinch.wide.eq} мм`);
-  expect('и рамка от этого РАСТЁТ — развели пальцы, стало крупнее',
-         pinch.wide.w > pinch.was.w * 1.5, `${Math.round(pinch.was.w)} → ${Math.round(pinch.wide.w)} точек`);
-  expect('число запомнилось за этой камерой',
-         Object.values(pinch.kept.map).some(v => Math.abs(v - pinch.wide.eq) < 0.6),
-         JSON.stringify(pinch.kept.map));
-  expect('сведение обратимо — свели пальцы, вернулось',
-         Math.abs(pinch.back.eq - pinch.was.eq) < pinch.was.eq * 0.15,
-         `${pinch.wide.eq} → ${pinch.back.eq} мм`);
+  expect('и картинка от этого ПРИБЛИЗИЛАСЬ',
+         pinch.wide.w > pinch.was.w * 1.2, `${pinch.was.w.toFixed(2)}× → ${pinch.wide.w.toFixed(2)}×`);
+  // ПОДГОНКУ ОБЗОРА ЩИПОК НЕ ТРОГАЕТ. Она вещь однократная и тонкая,
+  // а жест, который легко сделать случайно, молча уводил её в сторону —
+  // это и было «при первом открытии всё ок, а потом крупность уезжает».
+  expect('а подгонка обзора устройства НЕ тронута',
+         Math.abs(pinch.kept.devEq - pinch.devEq0) < 0.01,
+         `${pinch.devEq0} → ${pinch.kept.devEq} мм`);
+  expect('свели пальцы — объектив вернулся',
+         pinch.back.eq <= pinch.was.eq + 0.01, `${pinch.wide.eq} → ${pinch.back.eq} мм`);
   // ЗАСТРЯВШИЙ ПАЛЕЦ НЕ ДОЛЖЕН ПРЕВРАЩАТЬ КАСАНИЕ В ЩИПОК. Отпускание
   // изредка теряется, а нажатие по накладке в режиме подкрутки его
   // и не присылает: без подчистки обзор менялся бы сам собой от
   // обычного касания — та же беда, что была у доски.
   const stuck = await page.evaluate(async () => {
     const box = document.querySelector('[data-cf="scout-cam"]');
-    const eq = () => +(localStorage.getItem('cf_scout_deveq'));
+    const eq = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
     const ev = (type, id, x, y) => box.dispatchEvent(new PointerEvent(type, {
       pointerId: id, clientX: x, clientY: y, pointerType: 'touch', bubbles: true, cancelable: true }));
     const r = box.getBoundingClientRect();
@@ -722,8 +757,8 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     await new Promise(t => setTimeout(t, 200));
     return { was, after };
   });
-  expect('одиночное касание рядом с застрявшим пальцем обзор НЕ меняет',
-         Math.abs(stuck.after - stuck.was) < 3, `${stuck.was} → ${stuck.after} мм`);
+  expect('одиночное касание рядом с застрявшим пальцем объектив НЕ меняет',
+         Math.abs(stuck.after - stuck.was) < 0.01, `${stuck.was} → ${stuck.after} мм`);
 
   // --------------------------------------- 4г. СВЕРКА ТОЧКИ ПО КООРДИНАТАМ
   // Объект в списке и место, где мы стоим, расходятся МОЛЧА: переехали
@@ -838,6 +873,16 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     }
     const refs = JSON.parse(localStorage.getItem('cf_references') || '[]');
     const out = { hits, before, after: refs.length, last: refs[refs.length - 1] || null, at: Date.now() };
+    // Доля рамки на ЭКРАНЕ в момент съёмки — с ней потом сверяем снимок
+    (() => {
+      const boxEl = document.querySelector('[data-cf="scout-cam"]');
+      const svgEl = document.querySelector('[data-cf="scout-ar"]');
+      const fEl = document.querySelector('[data-cf="scout-frame"]');
+      if (!boxEl || !svgEl || !fEl) { out.frameOfScreen = 0; return; }
+      const vb = +svgEl.getAttribute('viewBox').split(' ')[2];
+      const k = svgEl.getBoundingClientRect().width / vb;
+      out.frameOfScreen = (+fEl.getAttribute('width')) * k / boxEl.getBoundingClientRect().width;
+    })();
     // РАМКА НА САМОМ СНИМКЕ. Ищем её по цвету: акцентная линия — заметно
     // краснее всего остального, — и смотрим габарит найденного. У рамки
     // он обязан быть пропорции кадра и стоять по центру.
@@ -911,6 +956,12 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
            `центр ${Math.round((bx.l + bx.r) / 2)},${Math.round((bx.t + bx.b) / 2)} при ${bx.w}×${bx.h}`);
     expect('рамка не режет снимок — кадр остаётся целиком',
            fw < bx.w * 0.995, `${Math.round(fw)} из ${bx.w}`);
+    // СНИМОК СОВПАДАЕТ С ЭКРАНОМ. Картинка в визире увеличена под
+    // выбранный объектив, и края за экраном человек не видел: доля,
+    // которую занимает рамка, обязана быть та же, что была на экране.
+    expect('доля рамки на снимке та же, что была на экране',
+           Math.abs(fw / bx.w - shot.frameOfScreen) < 0.04,
+           `${(fw / bx.w * 100).toFixed(0)}% на снимке против ${(shot.frameOfScreen * 100).toFixed(0)}% на экране`);
   }
 
   // ------------------------------------------------------------ 6. ЗАМЕТКИ
