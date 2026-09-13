@@ -2559,7 +2559,7 @@
         // по цифре. Раньше оно не было видно вообще ничем.
         // Считаем ОДИН раз, при открытии окна: перебор всех ключей на
         // каждую перерисовку — это мегабайты работы впустую.
-        const StorageInfo = () => {
+        const StorageInfo = ({ light }) => {
           const info = React.useMemo(() => {
             let used = 0;
             try {
@@ -2581,13 +2581,22 @@
             return { size, room };
           }, []);
           if (!info) return null;
+          // СОСТОЯНИЙ ТРИ, И СРЕДНЕЕ ЗАБЫВАЛИ. «Место кончилось — копия
+          // не обновляется» неверно, когда она обновляется, просто без
+          // фотографий: человек читает это как «ничего не сохраняется»
+          // и пугается зря. Это же место — единственное, где состояние
+          // написано постоянно, поэтому полоска о нём говорит ОДИН раз
+          // и отправляет сюда.
+          const ok = info.room && !light;
           return (
-            <div className="rounded-lg px-4 py-3 mb-2"
-                 style={{ background: 'var(--panel-2)', border: '1px solid ' + (info.room ? 'var(--border)' : 'rgba(248,113,113,0.5)') }}>
+            <div className="rounded-lg px-4 py-3 mb-2" data-cf="storage-info"
+                 style={{ background: 'var(--panel-2)', border: '1px solid ' + (ok ? 'var(--border)' : 'rgba(248,113,113,0.5)') }}>
               <span className="block text-sm font-semibold text-zinc-200">Местная копия на устройстве: {info.size}</span>
-              <span className="block text-[length:var(--fs-1)] leading-relaxed mt-0.5" style={{ color: info.room ? 'var(--muted-2)' : '#f87171' }}>
-                {info.room
+              <span className="block text-[length:var(--fs-1)] leading-relaxed mt-0.5" style={{ color: ok ? 'var(--muted-2)' : '#f87171' }}>
+                {ok
                   ? 'Место ещё есть. Эта копия — запасная, на случай сбоя облака; браузер отводит под неё несколько мегабайт, и от свободного места на диске это не зависит.'
+                  : light
+                  ? 'Фотографии сюда уже не помещаются: копия обновляется БЕЗ них — подписи, теги, папки и расстановка сохраняются. Сами фотографии лежат в облаке и в его кэше. Чтобы вернулись и они, перенесите фотографии во внешнее хранилище (кнопка «Где хранить фотографии» выше).'
                   : 'Место кончилось — копия на устройстве больше не обновляется. Сам проект при этом сохраняется в облако. Помогает: перенести фотографии во внешнее хранилище (кнопка «Где хранить фотографии» выше).'}
               </span>
             </div>
@@ -11458,7 +11467,26 @@
           // во-вторых, только то, что реально изменилось: ссылка на массив
           // у нетронутых коллекций та же, сравнение по ней и отсекает.
           const savedSnap = useRef({});
-          const storageWarned = useRef(false);   // о переполнении говорим один раз за сеанс
+          // О ПЕРЕПОЛНЕНИИ ГОВОРИМ ОДИН РАЗ НАСОВСЕМ, а не раз в сеанс.
+          // У большого проекта это состояние ПОСТОЯННОЕ: фотографии
+          // в местную копию не влезут и завтра, — и полоска встречала
+          // человека при каждом открытии приложения, повторяя то, что
+          // он уже знает и уже решил не чинить. Новость бывает новостью
+          // один раз; дальше это просто шум поверх экрана. Само состояние
+          // никуда не спрятано: оно написано в меню «Проект», в блоке
+          // «Местная копия на устройстве», где рядом и способ его
+          // исправить. Флаг снимается, когда проект снова влез целиком:
+          // если once упрётся заново — это опять новость.
+          const storageWarned = useRef(null);
+          const warnOnce = (msg) => {
+            if (storageWarned.current) return;
+            storageWarned.current = true;
+            try {
+              if (localStorage.getItem('cf_light_warned') === '1') return;
+              localStorage.setItem('cf_light_warned', '1');
+            } catch (e) {}
+            showToast(msg);
+          };
           // Коллекции, которые в этот сеанс уже не влезли целиком. Повторять
           // попытку на каждую правку нельзя: у большого проекта одна только
           // упаковка в строку — это десятки мегабайт, и телефон честно
@@ -11496,18 +11524,14 @@
                     // чтобы снова упереться в предел. На телефоне это
                     // ощущается как «приложение думает».
                     savedSnap.current[k] = v;
-                    if (!storageWarned.current) {
-                      storageWarned.current = true;
-                      showToast('Проект перерос память устройства: местная копия теперь без фотографий. Сам проект цел в облаке. Чтобы он стал легче, подключите хранилище фото в меню «Проект»');
-                    }
+                    // Коротко: подробности и способ починить — там, куда
+                    // отправляем. Пересказывать их полоской незачем.
+                    warnOnce('Фотографии больше не помещаются в местную копию. Проект цел в облаке — подробности в меню «Проект»');
                     return;
                   } catch (e2) { console.warn('localStorage переполнен даже без картинок:', k); }
                 }
                 savedSnap.current[k] = v;   // не долбимся в закрытую дверь на каждую правку
-                if (!storageWarned.current) {
-                  storageWarned.current = true;
-                  showToast('⚠️ На устройстве кончилось место — местная копия больше не обновляется. Проект сохраняется в облако');
-                }
+                warnOnce('⚠️ На устройстве кончилось место — местная копия не обновляется. Проект сохраняется в облако');
               };
               save('cf_scenes', scenes); save('cf_storyboard', storyboard);
               save('cf_references', references); save('cf_stickies', stickies);
@@ -11515,6 +11539,15 @@
               save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
               save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
               save('cf_boards', boards); save('cf_locations', locations);
+              // ВЕСЬ ПРОЕКТ ВЛЕЗ ЦЕЛИКОМ — значит прежняя теснота прошла,
+              // и следующее переполнение снова будет новостью. Снимать
+              // флаг ПОКЛЮЧЕВО нельзя: тяжёлых ключей три, и мелкий
+              // (файлы проекта) успешно сохранялся сразу после
+              // отвергнутых референсов, стирая только что поставленный
+              // флаг, — отчего полоска возвращалась при каждом открытии.
+              if (!Object.keys(lightOnly.current).length) {
+                try { localStorage.removeItem('cf_light_warned'); } catch (e) {}
+              }
             };
             flushLocal.current = doSave;
             // Упаковка проекта в строку — это десятки мегабайт на проекте
@@ -14142,7 +14175,21 @@
                 </div>
               )}
 
-              {toast && (<div style={{ bottom: 'calc(24px + var(--sab))' }} className="fixed left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
+              {/* ПОЛОСКА НЕ ДОЛЖНА ПРЕВРАЩАТЬСЯ В КЛЯКСУ. У неё стоял
+                  `rounded-full`, и на короткой строке это правильно —
+                  но длинное сообщение переносилось на шесть строк, а
+                  «радиус в половину высоты» превращал его в овал во
+                  весь экран поверх открытой шторки. Ширину ограничиваем,
+                  а полное скругление оставляем только однострочным. */}
+              {toast && (
+                <div style={{ bottom: 'calc(24px + var(--sab))', maxWidth: 'min(92vw, 460px)',
+                              borderRadius: String(toast).length > 60 ? 14 : 9999 }}
+                     data-cf="toast"
+                     className="fixed left-1/2 -translate-x-1/2 glass-panel text-white px-5 py-3 text-sm font-medium z-[400] flex items-start gap-2">
+                  <span className="shrink-0" style={{ marginTop: 1 }}><Icons.Bot /></span>
+                  <span style={{ lineHeight: 1.45 }}>{toast}</span>
+                </div>
+              )}
 
               {/* Возврат только что удалённого. Держится 15 секунд — этого
                   хватает, чтобы заметить промах, и не мешает дальше работать.
@@ -19208,7 +19255,7 @@
                              className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
                     </label>
 
-                    <StorageInfo />
+                    <StorageInfo light={!!Object.keys(lightOnly.current || {}).length} />
 
                     <button onClick={() => {
                       // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
