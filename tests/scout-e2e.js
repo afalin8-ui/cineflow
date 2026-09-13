@@ -1,0 +1,1648 @@
+// Сквозная проверка модуля «Скаут» в Chromium (Playwright).
+// Что делает: поднимает приложение локально, БЛОКИРУЕТ Firebase (иначе тест
+// писал бы в настоящий проект), даёт поддельную камеру и поддельный компас
+// и гоняет весь путь: счёт солнца и угла обзора → вид «План» с компасом
+// и ползунком времени → вид «Камера» с дугой, рамкой объектива и состоянием
+// «объектив шире, чем камера может показать» → подкрутку по солнцу →
+// снимок, который ложится к объекту с подписью → телефонную раскладку
+// (Скаут в таб-баре, Чат в «Ещё») → режим просмотра.
+//
+// Запуск:  node tests/scout-e2e.js
+// Нужны: node 18+, playwright, Chromium (CF_CHROME, по умолчанию
+// /opt/pw-browsers/chromium), python3 для статического сервера, curl.
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execSync, spawn } = require('child_process');
+
+const ROOT = path.resolve(__dirname, '..');
+const LIBS = process.env.CF_LIBS || path.join(os.tmpdir(), 'cineflow-libs');
+const PORT = process.env.CF_PORT || '8097';
+const CHROME = process.env.CF_CHROME || '/opt/pw-browsers/chromium';
+let playwright;
+try { playwright = require('playwright'); }
+catch (e) { playwright = require(execSync('npm root -g').toString().trim() + '/playwright'); }
+
+const LIB_URLS = {
+  'react.js': 'https://unpkg.com/react@18/umd/react.production.min.js',
+  'react-dom.js': 'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
+  'babel.js': 'https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js',
+  'tailwind.js': 'https://cdn.tailwindcss.com'
+};
+fs.mkdirSync(LIBS, { recursive: true });
+for (const [f, u] of Object.entries(LIB_URLS)) {
+  const p = path.join(LIBS, f);
+  if (!fs.existsSync(p) || fs.statSync(p).size < 1000) execSync(`curl -sSL -o "${p}" "${u}"`);
+}
+
+const server = spawn('python3', ['-m', 'http.server', PORT, '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
+const log = (...a) => console.log(...a);
+let failed = 0;
+const expect = (name, ok, info) => { log((ok ? '  ok  ' : '  FAIL') + ' ' + name + (info ? ' — ' + info : '')); if (!ok) failed++; };
+const near = (a, b, eps) => Math.abs(a - b) <= eps;
+
+// Объект с координатами Москвы и сцена со сменой — чтобы «План» было чем
+// наполнить, а день смены откуда взять.
+const SEED_LOC = { id: 'loc-t1', name: 'ДВОР ШКОЛЫ', address: 'Москва', coords: '55.75580, 37.61730',
+                   description: '', sceneIds: ['scene-1'], lightSchemeId: '', order: 1 };
+// Второй объект БЕЗ КООРДИНАТ — их заводят руками, по названию, ещё
+// до выезда. Нужен, чтобы проверить «записать эту точку объекту».
+const SEED_LOC2 = { id: 'loc-t2', name: 'ГАРАЖИ', address: '', coords: '',
+                    description: '', sceneIds: [], lightSchemeId: '', order: 2 };
+
+const mkPage = async (ctx, query) => {
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('PAGEERROR ' + String(e).slice(0, 400)));
+  page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text().slice(0, 200)); });
+  await page.route(/gstatic\.com\/firebasejs/, r => r.abort());
+  await page.route(/googleapis\.com/, r => r.abort());
+  await page.route(/nominatim\.openstreetmap\.org/, r => r.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ display_name: 'Тестовая улица, 1, Москва', address: { road: 'Тестовая улица', house_number: '1' } })
+  }));
+  const lib = (re, file) => page.route(re, r => r.fulfill({ path: path.join(LIBS, file), contentType: 'application/javascript' }));
+  await lib(/unpkg\.com\/react@18\/umd\/react\.production/, 'react.js');
+  await lib(/unpkg\.com\/react-dom@18/, 'react-dom.js');
+  await lib(/(unpkg\.com|cdn\.jsdelivr\.net)\/.*babel/, 'babel.js');
+  await lib(/cdn\.tailwindcss\.com/, 'tailwind.js');
+  await page.goto(`http://127.0.0.1:${PORT}/index.html${query || ''}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__CF_APP_OK === 1, null, { timeout: 180000 });
+  await page.waitForTimeout(1500);
+  return { page, errors };
+};
+
+// Поддельный компас: Chromium не знает webkitCompassHeading, зато понимает
+// стандартное событие с absolute — наш код для него и держит вторую ветку.
+const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
+  for (let i = 0; i < 3; i++) {
+    window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', {
+      absolute: true, alpha: (360 - az) % 360, beta, gamma
+    }));
+  }
+}, [az, beta, gamma]);
+
+(async () => {
+  await new Promise(r => setTimeout(r, 800));
+  const browser = await playwright.chromium.launch({
+    executablePath: CHROME,
+    args: ['--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
+           '--autoplay-policy=no-user-gesture-required']
+  });
+  const ctx = await browser.newContext({
+    viewport: { width: 1280, height: 900 },
+    permissions: ['geolocation', 'camera'],
+    geolocation: { latitude: 55.7558, longitude: 37.6173 }
+  });
+  await ctx.addInitScript(([loc, loc2]) => {
+    localStorage.setItem('cf_user_name', 'Тест Оператор');
+    localStorage.setItem('cf_room', 'e2e-scout-test-room');
+    localStorage.setItem('cf_locations', JSON.stringify([loc, loc2]));
+    localStorage.setItem('cf_scenes', JSON.stringify([{ id: 'scene-1', number: '1', title: 'ИНТ. ДВОР', content: '', date: '2026-06-29', x: 0, y: 0 }]));
+  }, [SEED_LOC, SEED_LOC2]);
+
+  // ---------------------------------------------------------------- 1. СЧЁТ
+  log('\n1. Счёт: угол обзора, проекция, дуга');
+  const { page, errors } = await mkPage(ctx);
+  const unit = await page.evaluate(() => {
+    const s35 = SCOUT_SENSORS.find(x => x.id === 's35');
+    const a35 = SCOUT_SENSORS.find(x => x.id === 'alexa35');
+    return {
+      // Открытые числа: 24.89 мм на 50 мм = 27.9°; 2*atan(18/26) = 69.4°
+      fov50: frameHFov(s35, 1.85, 50, 1),
+      fov50wide: frameHFov(a35, 2.39, 50, 1),
+      // Анаморф 2× на 50 мм: площадка на сенсоре 1.195 (почти квадрат),
+      // ширина 22.96 мм, по горизонтали объектив ведёт себя как 25 мм —
+      // 2*atan(22.96/50) = 49.3°
+      anam: frameHFov(a35, 2.39, 50, 2),
+      // Пропорция НАРИСОВАННОЙ рамки обязана равняться пропорции кадра:
+      // считаем вертикальный угол независимо, от высоты площадки.
+      anamAspect: (() => {
+        const K = 2, F = 50, sa = 2.39 / K;
+        const w = Math.min(a35.w, a35.h * sa), h = w / sa;
+        const hf = frameHFov(a35, 2.39, F, K) * Math.PI / 180;
+        const vf = 2 * Math.atan(h / (2 * F));
+        return Math.tan(hf / 2) / Math.tan(vf / 2);
+      })(),
+      sphAspect: (() => {
+        const F = 35, sa = 2.39;
+        const w = Math.min(a35.w, a35.h * sa), h = w / sa;
+        const hf = frameHFov(a35, 2.39, F, 1) * Math.PI / 180;
+        const vf = 2 * Math.atan(h / (2 * F));
+        return Math.tan(hf / 2) / Math.tan(vf / 2);
+      })(),
+      // Проекция: смотрим ровно на солнце — центр
+      centre: projectSky(120, 20, 120, 20, 0, 69.4, 1.5),
+      // На правом краю кадра
+      edge: projectSky(120 + 69.4 / 2, 0, 120, 0, 0, 69.4, 1.5),
+      behind: projectSky(300, 0, 120, 0, 0, 69.4, 1.5),
+      // Крен 90°: сдвиг вправо становится сдвигом по вертикали
+      rolled: projectSky(135, 0, 120, 0, 90, 60, 1),
+      arcLen: sunArc(55.7558, 37.6173, '2026-06-29').length,
+      arcNoon: (() => { const a = sunArc(55.7558, 37.6173, '2026-06-29'); return a[Math.round(a.length / 2)].alt; })(),
+      // Эквивалентное фокусное считается ПО ДИАГОНАЛИ 35-мм кадра, а не
+      // по его ширине. Сверка с числами Apple: у iPhone 13 Pro Max (26 мм)
+      // videoFieldOfView равен 67,1°, а заявленные «20°» у 120-мм теле —
+      // это диагональ.
+      halfs: [halfFrame(3 / 2), halfFrame(4 / 3), halfFrame(16 / 9)],
+      apple26: camFov(26, 4 / 3),
+      apple120diag: 2 * Math.atan(43.267 / 2 / 120) / SUN_RAD,
+      fov16x9: camFov(26, 16 / 9),
+      // Таблица устройств обязана быть внутренне непротиворечивой
+      cams: PHONE_CAMS.map(d => ({ id: d.id, n: d.lens.length,
+              bad: d.lens.filter(l => !(l[1] >= 10 && l[1] <= 400)).length,
+              main: (d.lens.find(l => l[0] === '1×') || [])[1],
+              uw: d.lens.some(l => l[1] < 20) })),
+      mainEq: { ipad: mainEqOf('ipad'), iph: mainEqOf('iph'), ipro: mainEqOf('ipro'), none: mainEqOf('') },
+      azd: [azDelta(10, 350), azDelta(350, 10), azDelta(100, 100)],
+      metres: Math.round(metersBetween({ lat: 55.7558, lon: 37.6173 }, { lat: 55.7568, lon: 37.6173 })),
+      plurs: [plur(1, 'кадр', 'кадра', 'кадров'), plur(3, 'кадр', 'кадра', 'кадров'), plur(11, 'кадр', 'кадра', 'кадров')]
+    };
+  });
+  expect('50 мм на Super 35 даёт 27.9°', near(unit.fov50, 27.9, 0.3), unit.fov50.toFixed(2) + '°');
+  expect('анаморф 2× на 50 мм даёт 49.3° по горизонтали', near(unit.anam, 49.3, 0.2), unit.anam.toFixed(2) + '°');
+  expect('у анаморфной рамки пропорция кадра — 2.39, а не пропорция площадки',
+         near(unit.anamAspect, 2.39, 0.01), unit.anamAspect.toFixed(3));
+  expect('у сферической рамки та же пропорция 2.39', near(unit.sphAspect, 2.39, 0.01), unit.sphAspect.toFixed(3));
+  expect('смотрим на солнце — оно в центре', near(unit.centre.x, 0.5, 1e-6) && near(unit.centre.y, 0.5, 1e-6));
+  expect('солнце на краю обзора — у края кадра', near(unit.edge.x, 1, 1e-6), 'x=' + unit.edge.x.toFixed(4));
+  expect('солнце за спиной не рисуется', unit.behind === null);
+  expect('крен 90° переводит сдвиг вправо в сдвиг вверх',
+         near(unit.rolled.x, 0.5, 1e-6) && unit.rolled.y > 0.6, JSON.stringify(unit.rolled));
+  expect('дуга дня — 145 точек по 10 минут', unit.arcLen === 145, String(unit.arcLen));
+  // 12:00 по часам стенда (UTC) — это не полдень в Москве: настоящий
+  // верхний проход около 09:30 UTC. Проверяем именно то, что считаем.
+  expect('29 июня в Москве в 12:00 UTC солнце около 47°', near(unit.arcNoon, 47, 3), unit.arcNoon.toFixed(1) + '°');
+  expect('разница азимутов по кратчайшей стороне', unit.azd[0] === 20 && unit.azd[1] === -20 && unit.azd[2] === 0, JSON.stringify(unit.azd));
+  expect('расстояние по земле: 0.001° широты ≈ 111 м', near(unit.metres, 111, 2), unit.metres + ' м');
+  expect('полуширина кадра считается от диагонали: 18.00 / 17.31 / 18.86',
+         near(unit.halfs[0], 18, 0.01) && near(unit.halfs[1], 17.307, 0.01) && near(unit.halfs[2], 18.855, 0.01),
+         unit.halfs.map(h => h.toFixed(3)).join(' / '));
+  expect('26 мм на кадре 4:3 дают 67.3° — Apple отдаёт 67.1°', near(unit.apple26, 67.3, 0.3), unit.apple26.toFixed(1) + '°');
+  expect('120 мм по диагонали дают 20.4° — Apple пишет «20°»', near(unit.apple120diag, 20.4, 0.3), unit.apple120diag.toFixed(1) + '°');
+  expect('та же камера на 16:9 шире: 71.9°', near(unit.fov16x9, 71.9, 0.3), unit.fov16x9.toFixed(1) + '°');
+  expect('во всех наборах камер фокусные в разумных пределах',
+         unit.cams.every(c => c.bad === 0), JSON.stringify(unit.cams.filter(c => c.bad).map(c => c.id)));
+  expect('у каждого набора есть основная камера «1×»',
+         unit.cams.every(c => c.main > 0), JSON.stringify(unit.cams.map(c => c.id + ':' + c.main)));
+  expect('основная камера набора и его фокусное — одно решение',
+         unit.mainEq.ipad === 30 && unit.mainEq.iph === 26 && unit.mainEq.ipro === 24 && unit.mainEq.none === 26,
+         JSON.stringify(unit.mainEq));
+  // У 16e, 17e и Air СВЕРХШИРОКОЙ НЕТ ВОВСЕ. Стой они в одном наборе
+  // с обычным iPhone, человек видел бы кнопку «0,5×», которой у его
+  // телефона не существует, — и рамка была бы вдвое шире снимаемого.
+  expect('набор без сверхширокой (16e · 17e · Air) заведён',
+         unit.cams.some(c => c.id === 'ie'), unit.cams.map(c => c.id).join(' · '));
+  expect('в нём ровно 1× и 2×, и сверхширокой нет',
+         (unit.cams.find(c => c.id === 'ie') || {}).uw === false &&
+         (unit.cams.find(c => c.id === 'ie') || {}).n === 2,
+         JSON.stringify(unit.cams.find(c => c.id === 'ie')));
+  expect('у обычного iPhone сверхширокая осталась',
+         (unit.cams.find(c => c.id === 'iph') || {}).uw === true);
+  expect('plur виден скауту (он объявлен выше AppCore)',
+         unit.plurs[0] === 'кадр' && unit.plurs[1] === 'кадра' && unit.plurs[2] === 'кадров', JSON.stringify(unit.plurs));
+
+  // ------------------------------------------------------- 2. ВИД «ПЛАН»
+  log('\n2. Вид «План» — без камеры и без разрешений');
+  // Неактивные вкладки шапки — ТОЛЬКО значок, подпись лежит в title.
+  // Искать по тексту нельзя: /Скаут/ поймает «Скаутинг» — режим экрана
+  // сцены, который стоит в разметке выше.
+  await page.click('button[title="Скаут"]');
+  await page.waitForTimeout(900);
+  const plan = await page.evaluate(() => {
+    const root = document.querySelector('[data-cf="scout"]');
+    const txt = root ? root.innerText : '';
+    const rose = document.querySelector('[data-cf="scout-rose"]');
+    const tb = document.querySelector('[data-cf="scout-timebar"]');
+    return {
+      onScout: /Восход|Закат|Полдень/.test(txt),
+      hasRose: !!rose,
+      arcPath: rose ? [...rose.querySelectorAll('path')].filter(p => (p.getAttribute('d') || '').length > 80).length : 0,
+      hasTimeBar: !!tb,
+      polyPts: tb ? tb.querySelector('polyline').getAttribute('points').split(' ').length : 0,
+      sunrise: (txt.match(/Восход\s+(\d\d:\d\d)/) || [])[1],
+      sunset: (txt.match(/Закат\s+(\d\d:\d\d)/) || [])[1],
+      shift: /День смены/.test(txt),
+      words: /Светит с|Солнца нет|за горизонтом/.test(txt)
+    };
+  });
+  expect('экран скаута открылся', plan.onScout);
+  expect('компас нарисован', plan.hasRose);
+  expect('дуга солнца на компасе есть', plan.arcPath >= 1, plan.arcPath + ' кривых');
+  expect('ползунок времени — это график высоты', plan.hasTimeBar && plan.polyPts === 145, plan.polyPts + ' точек');
+  expect('восход и закат посчитаны', !!plan.sunrise && !!plan.sunset, `${plan.sunrise} — ${plan.sunset}`);
+  expect('день взят из смены связанной сцены', plan.shift);
+  expect('солнце сказано словами', plan.words);
+
+  // Ползунок: тянем в 6 утра и проверяем, что время и высота поехали
+  const scrub = await page.evaluate(async () => {
+    const svg = document.querySelector('[data-cf="scout-timebar"]');
+    const r = svg.getBoundingClientRect();
+    const at = (f) => {
+      const x = r.left + r.width * f, y = r.top + r.height / 2;
+      svg.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 1, buttons: 1 }));
+      svg.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true, pointerId: 1 }));
+    };
+    at(6 / 24);
+    await new Promise(r2 => setTimeout(r2, 350));
+    // Часы читаем ИМЕННО у ползунка, а не по всей странице: на ней есть
+    // и восход, и закат, и любая из этих строк прошла бы проверку.
+    const clock = svg.parentElement.innerText.match(/\b(\d\d:\d\d)\b/);
+    return { clock: clock && clock[1], hadNow: /сейчас/.test(svg.parentElement.innerText) };
+  });
+  expect('тянем ползунок на 6 утра — часы показали 06:00', /^06:0\d$/.test(scrub.clock || ''), scrub.clock);
+  // Сверка видна и в плане: её читают ДО выезда — «а тот ли это двор».
+  const planSpot = await page.evaluate(async () => {
+    const b = document.querySelector('[data-cf="scout-spot-plan"]');
+    if (!b) return { found: false };
+    const r = b.getBoundingClientRect();
+    const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { found: true, kind: b.dataset.spot, text: b.innerText.trim(),
+             hit: !!t && (t === b || b.contains(t)) };
+  });
+  expect('сверка точки показана и в плане', planSpot.found && planSpot.hit === true, JSON.stringify(planSpot));
+  expect('и она говорит словами, а не значком', /Мы|сверено|координат/.test(planSpot.text || ''), planSpot.text);
+
+  expect('появилась кнопка «сейчас» — вернуться к живому времени', scrub.hadNow);
+
+  // ----------------------------------------------------- 3. ВИД «КАМЕРА»
+  log('\n3. Вид «Камера» — визир и дуга поверх кадра');
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(x => /Включить камеру/.test(x.textContent));
+    if (b) b.click();
+  });
+  await page.waitForTimeout(2500);
+  await aimAt(page, 180, 90, 0);          // смотрим на юг, горизонтально
+  await page.waitForTimeout(400);
+  const ar = await page.evaluate(() => {
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    const polys = svg ? [...svg.querySelectorAll('polyline')] : [];
+    return {
+      video: !!v && v.videoWidth > 0 && !v.paused,
+      vw: v ? v.videoWidth : 0, vh: v ? v.videoHeight : 0,
+      // ПО ГОРИЗОНТАЛИ КАДР НЕ СРЕЗАЕТСЯ НИКОГДА: на горизонтальном
+      // обзоре держится вся накладка. По вертикали срезать можно и нужно —
+      // иначе на широком телефоне 4:3 сидит полоской в 44% ширины.
+      fill: (() => {
+        if (!v) return null;
+        const box = v.parentElement.getBoundingClientRect();
+        const r = v.getBoundingClientRect();
+        return { vidW: Math.round(r.width), boxW: Math.round(box.width),
+                 vidH: Math.round(r.height), boxH: Math.round(box.height) };
+      })(),
+      overlay: !!svg,
+      polylines: polys.length,
+      frame: !!svg && !!svg.querySelector('[data-cf="scout-frame"]'),
+      frameW: svg && svg.querySelector('[data-cf="scout-frame"]')
+              ? +svg.querySelector('[data-cf="scout-frame"]').getAttribute('width') : 0,
+      svgW: svg ? +svg.getAttribute('viewBox').split(' ')[2] : 0,
+      ratioTag: (document.querySelector('[data-cf="scout-ratio"]') || {}).textContent || '',
+      // СКОЛЬКО ЗНАКОВ ЛЕЖИТ ПОВЕРХ САМОЙ КАРТИНКИ. Мерило числовое:
+      // на глаз «вроде немного» и при строке в сто десять знаков поперёк
+      // кадра. Считаем всё, что нарисовано в границах видео.
+      onPic: (() => {
+        const v2 = document.querySelector('[data-cf="scout-cam"] video');
+        if (!v2) return -1;
+        const r = v2.getBoundingClientRect();
+        // Настоящие границы картинки внутри <video> при object-fit: contain
+        const k = Math.min(r.width / v2.videoWidth, r.height / v2.videoHeight);
+        const iw = v2.videoWidth * k, ih = v2.videoHeight * k;
+        const box = { l: r.left + (r.width - iw) / 2, t: r.top + (r.height - ih) / 2 };
+        box.r = box.l + iw; box.b = box.t + ih;
+        // Кнопки не считаем: это органы управления, они и у Cadrage
+        // лежат полосой поверх картинки. Считаем НАДПИСИ — то, что просто
+        // написано на кадре и читать его мешает.
+        let n = 0, longest = 0, worst = '';
+        document.querySelectorAll('[data-cf="scout-cam"] *').forEach(el => {
+          if (el.children.length) return;
+          if (el.closest('button, input, select, label')) return;
+          const t = (el.textContent || '').trim();
+          if (!t) return;
+          const q = el.getBoundingClientRect();
+          if (!q.width || !q.height) return;
+          const cx = q.left + q.width / 2, cy = q.top + q.height / 2;
+          if (cx < box.l || cx > box.r || cy < box.t || cy > box.b) return;
+          n += t.length;
+          if (t.length > longest) { longest = t.length; worst = t; }
+        });
+        return { n, longest, worst };
+      })()
+    };
+  });
+  expect('камера отдала кадр', ar.video, `${ar.vw}×${ar.vh}`);
+  // МЕНЬШЕ, ЧЕМ ЕСТЬ У КАМЕРЫ, НЕ ПОКАЗЫВАЕМ НИКОГДА: увеличение
+  // не бывает меньше единицы, и картинка всегда заполняет ширину —
+  // иначе поток 4:3 сидел бы полоской в 44% ширины экрана.
+  expect('картинка заполняет ширину — увеличение не меньше единицы',
+         ar.fill && ar.fill.vidW >= ar.fill.boxW - 1,
+         `${ar.fill && ar.fill.vidW} при экране ${ar.fill && ar.fill.boxW}`);
+  expect('накладка лежит ровно по кадру', ar.overlay && ar.svgW > 0, 'ширина ' + ar.svgW);
+  expect('дуга солнца нарисована', ar.polylines >= 1, ar.polylines + ' линий');
+  expect('рамка объектива есть', ar.frame, `ширина ${Math.round(ar.frameW)} из ${Math.round(ar.svgW)}`);
+  expect('рамка уже кадра — 35 мм на Super 35 это ~58% ширины',
+         ar.frameW > ar.svgW * 0.45 && ar.frameW < ar.svgW * 0.7, (ar.frameW / ar.svgW * 100).toFixed(0) + '%');
+  // ПОВЕРХ КАРТИНКИ НЕ ПИШЕМ НИЧЕГО, кроме пропорции в углу рамки и
+  // подписей часов у дуги. Раньше тут лежала строка из ста десяти знаков
+  // («объект · объектив · камера · пропорция · азимут · дата · кто»),
+  // которая на широком телефоне растягивалась во всю ширину, переносилась
+  // на две строки и ложилась ПОПЕРЁК кадра. Сверено с Cadrage: у него
+  // поверх картинки нет ничего, кроме «2.35:1» в углу рамки.
+  expect('метка пропорции стоит в углу рамки — как «2.35:1» у Cadrage',
+         ar.ratioTag === '2.39', ar.ratioTag || '(нет)');
+  expect('поверх картинки нет длинных надписей',
+         ar.onPic && ar.onPic.longest > 0 && ar.onPic.longest <= 24,
+         `самая длинная — ${ar.onPic && ar.onPic.longest} знаков: «${ar.onPic && ar.onPic.worst}»`);
+  expect('и всего надписей на кадре немного',
+         ar.onPic && ar.onPic.n < 60, `${ar.onPic && ar.onPic.n} знаков`);
+
+  // Ночная часть дуги — пунктиром. Смотреть надо НА СЕВЕР: в Москве в конце
+  // июня солнце уходит под горизонт неглубоко и как раз с северной стороны,
+  // а на юге в кадре только дневная часть.
+  await aimAt(page, 0, 90, 0);
+  await page.waitForTimeout(400);
+  const night = await page.evaluate(() => {
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    const polys = [...svg.querySelectorAll('polyline')];
+    return { dashed: polys.filter(p => p.getAttribute('stroke-dasharray')).length, total: polys.length };
+  });
+  expect('ночная часть дуги нарисована пунктиром', night.dashed >= 1, `${night.dashed} пунктирных из ${night.total}`);
+
+  // Указатель «солнце вон там»: мы как раз отвернулись на север
+  const pointer = await page.evaluate(() => {
+    const root = document.querySelector('[data-cf="scout"]');
+    return (root.innerText.match(/солнце\s+\d+°\s*→|←\s*солнце\s+\d+°/) || [])[0] || '';
+  });
+  expect('отвернулись — появился указатель, куда повернуться', !!pointer, pointer);
+  await aimAt(page, 180, 90, 0);
+  await page.waitForTimeout(300);
+
+  // РАМКА СТОИТ НА МЕСТЕ, А КАРТИНКА ЗУМИТСЯ — как во всяком визире
+  // режиссёра и как у Cadrage: в визир СМОТРЯТ, как в объектив. Раньше
+  // было наоборот, картинка стояла и менялась рамочка, и от нажатия «+»
+  // кадр не приближался вовсе.
+  const setLens = (mm) => page.evaluate(async (mm) => {
+    // Число читаем МЕТКОЙ, а не разбором текста кнопки: «35» и «мм»
+    // лежат в разных строчках, и текст у неё слитный.
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    for (let i = 0; i < 30 && cur() !== mm; i++) {
+      const b = document.querySelector(cur() < mm ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]');
+      b.click();
+      await new Promise(r => setTimeout(r, 80));
+    }
+    await new Promise(r => setTimeout(r, 250));
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    // Рамка шире камеры живёт В ДРУГОМ слое (`scout-sim`),
+    // потому что верхний svg прибит к картинке и срезал бы её.
+    // Искать её внутри `scout-ar` значило бы не найти вовсе.
+    const f = document.querySelector('[data-cf="scout-frame"]');
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const fr = f ? f.getBoundingClientRect() : null;
+    const vr = v ? v.getBoundingClientRect() : null;
+    return { lens: cur(), w: f ? +f.getAttribute('width') : 0,
+             wide: !!(f && f.getAttribute('data-wide')),
+             // цвет линии: синий = посчитано, а не снято
+             stroke: f ? (f.getAttribute('stroke') || '') : '',
+             // целиком ли картинка внутри рамки
+             holds: !!(fr && vr) && fr.left <= vr.left + 1 && fr.right >= vr.right - 1,
+             frOnScreen: fr ? Math.round(fr.width) : 0,
+             // Ширина СВОЕГО svg у рамки: у корневого svg браузер сам
+             // ставит `overflow: hidden`, и всё, что шире его, СРЕЗАЕТСЯ.
+             // По габариту самого прямоугольника этого не видно вовсе:
+             // getBoundingClientRect отдаёт геометрию, а не то, что нарисовано.
+             hostW: (f && f.ownerSVGElement)
+               ? +f.ownerSVGElement.getAttribute('viewBox').split(' ')[2] : 0,
+             svgW: +svg.getAttribute('viewBox').split(' ')[2],
+             // во сколько раз картинка увеличена против ширины экрана
+             zoom: v ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0,
+             // и какую долю ЭКРАНА занимает рамка — она обязана стоять
+             frameOfScreen: f && v
+               ? (+f.getAttribute('width')) * (v.getBoundingClientRect().width / (+svg.getAttribute('viewBox').split(' ')[2]))
+                 / box.getBoundingClientRect().width : 0 };
+  }, mm);
+  const r100 = await setLens(100), r35 = await setLens(35), r12 = await setLens(12);
+  expect('«+» ПРИБЛИЖАЕТ: 100 мм увеличивает картинку сильнее, чем 35 мм',
+         r100.lens === 100 && r35.lens === 35 && r100.zoom > r35.zoom * 1.5,
+         `${r35.zoom.toFixed(2)}× на 35 мм против ${r100.zoom.toFixed(2)}× на 100 мм`);
+  expect('а рамка при этом СТОИТ НА МЕСТЕ',
+         Math.abs(r100.frameOfScreen - r35.frameOfScreen) < 0.02 && r35.frameOfScreen > 0.8,
+         `${(r35.frameOfScreen * 100).toFixed(0)}% и ${(r100.frameOfScreen * 100).toFixed(0)}% ширины экрана`);
+  expect('12 мм ШИРЕ камеры — рамка СИНЯЯ, а не терракотовая',
+         r12.lens === 12 && r12.wide && /38bdf8/i.test(r12.stroke),
+         `шире=${r12.wide}, цвет ${r12.stroke}`);
+  // ГЛАВНОЕ В ЭТОМ СОСТОЯНИИ — ЧТО РАМКА ВИДНА ЦЕЛИКОМ.
+  // Она рисовалась в слое, прибитом к самой картинке, а у корневого
+  // svg браузер сам ставит `overflow: hidden` — бока рамки СРЕЗАЛИСЬ,
+  // и на экране оставались две горизонтальные линии непонятно от чего.
+  expect('и картинка целиком ВНУТРИ неё',
+         r12.holds && r12.frOnScreen > 0, `рамка ${r12.frOnScreen} точек, картинка внутри=${r12.holds}`);
+  expect('и САМА РАМКА НЕ СРЕЗАНА — слой под неё шире её самой',
+         r12.hostW >= r12.w - 1, `слой ${r12.hostW}, рамка ${Math.round(r12.w)}`);
+  // РАМКА ОБЯЗАНА БЫТЬ ВИДНА ЦЕЛИКОМ на любом объективе: увеличили
+  // картинку так, что её края ушли за экран, — и выбирать стало нечем.
+  const fits = await page.evaluate(() => {
+    const box = document.querySelector('[data-cf="scout-cam"]').getBoundingClientRect();
+    const svg = document.querySelector('[data-cf="scout-ar"]').getBoundingClientRect();
+    const f = document.querySelector('[data-cf="scout-frame"]');
+    const vb = +document.querySelector('[data-cf="scout-ar"]').getAttribute('viewBox').split(' ')[2];
+    const k = svg.width / vb;
+    const w = (+f.getAttribute('width')) * k, h = (+f.getAttribute('height')) * k;
+    return { w: Math.round(w), h: Math.round(h), bw: Math.round(box.width), bh: Math.round(box.height) };
+  });
+  expect('рамка целиком помещается на экране',
+         fits.w <= fits.bw + 1 && fits.h <= fits.bh + 1, JSON.stringify(fits));
+  await setLens(35);
+
+  // ------------------------------- 3в. СВОЁ ФОКУСНОЕ НЕ ТЕРЯЕТСЯ
+  log('\n3в. Своё фокусное не теряется');
+  // СВОЁ ФОКУСНОЕ НЕ ТЕРЯЕТСЯ. Вписал 29, ушёл на 35, вернулся — и попал
+  // не на 29, а на 27: в общем списке 29 нет, и лестница о нём не знала.
+  // Число на кнопке при этом другое, а человек видит «рамка не сошлась».
+  const custom = await page.evaluate(async () => {
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await new Promise(r => setTimeout(r, 450));
+    const inp = [...document.querySelectorAll('input[type="number"]')].find(i => /например/.test(i.placeholder || ''));
+    if (!inp) return { err: 'поля «своё фокусное» нет' };
+    const setV = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setV.call(inp, '29');
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 400));
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await new Promise(r => setTimeout(r, 350));
+    const at29 = cur();
+    // Уходим на два шага вверх и возвращаемся на два вниз
+    for (let i = 0; i < 2; i++) { document.querySelector('[data-cf="scout-lens-plus"]').click(); await new Promise(r => setTimeout(r, 120)); }
+    const up = cur();
+    for (let i = 0; i < 2; i++) { document.querySelector('[data-cf="scout-lens-minus"]').click(); await new Promise(r => setTimeout(r, 120)); }
+    return { at29, up, back: cur() };
+  });
+  expect('вписанное своё фокусное встаёт текущим', custom.at29 === 29, JSON.stringify(custom));
+  expect('и ВОЗВРАЩАЕТСЯ шагами назад, а не теряется',
+         custom.back === 29, `29 → ${custom.up} → ${custom.back}`);
+  await setLens(35);
+
+  // ------------------------------------- 3б. КАДР ЗАНИМАЕТ ЭКРАН ЦЕЛИКОМ
+  // Мерило числовое: сколько точек высоты досталось кадру против высоты
+  // всего экрана. На глаз «вроде видно» и при полосе в сотню точек.
+  log('\n3б. В камере кадр — во весь экран, и выход из неё нарисован всегда');
+  const fill = await page.evaluate(() => {
+    const root = document.querySelector('[data-cf="scout"]');
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const hdr = document.querySelector('header');
+    const back = document.querySelector('[data-cf="scout-back"]');
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    const bar = document.querySelector('[data-cf="scout-bar"]');
+    const r = root.getBoundingClientRect(), c = cam.getBoundingClientRect();
+    // Нижняя полоса обязана ЛЕЖАТЬ ПОВЕРХ кадра, а не под ним.
+    const over = bar ? bar.getBoundingClientRect() : null;
+    const hit = (el) => {
+      if (!el) return false;
+      const b = el.getBoundingClientRect();
+      const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return !!t && (t === el || el.contains(t));
+    };
+    return {
+      camH: Math.round(c.height), rootH: Math.round(r.height), winH: window.innerHeight,
+      header: !!hdr, seg: document.querySelectorAll('[data-cf="scout"] .cf-seg').length,
+      dateInFlow: document.querySelectorAll('[data-cf="scout"] input[type="date"]').length,
+      timebar: document.querySelectorAll('[data-cf="scout-timebar"]').length,
+      backHit: hit(back), chipHit: hit(chip),
+      barBelow: !!over && over.top >= c.bottom - 2,
+      mode: root.getAttribute('data-mode')
+    };
+  });
+  expect('в камере шапки модуля нет — ни переключателя, ни поля даты в потоке',
+         fill.seg === 0 && fill.dateInFlow === 0, `сегментов ${fill.seg}, дат ${fill.dateInFlow}`);
+  expect('шкала дня в потоке не стоит — она по нажатию на часы',
+         fill.timebar === 0, String(fill.timebar));
+  expect('общая шапка приложения в камере убрана', !fill.header);
+  // ПОЛОСА РОВНО ОДНА — как у Cadrage. Она в потоке и картинку не
+  // закрывает; всё остальное живёт в ней, а не пилюлями поверх кадра.
+  expect('полос ровно одна, и кадру достаётся всё остальное',
+         fill.camH > fill.rootH * 0.82, `${fill.camH} из ${fill.rootH}`);
+  expect('кадру досталось больше 82% окна', fill.camH > fill.winH * 0.82,
+         `${fill.camH} из ${fill.winH}`);
+  expect('полоса НЕ закрывает картинку — она под ней', fill.barBelow);
+  expect('нажатие попадает в «‹ План» — из камеры есть выход', fill.backHit);
+  expect('нажатие попадает в чип объекта', fill.chipHit);
+  // «КОКПИТ ИСТРЕБИТЕЛЯ» — ЭТО ЧИСЛО ПЛАВАЮЩИХ ОРГАНОВ ПОВЕРХ КАДРА.
+  // Было десять: четыре пилюли сверху (и они наезжали друг на друга)
+  // и шесть внизу, разогнанных по всей ширине. У Cadrage поверх картинки
+  // НЕТ НИ ОДНОГО — всё в одной полосе. У нас осталось два: чем выйти
+  // и где мы; остальное переехало в полосу.
+  const cockpit = await page.evaluate(() => {
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const c = cam.getBoundingClientRect();
+    const items = [...cam.querySelectorAll('button, input, select')].filter(el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+    });
+    // И ничто из них не должно накрывать соседа: «по солнцу» уходило
+    // ПОД чип объекта, и нажать его было нечем.
+    let over = 0;
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i].getBoundingClientRect(), b = items[j].getBoundingClientRect();
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) over++;
+      }
+    }
+    return { n: items.length, over, labels: items.map(e => (e.textContent || e.tagName).trim().slice(0, 18)),
+             barItems: document.querySelectorAll('[data-cf="scout-bar"] button').length, camH: Math.round(c.height) };
+  });
+  expect('поверх кадра плавает не больше двух кнопок', cockpit.n <= 2,
+         `${cockpit.n}: ${cockpit.labels.join(' · ')}`);
+  expect('и они не наезжают друг на друга', cockpit.over === 0, `наложений ${cockpit.over}`);
+  expect('всё остальное собрано в одной полосе', cockpit.barItems >= 5, String(cockpit.barItems));
+
+  // ------------------------------------------------ 4. ПОДКРУТКА ПО СОЛНЦУ
+  log('\n4. Подкрутка компаса по настоящему солнцу');
+  await aimAt(page, 180, 90, 0);
+  await page.waitForTimeout(300);
+  // Задираем устройство на высоту солнца: подкрутка правит АЗИМУТ (там и
+  // живёт ошибка магнитометра), а высоту даёт акселерометр по силе тяжести,
+  // и она надёжна. Не задрав, солнце просто вне кадра по вертикали.
+  // Сбрасываем отмотку и ставим сегодняшний день: в разделе 2 мы увели
+  // ползунок на 6 утра дня смены, и целиться в солнце ДРУГОГО дня
+  // бессмысленно — проверка мерила бы не то, что показывает экран.
+  // В КАМЕРЕ шапки модуля нет: кадр занимает экран целиком, а объект
+  // и день живут в шторке за чипом в углу, «сейчас» — в шкале дня,
+  // которая открывается часами в нижней полосе.
+  await page.evaluate(async () => {
+    const clock = document.querySelector('[data-cf="scout-clock"]');
+    if (clock) {
+      clock.click();
+      await new Promise(r => setTimeout(r, 300));
+      const now = [...document.querySelectorAll('[data-cf="scout"] button')].find(b => b.textContent.trim() === 'сейчас');
+      if (now) now.click();
+      await new Promise(r => setTimeout(r, 200));
+      // ВРЕМЯ СТАВИМ САМИ, а не берём «сейчас»: у контейнера свои часы,
+      // и вечером солнце оказывается под горизонтом — подкрутить по нему
+      // нельзя (и приложение честно об этом говорит), а проверка от
+      // времени суток зависеть не должна. Тянем на полдень: ровно
+      // середина шкалы — 720 минут.
+      const tb = document.querySelector('[data-cf="scout-timebar"]');
+      if (tb) {
+        const r0 = tb.getBoundingClientRect();
+        const x = r0.left + r0.width * 0.5, y = r0.top + r0.height / 2;
+        tb.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 9 }));
+        tb.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true, pointerId: 9 }));
+        await new Promise(r => setTimeout(r, 300));
+      }
+      clock.click();                                  // шкалу убираем — она закрывает кадр
+      await new Promise(r => setTimeout(r, 200));
+    }
+    document.querySelector('[data-cf="scout-place"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    const d = document.querySelector('input[type="date"]');
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    set.call(d, new Date().toISOString().slice(0, 10));
+    d.dispatchEvent(new Event('input', { bubbles: true }));
+    d.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 300));
+    document.querySelector('[data-cf="scout-place-ok"]').click();
+    await new Promise(r => setTimeout(r, 400));
+  });
+  await page.waitForTimeout(500);
+  const sunAlt = await page.evaluate(() => {
+    // Тот же миг, что показывает экран: сегодняшний день, 12:00 по часам
+    // устройства — именно так приложение строит `when` из даты и ползунка.
+    const at = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00');
+    const p = sunPosition(55.7558, 37.6173, at);
+    return { alt: p.alt, az: p.az };
+  });
+  await aimAt(page, 200, 90 + sunAlt.alt, 0);
+  await page.waitForTimeout(400);
+  // ИЗ ПОДКРУТКИ ОБЯЗАН БЫТЬ ВЫХОД. Накладка накрывает весь кадр и просит
+  // ткнуть в солнце, а внутри неё ЛЮБОЕ нажатие и есть подкрутка: войдя
+  // случайно, человек оказывался заперт — и первый же тык уводил компас
+  // на десятки градусов. Так и вышло +93° в помещении, где солнца не видно.
+  const escape = await page.evaluate(async () => {
+    const btn = document.querySelector('[data-cf="scout-compass"]');
+    if (!btn) return { err: 'компаса в полосе нет' };
+    const off0 = localStorage.getItem('cf_scout_headoff');
+    btn.click();
+    await new Promise(r => setTimeout(r, 400));
+    const inCalib = /Отмена/.test(btn.textContent);
+    const scrim = !!document.querySelector('[data-cf="scout-ar"]');
+    // Выходим кнопкой, НЕ трогая кадр
+    const r = btn.getBoundingClientRect();
+    const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const hits = !!t && (t === btn || btn.contains(t));
+    btn.click();
+    await new Promise(r2 => setTimeout(r2, 400));
+    const tt = document.querySelector('[data-cf="toast"]');
+    return { inCalib, scrim, hits, out: !/Отмена/.test(btn.textContent),
+             toast: tt ? tt.innerText.trim().slice(0, 90) : '',
+             off0, off1: localStorage.getItem('cf_scout_headoff') };
+  });
+  expect('кнопка компаса включает подкрутку и становится «Отмена»',
+         escape.inCalib === true, JSON.stringify(escape));
+  expect('нажатие попадает в неё', escape.hits === true);
+  expect('«Отмена» выводит из подкрутки', escape.out === true);
+  expect('и поправка при этом НЕ меняется',
+         String(escape.off0) === String(escape.off1), `${escape.off0} → ${escape.off1}`);
+
+  const calib = await page.evaluate(async () => {
+    // Подкрутка живёт на КОМПАСЕ в нижней полосе: отдельная пилюля
+    // «по солнцу» поверх кадра убрана — их там было пять в ряд.
+    const btn = document.querySelector('[data-cf="scout-compass"]');
+    if (!btn) return { err: 'компаса в полосе нет' };
+    btn.click();
+    await new Promise(r => setTimeout(r, 350));
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    const pe = getComputedStyle(svg).pointerEvents;
+    const r = svg.getBoundingClientRect();
+    // Тычем РОВНО в центр: значит «солнце прямо передо мной», и поправка
+    // обязана стать такой, чтобы наш азимут сравнялся с азимутом солнца.
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const el = document.elementFromPoint(x, y);
+    const hitsOverlay = el === svg || svg.contains(el);
+    svg.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 7 }));
+    await new Promise(r2 => setTimeout(r2, 500));
+    const root = document.querySelector('[data-cf="scout"]');
+    const offBtn = [...root.querySelectorAll('button')].find(b => /^[+-]?\d+°$/.test(b.textContent.trim()));
+    return { pe, hitsOverlay, hitTag: el ? el.tagName + (el.getAttribute('data-cf') || '') : 'нет',
+             toast: /подкручен/i.test(document.body.innerText),
+             off: offBtn ? offBtn.textContent.trim() : '' };
+  });
+  expect('в режиме подкрутки накладка принимает нажатия',
+         calib.pe === 'auto' && calib.hitsOverlay, `pointer-events=${calib.pe}, под пальцем ${calib.hitTag}`);
+  expect('подкрутка применилась и о ней сказано полоской', calib.toast);
+  expect('поправка показана кнопкой — её видно и можно снять', !!calib.off, calib.off);
+  // После подкрутки солнце обязано оказаться в центре кадра
+  const centred = await page.evaluate(() => {
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    const disc = [...svg.querySelectorAll('circle')].filter(c => +c.getAttribute('r') === 8)[0];
+    return disc ? { dx: Math.abs(+disc.getAttribute('cx') - vb[2] / 2), w: vb[2] } : null;
+  });
+  expect('солнце встало в центр кадра', centred && centred.dx < centred.w * 0.03,
+         centred ? `сдвиг ${centred.dx.toFixed(1)} точек из ${centred.w}` : 'солнца в кадре нет');
+
+  // -------------------------------------------- 4б. ПРЕСЕТЫ КАМЕР УСТРОЙСТВ
+  log('\n4б. Пресеты камер устройств');
+  const presets = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    // Мерим УВЕЛИЧЕНИЕ картинки: рамка теперь стоит на месте, а зумится
+    // изображение — от смены камеры устройства меняется именно оно.
+    const frameW = () => {
+      const v = document.querySelector('[data-cf="scout-cam"] video');
+      const box = document.querySelector('[data-cf="scout-cam"]');
+      return (v && box) ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0;
+    };
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(450);
+    const devBtns = [...document.querySelectorAll('[data-cf="scout-device"]')].map(b => b.dataset.dev);
+    // Обычный iPhone: основная 26 мм
+    document.querySelector('[data-cf="scout-device"][data-dev="iph"]').click();
+    await wait(350);
+    const lensesIphone = [...document.querySelectorAll('[data-cf="scout-lenspreset"]')].map(b => +b.dataset.eq);
+    const eqIphone = (document.body.innerText.match(/(\d+(?:\.\d+)?) мм\s+\d+/) || [])[1];
+    // iPhone Pro: основная 24 мм, и объективов больше
+    document.querySelector('[data-cf="scout-device"][data-dev="ipro"]').click();
+    await wait(350);
+    const lensesPro = [...document.querySelectorAll('[data-cf="scout-lenspreset"]')].map(b => +b.dataset.eq);
+    // Переключаемся на сверхширокую — рамка обязана заметно вырасти
+    document.querySelector('[data-cf="scout-setup"]').click();   // закрыть, чтобы увидеть кадр
+    await wait(300);
+    const wMain = frameW();
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    document.querySelector('[data-cf="scout-lenspreset"][data-eq="13"]').click();
+    await wait(300);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(350);
+    const wUw = frameW();
+    // Подгонка: шаг в полмиллиметра
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    const before = +(localStorage.getItem('cf_scout_deveq'));
+    document.querySelector('[data-cf="scout-eq-plus"]').click();
+    await wait(300);
+    const after = +(localStorage.getItem('cf_scout_deveq'));
+    // Возвращаем основную камеру, чтобы дальше снимок был как раньше
+    document.querySelector('[data-cf="scout-lenspreset"][data-eq="24"]').click();
+    await wait(250);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(300);
+    return { devBtns, lensesIphone, lensesPro, wMain, wUw, before, after,
+             eqmap: JSON.parse(localStorage.getItem('cf_scout_eqmap') || '{}'),
+             device: localStorage.getItem('cf_scout_device'),
+             deveq: +(localStorage.getItem('cf_scout_deveq')) };
+  });
+  expect('устройства на выбор есть', presets.devBtns.length >= 6, presets.devBtns.join(' · '));
+  expect('у обычного iPhone основная 26 мм, у Pro — 24 мм',
+         presets.lensesIphone.includes(26) && presets.lensesPro.includes(24) && !presets.lensesPro.includes(26),
+         `обычный ${presets.lensesIphone.join('/')} · Pro ${presets.lensesPro.join('/')}`);
+  expect('у Pro объективов больше', presets.lensesPro.length > presets.lensesIphone.length,
+         `${presets.lensesPro.length} против ${presets.lensesIphone.length}`);
+  expect('сверхширокая ЗАСТАВЛЯЕТ ПРИБЛИЖАТЬ сильнее — обзор-то шире',
+         presets.wUw > 0 && presets.wMain > 0 && presets.wUw > presets.wMain * 1.3,
+         `увеличение ${presets.wMain.toFixed(2)}× -> ${presets.wUw.toFixed(2)}×`);
+  expect('подгонка шагает на полмиллиметра', near(presets.after - presets.before, 0.5, 0.01),
+         `${presets.before} -> ${presets.after} мм`);
+  expect('выбор устройства запомнился', presets.device === 'ipro', presets.device);
+  expect('угол запомнился за этой камерой', Object.values(presets.eqmap).length >= 1,
+         JSON.stringify(presets.eqmap));
+
+  // ------------------------------- 4б2. ОБЗОР ВПИСЫВАЕТСЯ ЧИСЛОМ, А НЕ НАБИРАЕТСЯ
+  // Замер по снимкам пользователя дал разницу в 1,31 раза: камера 26 мм
+  // отдала странице поток обзором как у 34 мм. От 26 до 34 кнопкой «+» —
+  // шестнадцать нажатий. Поле рядом с кнопками отвечает ровно на это.
+  log('\n4б2. Обзор телефона вписывается числом');
+  const typed = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const zoom = () => (v && box) ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0;
+    const type = (el, val) => {
+      // React слушает НАСТОЯЩИЙ сеттер значения: присваивание через
+      // el.value он не замечает вовсе, и проверка была бы зелёной
+      // при неработающем поле.
+      const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      set.call(el, String(val));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(450);
+    // Ставим заведомо известный обзор, чтобы считать от него
+    const inp = document.querySelector('[data-cf="scout-eq-input"]');
+    const found = !!inp;
+    if (!found) return { found };
+    // Окно настроек длинное и прокручивается внутри себя: без этого
+    // поле стоит ниже видимой полосы, elementFromPoint отдаёт пустоту,
+    // и проверка ловила бы не промах по полю, а прокрутку.
+    inp.scrollIntoView({ block: 'center' });
+    await wait(200);
+    const tap = inp.getBoundingClientRect();
+    const t = document.elementFromPoint(tap.left + tap.width / 2, tap.top + tap.height / 2);
+    const hit = !!t && (t === inp || inp.contains(t));
+    const hitWas = t ? (t.tagName + '.' + (t.className || '') + '#' + (t.dataset.cf || '')) : 'ничего';
+    const tall = tap.height;
+    type(inp, '26');
+    await wait(300);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(350);
+    const z26 = zoom();
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    // Недописанное число не применяется: «3» из «34» — это не 3 мм
+    type(document.querySelector('[data-cf="scout-eq-input"]'), '3');
+    await wait(250);
+    const midway = +(localStorage.getItem('cf_scout_deveq'));
+    type(document.querySelector('[data-cf="scout-eq-input"]'), '34');
+    await wait(300);
+    const stored = +(localStorage.getItem('cf_scout_deveq'));
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(350);
+    const z34 = zoom();
+    // Уход фокуса приводит недописанное в порядок, а не оставляет мусор
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    const el = document.querySelector('[data-cf="scout-eq-input"]');
+    type(el, '900');
+    el.focus(); el.blur();
+    await wait(300);
+    const clamped = +(localStorage.getItem('cf_scout_deveq'));
+    type(document.querySelector('[data-cf="scout-eq-input"]'), '26');
+    await wait(250);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(300);
+    return { found, hit, hitWas, tall, z26, z34, midway, stored, clamped };
+  });
+  expect('поле обзора есть и нажатие попадает в него', typed.found && typed.hit, typed.hitWas);
+  expect('поле ростом с палец', typed.tall >= 34, `${(typed.tall || 0).toFixed(0)} точек`);
+  expect('вписанное число применяется', typed.stored === 34, `${typed.stored} мм`);
+  expect('недописанное «3» НЕ применяется', typed.midway === 26, `${typed.midway} мм`);
+  expect('34 мм вместо 26 — картинка отъезжает примерно в 1,3 раза',
+         typed.z26 > 0 && typed.z34 > 0 && near(typed.z26 / typed.z34, 1.3, 0.06),
+         `${typed.z26.toFixed(2)}× -> ${typed.z34.toFixed(2)}× (в ${(typed.z26 / typed.z34).toFixed(2)} раза)`);
+  expect('бессмысленное число приводится к пределу, а не ломает визир',
+         typed.clamped === 400, `${typed.clamped} мм`);
+
+  // ------------------------------------------- 4в. В НАСТРОЙКАХ НЕ СВИТОК
+  // Мерило числовое: сколько СЛОВ видно в окне в покое. На глаз «вроде
+  // немного» и при десяти абзацах — их же читают по одному разу.
+  log('\n4в. Настройки визира: пояснения по «?», а не свитком');
+  const words = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const box = () => document.querySelector('[data-cf="scout-hints"]').closest('[role="dialog"]')
+                   || document.querySelector('[data-cf="scout-hints"]').parentElement.parentElement;
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(450);
+    const q = document.querySelector('[data-cf="scout-hints"]');
+    const count = () => (box().innerText.trim().match(/[А-Яа-яЁёA-Za-z]+/g) || []).length;
+    const off = count();
+    const b = q.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    const hit = !!t && (t === q || q.contains(t));
+    q.click(); await wait(350);
+    const on = count();
+    const kept = localStorage.getItem('cf_scout_hints');
+    q.click(); await wait(350);
+    const back = count();
+    // Кнопки-то остались все до единой — прячется только проза.
+    const chips = box().querySelectorAll('button, input, select').length;
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(300);
+    return { off, on, back, hit, kept, chips };
+  });
+  expect('нажатие попадает в «?»', words.hit);
+  expect('в покое пояснений нет — текста стало заметно меньше',
+         words.off < words.on * 0.45, `${words.off} слов против ${words.on} с пояснениями`);
+  expect('«?» возвращает прежний вид', words.back === words.off, `${words.back} против ${words.off}`);
+  expect('выбор помнится', words.kept === '1', String(words.kept));
+  expect('органы управления НЕ спрятаны — прячется только проза',
+         words.chips > 30, String(words.chips));
+
+  // --------------------------------- 4д. ОБЗОР ТЕЛЕФОНА СВОДИТСЯ ЩИПКОМ
+  // Камерная сторона считается точно (35 мм на Mini LF в 2.39 — это 55,3°),
+  // а вот какую долю экрана займёт эта рамка, зависит от обзора САМОГО
+  // телефона. Спросить его нечем ни одним способом: Safari отдаёт странице
+  // свой пресет съёмки. Поэтому обзор подвижен — щипком прямо по кадру.
+  log('\n4д. Щипок меняет ОБЪЕКТИВ, а не подгонку обзора');
+  const pinch = await page.evaluate(async () => {
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const fw = () => v.getBoundingClientRect().width / box.getBoundingClientRect().width;
+    const eq = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    const ev = (type, id, x, y) => box.dispatchEvent(new PointerEvent(type, {
+      pointerId: id, clientX: x, clientY: y, pointerType: 'touch', bubbles: true, cancelable: true }));
+    const r = box.getBoundingClientRect();
+    const cy = r.top + r.height / 2, cx = r.left + r.width / 2;
+    const was = { eq: eq(), w: fw() };
+    const devEq0 = +(localStorage.getItem('cf_scout_deveq'));
+    // Разводим пальцы вдвое — рамка обязана вырасти
+    ev('pointerdown', 11, cx - 100, cy); ev('pointerdown', 12, cx + 100, cy);
+    await new Promise(t => setTimeout(t, 60));
+    ev('pointermove', 11, cx - 200, cy); ev('pointermove', 12, cx + 200, cy);
+    await new Promise(t => setTimeout(t, 350));
+    const wide = { eq: eq(), w: fw() };
+    ev('pointerup', 11, cx - 200, cy); ev('pointerup', 12, cx + 200, cy);
+    await new Promise(t => setTimeout(t, 250));
+    const kept = { eq: eq(), devEq: +(localStorage.getItem('cf_scout_deveq')) };
+    // И обратно, чтобы дальше всё было как было
+    ev('pointerdown', 13, cx - 200, cy); ev('pointerdown', 14, cx + 200, cy);
+    await new Promise(t => setTimeout(t, 60));
+    ev('pointermove', 13, cx - 100, cy); ev('pointermove', 14, cx + 100, cy);
+    await new Promise(t => setTimeout(t, 350));
+    ev('pointerup', 13, cx - 100, cy); ev('pointerup', 14, cx + 100, cy);
+    await new Promise(t => setTimeout(t, 250));
+    return { was, wide, kept, devEq0, back: { eq: eq(), w: fw() } };
+  });
+  expect('развели пальцы — объектив стал длиннее', pinch.wide.eq > pinch.was.eq,
+         `${pinch.was.eq} → ${pinch.wide.eq} мм`);
+  expect('и картинка от этого ПРИБЛИЗИЛАСЬ',
+         pinch.wide.w > pinch.was.w * 1.2, `${pinch.was.w.toFixed(2)}× → ${pinch.wide.w.toFixed(2)}×`);
+  // ПОДГОНКУ ОБЗОРА ЩИПОК НЕ ТРОГАЕТ. Она вещь однократная и тонкая,
+  // а жест, который легко сделать случайно, молча уводил её в сторону —
+  // это и было «при первом открытии всё ок, а потом крупность уезжает».
+  expect('а подгонка обзора устройства НЕ тронута',
+         Math.abs(pinch.kept.devEq - pinch.devEq0) < 0.01,
+         `${pinch.devEq0} → ${pinch.kept.devEq} мм`);
+  expect('свели пальцы — объектив вернулся',
+         pinch.back.eq <= pinch.was.eq + 0.01, `${pinch.wide.eq} → ${pinch.back.eq} мм`);
+  // ЗАСТРЯВШИЙ ПАЛЕЦ НЕ ДОЛЖЕН ПРЕВРАЩАТЬ КАСАНИЕ В ЩИПОК. Отпускание
+  // изредка теряется, а нажатие по накладке в режиме подкрутки его
+  // и не присылает: без подчистки обзор менялся бы сам собой от
+  // обычного касания — та же беда, что была у доски.
+  const stuck = await page.evaluate(async () => {
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const eq = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    const ev = (type, id, x, y) => box.dispatchEvent(new PointerEvent(type, {
+      pointerId: id, clientX: x, clientY: y, pointerType: 'touch', bubbles: true, cancelable: true }));
+    const r = box.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    ev('pointerdown', 91, cx - 150, cy);            // палец, который «потеряли»
+    await new Promise(t => setTimeout(t, 900));
+    const was = eq();
+    ev('pointerdown', 92, cx + 40, cy);             // обычное одиночное касание
+    ev('pointermove', 92, cx + 90, cy);
+    await new Promise(t => setTimeout(t, 300));
+    const after = eq();
+    ev('pointerup', 92, cx + 90, cy); ev('pointerup', 91, cx - 150, cy);
+    await new Promise(t => setTimeout(t, 200));
+    return { was, after };
+  });
+  expect('одиночное касание рядом с застрявшим пальцем объектив НЕ меняет',
+         Math.abs(stuck.after - stuck.was) < 0.01, `${stuck.was} → ${stuck.after} мм`);
+
+  // --------------------------------------- 4г. СВЕРКА ТОЧКИ ПО КООРДИНАТАМ
+  // Объект в списке и место, где мы стоим, расходятся МОЛЧА: переехали
+  // на другой двор, а кадры и заметки всё так же ложатся к прежнему
+  // объекту, и узнаётся это уже дома.
+  log('\n4г. Сверка: та ли это точка');
+  const spotHere = await page.evaluate(() => {
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    return { kind: chip && chip.dataset.spot, text: chip && chip.innerText.replace(/\s+/g, ' ').trim() };
+  });
+  expect('стоим на объекте — точка зелёная', spotHere.kind === 'here', JSON.stringify(spotHere));
+  expect('расстояние в покое не пишется — новостей нет',
+         !/км|\d+ м/.test(spotHere.text || ''), spotHere.text);
+
+  // Уезжаем на 3,8 км к северу, не трогая объект
+  await ctx.setGeolocation({ latitude: 55.79, longitude: 37.6173 });
+  await page.waitForTimeout(2500);
+  const spotFar = await page.evaluate(async () => {
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    const out = { kind: chip && chip.dataset.spot, text: chip && chip.innerText.replace(/\s+/g, ' ').trim() };
+    chip.click();
+    await new Promise(r => setTimeout(r, 500));
+    const blk = document.querySelector('[data-cf="scout-spot"]');
+    out.block = blk ? blk.innerText.replace(/\s+/g, ' ').trim() : '';
+    out.blockKind = blk && blk.dataset.spot;
+    document.querySelector('[data-cf="scout-place-ok"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    return out;
+  });
+  expect('уехали — точка жёлтая и на чипе написано, насколько',
+         spotFar.kind === 'far' && /3,8 км|3,9 км|4 км/.test(spotFar.text || ''), JSON.stringify(spotFar));
+  expect('в шторке сказано словами, где мы и что дальше',
+         spotFar.blockKind === 'far' && /Мы в .* от «ДВОР ШКОЛЫ»/.test(spotFar.block) &&
+         /Приёмник: 55\.79/.test(spotFar.block), spotFar.block);
+  expect('сказано, что солнце считается для ТОЧКИ ОБЪЕКТА, а не для нас',
+         /Солнце считается для точки объекта/.test(spotFar.block), spotFar.block);
+
+  // Объект БЕЗ координат: «Я здесь» завела бы второй такой же на том же
+  // месте — точек без координат она не видит. Поэтому отдельная кнопка.
+  const noCoords = await page.evaluate(async () => {
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    chip.click();
+    await new Promise(r => setTimeout(r, 500));
+    const sel = document.querySelector('[data-cf="scout-place-pick"]');
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+    set.call(sel, 'loc-t2');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 600));
+    const blk = document.querySelector('[data-cf="scout-spot"]');
+    const btn = document.querySelector('[data-cf="scout-setcoords"]');
+    const out = { kind: blk && blk.dataset.spot, block: blk ? blk.innerText.replace(/\s+/g, ' ').trim() : '',
+                  hasBtn: !!btn };
+    if (btn) {
+      const b = btn.getBoundingClientRect();
+      const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      out.hit = !!t && (t === btn || btn.contains(t));
+      btn.click();
+      await new Promise(r => setTimeout(r, 800));
+    }
+    out.coords = (JSON.parse(localStorage.getItem('cf_locations') || '[]')
+                   .find(l => l.id === 'loc-t2') || {}).coords || '';
+    out.kindAfter = (document.querySelector('[data-cf="scout-spot"]') || {}).dataset
+                      ? document.querySelector('[data-cf="scout-spot"]').dataset.spot : '';
+    // Возвращаем прежний объект и прежнее место — дальше снимок
+    set.call(sel, 'loc-t1');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 500));
+    document.querySelector('[data-cf="scout-place-ok"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    return out;
+  });
+  expect('у объекта без координат так и сказано', noCoords.kind === 'nocoords', noCoords.block);
+  expect('и предложено записать ему эту точку', noCoords.hasBtn && noCoords.hit === true, JSON.stringify(noCoords));
+  expect('точка записалась объекту', /^55\.79/.test(noCoords.coords), noCoords.coords || '(пусто)');
+  expect('после записи мы на нём и стоим', noCoords.kindAfter === 'here', noCoords.kindAfter);
+
+  await ctx.setGeolocation({ latitude: 55.7558, longitude: 37.6173 });
+  await page.waitForTimeout(2000);
+  const backHome = await page.evaluate(() => (document.querySelector('[data-cf="scout-place"]') || {}).dataset.spot);
+  expect('вернулись на объект — снова зелёная', backHome === 'here', String(backHome));
+
+  // ------------------------------------------------------------ 5. СНИМОК
+  log('\n5. Снимок ложится к объекту с подписью');
+  const shot = await page.evaluate(async () => {
+    // Отматываем солнце на другой час ПЕРЕД съёмкой: время в подписи
+    // обязано остаться настоящим. Раньше туда уходило время с ползунка,
+    // и в записи кадра стояло «19:55» при часах 13:46.
+    const clock = document.querySelector('[data-cf="scout-clock"]');
+    if (clock) {
+      clock.click();
+      await new Promise(r => setTimeout(r, 400));
+      const tb = document.querySelector('[data-cf="scout-timebar"]');
+      if (tb) {
+        const r0 = tb.getBoundingClientRect();
+        const x = r0.left + r0.width * 0.82;          // около 19:40
+        tb.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: r0.top + r0.height / 2, bubbles: true, pointerId: 7 }));
+        tb.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: r0.top + r0.height / 2, bubbles: true, pointerId: 7 }));
+        await new Promise(r => setTimeout(r, 400));
+      }
+      clock.click();
+      await new Promise(r => setTimeout(r, 300));
+    }
+    const before = JSON.parse(localStorage.getItem('cf_references') || '[]').length;
+    const b = document.querySelector('[data-cf="scout-shoot"]');
+    if (!b) return { err: 'кнопки «Снять» нет' };
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const hits = hit === b || b.contains(hit);
+    b.click();
+    for (let i = 0; i < 60 && JSON.parse(localStorage.getItem('cf_references') || '[]').length === before; i++) {
+      await new Promise(r2 => setTimeout(r2, 200));
+    }
+    const refs = JSON.parse(localStorage.getItem('cf_references') || '[]');
+    const out = { hits, before, after: refs.length, last: refs[refs.length - 1] || null, at: Date.now() };
+    // Доля рамки на ЭКРАНЕ в момент съёмки — с ней потом сверяем снимок
+    (() => {
+      const boxEl = document.querySelector('[data-cf="scout-cam"]');
+      const svgEl = document.querySelector('[data-cf="scout-ar"]');
+      const fEl = document.querySelector('[data-cf="scout-frame"]');
+      if (!boxEl || !svgEl || !fEl) { out.frameOfScreen = 0; return; }
+      const vb = +svgEl.getAttribute('viewBox').split(' ')[2];
+      const k = svgEl.getBoundingClientRect().width / vb;
+      out.frameOfScreen = (+fEl.getAttribute('width')) * k / boxEl.getBoundingClientRect().width;
+    })();
+    // РАМКА НА САМОМ СНИМКЕ. Ищем её по цвету: акцентная линия — заметно
+    // краснее всего остального, — и смотрим габарит найденного. У рамки
+    // он обязан быть пропорции кадра и стоять по центру.
+    const url = out.last && out.last.url;
+    if (url) {
+      out.box = await new Promise(res => {
+        const im = new Image();
+        im.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = im.naturalWidth; c.height = im.naturalHeight;
+          const cx = c.getContext('2d');
+          cx.drawImage(im, 0, 0);
+          const d = cx.getImageData(0, 0, c.width, c.height).data;
+          let l = 1e9, t = 1e9, r2 = -1, b2 = -1, n = 0;
+          for (let y = 0; y < c.height; y += 2) {
+            for (let x = 0; x < c.width; x += 2) {
+              const i = (y * c.width + x) * 4;
+              const R = d[i], G = d[i + 1], B = d[i + 2];
+              if (R > 150 && R - B > 55 && R - G > 35) {
+                n++;
+                if (x < l) l = x; if (x > r2) r2 = x;
+                if (y < t) t = y; if (y > b2) b2 = y;
+              }
+            }
+          }
+          res(n > 50 ? { l, t, r: r2, b: b2, n, w: c.width, h: c.height } : { n, w: c.width, h: c.height });
+        };
+        im.onerror = () => res(null);
+        im.src = url;
+      });
+    }
+    return out;
+  });
+  expect('нажатие попадает в кнопку «Снять»', shot.hits);
+  expect('кадр добавился в проект', shot.after === shot.before + 1, `${shot.before} → ${shot.after}`);
+  const L = shot.last || {};
+  expect('кадр привязан к объекту', L.locationId === 'loc-t1', L.locationId);
+  expect('кадр получил тег «скаут»', (L.tags || []).includes('скаут'), JSON.stringify(L.tags));
+  expect('кадр лёг в папку с именем объекта', L.folder === 'ДВОР ШКОЛЫ', L.folder);
+  expect('картинка настоящая', /^data:image\/jpeg/.test(L.url || ''), (L.url || '').slice(0, 24));
+  const sh = L.shot || {};
+  expect('подпись «чем снято» в записи', sh.lens > 0 && sh.sw > 0 && sh.ratio > 0, JSON.stringify({ lens: sh.lens, sw: sh.sw, ratio: sh.ratio }));
+  expect('подпись «где снято» в записи', near(sh.lat, 55.7558, 0.01) && near(sh.lon, 37.6173, 0.01) && sh.az !== null,
+         `${sh.lat}, ${sh.lon}, азимут ${sh.az}°`);
+  // «ГДЕ СНЯТО» — это где стояла КАМЕРА. Раньше в запись уходили
+  // координаты ОБЪЕКТА, и кадр, снятый за квартал, врал про своё место.
+  expect('«где снято» взято у приёмника, а не у объекта', sh.fix === 'gps', String(sh.fix));
+  expect('и точность ответа записана', sh.acc === null || sh.acc >= 0, String(sh.acc));
+  expect('подпись «когда снято» в записи', !!sh.when && !isNaN(new Date(sh.when)), sh.when);
+  expect('подпись «кем снято» в записи', sh.who === 'Тест Оператор', sh.who);
+  expect('название объекта в подписи', sh.place === 'ДВОР ШКОЛЫ', sh.place);
+  // ВРЕМЯ В ЗАПИСИ — НАСТОЯЩЕЕ, а отмотанное лежит отдельным полем.
+  expect('«когда снято» — это время СЪЁМКИ, а не положение ползунка',
+         Math.abs(new Date(sh.when).getTime() - shot.at) < 60000,
+         `${sh.when} против ${new Date(shot.at).toISOString()}`);
+  expect('а отмотанное время не потеряно — лежит отдельно',
+         !!sh.sunAt && sh.sunAt !== sh.when, `sunAt=${sh.sunAt}`);
+
+  // РАМКА ОБЪЕКТИВА НА САМОМ СНИМКЕ. Без неё в объекте лежит обычная
+  // фотография с телефона и подписью «35 мм · ALEXA · 2.39», проверить
+  // которую нечем — а ради этой рамки визир и заведён.
+  const bx = shot.box || {};
+  expect('на снимке нарисована рамка', bx.n > 50, `красных точек ${bx.n || 0}`);
+  if (bx.n > 50) {
+    const fw = bx.r - bx.l, fh = bx.b - bx.t;
+    expect('у рамки на снимке пропорция кадра — 2.39',
+           Math.abs(fw / fh - 2.39) < 0.12, (fw / fh).toFixed(2));
+    expect('рамка стоит по центру снимка',
+           Math.abs((bx.l + bx.r) / 2 - bx.w / 2) < bx.w * 0.03 &&
+           Math.abs((bx.t + bx.b) / 2 - bx.h / 2) < bx.h * 0.03,
+           `центр ${Math.round((bx.l + bx.r) / 2)},${Math.round((bx.t + bx.b) / 2)} при ${bx.w}×${bx.h}`);
+    expect('рамка не режет снимок — кадр остаётся целиком',
+           fw < bx.w * 0.995, `${Math.round(fw)} из ${bx.w}`);
+    // СНИМОК СОВПАДАЕТ С ЭКРАНОМ. Картинка в визире увеличена под
+    // выбранный объектив, и края за экраном человек не видел: доля,
+    // которую занимает рамка, обязана быть та же, что была на экране.
+    expect('доля рамки на снимке та же, что была на экране',
+           Math.abs(fw / bx.w - shot.frameOfScreen) < 0.04,
+           `${(fw / bx.w * 100).toFixed(0)}% на снимке против ${(shot.frameOfScreen * 100).toFixed(0)}% на экране`);
+  }
+
+  // -------------------- 5б. СНИМОК НА ОБЪЕКТИВЕ ШИРЕ КАМЕРЫ
+  // ЖИВОЙ СЛУЧАЙ: 29 мм на iPhone 16e шире, чем отдаёт камера, и в галерее
+  // на снимке стояла рамка «не пойми от чего» — вдвое меньше, чем была
+  // на экране. Причина: в холст ложился кусок ПОТОКА, а рамка считалась
+  // долей ОТ КОНТЕЙНЕРА. Пока картинка шире экрана, это одно и то же;
+  // а когда она УЖЕ экрана, мерила расходятся. Замер по снимку
+  // пользователя: 53,6 % ширины фотографии вместо своих девяноста.
+  log('\n5б. Снимок на объективе шире камеры');
+  const wideShot = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    for (let i = 0; i < 40 && cur() !== 12; i++) {
+      document.querySelector(cur() < 12 ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]').click();
+      await wait(60);
+    }
+    await wait(350);
+    const boxEl = document.querySelector('[data-cf="scout-cam"]');
+    const fEl = document.querySelector('[data-cf="scout-frame"]');
+    const vEl = document.querySelector('[data-cf="scout-cam"] video');
+    if (!fEl) return { err: 'рамки на экране нет' };
+    const bw = boxEl.getBoundingClientRect().width;
+    const onScreen = fEl.getBoundingClientRect().width / bw;
+    const picOfScreen = vEl.getBoundingClientRect().width / bw;
+    const before = JSON.parse(localStorage.getItem('cf_references') || '[]').length;
+    document.querySelector('[data-cf="scout-shoot"]').click();
+    for (let i = 0; i < 60 && JSON.parse(localStorage.getItem('cf_references') || '[]').length === before; i++) await wait(200);
+    const refs = JSON.parse(localStorage.getItem('cf_references') || '[]');
+    const url = refs[refs.length - 1] && refs[refs.length - 1].url;
+    if (!url) return { err: 'снимок не сохранился' };
+    // Рамку на снимке ищем ПО ЦВЕТУ: она синяя — значит посчитана,
+    // а не снята. Заодно меряем, где кончается сама картинка.
+    const box = await new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const cx = c.getContext('2d');
+        cx.drawImage(im, 0, 0);
+        const d = cx.getImageData(0, 0, c.width, c.height).data;
+        let l = 1e9, r2 = -1, t = 1e9, b2 = -1, n = 0;
+        for (let y = 0; y < c.height; y += 2) {
+          for (let x = 0; x < c.width; x += 2) {
+            const i = (y * c.width + x) * 4;
+            const R = d[i], G = d[i + 1], B = d[i + 2];
+            if (B > 140 && B - R > 55 && B - G > 25) {
+              n++;
+              if (x < l) l = x; if (x > r2) r2 = x;
+              if (y < t) t = y; if (y > b2) b2 = y;
+            }
+          }
+        }
+        // КРАЯ САМОЙ КАРТИНКИ — САМЫЙ ДЛИННЫЙ НЕЧЁРНЫЙ ОТРЕЗОК
+        // средней строки, а НЕ крайние нечёрные точки: та же строка
+        // пересекает и бока самой рамки, и по крайним точкам выходила
+        // ширина РАМКИ, а не картинки — проверка сравнивала рамку с собой.
+        let pl = 0, pr = 0, runL = -1;
+        const y0 = Math.floor(c.height / 2);
+        for (let x = 0; x <= c.width; x++) {
+          const i = (y0 * c.width + x) * 4;
+          const on = x < c.width && (d[i] + d[i + 1] + d[i + 2]) > 40;
+          if (on && runL < 0) runL = x;
+          if (!on && runL >= 0) {
+            if (x - runL > pr - pl) { pl = runL; pr = x; }
+            runL = -1;
+          }
+        }
+        res({ l, r: r2, t, b: b2, n, w: c.width, h: c.height, pl, pr });
+      };
+      im.onerror = () => res(null);
+      im.src = url;
+    });
+    return { onScreen, picOfScreen, box };
+  });
+  if (wideShot.err) expect('снимок на широком объективе сделан', false, wideShot.err);
+  else {
+    const wb = wideShot.box || {};
+    expect('рамка на снимке СИНЯЯ — посчитана, а не снята', wb.n > 50, `синих точек ${wb.n || 0}`);
+    if (wb.n > 50) {
+      const fw = wb.r - wb.l, fh = wb.b - wb.t;
+      expect('и у неё пропорция кадра', Math.abs(fw / fh - 2.39) < 0.12, (fw / fh).toFixed(2));
+      expect('доля рамки на снимке та же, что была на экране',
+             Math.abs(fw / wb.w - wideShot.onScreen) < 0.05,
+             `${(fw / wb.w * 100).toFixed(0)}% на снимке против ${(wideShot.onScreen * 100).toFixed(0)}% на экране`);
+      expect('картинка на снимке УЖЕ рамки — кадр посчитан шире снятого',
+             (wb.pr - wb.pl) < fw * 0.98,
+             `картинка ${wb.pr - wb.pl}, рамка ${Math.round(fw)} из ${wb.w}`);
+      expect('и доля картинки на снимке та же, что была на экране',
+             Math.abs((wb.pr - wb.pl) / wb.w - wideShot.picOfScreen) < 0.06,
+             `${((wb.pr - wb.pl) / wb.w * 100).toFixed(0)}% против ${(wideShot.picOfScreen * 100).toFixed(0)}% на экране`);
+    }
+  }
+  // Возвращаем рабочий объектив, чтобы дальше всё шло как раньше
+  await page.evaluate(async () => {
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    for (let i = 0; i < 40 && cur() !== 35; i++) {
+      document.querySelector(cur() < 35 ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]').click();
+      await new Promise(r => setTimeout(r, 60));
+    }
+    await new Promise(r => setTimeout(r, 250));
+  });
+
+  // ------------------------------------------------------------ 6. ЗАМЕТКИ
+  log('\n6. Заметки на ходу ложатся к объекту');
+  const noteOpen = await page.evaluate(async () => {
+    const open = [...document.querySelectorAll('[data-cf="scout"] button')].find(b => /^☰/.test(b.textContent.trim()));
+    if (!open) return 'нет кнопки заметок';
+    open.click();
+    await new Promise(r => setTimeout(r, 500));
+    if (!document.querySelector('[data-cf="scout-notes"]')) return 'окно заметок не открылось';
+    // Метка обязательна: «+ заметка» есть и на экране сцены, и по тексту
+    // проверка хватала ЕГО — заметка уходила сцене, а не объекту.
+    const add = document.querySelector('[data-cf="scout-note-add"]');
+    if (!add) return 'нет кнопки «+ заметка»';
+    add.click();
+    await new Promise(r => setTimeout(r, 500));
+    return document.querySelectorAll('[data-cf="scout-note"]').length ? 'ок' : 'поля заметки не появилось';
+  });
+  expect('окно заметок открылось и поле появилось', noteOpen === 'ок', noteOpen);
+  // Набираем НАСТОЯЩИМ вводом: присвоение .value напрямую React не замечает,
+  // у него свой сторож значения на узле.
+  const NOTE = 'Питание от щитка у калитки, подъезд с грунтовки';
+  if (noteOpen === 'ок') await page.fill('[data-cf="scout-note"]', NOTE);
+  await page.waitForTimeout(1200);
+  const notes = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('cf_stickies') || '[]');
+    return { mine: st.filter(x => x.locationId === 'loc-t1'), all: st.length };
+  });
+  expect('заметка заведена и привязана к объекту', (notes.mine || []).length === 1,
+         `своих ${(notes.mine || []).length} из ${notes.all}`);
+  expect('текст заметки сохранён', ((notes.mine[0] || {}).text || '') === NOTE, (notes.mine[0] || {}).text);
+  expect('заметка лежит и на доске (boardId есть)', !!(notes.mine[0] || {}).boardId, (notes.mine[0] || {}).boardId);
+  // ЧТО ЗАМЕТКА ЗАПИСАНА, ДОЛЖНО БЫТЬ ВИДНО. Пишется она на каждую букву,
+  // но подтверждения этому не было ниоткуда: окно закрывалось молча.
+  const noteOk = await page.evaluate(async () => {
+    const ok = document.querySelector('[data-cf="scout-note-ok"]');
+    if (!ok) return { err: 'кнопки «Готово» нет' };
+    const b = ok.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    const hit = !!t && (t === ok || ok.contains(t));
+    ok.click();
+    await new Promise(r => setTimeout(r, 500));
+    return {
+      hit, closed: !document.querySelector('[data-cf="scout-notes"]'),
+      said: (() => {
+        const t = [...document.querySelectorAll('div')].find(d => /z-\[400\]/.test(d.className || ''));
+        return t ? t.innerText.trim() : '';
+      })()
+    };
+  });
+  expect('нажатие попадает в «Готово»', noteOk.hit === true, JSON.stringify(noteOk));
+  expect('«Готово» закрывает окно заметок', noteOk.closed === true, JSON.stringify(noteOk));
+  expect('и ГОВОРИТ, что записано и куда',
+         /\d+ заметк\S* в объекте/.test(noteOk.said || ''), noteOk.said || '(молчит)');
+
+  // ------------------------------------------------------------ 7. ТЕЛЕФОН
+  log('\n7. Телефон 390: Скаут в таб-баре, Чат в «Ещё»');
+  const phone = await ctx.newPage();
+  await phone.close();
+  const pctx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+    deviceScaleFactor: 3, permissions: ['geolocation', 'camera'],
+    geolocation: { latitude: 55.7558, longitude: 37.6173 }
+  });
+  await pctx.addInitScript(([loc]) => {
+    localStorage.setItem('cf_user_name', 'Тест Оператор');
+    localStorage.setItem('cf_room', 'e2e-scout-test-room');
+    localStorage.setItem('cf_locations', JSON.stringify([loc]));
+  }, [SEED_LOC]);
+  const { page: ph, errors: phErr } = await mkPage(pctx);
+  // СТАТУС-БАР СВЕРХУ ЕСТЬ, И СЧИТАТЬ НАДО С НИМ. В браузере вставки
+  // равны нулю, и на стенде без них «кадру достался весь экран» — это
+  // замер того, чего на устройстве не бывает: в установленном приложении
+  // сверху лежат часы, а в горизонтальном положении сбоку — чёлка.
+  // Подменяем через CDP, ровно как в scratchpad/overlays3.js.
+  const phCdp = await pctx.newCDPSession(ph);
+  const setInsets = (ins) => phCdp.send('Emulation.setSafeAreaInsetsOverride', { insets: ins }).catch(() => {});
+  await setInsets({ top: 47, left: 0, right: 0, bottom: 34 });
+  await ph.waitForTimeout(400);
+  const tabs = await ph.evaluate(() => {
+    const bar = document.querySelector('.cf-tabbar');
+    const btns = bar ? [...bar.querySelectorAll('button')] : [];
+    return { labels: btns.map(b => b.textContent.trim()), count: btns.length,
+             h: bar ? Math.round(bar.getBoundingClientRect().height) : 0 };
+  });
+  expect('в таб-баре пять вкладок', tabs.count === 5, tabs.labels.join(' · '));
+  expect('«Скаут» в таб-баре', tabs.labels.some(l => /Скаут/.test(l)), tabs.labels.join(' · '));
+  expect('«Чат» из таб-бара ушёл', !tabs.labels.some(l => /^Чат/.test(l)));
+  const more = await ph.evaluate(async () => {
+    const b = [...document.querySelectorAll('.cf-tabbar button')].find(x => /Ещё/.test(x.textContent));
+    b.click();
+    await new Promise(r => setTimeout(r, 500));
+    const sheet = document.querySelector('.cf-sheet');
+    const rows = sheet ? [...sheet.querySelectorAll('button')].map(x => x.textContent.trim()) : [];
+    const chat = sheet ? [...sheet.querySelectorAll('button')].find(x => /^Чат/.test(x.textContent.trim())) : null;
+    let hits = false;
+    if (chat) { const r = chat.getBoundingClientRect();
+                const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                hits = el === chat || chat.contains(el); }
+    return { rows, hasChat: !!chat, hits };
+  });
+  expect('«Чат» есть в «Ещё» — другого пути к нему с телефона нет', more.hasChat, more.rows.slice(0, 8).join(' · '));
+  expect('нажатие попадает именно в строку «Чат»', more.hits);
+  expect('«Скаут» в «Ещё» не дублируется', !more.rows.some(r => /^Скаут$/.test(r)), more.rows.join(' · '));
+  await ph.keyboard.press('Escape');
+  const phScout = await ph.evaluate(async () => {
+    const b = [...document.querySelectorAll('.cf-tabbar button')].find(x => /Скаут/.test(x.textContent));
+    b.click();
+    await new Promise(r => setTimeout(r, 900));
+    const seg = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].map(x => x.textContent.trim());
+    // Ничего не должно уезжать за правый край: 390 точек это мало
+    // Смотрим ТОЛЬКО внутри скаута: чат-шторка и окна проекта лежат
+    // за краем экрана намеренно, и ловить их тут значило бы ругаться
+    // на исправную разметку.
+    const root = document.querySelector('[data-cf="scout"]');
+    const over = [...root.querySelectorAll('button, select, input, svg')]
+      .filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > 391 || r.left < -1); })
+      .map(e => (e.textContent || e.tagName).trim().slice(0, 22) + ' @' + Math.round(e.getBoundingClientRect().right));
+    const tb = document.querySelector('.cf-tabbar').getBoundingClientRect();
+    const hidden = [...root.querySelectorAll('button, select, input')]
+      .filter(e => { const r = e.getBoundingClientRect(); return r.height > 0 && r.top < tb.top && r.bottom > tb.top + 2; }).length;
+    return { seg, over, tabTop: Math.round(tb.top), hidden, txt: /Восход|Закат/.test(root.innerText) };
+  });
+  expect('на телефоне скаут открылся и посчитал солнце', phScout.txt);
+  expect('переключатель «План / Камера» на месте', phScout.seg.join('/') === 'План/Камера', phScout.seg.join('/'));
+  expect('ничего не уезжает за края экрана 390', phScout.over.length === 0, phScout.over.join(' | '));
+  expect('ничего не залезло под таб-бар', phScout.hidden === 0, String(phScout.hidden));
+
+  // ГОРИЗОНТАЛЬНОЕ ПОЛОЖЕНИЕ ТЕЛЕФОНА — то, ради чего переделка. Раньше
+  // шапка приложения, шапка модуля, полоса визира и шкала дня съедали
+  // около 200 точек из 390, и кадру оставалось меньше сотни — «ничего
+  // не видно». Мерим числом: сколько досталось кадру и вернулась ли
+  // навигация после «‹ План».
+  await ph.setViewportSize({ width: 844, height: 390 });
+  // В горизонтальном положении iPhone прячет часы, а чёлка уходит вбок,
+  // и полоска «домой» становится тоньше — вставки для этого положения
+  // свои, и считать надо с ними.
+  await setInsets({ top: 0, left: 47, right: 0, bottom: 21 });
+  await ph.waitForTimeout(600);
+  const land = await ph.evaluate(async () => {
+    const b = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (b) b.click();
+    await new Promise(r => setTimeout(r, 700));
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const c = cam ? cam.getBoundingClientRect() : { height: 0 };
+    const back = document.querySelector('[data-cf="scout-back"]');
+    const bb = back ? back.getBoundingClientRect() : null;
+    const hit = bb && (() => { const t = document.elementFromPoint(bb.left + bb.width / 2, bb.top + bb.height / 2);
+                               return !!t && (t === back || back.contains(t)); })();
+    const out = {
+      camH: Math.round(c.height), winH: window.innerHeight,
+      tabbar: document.querySelectorAll('.cf-tabbar').length,
+      header: document.querySelectorAll('header').length,
+      backHit: !!hit
+    };
+    if (back) { back.click(); await new Promise(r => setTimeout(r, 700)); }
+    out.tabbarBack = document.querySelectorAll('.cf-tabbar').length;
+    out.headerBack = document.querySelectorAll('header').length;
+    return out;
+  });
+  // СЧИТАЕМ С ЧЁЛКОЙ И ПОЛОСКОЙ «ДОМОЙ». Замер без вставок показывал
+  // то, чего на устройстве не бывает: полоска «домой» съедает низ,
+  // и её высоту несёт нижняя полоса.
+  expect('в горизонтальном телефоне кадру достаётся больше 75% высоты',
+         land.camH > land.winH * 0.75, `${land.camH} из ${land.winH} (с полоской «домой» 21)`);
+  // 844 точки в ширину — это уже НЕ телефонная раскладка (порог 768),
+  // таб-бара там нет и без камеры. Смотрим на шапку: в камере её быть
+  // не должно, а «‹ План» обязан её вернуть.
+  expect('в камере шапки нет — экран отдан кадру', land.header === 0, String(land.header));
+  expect('нажатие попадает в «‹ План» и в горизонтальном положении', land.backHit);
+  expect('«‹ План» возвращает навигацию', land.headerBack === 1, String(land.headerBack));
+  await ph.setViewportSize({ width: 390, height: 844 });
+  await setInsets({ top: 47, left: 0, right: 0, bottom: 34 });
+  await ph.waitForTimeout(500);
+
+  // А вот В ПОРТРЕТЕ таб-бар есть, и в камере он тоже обязан уйти:
+  // это ещё полсотни точек, отнятых у кадра.
+  const port = await ph.evaluate(async () => {
+    const b = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (b) b.click();
+    await new Promise(r => setTimeout(r, 700));
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const out = {
+      camH: Math.round((cam ? cam.getBoundingClientRect() : { height: 0 }).height),
+      winH: window.innerHeight,
+      tabbar: document.querySelectorAll('.cf-tabbar').length,
+      header: document.querySelectorAll('header').length
+    };
+    const back = document.querySelector('[data-cf="scout-back"]');
+    if (back) { back.click(); await new Promise(r => setTimeout(r, 700)); }
+    out.tabbarBack = document.querySelectorAll('.cf-tabbar').length;
+    out.headerBack = document.querySelectorAll('header').length;
+    return out;
+  });
+  expect('в портрете камера тоже убирает таб-бар и шапку',
+         port.tabbar === 0 && port.header === 0, `таб-баров ${port.tabbar}, шапок ${port.header}`);
+  expect('и кадру достаётся почти весь экран — с часами и полоской «домой»',
+         port.camH > port.winH * 0.85, `${port.camH} из ${port.winH}`);
+  expect('«‹ План» возвращает и таб-бар, и шапку',
+         port.tabbarBack === 1 && port.headerBack === 1,
+         `таб-баров ${port.tabbarBack}, шапок ${port.headerBack}`);
+
+  // ------------------- 7в. КОРОТКИЙ ЭКРАН: РАМКА ВАЖНЕЕ ЗАПОЛНЕННОЙ ШИРИНЫ
+  // Safari в горизонтальном положении отдаёт приложению полосу в четверть
+  // высоты — адресная строка и закладки съедают остальное. На такой полосе
+  // «во всю ширину» и «рамка целиком» одновременно не бывает: 2.39 при
+  // ширине в 64% требует высоты больше, чем есть. Рамка обязана победить —
+  // без верха и низа она превращается в две вертикальные палки.
+  log('\n7в. Короткий экран: рамка видна целиком, даже ценой полей');
+  // 844×250 — примерно то, что остаётся приложению в Safari, когда сверху
+  // стоят адресная строка и полоса закладок.
+  await ph.setViewportSize({ width: 844, height: 250 });
+  await setInsets({ top: 0, left: 0, right: 0, bottom: 21 });
+  await ph.waitForTimeout(600);
+  const shortScreen = await ph.evaluate(async () => {
+    const seg = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (seg) { seg.click(); await new Promise(r => setTimeout(r, 700)); }
+    const on = [...document.querySelectorAll('button')].find(x => /Включить камеру/.test(x.textContent));
+    if (on) { on.click(); await new Promise(r => setTimeout(r, 2500)); }
+    await new Promise(r => setTimeout(r, 500));
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    const f = document.querySelector('[data-cf="scout-frame"]');
+    if (!box || !svg || !f) return { err: 'рамки нет' };
+    const b = box.getBoundingClientRect(), sr = svg.getBoundingClientRect();
+    const vb = +svg.getAttribute('viewBox').split(' ')[2];
+    const k = sr.width / vb;
+    const w = (+f.getAttribute('width')) * k, h = (+f.getAttribute('height')) * k;
+    return { fw: Math.round(w), fh: Math.round(h),
+             bw: Math.round(b.width), bh: Math.round(b.height),
+             wide: !!f.getAttribute('data-wide') };
+  });
+  if (shortScreen.err) expect('рамка есть', false, shortScreen.err);
+  else {
+    expect('на коротком экране рамка помещается ЦЕЛИКОМ',
+           shortScreen.fh <= shortScreen.bh + 1 && shortScreen.fw <= shortScreen.bw + 1,
+           `рамка ${shortScreen.fw}×${shortScreen.fh} при экране ${shortScreen.bw}×${shortScreen.bh}`);
+    expect('и у неё сохранилась пропорция кадра',
+           shortScreen.wide || Math.abs(shortScreen.fw / shortScreen.fh - 2.39) < 0.1,
+           (shortScreen.fw / shortScreen.fh).toFixed(2));
+  }
+
+  // РАЗРЫВ БЫЛ РОВНО МЕЖДУ 29 И 27 ММ. На ALEXA Mini LF в 2.39 доля
+  // ширины растёт 0.951 → 1.021, и особый случай «шире камеры — покажем
+  // всё» швырял картинку скачком во весь экран. Проходим лестницу подряд
+  // и смотрим, что соседние шаги не дают прыжка.
+  const sweep = await ph.evaluate(async () => {
+    const set = async (mm) => {
+      const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+      for (let i = 0; i < 40 && cur() !== mm; i++) {
+        document.querySelector(cur() < mm ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]').click();
+        await new Promise(r => setTimeout(r, 60));
+      }
+      await new Promise(r => setTimeout(r, 220));
+      const v = document.querySelector('[data-cf="scout-cam"] video');
+      const box = document.querySelector('[data-cf="scout-cam"]');
+      const svg = document.querySelector('[data-cf="scout-ar"]');
+      const f = document.querySelector('[data-cf="scout-frame"]');
+      const k = (svg && f) ? svg.getBoundingClientRect().width / (+svg.getAttribute('viewBox').split(' ')[2]) : 0;
+      return { mm: cur(), zoom: v.getBoundingClientRect().width / box.getBoundingClientRect().width,
+               frame: f ? (+f.getAttribute('width')) * k : 0 };
+    };
+    const out = [];
+    for (const mm of [40, 35, 32, 27, 24, 21]) out.push(await set(mm));
+    return out;
+  });
+  const jumps = [];
+  for (let i = 1; i < sweep.length; i++) {
+    const a = sweep[i - 1].zoom, b = sweep[i].zoom;
+    const k = Math.max(a, b) / Math.max(0.001, Math.min(a, b));
+    if (k > 1.6) jumps.push(`${sweep[i - 1].mm}→${sweep[i].mm}: ${a.toFixed(2)}×→${b.toFixed(2)}×`);
+  }
+  // РАМКА ОДНОГО РАЗМЕРА НА ВСЕХ ОБЪЕКТИВАХ, включая те, что шире камеры.
+  // В ветке «шире камеры» рамка рисовалась по краю КАРТИНКИ — от прежней
+  // поры, когда картинка занимала экран. Теперь картинка сама уменьшается
+  // под рамку, и рамка помещается целиком, а рисовалась всё равно
+  // по картинке: 525 точек против 541 у соседнего объектива.
+  const frames = sweep.map(x => x.frame).filter(v => v > 0);
+  expect('рамка ОДНОГО размера на всех объективах',
+         frames.length > 0 && Math.max(...frames) - Math.min(...frames) < 2,
+         sweep.map(x => `${x.mm}:${Math.round(x.frame)}`).join(' '));
+  expect('соседние объективы не дают скачка крупности', jumps.length === 0,
+         jumps.join(' · ') || sweep.map(x => `${x.mm}:${x.zoom.toFixed(2)}×`).join(' '));
+  expect('и крупность падает МОНОТОННО от длинного к короткому',
+         sweep.every((x, i) => i === 0 || x.zoom <= sweep[i - 1].zoom + 0.01),
+         sweep.map(x => `${x.mm}:${x.zoom.toFixed(2)}×`).join(' '));
+
+
+  await ph.evaluate(async () => {
+    const b = document.querySelector('[data-cf="scout-back"]');
+    if (b) { b.click(); await new Promise(r => setTimeout(r, 600)); }
+  });
+  await ph.setViewportSize({ width: 390, height: 844 });
+  await ph.waitForTimeout(400);
+
+  // ------------------------------ 7б. ВСТАВКИ: ЧАСЫ СВЕРХУ, ЧЁЛКА СБОКУ
+  log('\n7б. Статус-бар сверху и чёлка сбоку: рамка и кнопки под них не лезут');
+  const insets = async (w, h, ins, label) => {
+    await ph.setViewportSize({ width: w, height: h });
+    await setInsets(ins);
+    await ph.waitForTimeout(500);
+    return ph.evaluate(async (L) => {
+      const seg = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+      if (seg) { seg.click(); await new Promise(r => setTimeout(r, 700)); }
+      // Рамка есть только при живой камере — включаем её, если ещё не.
+      const on = [...document.querySelectorAll('button')].find(x => /Включить камеру/.test(x.textContent));
+      if (on) { on.click(); await new Promise(r => setTimeout(r, 2500)); }
+      await new Promise(r => setTimeout(r, 400));
+      const box = document.querySelector('[data-cf="scout-cam"]');
+      const svg = document.querySelector('[data-cf="scout-ar"]');
+      const f = document.querySelector('[data-cf="scout-frame"]');
+      const back = document.querySelector('[data-cf="scout-back"]');
+      const chip = document.querySelector('[data-cf="scout-place"]');
+      const b = box.getBoundingClientRect();
+      const out = { label: L, boxTop: Math.round(b.top), boxLeft: Math.round(b.left),
+                    boxBottom: Math.round(b.bottom), boxRight: Math.round(b.right),
+                    backTop: back ? Math.round(back.getBoundingClientRect().top) : -1,
+                    backLeft: back ? Math.round(back.getBoundingClientRect().left) : -1,
+                    chipRight: chip ? Math.round(window.innerWidth - chip.getBoundingClientRect().right) : -1 };
+      if (svg && f) {
+        const sr = svg.getBoundingClientRect();
+        const vb = +svg.getAttribute('viewBox').split(' ')[2];
+        const k = sr.width / vb;
+        const fw = (+f.getAttribute('width')) * k, fh = (+f.getAttribute('height')) * k;
+        out.frameTop = Math.round(sr.top + (sr.height - fh) / 2);
+        out.frameLeft = Math.round(sr.left + (sr.width - fw) / 2);
+        out.frameRight = Math.round(out.frameLeft + fw);
+        out.frameBottom = Math.round(out.frameTop + fh);
+      }
+      return out;
+    }, label);
+  };
+  // Вертикально: часы сверху 47
+  const up = await insets(390, 844, { top: 47, left: 0, right: 0, bottom: 34 }, 'портрет');
+  expect('верх рамки не под часами', up.frameTop >= up.boxTop + 47 - 1,
+         `${up.frameTop} при верхе кадра ${up.boxTop} и вставке 47`);
+  // ГЛАВНАЯ ПРОВЕРКА: рамка стоит по середине ВИДИМОЙ полосы, а не всей
+  // площади. Просто «не под часами» тут ничего не ловит — при 2.39
+  // в высоком экране запас и так велик; врёт именно центровка.
+  expect('рамка центрирована по видимой полосе, а не по всему экрану',
+         Math.abs((up.frameTop - (up.boxTop + 47)) - (up.boxBottom - up.frameBottom)) <= 3,
+         `сверху ${up.frameTop - up.boxTop - 47}, снизу ${up.boxBottom - up.frameBottom}`);
+  expect('и «‹ План» тоже не под часами',
+         up.backTop >= up.boxTop + 47 - 1, `${up.backTop} при ${up.boxTop}`);
+  // Горизонтально: чёлка слева 47, часов нет
+  const side = await insets(844, 390, { top: 0, left: 47, right: 0, bottom: 21 }, 'ландшафт');
+  expect('левый край рамки не под чёлкой', side.frameLeft >= side.boxLeft + 47 - 1,
+         `${side.frameLeft} при левом крае ${side.boxLeft} и вставке 47`);
+  expect('рамка сдвинута от чёлки, а не просто сужена',
+         Math.abs((side.frameLeft - (side.boxLeft + 47)) - (side.boxRight - side.frameRight)) <= 3,
+         `слева ${side.frameLeft - side.boxLeft - 47}, справа ${side.boxRight - side.frameRight}`);
+  expect('и «‹ План» отодвинут от чёлки',
+         side.backLeft >= side.boxLeft + 47 - 1, `${side.backLeft} при ${side.boxLeft}`);
+  await setInsets({ top: 0, left: 0, right: 0, bottom: 0 });
+  await ph.setViewportSize({ width: 390, height: 844 });
+  await ph.waitForTimeout(400);
+
+  // --------------------------------------------------- 8. РЕЖИМ ПРОСМОТРА
+  log('\n8. Режим просмотра: гость смотрит, но не правит');
+  // ОТДЕЛЬНЫЙ контекст: в общем остался бы наш cf_scout_mode от страницы
+  // выше, и проверка «гость открывает план» ничего бы не значила.
+  const roctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await roctx.addInitScript(([loc]) => {
+    localStorage.setItem('cf_room', 'e2e-scout-test-room');
+    localStorage.setItem('cf_locations', JSON.stringify([loc]));
+    localStorage.setItem('cf_scout_mode', 'ar');   // нарочно: гость его не выбирал
+  }, [SEED_LOC]);
+  const { page: ro, errors: roErr } = await mkPage(roctx, '?view=scout&room=e2e-scout-test-room');
+  await ro.waitForTimeout(800);
+  const guest = await ro.evaluate(() => {
+    const root = document.querySelector('[data-cf="scout"]');
+    const vis = (sel) => [...(root || document).querySelectorAll(sel)]
+      .filter(b => { const s = getComputedStyle(b); return s.display !== 'none' && s.visibility !== 'hidden'; }).length;
+    const navLabels = [...document.querySelectorAll('.cf-navtab, header button')].map(b => b.getAttribute('title') || b.textContent.trim());
+    return {
+      tabs: navLabels.filter(Boolean),
+      shoot: vis('[data-cf="scout-shoot"]'),
+      here: [...(root || document).querySelectorAll('button')].filter(b => /Я здесь/.test(b.textContent))
+              .filter(b => getComputedStyle(b).display !== 'none').length,
+      sun: root ? /Восход|Закат|Полдень|Светит/.test(root.innerText) : false,
+      seg: root ? [...root.querySelectorAll('.cf-seg button')].map(b => b.textContent.trim()) : [],
+      locs: JSON.parse(localStorage.getItem('cf_locations') || '[]').length,
+      firstCoords: (JSON.parse(localStorage.getItem('cf_locations') || '[]')[0] || {}).coords || '',
+      hasRoot: !!root,
+      head: root ? root.innerText.slice(0, 140).replace(/\n/g, ' | ') : ''
+    };
+  });
+  expect('гостю по ссылке видна только страница скаута',
+         !guest.tabs.some(t => /КПП|Экспликации|Доски/.test(t)), guest.tabs.join(' · '));
+  expect('солнце гость ВИДИТ — ради этого ссылку и открывают', guest.sun,
+         `объектов ${guest.locs}, координаты «${guest.firstCoords}», экран: ${guest.head}`);
+  expect('кнопка «Снять» у гостя спрятана', guest.shoot === 0, String(guest.shoot));
+  expect('кнопка «Я здесь» у гостя спрятана', guest.here === 0, String(guest.here));
+  expect('переключатель видов гостю оставлен', guest.seg.join('/') === 'План/Камера', guest.seg.join('/'));
+  expect('гость открывается на «Плане», а не с просьбой дать камеру',
+         !/Включить камеру/.test(guest.head), guest.head.slice(0, 80));
+
+  // Заметка Babel про размер файла — это note, а не ошибка: он её печатает
+  // в console.error на любом файле крупнее 500 КБ, и наш заведомо крупнее.
+  const allErr = [...errors, ...phErr, ...roErr]
+    .filter(e => !/firestore|firebase|googleapis|net::ERR|deoptimised the styling/i.test(e));
+  expect('ни одной ошибки на странице', allErr.length === 0, allErr.slice(0, 3).join(' ;; '));
+
+  await browser.close();
+  server.kill();
+  log(failed ? `\n${failed} проверок не прошло` : '\nВсё прошло');
+  process.exit(failed ? 1 : 0);
+})().catch(e => { console.error(e); server.kill(); process.exit(1); });

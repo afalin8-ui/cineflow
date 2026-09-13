@@ -626,6 +626,7 @@
             Print: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
             Tag: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>,
             Image: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+            Scout: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18"/><circle cx="12" cy="11" r="3.4"/><path d="M12 3.5v1.8M5.2 6.2l1.3 1.3M18.8 6.2l-1.3 1.3M2.5 14h1.8M19.7 14h1.8"/></svg>,
             Camera: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/></svg>,
             Lightbulb: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>,
             Square: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>,
@@ -705,12 +706,13 @@
         // «показать всё». Теперь в `?view=` лежит список страниц через
         // запятую. Старые ссылки продолжают работать: `gallery`, `board`
         // и `all` разбираются как прежде, а их уже разослали.
-        const CF_ALL_VIEWS = ['notion', 'whiteboard', 'gallery', 'locations', 'table', 'docs'];
+        const CF_ALL_VIEWS = ['notion', 'whiteboard', 'gallery', 'locations', 'scout', 'table', 'docs'];
         const CF_VIEW_ALIAS = {
           all: '*',            gallery: 'gallery',   board: 'whiteboard',
           boards: 'whiteboard', whiteboard: 'whiteboard',
           scenes: 'notion',    notion: 'notion',     locations: 'locations',
-          table: 'table',      kpp: 'table',         docs: 'docs'
+          table: 'table',      kpp: 'table',         docs: 'docs',
+          scout: 'scout'
         };
         const CF_VIEWS = (() => {
           if (!CF_VIEW_SCOPE) return CF_ALL_VIEWS;
@@ -2151,6 +2153,17 @@
           // это и есть общепринятый «восход». 6° — верхняя граница золотого часа.
           return { sun: at(-0.833), golden: at(6), transit: toDate(Jtransit) };
         };
+        // Склонение после числа. Живёт на модульном уровне, потому что
+        // нужно и тем компонентам, что объявлены ВЫШЕ AppCore (скаут):
+        // «1 сцен» и «4 сцен» читаются опечаткой, а КПП показывают группе.
+        // Отдаёт ТОЛЬКО слово — число пишется рядом: `${n} ${plur(...)}`.
+        const plur = (n, one, few, many) => {
+          const a = Math.abs(n) % 100, b = a % 10;
+          if (a > 10 && a < 20) return many;
+          if (b > 1 && b < 5) return few;
+          if (b === 1) return one;
+          return many;
+        };
         const hhmm = (d) => d ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
 
         // ГДЕ СОЛНЦЕ ПРЯМО СЕЙЧАС — высота над горизонтом и азимут
@@ -2193,6 +2206,202 @@
           return `Светит с ${side}, ${high}.`;
         };
 
+        // =====================================================================
+        // СКАУТ: ДУГА СОЛНЦА, СЕНСОРЫ И ОПТИКА
+        // =====================================================================
+        // Дуга дня — солнце, посчитанное шагом в 10 минут. Шаг не случайный:
+        // в широтах средней полосы летом солнце идёт 4,2° за десять минут,
+        // и на таком шаге ломаная уже читается кривой, а не многоугольником
+        // (при большем шаге граней видно). Считаем ВСЕ СУТКИ, включая ночь:
+        // ночная часть дуги — это и есть ответ на «откуда утром выйдет свет»,
+        // и стоя на точке до рассвета нужна именно она.
+        const SUN_STEP_MIN = 10;
+        const sunArc = (lat, lon, dateStr) => {
+          const base = new Date(dateStr + 'T00:00:00');
+          if (isNaN(base)) return [];
+          const out = [];
+          for (let m = 0; m <= 24 * 60; m += SUN_STEP_MIN) {
+            const when = new Date(base.getTime() + m * 60000);
+            const p = sunPosition(lat, lon, when);
+            out.push({ when, m, alt: p.alt, az: p.az });
+          }
+          return out;
+        };
+        // Дуги солнцестояний — самый дешёвый способ ответить на «а если
+        // перенесём съёмку на сентябрь». Две кривые превращают один день
+        // в годовой размах, и стоят они ровно двух вызовов sunArc.
+        const solsticeArcs = (lat, lon, year) => ({
+          long: sunArc(lat, lon, `${year}-06-21`),
+          short: sunArc(lat, lon, `${year}-12-21`)
+        });
+
+        // СЕНСОРЫ. Список КОРОТКИЙ намеренно — та же мысль, что у палитры
+        // из шести цветов на доске: короткий набор хороших значений вместо
+        // бесконечной точности, из которой всё равно берут пять. Размеры —
+        // активная область в миллиметрах, ширина × высота.
+        // Внизу списка «своё» — вписать ширину руками, потому что режимов
+        // съёмки у каждой камеры с десяток, и угадать нужный мы не можем.
+        const SCOUT_SENSORS = [
+          { id: 's35',     label: 'Super 35 · 4 перфорации', w: 24.89, h: 18.66 },
+          { id: 'alexa35', label: 'ARRI ALEXA 35 · Open Gate', w: 27.99, h: 19.22 },
+          { id: 'minilf',  label: 'ARRI ALEXA Mini LF · Open Gate', w: 36.70, h: 25.54 },
+          { id: 'ff',      label: 'Полный кадр · Venice, FX, R5', w: 36.00, h: 24.00 },
+          { id: 'komodo',  label: 'RED KOMODO / V-RAPTOR S35', w: 27.03, h: 14.26 },
+          { id: 'bm6k',    label: 'Blackmagic 6K · Super 35', w: 23.10, h: 12.99 },
+          { id: 'apsc',    label: 'APS-C · FX30, C70', w: 23.30, h: 15.50 },
+          { id: 'mft',     label: 'Micro 4/3 · Pocket 4K', w: 18.96, h: 10.00 },
+          { id: 's16',     label: 'Super 16', w: 12.52, h: 7.41 }
+        ];
+        // Универсальные фиксы. Не «серия такого-то производителя», а просто
+        // фокусные: на скауте спрашивают «а на 35 влезет», а не «а на
+        // Cooke S4/i 35 влезет» — угол обзора у них один и тот же.
+        const SCOUT_LENSES = [12, 14, 16, 18, 21, 24, 27, 32, 35, 40, 50, 65, 75, 85, 100, 135, 180];
+        const SCOUT_SQUEEZES = [['сферика', 1], ['анаморф 1.3×', 1.3], ['анаморф 2×', 2]];
+
+        // УГОЛ ОБЗОРА ПО ГОРИЗОНТАЛИ. Считается от площадки на сенсоре под
+        // нужную пропорцию, а не от всей его ширины: на 2.39 с сенсора 4:3
+        // берётся полоса посередине, и угол у неё другой.
+        //   Анаморф: объектив с фокусным F при сжатии K по горизонтали
+        //   ведёт себя как F/K, поэтому площадка на сенсоре имеет пропорцию
+        //   ratio/K — для 2.39 при сжатии 2× это 1.195, то есть почти
+        //   квадрат, как и положено анаморфному кадру.
+        // Нарисованная на экране рамка получает пропорцию РОВНО ratio:
+        // отношение тангенсов половин углов по горизонтали и вертикали
+        // и есть пропорция готового кадра. Проверено счётом.
+        const frameHFov = (sensor, ratio, focal, squeeze) => {
+          const k = squeeze || 1;
+          const sa = ratio / k;                       // пропорция площадки на сенсоре
+          const w = Math.min(sensor.w, sensor.h * sa);
+          if (!(focal > 0) || !(w > 0)) return 0;
+          return 2 * Math.atan(w * k / (2 * focal)) / SUN_RAD;
+        };
+
+        // ОБЗОР КАМЕРЫ УСТРОЙСТВА СПРОСИТЬ НЕЛЬЗЯ — такого способа нет ни
+        // в одном браузере. Ни getCapabilities, ни getSettings, ни
+        // ImageCapture не отдают ни угла, ни фокусного: в спецификации это
+        // до сих пор ОБСУЖДАЕМОЕ предложение (w3c/mediacapture-main#416).
+        // `zoom` с Safari 17 отдаётся, но это множитель от неизвестной
+        // единицы — он не говорит, от чего считать.
+        //   Поэтому храним ЭКВИВАЛЕНТНОЕ ФОКУСНОЕ камеры устройства (те
+        // самые «26 мм», которые печатают в характеристиках), а угол
+        // считаем сами — и считаем от НАСТОЯЩЕЙ пропорции живого потока.
+        //
+        // ЭКВИВАЛЕНТНОЕ ФОКУСНОЕ ОПРЕДЕЛЕНО ПО ДИАГОНАЛИ 35-мм кадра
+        // (43,267 мм), А НЕ ПО ЕГО ШИРИНЕ. Это не придирка: считая от
+        // ширины 36 мм, для основной камеры получаешь 69,4° вместо 67,3° —
+        // рамка мимо на 3%. Сверено с числами Apple: у iPhone 13 Pro Max
+        // (26 мм) videoFieldOfView равен 67,1°, и правильная формула даёт
+        // 67,3°; заявленные Apple «20°» у 120-мм теле — это ДИАГОНАЛЬ,
+        // и она тоже сходится. Отсюда же следует, что все «120°»
+        // и «125°» в рекламе — диагональные, и в горизонтальную формулу
+        // их подставлять нельзя.
+        const FRAME_DIAG = 43.267;
+        const halfFrame = (aspect) => FRAME_DIAG * aspect / (2 * Math.sqrt(aspect * aspect + 1));
+        const camFov = (eq, aspect) => (eq > 0)
+          ? 2 * Math.atan(halfFrame(aspect > 0 ? aspect : 4 / 3) / eq) / SUN_RAD : 0;
+
+        // НАБОРЫ КАМЕР УСТРОЙСТВ. Список собран НЕ по маркетинговым именам,
+        // а по наборам объективов: моделей три десятка, а разных чисел
+        // всего четыре. Основная камера бывает 24 мм (все Pro начиная
+        // с 14 Pro), 26 мм (все обычные, Air и e), 28 мм (SE) и около
+        // 30 мм (iPad); сверхширокая у всех, у кого она есть, — 13 мм.
+        // Тридцать кнопок с именами моделей отвечали бы на вопрос,
+        // который человек и так про себя знает, вчетверо длиннее.
+        //   Но НАБОР важнее числа, и по нему делить приходится: у 16e,
+        // 17e и Air сверхширокой НЕТ ВОВСЕ, хотя основная у них та же
+        // 26 мм, что у обычного iPhone. Стой они в одном наборе, человек
+        // видел бы кнопку «0,5×», которой у его телефона не существует, —
+        // а нажав её, получил бы рамку вдвое шире, чем снимает камера.
+        //   Подписи — теми кратностями, что пишет сама камера телефона
+        // («0,5×», «1×»), потому что человек узнаёт их, а не миллиметры.
+        const PHONE_CAMS = [
+          { id: 'ipro',  label: 'iPhone Pro',   hint: '14 Pro и новее',
+            lens: [['0,5×', 13], ['1×', 24], ['2×', 48], ['3×', 77], ['5×', 120]] },
+          { id: 'iph',   label: 'iPhone',       hint: '14 · 15 · 16 · 17',
+            lens: [['0,5×', 13], ['1×', 26], ['2×', 52]] },
+          { id: 'ie',    label: 'iPhone e · Air', hint: '16e · 17e · Air — без сверхширокой',
+            lens: [['1×', 26], ['2×', 52]] },
+          { id: 'iold',  label: 'iPhone до 14', hint: '11 · 12 · 13',
+            lens: [['0,5×', 13], ['1×', 26], ['2×', 52], ['3×', 77]] },
+          { id: 'se',    label: 'iPhone SE',    hint: '2-е и 3-е поколение',
+            lens: [['1×', 28]] },
+          { id: 'ipad',  label: 'iPad',         hint: 'одна задняя камера',
+            lens: [['1×', 30]] },
+          { id: 'ipadp', label: 'iPad Pro до M4', hint: 'со сверхширокой',
+            lens: [['0,5×', 13], ['1×', 30]] },
+          { id: 'andr',  label: 'Android',      hint: 'Galaxy, Pixel',
+            lens: [['0,5×', 13], ['1×', 24], ['3×', 67]] }
+        ];
+        const DEV_EQ_DEFAULT = 26;
+        // Основная камера набора. Нужна, чтобы догадка о планшете ставила
+        // и его фокусное: выбрать «iPad», но остаться на 26 мм от телефона
+        // — это молча неверная рамка, а выглядит как будто всё настроено.
+        const mainEqOf = (id) => {
+          const d = PHONE_CAMS.find(x => x.id === id);
+          const m = d && (d.lens.find(l => l[0] === '1×') || d.lens[0]);
+          return m ? m[1] : DEV_EQ_DEFAULT;
+        };
+
+        // ЧТО ЗА УСТРОЙСТВО — ТОЛЬКО ДОГАДКА, И ОНА НАМЕРЕННО СЛАБАЯ.
+        // Размер экрана определяет не модель, а ГРУППУ моделей, и группы
+        // эти смешанные: 402×874 — это и 16 Pro (24 мм), и 17 (26 мм),
+        // а 393×852 — сразу четыре телефона с разными камерами. То есть
+        // «Pro или обычный» экран не говорит, и притворяться, что говорит,
+        // нельзя. Надёжно различаются только три вещи: планшет от телефона
+        // (по ширине), SE (единственный с плотностью 2 при ширине 375)
+        // и касание от мыши. Остального человек не знает разве что про
+        // чужой телефон.
+        //   Всё прочее, что советуют для опознания, в Safari мертво:
+        // WEBGL_debug_renderer_info возвращает literal «Apple GPU» на всех
+        // устройствах, hardwareConcurrency округлён до 4 или 8 (а при
+        // усиленной защите вообще случаен), deviceMemory не реализован.
+        // На iPad Safari к тому же представляется Маком — поэтому планшет
+        // узнаём по касанию, а не по строке браузера.
+        const guessDevice = () => {
+          try {
+            if (!(navigator.maxTouchPoints > 0)) return null;      // мышь — не угадываем
+            const w = Math.min(screen.width, screen.height);
+            const dpr = window.devicePixelRatio || 1;
+            if (w >= 700) return 'ipad';
+            if (w <= 380 && dpr < 2.5) return 'se';
+            return null;                                            // телефон, но какой — не скажем
+          } catch (e) { return null; }
+        };
+
+        // ЭКРАН ← НАПРАВЛЕНИЕ. Куда на экране попадает точка неба с азимутом
+        // az и высотой alt, если устройство смотрит в азимут yaw с наклоном
+        // pitch и креном roll, а обзор по горизонтали — hfov.
+        // Мир: X — восток, Y — вверх, Z — юг (азимут 0 = север = −Z).
+        // Возвращает доли от ширины и высоты экрана (0…1) или null, если
+        // точка за спиной. Проверено счётом: смотрим ровно на солнце —
+        // центр; солнце на 15° правее при обзоре 60° — 0.732, столько же
+        // даёт аналитика; крен 90° переводит сдвиг вправо в сдвиг вверх.
+        const skyDir = (az, alt) => {
+          const ca = Math.cos(alt * SUN_RAD), sa = Math.sin(alt * SUN_RAD);
+          return [ca * Math.sin(az * SUN_RAD), sa, -ca * Math.cos(az * SUN_RAD)];
+        };
+        const projectSky = (az, alt, yaw, pitch, roll, hfov, aspect) => {
+          const f = skyDir(yaw, pitch);
+          // Правый вектор без крена — горизонтальный, перпендикулярный взгляду
+          const r = [Math.cos(yaw * SUN_RAD), 0, Math.sin(yaw * SUN_RAD)];
+          const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+          const cr = Math.cos(roll * SUN_RAD), sr = Math.sin(roll * SUN_RAD);
+          const r2 = [r[0] * cr + u[0] * sr, r[1] * cr + u[1] * sr, r[2] * cr + u[2] * sr];
+          const u2 = [u[0] * cr - r[0] * sr, u[1] * cr - r[1] * sr, u[2] * cr - r[2] * sr];
+          const s = skyDir(az, alt);
+          const dz = s[0] * f[0] + s[1] * f[1] + s[2] * f[2];
+          if (dz <= 0.0001) return null;              // за спиной — не рисуем
+          const dx = s[0] * r2[0] + s[1] * r2[1] + s[2] * r2[2];
+          const dy = s[0] * u2[0] + s[1] * u2[1] + s[2] * u2[2];
+          // aspect — ШИРИНА/ВЫСОТА области рисования: вертикальный обзор
+          // получается из горизонтального именно через неё.
+          const th = Math.tan(hfov * SUN_RAD / 2);
+          return { x: 0.5 + 0.5 * (dx / dz) / th, y: 0.5 - 0.5 * (dy / dz) * aspect / th };
+        };
+        // Разница двух азимутов по кратчайшей стороне, со знаком:
+        // нужна и указателю «солнце вон там», и подкрутке компаса.
+        const azDelta = (a, b) => ((a - b + 540) % 360) - 180;
+
         // Координаты человек либо ищет по адресу, либо вставляет из карт.
         // Поэтому храним строкой как есть, а разбираем при счёте: и
         // «55.7558, 37.6173», и «55,7558 37,6173» — одно и то же.
@@ -2220,6 +2429,66 @@
             coords: `${parseFloat(list[0].lat).toFixed(5)}, ${parseFloat(list[0].lon).toFixed(5)}`,
             name: list[0].display_name || ''
           };
+        };
+
+        // КООРДИНАТЫ → АДРЕС. Нужно на скауте: приехали, нажали «я здесь»,
+        // и у новой точки уже есть адрес, а не пустая строка. Та же служба
+        // OpenStreetMap и то же правило — ТОЛЬКО по нажатию: дёргать чужую
+        // открытую службу сама собой страница не должна.
+        const reverseGeocode = async (lat, lon) => {
+          const url = 'https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&accept-language=ru'
+                    + `&lat=${lat}&lon=${lon}`;
+          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) throw new Error('Служба карт ответила ' + res.status);
+          const j = await res.json();
+          const a = j && j.address ? j.address : {};
+          // Короткое имя для объекта — улица с домом или населённый пункт:
+          // полное display_name это строка на полторы сотни знаков, и
+          // названием объекта она быть не может.
+          const short = [a.road, a.house_number].filter(Boolean).join(', ')
+                     || a.suburb || a.city_district || a.village || a.town || a.city || '';
+          return { address: (j && j.display_name) || '', short };
+        };
+        // Где мы сейчас. Обещаем ОДИН ответ и ждём его не дольше 12 секунд:
+        // на площадке спутники ловятся не сразу, а бесконечное «определяю…»
+        // читается как «зависло».
+        const whereAmI = () => new Promise((resolve, reject) => {
+          if (!navigator.geolocation) { reject(new Error('Это устройство не сообщает своё место')); return; }
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude,
+                               acc: pos.coords.accuracy, alt: pos.coords.altitude }),
+            (err) => reject(new Error(err && err.code === 1
+              ? 'Доступ к месту не разрешён. В Safari: «Настройки для этого сайта» → «Геопозиция»'
+              : 'Место не определилось — выйдите под открытое небо и попробуйте снова')),
+            { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
+        });
+        // Расстояние между двумя точками по земле, в метрах (формула
+        // гаверсинуса). Нужно, чтобы узнать объект, на котором мы стоим:
+        // заводить второй «двор школы» в двадцати метрах от первого нельзя.
+        const metersBetween = (a, b) => {
+          const R = 6371000, dLat = (b.lat - a.lat) * SUN_RAD, dLon = (b.lon - a.lon) * SUN_RAD;
+          const la = a.lat * SUN_RAD, lb = b.lat * SUN_RAD;
+          const h = Math.sin(dLat / 2) ** 2 + Math.cos(la) * Math.cos(lb) * Math.sin(dLon / 2) ** 2;
+          return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+        };
+
+        // «МЫ ЗДЕСЬ» — это 250 метров. То же число, что у «Я здесь»:
+        // заводить второй «двор школы» в двадцати метрах от первого нельзя,
+        // а двор в полкилометра — уже другое место.
+        const SCOUT_NEAR = 250;
+        // Расстояние СЛОВАМИ. «3247 м» человек в уме не переводит, а на
+        // площадке эту строку читают одним глазом.
+        const fmtDist = (m) => m < 1000 ? `${Math.round(m)} м`
+          : m < 10000 ? `${(m / 1000).toFixed(1).replace('.', ',')} км`
+          : `${Math.round(m / 1000)} км`;
+        // Когда приёмник отвечал в последний раз. Расстояние без давности —
+        // это половина правды: ответ часовой давности говорит о том, где мы
+        // были, а не где стоим.
+        const fmtAgo = (at) => {
+          const s = Math.max(0, (Date.now() - at) / 1000);
+          if (s < 45) return 'только что';
+          if (s < 3600) return `${Math.round(s / 60)} мин назад`;
+          return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
         };
 
         class ErrorBoundary extends React.Component {
@@ -2290,7 +2559,7 @@
         // по цифре. Раньше оно не было видно вообще ничем.
         // Считаем ОДИН раз, при открытии окна: перебор всех ключей на
         // каждую перерисовку — это мегабайты работы впустую.
-        const StorageInfo = () => {
+        const StorageInfo = ({ light }) => {
           const info = React.useMemo(() => {
             let used = 0;
             try {
@@ -2312,13 +2581,22 @@
             return { size, room };
           }, []);
           if (!info) return null;
+          // СОСТОЯНИЙ ТРИ, И СРЕДНЕЕ ЗАБЫВАЛИ. «Место кончилось — копия
+          // не обновляется» неверно, когда она обновляется, просто без
+          // фотографий: человек читает это как «ничего не сохраняется»
+          // и пугается зря. Это же место — единственное, где состояние
+          // написано постоянно, поэтому полоска о нём говорит ОДИН раз
+          // и отправляет сюда.
+          const ok = info.room && !light;
           return (
-            <div className="rounded-lg px-4 py-3 mb-2"
-                 style={{ background: 'var(--panel-2)', border: '1px solid ' + (info.room ? 'var(--border)' : 'rgba(248,113,113,0.5)') }}>
+            <div className="rounded-lg px-4 py-3 mb-2" data-cf="storage-info"
+                 style={{ background: 'var(--panel-2)', border: '1px solid ' + (ok ? 'var(--border)' : 'rgba(248,113,113,0.5)') }}>
               <span className="block text-sm font-semibold text-zinc-200">Местная копия на устройстве: {info.size}</span>
-              <span className="block text-[length:var(--fs-1)] leading-relaxed mt-0.5" style={{ color: info.room ? 'var(--muted-2)' : '#f87171' }}>
-                {info.room
+              <span className="block text-[length:var(--fs-1)] leading-relaxed mt-0.5" style={{ color: ok ? 'var(--muted-2)' : '#f87171' }}>
+                {ok
                   ? 'Место ещё есть. Эта копия — запасная, на случай сбоя облака; браузер отводит под неё несколько мегабайт, и от свободного места на диске это не зависит.'
+                  : light
+                  ? 'Фотографии сюда уже не помещаются: копия обновляется БЕЗ них — подписи, теги, папки и расстановка сохраняются. Сами фотографии лежат в облаке и в его кэше. Чтобы вернулись и они, перенесите фотографии во внешнее хранилище (кнопка «Где хранить фотографии» выше).'
                   : 'Место кончилось — копия на устройстве больше не обновляется. Сам проект при этом сохраняется в облако. Помогает: перенести фотографии во внешнее хранилище (кнопка «Где хранить фотографии» выше).'}
               </span>
             </div>
@@ -2373,6 +2651,172 @@
            а не «закрой меня». И только после 6 точек, иначе обычное
            нажатие по строке списка утаскивало бы шторку. */
         const SHEET_CLOSE_PX = 90;
+        // КОМПАС И НАКЛОН УСТРОЙСТВА.
+        // На iOS доступен РОВНО ОДИН путь, и он нестандартный:
+        // `webkitCompassHeading` у события `deviceorientation`. Стандартные
+        // `deviceorientationabsolute` и флаг `absolute` в Safari не
+        // реализованы вовсе, а `AbsoluteOrientationSensor` и `Magnetometer`
+        // из Generic Sensor API есть только в Chrome. Поэтому запасного
+        // пути нет, и если `webkitCompassHeading` не пришёл — компаса нет,
+        // и об этом надо сказать, а не показывать дугу «примерно».
+        //   `alpha` на iOS НЕ годится: он отсчитывается от того положения,
+        // в котором устройство было при подписке, то есть к северу не
+        // привязан никак. На Android наоборот — там только `alpha`, и он
+        // идёт ПРОТИВ часовой стрелки, отсюда `360 - alpha`.
+        const useDeviceHeading = (active) => {
+          const [st, setSt] = React.useState({ ready: false, heading: null, pitch: 0, roll: 0, acc: null, denied: false });
+          const raw = React.useRef({ heading: null, pitch: 0, roll: 0, acc: null });
+          const need = typeof DeviceOrientationEvent !== 'undefined'
+                    && typeof DeviceOrientationEvent.requestPermission === 'function';
+          // Подписываться ДО разрешения бесполезно: на iOS такой слушатель
+          // молчит и после того, как разрешение дали. Поэтому ждём ответа
+          // и подписываемся уже потом. Там, где разрешения нет вовсе
+          // (Android, настольный браузер), подписываемся сразу.
+          const [armed, setArmed] = React.useState(!need);
+          // Разрешение спрашивается ТОЛЬКО из обработчика нажатия — то же
+          // правило, что у окна печати, у чтения буфера и у `input.click()`
+          // в PhotoSourcePicker. Вызов без жеста человека бросает
+          // NotAllowedError. Узнать заранее, дали разрешение или нет, нечем:
+          // Permissions API этого события в Safari не покрывает — поэтому
+          // кнопку рисуем всегда, а ответ узнаём только вызовом.
+          const ask = React.useCallback(async () => {
+            try {
+              if (!need) return true;
+              const state = await DeviceOrientationEvent.requestPermission();
+              if (state !== 'granted') { setSt(s => ({ ...s, denied: true })); return false; }
+              setArmed(true);
+              return true;
+            } catch (e) { setSt(s => ({ ...s, denied: true })); return false; }
+          }, [need]);
+          React.useEffect(() => {
+            if (!active || !armed) return;
+            let alive = true, tick = 0;
+            const onOrient = (e) => {
+              // Экран повёрнут — компас об этом не знает: он отсчитывает от
+              // верха УСТРОЙСТВА, а рисуем мы по верху ЭКРАНА. Верить надо
+              // `.angle`, а не `.type`: Safari 16.4 поменял местами
+              // landscape-primary и landscape-secondary относительно
+              // спецификации, и по имени ориентации выйдет зеркально.
+              let scr = 0;
+              try {
+                scr = (screen.orientation && typeof screen.orientation.angle === 'number')
+                    ? screen.orientation.angle
+                    : (typeof window.orientation === 'number' ? ((window.orientation + 360) % 360) : 0);
+              } catch (err) { scr = 0; }
+              let head = null;
+              if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) head = e.webkitCompassHeading;
+              else if (e.absolute === true && typeof e.alpha === 'number') head = (360 - e.alpha) % 360;
+              if (head !== null) head = (head + scr + 360) % 360;
+              // Наклон: beta — «задрали или опустили», gamma — крен. При
+              // повёрнутом экране они меняются ролями, поэтому пересчёт тот
+              // же, что у компаса.
+              const beta = typeof e.beta === 'number' ? e.beta : 0;
+              const gamma = typeof e.gamma === 'number' ? e.gamma : 0;
+              let pitch = beta - 90, roll = -gamma;
+              if (scr === 90) { pitch = -gamma - 90; roll = -beta; }
+              else if (scr === 270) { pitch = gamma - 90; roll = beta; }
+              else if (scr === 180) { pitch = -beta - 90; roll = gamma; }
+              raw.current = { heading: head, pitch, roll,
+                              acc: typeof e.webkitCompassAccuracy === 'number' ? e.webkitCompassAccuracy : null };
+              // Событие прилетает 60 раз в секунду. Перерисовывать экран на
+              // каждое — то же, что перерисовывать доску на каждое движение
+              // пальца: правда живёт в ref, состояние догоняет 12 раз
+              // в секунду, этого хватает, чтобы дуга не дёргалась.
+              const now = Date.now();
+              if (now - tick < 80) return;
+              tick = now;
+              if (alive) setSt(s => ({ ...s, ready: head !== null, ...raw.current, denied: false }));
+            };
+            window.addEventListener('deviceorientation', onOrient, true);
+            return () => { alive = false; window.removeEventListener('deviceorientation', onOrient, true); };
+          }, [active, armed]);
+          return { ...st, raw, ask, needsPermission: need };
+        };
+
+        // ЖИВАЯ КАМЕРА. Работает и в приложении, установленном на домашний
+        // экран: тот старый отказ (WebKit 185448) закрыт в iOS 13.4.
+        // Две особенности, про которые надо помнить, а не узнавать на площадке:
+        //   1) РАЗРЕШЕНИЕ НА КАМЕРУ В УСТАНОВЛЕННОМ ПРИЛОЖЕНИИ НЕ ПОМНИТСЯ —
+        //      его спрашивают заново. Это не наша беда и обойти её нечем,
+        //      поэтому отказ показываем словами, а не пустым чёрным экраном.
+        //   2) ЛЮБАЯ СМЕНА АДРЕСА РУШИТ ПОТОК: WebKit привязывает жизнь
+        //      камеры к адресу верхнего документа, и даже history.replaceState
+        //      со сменой пути её убивает (WebKit 252465). У нас экраны
+        //      переключаются состоянием React, а единственный replaceState
+        //      стоит в разборе ответа Dropbox при запуске — то есть мы
+        //      случайно в безопасности. НЕ ЗАВОДИ replaceState/pushState,
+        //      который может сработать при живой камере.
+        const useCamera = (active) => {
+          const videoRef = React.useRef(null);
+          const streamRef = React.useRef(null);
+          const [cams, setCams] = React.useState([]);
+          const [err, setErr] = React.useState('');
+          const [on, setOn] = React.useState(false);
+          const [activeCam, setActiveCam] = React.useState('');
+          const stop = React.useCallback(() => {
+            const s = streamRef.current;
+            if (s) { try { s.getTracks().forEach(t => t.stop()); } catch (e) {} }
+            streamRef.current = null;
+            if (videoRef.current) { try { videoRef.current.srcObject = null; } catch (e) {} }
+            setOn(false);
+          }, []);
+          const start = React.useCallback(async (label) => {
+            setErr('');
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+              setErr('Этот браузер не даёт странице камеру'); return false;
+            }
+            stop();
+            try {
+              // Сначала общий запрос: пока разрешения нет, enumerateDevices
+              // отдаёт список БЕЗ названий, и выбрать из него нечего.
+              // ФОРМАТ ПОТОКА ПРОСИМ ЯВНО, И ЭТО НЕ ПРИДИРКА. Без заявки
+              // Safari сам выбирает пресет съёмки, и от запуска к запуску
+              // выбирает разный: то 4:3, то 16:9, а на мелких пресетах
+              // ещё и ПОДРЕЗАННЫЙ по центру. Обзор от этого гуляет, рамка
+              // считается по прежнему числу — и выходит «каждый раз разная
+              // крупность, а я не двигался с места». Просим 4:3 (родная
+              // для сенсора пропорция, и именно к ней относятся
+              // опубликованные фокусные) и побольше точек: крупные пресеты
+              // читают сенсор целиком, мелкие — из середины.
+              const fmt = { aspectRatio: { ideal: 4 / 3 }, width: { ideal: 1920 }, height: { ideal: 1440 } };
+              let want = { video: { facingMode: { ideal: 'environment' }, ...fmt }, audio: false };
+              const list = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+              const named = list.filter(d => d.kind === 'videoinput' && d.label);
+              // Помним камеру ПО НАЗВАНИЮ, а не по deviceId: id меняется при
+              // каждой перезагрузке страницы (WebKit 179220), и сохранённый
+              // никуда не привёл бы.
+              const pick = label && named.find(d => d.label === label);
+              if (pick) want = { video: { deviceId: { exact: pick.deviceId }, ...fmt }, audio: false };
+              const stream = await navigator.mediaDevices.getUserMedia(want);
+              streamRef.current = stream;
+              // Название РАБОТАЮЩЕЙ камеры берём у самой дорожки: человек
+              // мог ничего не выбирать (камера одна), а запоминать угол
+              // всё равно надо за чем-то определённым.
+              const tr = stream.getVideoTracks()[0];
+              setActiveCam((tr && (tr.label || (tr.getSettings && tr.getSettings().deviceId))) || 'камера');
+              if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                try { await videoRef.current.play(); } catch (e) {}
+              }
+              const after = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+              setCams(after.filter(d => d.kind === 'videoinput'));
+              setOn(true);
+              return true;
+            } catch (e) {
+              // Причину называем: «камера не работает» без неё — тупик.
+              const n = (e && e.name) || '';
+              setErr(n === 'NotAllowedError' ? 'Камеру не разрешили. В Safari: «Настройки для этого сайта» → «Камера» → «Разрешить»'
+                   : n === 'NotFoundError' ? 'Камеры на этом устройстве нет'
+                   : n === 'NotReadableError' ? 'Камеру занял кто-то другой — закройте другие приложения с камерой'
+                   : `Камера не открылась: ${(e && e.message) || n || 'причина неизвестна'}`);
+              return false;
+            }
+          }, [stop]);
+          React.useEffect(() => { if (!active) stop(); }, [active, stop]);
+          React.useEffect(() => () => stop(), [stop]);
+          return { videoRef, cams, err, on, active: activeCam, start, stop };
+        };
+
         const useSheetSwipe = (onClose) => {
             const ref = React.useRef(null);
             const st = React.useRef(null);
@@ -4248,6 +4692,1933 @@
           );
         };
 
+        // =====================================================================
+        // МОДУЛЬ «СКАУТ»
+        // =====================================================================
+        // Выезд на место одним экраном: где солнце, что влезет в кадр,
+        // и заметки, которые пишут на ходу. Всё, что тут собрано, ложится
+        // в УЖЕ СУЩЕСТВУЮЩИЕ вещи проекта — объект, референсы, стикеры:
+        // своего хранилища у скаута НЕТ намеренно, ровно как у фотографий
+        // объекта и у панорам. Второе разъехалось бы с первым при первой
+        // же правке, а заметил бы это тот, кому отчёт уже уехал.
+        //
+        // ДВА ВИДА, и «План» главный. Так устроены все приложения этого
+        // рода — у Sun Seeker плоский компас, у Sun Surveyor трёхмерный
+        // глобус, у PhotoPills карта, у Shadowmap только карта, — и это
+        // не запасной путь, а ДОВЕРЕННЫЙ: план не зависит ни от компаса,
+        // ни от камеры, ни от разрешений, а считается из координат
+        // и даты. Камера — это подтверждение на месте.
+        //
+        // ПОЛЗУНОК ВРЕМЕНИ — ОН ЖЕ ГРАФИК ВЫСОТЫ СОЛНЦА. Самая удачная
+        // находка PhotoPills: тянешь по графику и одним жестом и
+        // перемещаешься по дню, и читаешь, какой в этот час будет свет.
+        // Две отдельные вещи — ползунок и табличка времён — заставляли бы
+        // переводить одно в другое в голове.
+        const SCOUT_MODES = [['plan', 'План'], ['ar', 'Камера']];
+        const ARC_ABOVE = 'var(--warn)';        // солнце над горизонтом
+        const ARC_BELOW = 'var(--muted-2)';     // и под ним — пунктиром
+        // СИНЯЯ РАМКА — ЭТО СЧЁТ, А НЕ СНЯТОЕ. Когда объектив
+        // шире, чем видит камера телефона, рамка рисуется вокруг
+        // картинки, а не по ней: внутри то, что камера даёт, снаружи —
+        // посчитанный кадр. Цвет другой именно поэтому — терракотовая
+        // рамка всюду значит «это снимается», а тут снимается меньше.
+        // Так же поступает Cadrage — и это понятнее пунктира со стрелками.
+        const SIM_LINE = '#38bdf8';
+
+        const ScoutModule = ({
+          locations, activeLocationId, setActiveLocationId, createLocationAt,
+          stickies, setStickies, addLocationNote, references, scenes,
+          projectRatio, userName, showToast, readOnly, syncDoc, onCapture, onFull,
+          updateLocation
+        }) => {
+          const loc = locations.find(x => x.id === activeLocationId) || locations[0] || null;
+          // В ПРОСМОТРЕ ВСЕГДА ОТКРЫВАЕТСЯ «ПЛАН». Гость вид не выбирал, и
+          // встречать его просьбой дать камеру нельзя: по ссылке приходят
+          // посмотреть, куда едем и какой там свет, а это план и отвечает.
+          // И вид его не запоминаем — то же правило, что у кода комнаты
+          // и активной доски: чужая ссылка не должна переставлять человеку
+          // его собственное приложение.
+          const [mode, setMode] = React.useState(() => {
+            if (readOnly) return 'plan';
+            try { return localStorage.getItem('cf_scout_mode') || 'plan'; } catch (e) { return 'plan'; }
+          });
+          React.useEffect(() => {
+            if (readOnly) return;
+            try { localStorage.setItem('cf_scout_mode', mode); } catch (e) {}
+          }, [mode, readOnly]);
+          // КАМЕРА ЗАБИРАЕТ ВЕСЬ ЭКРАН, ВКЛЮЧАЯ ОБЩУЮ ШАПКУ И ТАБ-БАР.
+          // Визир — это видоискатель, и главное в нём кадр: любая полоса
+          // сверху и снизу стоит ему высоты, а в горизонтальном положении
+          // телефона она стоит ему всего. Выход при этом гарантирован
+          // и нарисован всегда — кнопка «‹ План» в самом кадре, — иначе
+          // это была бы ровно та ловушка «нечем закрыть», которую чинили
+          // во всплывающих окнах. Флаг снимается и при уходе с модуля:
+          // вернуться на другой экран без шапки нельзя.
+          React.useEffect(() => {
+            if (!onFull) return;
+            onFull(mode === 'ar');
+            return () => onFull(false);
+          }, [mode, onFull]);
+
+          // --- ГДЕ И КОГДА ---
+          // Координаты берём у объекта. Своего поля координат у скаута нет:
+          // вторая копия разъехалась бы с той, что в карточке объекта.
+          const locCoords = loc ? parseCoords(loc.coords) : null;
+          const [gps, setGps] = React.useState(null);          // что сказал приёмник
+          // Солнце считаем ОТ ОБЪЕКТА, а не от нас: на скаут заходят
+          // и накануне, из дома, и тогда нужен свет НА ТОЧКЕ, а не
+          // за письменным столом. Что мы стоим не там, говорится отдельно
+          // (см. «сверку» ниже) — молчать об этом нельзя.
+          const coords = locCoords || gps;
+
+          // --- СВЕРКА: ТА ЛИ ЭТО ТОЧКА ---
+          // Объект в списке и место, где мы стоим, — две разные вещи,
+          // и расходятся они МОЛЧА: переехали на другой двор, а кадры
+          // и заметки всё так же ложатся к прежнему объекту, и узнаётся
+          // это уже дома, при разборе. Поэтому приёмник слушаем всё
+          // время, пока открыт скаут, и расхождение показываем.
+          const watchRef = React.useRef(null);
+          const startWatch = React.useCallback(() => {
+            if (watchRef.current !== null || !navigator.geolocation) return;
+            try {
+              watchRef.current = navigator.geolocation.watchPosition(
+                (pos) => setGps({ lat: pos.coords.latitude, lon: pos.coords.longitude,
+                                  acc: pos.coords.accuracy, at: Date.now() }),
+                // Молчим: об отказе скажет сама кнопка «Я здесь», когда
+                // её нажмут. Полоска на ровном месте, которую человек
+                // не звал, — это шум.
+                () => {},
+                { enableHighAccuracy: false, timeout: 20000, maximumAge: 20000 });
+            } catch (e) {}
+          }, []);
+          React.useEffect(() => {
+            // РАЗРЕШЕНИЕ САМИ НЕ СПРАШИВАЕМ. Без жеста человека браузер
+            // откажет, а на iOS ещё и покажет окно там, где его не звали —
+            // то же правило, что у камеры, компаса и буфера обмена.
+            // Подписываемся, только если разрешение УЖЕ дано: тогда окна
+            // не будет вовсе. Не дано — сверка ждёт нажатия «Я здесь».
+            let alive = true;
+            try {
+              if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'geolocation' })
+                  .then(st => { if (alive && st.state === 'granted') startWatch(); })
+                  .catch(() => {});
+              }
+            } catch (e) {}
+            return () => {
+              alive = false;
+              if (watchRef.current !== null) {
+                try { navigator.geolocation.clearWatch(watchRef.current); } catch (e) {}
+                watchRef.current = null;
+              }
+            };
+          }, [startWatch]);
+          const drift = (locCoords && gps) ? metersBetween(gps, locCoords) : null;
+          const atSpot = drift !== null && drift <= SCOUT_NEAR;
+          // Какой объект РЯДОМ с нами — чтобы предложить переключиться,
+          // а не заводить второй такой же в двадцати метрах.
+          const nearLoc = React.useMemo(() => {
+            if (!gps) return null;
+            return locations
+              .map(l => { const c = parseCoords(l.coords); return c ? { l, d: metersBetween(gps, c) } : null; })
+              .filter(x => x && x.d <= SCOUT_NEAR).sort((a, b) => a.d - b.d)[0] || null;
+          }, [gps, locations]);
+          // Одно и то же говорится в трёх местах — на чипе объекта,
+          // в плане и в шторке, — поэтому считается один раз.
+          const spot = !loc ? { kind: 'noloc', text: 'Объект не выбран' }
+            : !locCoords ? { kind: 'nocoords', text: `У «${loc.name}» нет координат` }
+            : !gps ? { kind: 'unknown', text: 'Где мы — не сверено' }
+            : atSpot ? { kind: 'here', text: `Мы на объекте · ${fmtDist(drift)}` }
+            : { kind: 'far', text: `Мы в ${fmtDist(drift)} от «${loc.name}»` };
+          const SPOT_COLOR = { here: 'var(--ok)', far: 'var(--warn)', nocoords: 'var(--warn)' };
+          const spotColor = SPOT_COLOR[spot.kind] || 'var(--muted-2)';
+          // День съёмки — из связанных сцен, как в отчёте по объектам.
+          // Если смены нет, смотрим на сегодня и ГОВОРИМ об этом: пустая
+          // строка вместо восхода бесполезна ровно там, где отчёт и нужен.
+          const shiftDate = React.useMemo(() => {
+            if (!loc) return '';
+            const ds = scenes.filter(sc => (loc.sceneIds || []).includes(sc.id) && sc.date)
+                             .map(sc => sc.date).sort();
+            return ds[0] || '';
+          }, [loc, scenes]);
+          const today = new Date().toISOString().slice(0, 10);
+          const [date, setDate] = React.useState(shiftDate || today);
+          React.useEffect(() => { setDate(shiftDate || today); }, [shiftDate, loc && loc.id]);
+
+          // Время: живое или отмотанное ползунком. По умолчанию живое —
+          // на площадке спрашивают «что сейчас», а не «что в 14:30».
+          const [scrub, setScrub] = React.useState(null);      // минуты от полуночи или null
+          const [now, setNow] = React.useState(() => new Date());
+          React.useEffect(() => {
+            // Часы тикают раз в полминуты: солнце за это время проходит
+            // четверть градуса, на экране это меньше точки.
+            const t = setInterval(() => setNow(new Date()), 30000);
+            return () => clearInterval(t);
+          }, []);
+          const liveDay = date === today;
+          const when = React.useMemo(() => {
+            if (scrub === null) return liveDay ? now : new Date(date + 'T12:00:00');
+            const d = new Date(date + 'T00:00:00');
+            return new Date(d.getTime() + scrub * 60000);
+          }, [scrub, now, date, liveDay]);
+
+          const arc = React.useMemo(
+            () => coords ? sunArc(coords.lat, coords.lon, date) : [],
+            [coords && coords.lat, coords && coords.lon, date]);
+          const times = React.useMemo(
+            () => coords ? sunTimes(coords.lat, coords.lon, date) : null,
+            [coords && coords.lat, coords && coords.lon, date]);
+          const sunNow = React.useMemo(
+            () => coords ? sunPosition(coords.lat, coords.lon, when) : null,
+            [coords && coords.lat, coords && coords.lon, when]);
+          const [showSolstice, setShowSolstice] = React.useState(false);
+          const sols = React.useMemo(() => {
+            if (!coords || !showSolstice) return null;
+            return solsticeArcs(coords.lat, coords.lon, Number(date.slice(0, 4)) || new Date().getFullYear());
+          }, [coords && coords.lat, coords && coords.lon, date, showSolstice]);
+
+          // --- ОПТИКА ---
+          const savedNum = (k, d) => { try { const v = parseFloat(localStorage.getItem(k)); return isFinite(v) ? v : d; } catch (e) { return d; } };
+          const [sensorId, setSensorId] = React.useState(() => { try { return localStorage.getItem('cf_scout_sensor') || 'alexa35'; } catch (e) { return 'alexa35'; } });
+          const [ownW, setOwnW] = React.useState(() => savedNum('cf_scout_ownw', 0));
+          const [focal, setFocal] = React.useState(() => savedNum('cf_scout_lens', 35));
+          const [squeeze, setSqueeze] = React.useState(() => savedNum('cf_scout_squeeze', 1));
+          const [ratio, setRatio] = React.useState(() => savedNum('cf_scout_ratio', 0) || projectRatio || 2.39);
+          const [bag, setBag] = React.useState(() => {
+            try { const a = JSON.parse(localStorage.getItem('cf_scout_bag') || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+          });
+          // Показывать ли соседние объективы сумки. По умолчанию НЕТ:
+          // рамка должна быть одна, иначе непонятно, на какую смотреть.
+          const [bagOn, setBagOn] = React.useState(() => {
+            try { return localStorage.getItem('cf_scout_bagon') === '1'; } catch (e) { return false; }
+          });
+          React.useEffect(() => { try { localStorage.setItem('cf_scout_bagon', bagOn ? '1' : '0'); } catch (e) {} }, [bagOn]);
+          React.useEffect(() => { try {
+            localStorage.setItem('cf_scout_sensor', sensorId);
+            localStorage.setItem('cf_scout_lens', String(focal));
+            localStorage.setItem('cf_scout_squeeze', String(squeeze));
+            localStorage.setItem('cf_scout_ratio', String(ratio));
+            localStorage.setItem('cf_scout_ownw', String(ownW));
+            localStorage.setItem('cf_scout_bag', JSON.stringify(bag));
+          } catch (e) {} }, [sensorId, focal, squeeze, ratio, ownW, bag]);
+          const sensor = React.useMemo(() => {
+            // Вписанное число — это активная ШИРИНА под свою пропорцию,
+            // а не ширина всего сенсора: режимов съёмки у камеры десяток,
+            // и угадывать, какой из них имели в виду, мы не станем.
+            // Высоту берём равной ширине, чтобы площадку ограничивала
+            // именно она при любой пропорции из нашего списка.
+            if (sensorId === 'own' && ownW > 0) return { id: 'own', label: `своё · ${ownW} мм`, w: ownW, h: ownW };
+            return SCOUT_SENSORS.find(s => s.id === sensorId) || SCOUT_SENSORS[1];
+          }, [sensorId, ownW]);
+          const hfov = frameHFov(sensor, ratio, focal, squeeze);
+          // Шаг по объективам идёт по сумке, если она набрана, иначе по общему
+          // ряду, и считается ОТ БЛИЖАЙШЕГО: своё фокусное (53) в ряду не
+          // лежит, и поиск по индексу отправлял бы «+» в самое начало.
+          // ЛЕСТНИЦА ОБЪЕКТИВОВ ОБЯЗАНА СОДЕРЖАТЬ ТО, ЧТО НА НЕЙ СТОЯТ.
+          // Своё фокусное («например 53») кладётся в сумку, но пока в ней
+          // одно число, лестницей служил общий список — а в нём этого
+          // числа нет. Выходило так: встал на 29, нажал «+» дважды (32,
+          // 35), нажал «−» дважды — и вернулся не на 29, а на 27. Число
+          // на кнопке при этом другое, а человек видит только «рамка
+          // не сошлась». Теперь свои фокусные всегда в лестнице, и
+          // нынешнее — тоже: с него обязано быть куда шагнуть в обе
+          // стороны и куда вернуться.
+          const lensLadder = () => {
+            const base = bag.length > 1 ? bag.slice() : SCOUT_LENSES.concat(bag);
+            if (focal > 0 && !base.some(f => Math.abs(f - focal) < 0.01)) base.push(focal);
+            return [...new Set(base)].sort((a, b) => a - b);
+          };
+          const stepLens = (dir) => {
+            const list = lensLadder();
+            const next = dir > 0 ? list.find(f => f > focal + 0.01) : list.slice().reverse().find(f => f < focal - 0.01);
+            return next === undefined ? focal : next;
+          };
+          // Ближайший объектив из лестницы — для щипка: он идёт плавно,
+          // а объективы в сумке стоят ступеньками.
+          const nearestLens = (mm) => lensLadder()
+            .reduce((best, f) => Math.abs(f - mm) < Math.abs(best - mm) ? f : best, focal);
+
+          // --- КАМЕРА И КОМПАС ---
+          const arOn = mode === 'ar';
+          const head = useDeviceHeading(arOn);
+          const [camLabel, setCamLabel] = React.useState(() => { try { return localStorage.getItem('cf_scout_cam') || ''; } catch (e) { return ''; } });
+          const cam = useCamera(arOn, camLabel);
+          // ЧЕМ СМОТРИМ. Храним эквивалентное фокусное камеры устройства
+          // в миллиметрах, а не угол: угол зависит ещё и от пропорции
+          // потока, а её мы узнаём только от живого видео.
+          // Первый запуск считаем ОДИН раз: и набор, и фокусное должны
+          // выйти из одного решения, иначе догадка про планшет поставит
+          // его набор, а миллиметры оставит телефонные.
+          const boot = React.useRef(null);
+          if (!boot.current) {
+            // ОДНОРАЗОВЫЙ СБРОС ПОДГОНКИ. Пока щипок менял обзор
+            // устройства, случайный жест молча уводил его в сторону,
+            // и на устройстве осталось съехавшее число — то самое
+            // «потом крупность уезжает». Само оно не вернётся: человек
+            // про него не знает. Сбрасываем ОДИН раз, на справочное.
+            try {
+              if (localStorage.getItem('cf_scout_fovver') !== '2') {
+                localStorage.removeItem('cf_scout_deveq');
+                localStorage.removeItem('cf_scout_eqmap');
+                localStorage.setItem('cf_scout_fovver', '2');
+              }
+            } catch (e) {}
+            let id = '';
+            try { id = localStorage.getItem('cf_scout_device') || guessDevice() || ''; } catch (e) { id = ''; }
+            boot.current = { id, eq: savedNum('cf_scout_deveq', mainEqOf(id)) };
+          }
+          const [devEq, setDevEq] = React.useState(boot.current.eq);
+          const [devId, setDevId] = React.useState(boot.current.id);
+          const device = PHONE_CAMS.find(d => d.id === devId) || null;
+          const guessed = React.useMemo(guessDevice, []);
+          // УГОЛ КАЖДОЙ КАМЕРЫ ПОМНИТСЯ ОТДЕЛЬНО. Раньше переключение
+          // камеры в списке НЕ меняло угол: взял сверхширокую — а рамка
+          // осталась посчитанной для основной, то есть молча врала вдвое.
+          // Сопоставить название камеры с объективом надёжно нечем (у Safari
+          // они переведены на язык устройства и поля «какой это объектив»
+          // нет вовсе), поэтому спрашиваем ОДИН раз и запоминаем.
+          const [eqMap, setEqMap] = React.useState(() => {
+            try { const m = JSON.parse(localStorage.getItem('cf_scout_eqmap') || '{}'); return m && typeof m === 'object' ? m : {}; }
+            catch (e) { return {}; }
+          });
+          // ПОДКРУТКА КОМПАСА. Обязательна, а не украшение: ошибка
+          // магнитометра в 10–15° — обычное дело рядом с машиной, штативом
+          // и арматурой, а на экране это уводит солнце на пятую часть
+          // ширины. Заодно эта же поправка съедает магнитное отклонение:
+          // компас даёт МАГНИТНЫЙ север, а наше солнце считается от
+          // истинного, и разница в наших широтах доходит до 15°.
+          // Способа спросить отклонение у браузера нет вовсе.
+          const [headOff, setHeadOff] = React.useState(() => savedNum('cf_scout_headoff', 0));
+          const [manualHead, setManualHead] = React.useState(null);   // компаса нет — ведём рукой
+          React.useEffect(() => { try {
+            localStorage.setItem('cf_scout_deveq', String(devEq));
+            localStorage.setItem('cf_scout_headoff', String(headOff));
+            localStorage.setItem('cf_scout_eqmap', JSON.stringify(eqMap));
+            if (devId) localStorage.setItem('cf_scout_device', devId);
+            if (camLabel) localStorage.setItem('cf_scout_cam', camLabel);
+          } catch (e) {} }, [devEq, headOff, camLabel, devId, eqMap]);
+          // Выбрали объектив устройства — запоминаем его за ТОЙ камерой,
+          // которая сейчас включена, чтобы при следующем переключении
+          // угол вернулся сам.
+          const pickEq = (eq) => {
+            setDevEq(eq);
+            const key = cam.active || camLabel;
+            if (key) setEqMap(m => ({ ...m, [key]: eq }));
+          };
+          // --- ЩИПОК МЕНЯЕТ ОБЪЕКТИВ ---
+          // Развели пальцы — объектив длиннее и кадр крупнее, свели —
+          // короче и шире. То же, что делают «+» и «−», только плавно:
+          // так ведёт себя всякая камера, и объяснять это не нужно.
+          //   РАНЬШЕ ЩИПОК МЕНЯЛ ОБЗОР УСТРОЙСТВА, и это была ошибка:
+          // подгонка — вещь однократная и тонкая, а жест, который легко
+          // сделать случайно (хоть попыткой увеличить страницу), молча
+          // уводил её в сторону. Со стороны это «при первом открытии всё
+          // ок, а потом крупность уезжает»: рамка считалась от съехавшего
+          // числа, и вернуть его было нечем, кроме как знать про него.
+          // Подгонка обзора живёт в настройках, где случайно её не тронешь.
+          // ЗАБЫТЫЙ ПАЛЕЦ — известная беда, и здесь она тоже есть.
+          // Отпускание изредка теряется (а нажатие по накладке в режиме
+          // подкрутки его и не присылает), и застрявший в списке палец
+          // превращал бы следующее обычное касание в щипок: обзор менялся
+          // бы сам собой. Поэтому у каждого пальца стоит время, старые
+          // выбрасываются, и жест держится за ДВА выбранных id, а не за
+          // «сколько сейчас в списке» — то же лечение, что у доски.
+          const PINCH_STALE = 3000;
+          // А ГЛАВНОЕ — НАСТОЯЩИЙ ЩИПОК НАЧИНАЮТ ДВУМЯ ПАЛЬЦАМИ СРАЗУ.
+          // Одной подчистки по времени мало: палец, застрявший секунду
+          // назад, вместе со следующим обычным касанием давал «щипок»,
+          // и обзор уезжал от простого тычка в кадр. Поэтому жест
+          // засчитывается, только если оба пальца легли почти
+          // одновременно; всё остальное — одиночные касания.
+          const PINCH_GAP = 300;
+          // РЕЖИМ «СВЕСТИ ОБЗОР». Справочное фокусное телефона — догадка:
+          // сколько видит поток, отданный странице, спросить нечем ни одним
+          // способом. Если оно мимо, рамка показывает не тот кусок сцены —
+          // на всех объективах одинаково мимо, и заметно это только рядом
+          // с проверенным эталоном. Свести за десять секунд можно щипком,
+          // но ВКЛЮЧАТЬ его надо НАРОЧНО: когда щипок менял обзор всегда,
+          // случайный жест молча уводил подгонку, и выходило «при первом
+          // открытии всё ок, а потом крупность уезжает». Режим не помнится
+          // между запусками — это разовая настройка, а не состояние.
+          const [fovTune, setFovTune] = React.useState(false);
+          // ЧИСЛО ВВОДЯТ РУКАМИ, А НЕ НАБИРАЮТ ПОЛУМИЛЛИМЕТРАМИ.
+          // Замер по двум снимкам пользователя (наш кадр против проверенного
+          // эталона) дал разницу в 1,31 раза: телефон с камерой 26 мм отдал
+          // странице поток обзором как у 34 мм. От 26 до 34 кнопкой «+» —
+          // шестнадцать нажатий, и это ровно тот случай, когда подгонка
+          // выглядит непосильной, хотя нужное число уже известно. Поэтому
+          // рядом с кнопками стоит поле: знаешь число — вписал.
+          //   Черновик отдельным состоянием: пока набирают «3» из «34»,
+          // применять нечего — 3 мм вне разумного, и кадр дёрнулся бы
+          // на каждую цифру. Живьём применяется только осмысленное
+          // значение, остальное ждёт ухода фокуса.
+          const [eqDraft, setEqDraft] = React.useState(null);
+          const pinchRef = React.useRef(null);
+          const frameShare = (eq) => {
+            // Какую долю ширины кадра занимает рамка при таком обзоре.
+            const d = camFov(eq, aspect);
+            return (hfov > 0 && d > 0) ? Math.tan(hfov * SUN_RAD / 2) / Math.tan(d * SUN_RAD / 2) : 0;
+          };
+          const pinchDown = (e) => {
+            if (readOnly || e.pointerType === 'mouse') return;
+            const p = pinchRef.current || (pinchRef.current = { pts: new Map(), ids: null, f0: 0, d0: 0 });
+            const now = Date.now();
+            p.pts.forEach((v, k) => { if (now - v.t > PINCH_STALE) p.pts.delete(k); });
+            p.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+            if (p.pts.size < 2) { p.ids = null; p.d0 = 0; return; }
+            // Берём ДВА САМЫХ СВЕЖИХ пальца: их человек и свёл только что.
+            const two = [...p.pts.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, 2);
+            if (two[0][1].t - two[1][1].t > PINCH_GAP) { p.ids = null; p.d0 = 0; return; }
+            p.ids = [two[0][0], two[1][0]];
+            p.d0 = Math.hypot(two[0][1].x - two[1][1].x, two[0][1].y - two[1][1].y);
+            p.f0 = focal; p.e0 = devEq;
+          };
+          const pinchMove = (e) => {
+            const p = pinchRef.current;
+            if (!p || !p.ids || !p.pts.has(e.pointerId)) return;
+            const was = p.pts.get(e.pointerId);
+            p.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: was ? was.t : Date.now() });
+            if (p.ids.indexOf(e.pointerId) < 0 || !(p.d0 > 0)) return;
+            const a = p.pts.get(p.ids[0]), b = p.pts.get(p.ids[1]);
+            if (!a || !b) return;
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (!(d > 0)) return;
+            if (fovTune) {
+              // Развели пальцы — картинка крупнее, значит в рамку попадает
+              // МЕНЬШЕ сцены: это и есть более узкий обзор устройства,
+              // то есть большее его фокусное… нет, наоборот — картинка
+              // растёт, когда обзор ШИРЕ, а фокусное МЕНЬШЕ.
+              const eq = Math.max(4, Math.min(400, Math.round(p.e0 * (p.d0 / d) * 10) / 10));
+              if (eq !== devEq) pickEq(eq);
+              return;
+            }
+            // Развели пальцы — объектив длиннее, кадр крупнее.
+            const mm = nearestLens(p.f0 * (d / p.d0));
+            if (mm !== focal) setFocal(mm);
+          };
+          const pinchUp = (e) => {
+            const p = pinchRef.current;
+            if (!p) return;
+            p.pts.delete(e.pointerId);
+            if (p.pts.size < 2) { p.ids = null; p.d0 = 0; }
+          };
+
+          const pickCam = (label) => {
+            setCamLabel(label);
+            cam.start(label);
+            const known = eqMap[label];   // что за объектив у неё, мы уже спрашивали
+            if (known > 0) setDevEq(known);
+            else if (device) showToast(`Скажите, какой это объектив — иначе рамка будет считаться от ${devEq} мм`);
+          };
+
+          const yaw = manualHead !== null ? manualHead
+                    : (head.heading !== null ? (head.heading + headOff + 360) % 360 : null);
+          const pitch = manualHead !== null ? 0 : head.pitch;
+          const roll = manualHead !== null ? 0 : head.roll;
+
+          // КАРТИНКА ЗАПОЛНЯЕТ ШИРИНУ, А НЕ СИДИТ В ПОЛОСКЕ ПОСЕРЕДИНЕ.
+          // Поток приходит 4:3, а телефон в горизонтальном положении почти
+          // втрое шире, чем выше: вписанный целиком кадр занимал 890 точек
+          // из 2000 — 44% экрана, — а остальное было чёрными полями, вокруг
+          // которых и рассыпался весь интерфейс. У Cadrage картинка
+          // заполняет экран, и оттого сразу видно, на что смотришь.
+          //   ПО ГОРИЗОНТАЛИ НЕ СРЕЗАЕМ НИКОГДА (`k` не больше `cw/vw`):
+          // на горизонтальном обзоре держится вся накладка, и срезав его,
+          // мы получили бы неверную рамку, о которой никто бы не узнал.
+          // Срезается только верх и низ — то, что в кадр всё равно
+          // не войдёт. И рамка обязана поместиться целиком: если при
+          // заполнении ширины она выше экрана, масштаб уменьшается ровно
+          // настолько, чтобы она влезла, но не мельче «вписать целиком».
+          const boxRef = React.useRef(null);
+          // ВСТАВКИ МЕРЯЕМ, А НЕ ДОГАДЫВАЕМСЯ. Кадр занимает весь экран,
+          // и в установленном приложении сверху лежит статус-бар, а в
+          // горизонтальном положении чёлка съедает боковой край. Считать
+          // рамку от всей площади значило бы завести её верх под часы,
+          // а край — под чёлку. Читаем настоящие значения с невидимой
+          // подложки: `env()` внутри CSS-переменной надёжно из JS
+          // не достаётся, а вычисленный `padding` — достаётся всегда.
+          const insRef = React.useRef(null);
+          const [cbox, setCbox] = React.useState({ cw: 0, ch: 0, vw: 0, vh: 0, it: 0, il: 0, ir: 0 });
+          const measure = React.useCallback(() => {
+            const el = boxRef.current, v = cam.videoRef.current, ip = insRef.current;
+            if (!el) return;
+            let it = 0, il = 0, ir = 0;
+            if (ip) {
+              const cs = getComputedStyle(ip);
+              it = parseFloat(cs.paddingTop) || 0;
+              il = parseFloat(cs.paddingLeft) || 0;
+              ir = parseFloat(cs.paddingRight) || 0;
+            }
+            setCbox({
+              cw: el.clientWidth, ch: el.clientHeight,
+              vw: (v && v.videoWidth) || 0, vh: (v && v.videoHeight) || 0,
+              it, il, ir
+            });
+          }, []);
+          // ПОТОК МОЖЕТ ПЕРЕЕХАТЬ САМ, И МОЛЧАТЬ ОБ ЭТОМ НЕЛЬЗЯ. iOS 18
+          // переключает задние объективы посреди работы, а Safari умеет
+          // сменить пресет съёмки: обзор становится другим, а наше число
+          // в миллиметрах остаётся прежним — то есть рамка молча врёт.
+          // Запретить это нечем, а вот ЗАМЕТИТЬ можно: у <video> на смену
+          // videoWidth/videoHeight приходит событие `resize`.
+          const geoRef = React.useRef('');
+          React.useEffect(() => {
+            if (!arOn) return;
+            measure();
+            const el = boxRef.current, v = cam.videoRef.current;
+            const onResize = () => {
+              measure();
+              // Пока камера не отдала кадр, размер нулевой — это НЕ формат,
+              // и объявлять «0x0 → 1920x1440» сменой нельзя: так полоска
+              // ругалась на каждый обычный запуск камеры.
+              const g = (v && v.videoWidth && v.videoHeight) ? `${v.videoWidth}x${v.videoHeight}` : '';
+              if (!g || g === geoRef.current) return;
+              const was = geoRef.current;
+              geoRef.current = g;
+              // Первый ответ камеры — это не смена, это её запуск.
+              if (was) showToast(`Камера сама сменила формат: ${was} → ${g}. Обзор мог измениться — сверьте рамку`);
+            };
+            onResize();
+            let ro = null;
+            try { ro = new ResizeObserver(measure); if (el) ro.observe(el); } catch (e) {}
+            if (v) v.addEventListener('resize', onResize);
+            window.addEventListener('orientationchange', measure);
+            return () => {
+              if (ro) ro.disconnect();
+              if (v) v.removeEventListener('resize', onResize);
+              window.removeEventListener('orientationchange', measure);
+            };
+          }, [arOn, measure, cam.on]);
+
+          // Пропорция ЖИВОГО потока. От неё зависит и вертикальный обзор,
+          // и сам угол устройства: 26 мм дают 67,3° на кадре 4:3 и 71,9°
+          // на 16:9 — это одна и та же камера, просто снятая полоса разная.
+          // Пропорцию берём у САМОГО ПОТОКА, а не у нарисованного
+          // прямоугольника: он теперь может быть срезан по высоте, а обзор
+          // от этого не меняется.
+          const aspect = cbox.vh > 0 ? cbox.vw / cbox.vh : 4 / 3;
+          const devFov = camFov(devEq, aspect);
+          const frameShareNow = (hfov > 0 && devFov > 0)
+            ? Math.tan(hfov * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2) : 0;
+          // РАМКА СТОИТ НА МЕСТЕ, А КАРТИНКА ЗУМИТСЯ ВМЕСТЕ С ОБЪЕКТИВОМ.
+          // Так устроен всякий визир режиссёра, и так же — Cadrage: в него
+          // СМОТРЯТ, как в объектив. Раньше было наоборот — картинка стояла,
+          // а рамка от смены фокусного росла и уменьшалась; со стороны это
+          // «крупность уезжает», потому что от нажатия на «+» кадр не
+          // приближался, а просто сужалась рамочка.
+          //   Считается так: рамке назначена ПОСТОЯННАЯ ширина на экране
+          // (`fwTarget`), и картинка увеличивается ровно настолько, чтобы
+          // выбранный объектив занял её: `Wd = fwTarget / share`. Длиннее
+          // объектив — меньше `share` — сильнее увеличение. Это ПРАВДА,
+          // а не эффект: обрезать поток по краям — ровно то же, что делает
+          // объектив подлиннее.
+          //   Два предела, и оба честные. Меньше, чем есть у камеры, мы
+          // не покажем никогда (`Wd` не меньше ширины экрана): дальше
+          // объектив шире того, что видит телефон, и тогда рамка рисуется
+          // пунктиром во весь кадр со стрелками наружу — как и раньше.
+          // И рамка обязана поместиться по высоте целиком.
+          const vbox = React.useMemo(() => {
+            const { cw, ch, vw, vh, it, il, ir } = cbox;
+            if (!cw || !ch) return { x: 0, y: 0, w: 0, h: 0 };
+            if (!vw || !vh) return { x: 0, y: 0, w: cw, h: ch };
+            // Считаем от ВИДИМОЙ полосы — без статус-бара сверху и без
+            // чёлки по бокам. Постоянная ширина рамки: 90% этой полосы,
+            // но не выше 90% её высоты. Поля вокруг рамки оставлены
+            // намеренно — на скауте важно видеть, что стоит ЗА краем кадра.
+            const safeW = Math.max(1, cw - il - ir), safeH = Math.max(1, ch - it);
+            const fwTarget = Math.min(safeW * 0.9, safeH * 0.94 * (ratio || 1.85));
+            // ОДНА ФОРМУЛА БЕЗ ЕДИНОГО ОСОБОГО СЛУЧАЯ, и это важнее
+            // красоты. Рамке назначена постоянная ширина, картинка берёт
+            // ровно `fwTarget / share` — и всё.
+            //   Особые случаи тут уже дважды вышли боком. `Math.max(cw, …)`
+            // («чтоб картинка не сидела полоской») перебивал ограничение
+            // по высоте, и на коротком экране у рамки пропадали верх и низ.
+            // Потом `share >= 1 ? cw` («шире камеры — покажем всё»)
+            // давал РАЗРЫВ ровно между 29 и 27 мм: на ALEXA Mini LF в 2.39
+            // доля растёт 0.951 → 1.021, и картинка скачком разлеталась
+            // во весь экран, переставая сходиться с чем бы то ни было.
+            //   Теперь зависимость непрерывна и монотонна: объектив шире —
+            // картинка плавно меньше. Когда она становится уже рамки,
+            // это и значит «объектив шире, чем видит телефон», и рамка
+            // рисуется пунктиром ВОКРУГ картинки — видно целиком, а не
+            // стрелками за краем.
+            const w = frameShareNow > 0 ? fwTarget / frameShareNow : cw;
+            const h = w * vh / vw;
+            // Середина видимой полосы, а не всей площади: иначе рамка
+            // встала бы по центру экрана, верхний её край — под часами.
+            return { x: (cw - w) / 2 + (il - ir) / 2, y: (ch - h) / 2 + it / 2, w, h };
+          }, [cbox, frameShareNow, ratio]);
+          // Во сколько раз картинка увеличена против того, что отдаёт
+          // камера. Ровно единица — снимаем как есть.
+          const vzoom = (cbox.cw > 0 && vbox.w > 0) ? vbox.w / cbox.cw : 1;
+          const px = (p) => p ? { x: p.x * vbox.w, y: p.y * vbox.h } : null;
+          const see = (az, alt) => px(projectSky(az, alt, yaw, pitch, roll, devFov, aspect));
+
+          // --- ПОДКРУТКА ПО НАСТОЯЩЕМУ СОЛНЦУ ---
+          // Ткнул в солнце на экране — вся модель встала на место. Это
+          // единственная калибровка, которая не требует верить компасу:
+          // солнце видно, его положение мы знаем точно. У Sun Scout такой
+          // кнопки нет, и там ровно жалоба «солнце не совпадает с видом».
+          const [calib, setCalib] = React.useState(false);
+          const calibTap = (e) => {
+            if (!calib || !sunNow || yaw === null) return;
+            const r = e.currentTarget.getBoundingClientRect();
+            const fx = (e.clientX - r.left) / Math.max(1, r.width);
+            // Куда смотрит точка, в которую ткнули: отклонение от центра
+            // в долях ширины переводим в градусы через тангенс — по краям
+            // кадра градус «короче», и линейная прикидка врала бы тем
+            // сильнее, чем шире объектив.
+            const off = Math.atan((fx - 0.5) * 2 * Math.tan(devFov * SUN_RAD / 2)) / SUN_RAD;
+            const wantYaw = sunNow.az - off;             // каким должен быть наш азимут
+            const cur = head.heading;
+            if (cur === null) { setManualHead((wantYaw + 360) % 360); }
+            else setHeadOff(((wantYaw - cur + 540) % 360) - 180);
+            setCalib(false);
+            // ГОВОРИМ ЧИСЛО. «Подкручен» без него не даёт заметить промах:
+            // ошибка компаса бывает 10–15°, и поправка в девяносто — это
+            // не подкрутка, а тычок мимо. Увидев число, человек снимает
+            // её тут же кнопкой рядом с компасом.
+            const got = ((wantYaw - (cur === null ? wantYaw : cur) + 540) % 360) - 180;
+            showToast(Math.abs(got) > 45
+              ? `Компас подкручен на ${got > 0 ? '+' : ''}${Math.round(got)}° — это очень много. Ошибка компаса обычно 10–15°; если ткнули мимо солнца, снимите поправку кнопкой рядом с компасом`
+              : `Компас подкручен: ${got > 0 ? '+' : ''}${Math.round(got)}°`);
+          };
+
+          // --- СНИМОК ---
+          // Кадр с камеры + подпись «где, когда, кем». Подпись ЖИВЁТ
+          // В ЗАПИСИ референса (поле `shot`), а не только нарисованной
+          // на картинке: из записи она печатается в отчёт, ищется
+          // и правится, а с картинки её уже не снять. Выжигать её на
+          // кадре можно по желанию — для того, что уходит наружу.
+          const [burn, setBurn] = React.useState(() => { try { return localStorage.getItem('cf_scout_burn') === '1'; } catch (e) { return false; } });
+          React.useEffect(() => { try { localStorage.setItem('cf_scout_burn', burn ? '1' : '0'); } catch (e) {} }, [burn]);
+          const [busy, setBusy] = React.useState(false);
+          // ВРЕМЯ В ПОДПИСИ — НАСТОЯЩЕЕ, А НЕ С ПОЛЗУНКА. `when` — это
+          // время, на которое отмотали СОЛНЦЕ: отмотали на вечер посмотреть
+          // свет, сняли кадр — и в записи стояло «19:55» при часах 13:46.
+          // По этой строке потом ищут, а она врала. Отмотанное время не
+          // потеряно: оно уходит в запись отдельным полем `sunAt`.
+          const stampLine = (at) => {
+            const t = at || new Date();
+            const bits = [];
+            if (loc) bits.push(loc.name || 'объект без названия');
+            bits.push(`${focal} мм · ${sensor.label.split(' · ')[0]} · ${ratio.toFixed(2)}${squeeze > 1 ? ` · ${squeeze}×` : ''}`);
+            if (yaw !== null) bits.push(`азимут ${Math.round(yaw)}°`);
+            bits.push(t.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }));
+            if (userName) bits.push(userName);
+            return bits.join(' · ');
+          };
+          // «ГДЕ СНЯТО» — ЭТО ГДЕ СТОЯЛА КАМЕРА, а не где записана точка
+          // объекта. Раньше в запись кадра уходили координаты ОБЪЕКТА,
+          // и снимок, сделанный за квартал от него, врал про своё место
+          // молча — а по этой строке потом ищут, куда возвращаться.
+          // Свежий ответ приёмника вернее: точку объекта могли записать
+          // с другого конца двора или вовсе взять из адреса в картах.
+          const SHOT_FIX_AGE = 5 * 60 * 1000;
+          const freshFix = (gps && gps.at && Date.now() - gps.at < SHOT_FIX_AGE) ? gps : null;
+
+          const shoot = async () => {
+            // Проверка стоит ПЕРВОЙ строкой — правило всего приложения.
+            if (readOnly) { showToast('Режим просмотра — менять проект нельзя'); return; }
+            const v = cam.videoRef.current;
+            if (!v || !v.videoWidth) { showToast('Камера ещё не отдала кадр'); return; }
+            if (!loc) { showToast('Сначала выберите объект — снимок кладётся к нему'); return; }
+            // Настоящее время съёмки берём ОДИН раз на весь вызов: подпись
+            // на картинке и запись кадра обязаны говорить одно и то же.
+            const shotNow = new Date();
+            setBusy(true);
+            try {
+              // СНИМОК — ЭТО ТО, ЧТО ВИДНО НА ЭКРАНЕ, а не весь поток.
+              // Картинка в визире увеличена под выбранный объектив, и края
+              // за экраном человек НЕ видел: положив их в снимок, мы отдали
+              // бы кадр шире того, который выбирали. Правило то же, что
+              // у выгрузки доски: картинка обязана совпадать с экраном.
+              //   ДВА МЕРИЛА НА ОДНОЙ КАРТИНКЕ — ВОТ ОТКУДА БРАЛАСЬ
+              // «РАМКА НЕ ПОЙМИ ОТ ЧЕГО». Раньше в холст ложился кусок
+              // ПОТОКА, а рамка считалась долей ОТ КОНТЕЙНЕРА. Пока
+              // картинка шире экрана, это одно и то же. Но стоит объективу
+              // оказаться шире камеры, картинка становится УЖЕ экрана —
+              // и рамка на снимке выходила вдвое мельче, чем была на экране.
+              // Замер по снимку пользователя: рамка заняла 53,6 % ширины
+              // фотографии вместо своих девяноста — ровно отношение
+              // ширины картинки к ширине экрана.
+              //   Теперь холст — ВСЯ ВИДИМАЯ ОБЛАСТЬ визира: видео ложится
+              // в неё туда же, где оно на экране, а по краям остаётся такая же
+              // тёмная полоса, какая была видна. Мерило стало ОДНО.
+              const px = vbox.w > 0 ? v.videoWidth / vbox.w : 1;   // точки видео на точку экрана
+              const cssW = Math.max(1, cbox.cw), cssH = Math.max(1, cbox.ch);
+              // 1600 точек по длинной стороне: дальше растёт только вес.
+              // Сжатие и отправку в облако делает общий путь загрузки.
+              const k = Math.min(1, 1600 / Math.max(cssW * px, cssH * px));
+              const sc = px * k;                                   // точки холста на точку экрана
+              const cv = document.createElement('canvas');
+              cv.width = Math.max(1, Math.round(cssW * sc));
+              cv.height = Math.max(1, Math.round(cssH * sc));
+              const ctx = cv.getContext('2d');
+              ctx.fillStyle = '#000';
+              ctx.fillRect(0, 0, cv.width, cv.height);
+              ctx.drawImage(v, vbox.x * sc, vbox.y * sc, vbox.w * sc, vbox.h * sc);
+
+              // РАМКА ОБЪЕКТИВА РИСУЕТСЯ НА САМОМ СНИМКЕ, И ВСЕГДА.
+              // Раньше её тут не было вовсе: в объекте лежала обычная
+              // фотография с телефона и подписью «35 мм · ALEXA Mini LF ·
+              // 2.39», проверить которую нечем — а ради этой рамки визир
+              // и заведён. Резать по ней НЕ режем, по той же причине, что
+              // и в живом виде: обзор камеры узнать нечем, и подрезанный
+              // кадр молча врёт про план. Cadrage поступает так же —
+              // рисует, а не режет.
+              // Рамка на снимке — ровно та же доля ширины, что и на экране:
+              // оба считаются от одного `frameW` в точках видео.
+              const fw = (vbox.w > 0 && frameShareNow > 0) ? vbox.w * frameShareNow * sc : 0;
+              if (fw > 0) {
+                // Шире камеры — рамка СИНЯЯ и целиком вокруг картинки,
+                // ровно как на экране: внутри то, что камера дала, снаружи —
+                // посчитанный кадр. Прижимать её к краю холста (было
+                // `cv.width - 4`) больше не надо — холст шире рамки всегда.
+                const wide = frameShareNow > 1.001;
+                const w = fw, h = w / ratio;
+                const x = (vbox.x + vbox.w / 2) * sc - w / 2;
+                const y = (vbox.y + vbox.h / 2) * sc - h / 2;
+                const lw = Math.max(2, Math.round(cv.width / 500));
+                // Тёмная подложка обязательна: белого кадра хватает,
+                // чтобы линия на нём пропала.
+                ctx.lineWidth = lw * 2.4; ctx.strokeStyle = 'rgba(0,0,0,.35)';
+                ctx.setLineDash([]); ctx.strokeRect(x, y, w, h);
+                ctx.lineWidth = lw; ctx.strokeStyle = wide ? SIM_LINE : '#d97757';
+                ctx.strokeRect(x, y, w, h);
+                // Метка пропорции в углу рамки — единственная надпись
+                // на картинке, ровно как «2.35:1» у Cadrage.
+                const rs = Math.max(10, Math.round(cv.width / 78));
+                ctx.font = `600 ${rs}px ui-monospace, Menlo, monospace`;
+                ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+                ctx.lineWidth = Math.max(2, rs / 5); ctx.strokeStyle = 'rgba(0,0,0,.55)';
+                ctx.strokeText(ratio.toFixed(2), x + w - rs * 0.5, y + h - rs * 0.5);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(ratio.toFixed(2), x + w - rs * 0.5, y + h - rs * 0.5);
+                ctx.textAlign = 'left';
+              }
+
+              if (burn) {
+                const fs = Math.max(11, Math.round(cv.width / 62));
+                const pad = Math.round(fs * 0.7);
+                ctx.font = `600 ${fs}px -apple-system, Helvetica, Arial, sans-serif`;
+                const txt = stampLine(shotNow);
+                const tw = ctx.measureText(txt).width;
+                ctx.fillStyle = 'rgba(0,0,0,.55)';
+                ctx.fillRect(0, cv.height - fs - pad * 2, Math.min(cv.width, tw + pad * 2), fs + pad * 2);
+                ctx.fillStyle = '#fff';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(txt, pad, cv.height - fs / 2 - pad, cv.width - pad * 2);
+              }
+              const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9));
+              cv.width = 0; cv.height = 0;
+              if (!blob) { showToast('Кадр не сохранился'); return; }
+              const shotPt = freshFix || coords;
+              const name = `scout-${shotNow.toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jpg`;
+              const file = new File([blob], name, { type: 'image/jpeg' });
+              await onCapture(file, loc.id, {
+                shot: {
+                  cam: sensor.label, sw: sensor.w, sh: sensor.h, ratio, lens: focal, squeeze,
+                  hfov: Math.round(hfov * 10) / 10,
+                  az: yaw === null ? null : Math.round(yaw),
+                  alt: Math.round(pitch),
+                  lat: shotPt ? Number(shotPt.lat.toFixed(6)) : null,
+                  lon: shotPt ? Number(shotPt.lon.toFixed(6)) : null,
+                  // Откуда взята точка, сказано прямо: «gps» — приёмник
+                  // в момент съёмки, «loc» — записанная точка объекта.
+                  // Без этого две разные по надёжности строки выглядели
+                  // бы одинаково.
+                  fix: shotPt ? (freshFix ? 'gps' : 'loc') : '',
+                  acc: freshFix && freshFix.acc ? Math.round(freshFix.acc) : null,
+                  when: shotNow.toISOString(),
+                  // Отмотанное время не теряется: если солнце смотрели
+                  // на другой час, это сказано отдельно и видно, что это
+                  // не время съёмки.
+                  sunAt: (scrub !== null || !liveDay) ? when.toISOString() : '',
+                  who: userName || '', place: loc.name || ''
+                }
+              });
+            } catch (e) {
+              console.error(e);
+              showToast(`Кадр не сохранился: ${(e && e.message) || 'причина неизвестна'}`);
+            } finally { setBusy(false); }
+          };
+
+          // --- ЗАМЕТКИ НА ХОДУ ---
+          // Те же стикеры, что в объекте и на доске, а не третий список:
+          // написанное на выезде обязано попасть в отчёт по объекту,
+          // а он собирается из stickies.
+          const notes = React.useMemo(
+            () => loc ? stickies.filter(st => st.locationId === loc.id) : [], [stickies, loc]);
+          const [noteOpen, setNoteOpen] = React.useState(false);
+          // Курсор в ТОЛЬКО ЧТО заведённую заметку. Пустая строка без
+          // курсора выглядит как «ничего не добавилось» — то же правило,
+          // что у новой строки состава группы.
+          const [noteFresh, setNoteFresh] = React.useState('');
+          const addNote = () => {
+            if (!loc) return;
+            const id = addLocationNote(loc.id);
+            if (id) setNoteFresh(id);
+          };
+          // Закрытие заметок ГОВОРИТ, что записано и куда. Заметка
+          // сохраняется на каждую букву, но человеку это ниоткуда не видно:
+          // окно просто закрывалось, и оставалось гадать, дошло ли.
+          const closeNotes = () => {
+            setNoteOpen(false); setNoteFresh('');
+            if (readOnly || !loc) return;
+            const kept = notes.filter(st => (st.text || '').trim()).length;
+            showToast(kept
+              ? `${kept} ${plur(kept, 'заметка', 'заметки', 'заметок')} в объекте «${loc.name}»`
+              : 'Пустые заметки не сохраняются');
+          };
+          const patchNote = (id, text) => {
+            // Проверка первой строкой — правило всего приложения. Наружу
+            // правка и так не ушла бы (syncDoc выходит по READ_ONLY), но
+            // гость не должен менять чужой проект даже у себя на экране.
+            if (readOnly) return;
+            const up = stickies.map(x => x.id === id ? { ...x, text } : x);
+            setStickies(up); syncDoc('stickies', id, up.find(x => x.id === id));
+          };
+
+          // --- «Я ЗДЕСЬ» ---
+          // Приехали на точку: спрашиваем приёмник, ищем объект поблизости
+          // и либо переключаемся на него, либо заводим новый с адресом.
+          // Сам ничего не выбирает и молча не пишет — какой это объект,
+          // знает только тот, кто на нём стоит.
+          const [locating, setLocating] = React.useState(false);
+          const iAmHere = async () => {
+            if (readOnly) { showToast('Режим просмотра — менять проект нельзя'); return; }
+            setLocating(true);
+            try {
+              const p = await whereAmI();
+              setGps({ lat: p.lat, lon: p.lon, acc: p.acc, at: Date.now() });
+              // Разрешение только что дали — дальше следим сами, и второй
+              // раз нажимать «Я здесь» ради сверки уже не придётся.
+              startWatch();
+              const near = locations
+                .map(l => { const c = parseCoords(l.coords); return c ? { l, d: metersBetween(p, c) } : null; })
+                .filter(x => x && x.d < 250).sort((a, b) => a.d - b.d)[0];
+              if (near) {
+                setActiveLocationId(near.l.id);
+                showToast(`Это «${near.l.name}» — ${Math.round(near.d)} м от записанной точки`);
+                return;
+              }
+              let short = '', address = '';
+              try { const g = await reverseGeocode(p.lat, p.lon); short = g.short; address = g.address; }
+              catch (e) { /* без связи адреса не будет — это не повод не заводить точку */ }
+              const id = createLocationAt({
+                name: (short || 'НОВАЯ ТОЧКА').toUpperCase(),
+                address,
+                coords: `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`
+              });
+              setActiveLocationId(id);
+              showToast(address ? `Точка заведена: ${short || address}` : 'Точка заведена по координатам — адрес допишется при связи');
+            } catch (e) {
+              showToast((e && e.message) || 'Место не определилось');
+            } finally { setLocating(false); }
+          };
+
+          // Записать объекту то место, где мы стоим. Только когда
+          // координат у него НЕТ вовсе: переписывать записанную точку
+          // потому, что мы отошли на километр, нельзя — она может быть
+          // верной, а мы ещё в дороге.
+          const writeCoordsHere = () => {
+            if (readOnly) { showToast('Режим просмотра — менять проект нельзя'); return; }
+            if (!loc || !gps) return;
+            updateLocation(loc.id, 'coords', `${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)}`);
+            showToast(`Точка записана объекту «${loc.name}»`);
+          };
+
+          // ------------------------------------------------------------------
+          // ПОЛЗУНОК ВРЕМЕНИ = ГРАФИК ВЫСОТЫ СОЛНЦА
+          // ------------------------------------------------------------------
+          // Одно движение отвечает и «когда», и «какой будет свет»: выше
+          // кривая — жёстче сверху, у самого горизонта — контровой
+          // и длинные тени. Полоска под кривой — золотой час.
+          const TB_W = 320, TB_H = 66, TB_TOP = 8, TB_BOT = 52;
+          const altY = (a) => {
+            // Высоту рисуем в пределах −12…+70°: ниже −12 уже ночь, и
+            // растягивать график на неё значило бы сплющить рабочую часть.
+            const t = Math.max(-12, Math.min(70, a));
+            return TB_BOT - (t + 12) / 82 * (TB_BOT - TB_TOP);
+          };
+          const minX = (m) => m / 1440 * TB_W;
+          const timeBar = () => {
+            if (!arc.length) return null;
+            const pts = arc.map(p => `${minX(p.m).toFixed(1)},${altY(p.alt).toFixed(1)}`).join(' ');
+            const nowMin = when.getHours() * 60 + when.getMinutes();
+            const gh = (times && !times.golden.polar && times.golden.rise) ? {
+              a: times.golden.rise.getHours() * 60 + times.golden.rise.getMinutes(),
+              b: times.golden.set.getHours() * 60 + times.golden.set.getMinutes()
+            } : null;
+            const grab = (e) => {
+              if (e.currentTarget.setPointerCapture && e.pointerId !== undefined) {
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+              }
+              const move = (ev) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                const f = Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width)));
+                setScrub(Math.round(f * 1440 / 5) * 5);
+              };
+              move(e);
+              e.currentTarget.__mv = move;
+            };
+            return (
+              <div style={{ padding: '6px 12px 8px' }}>
+                <svg data-cf="scout-timebar" viewBox={`0 0 ${TB_W} ${TB_H}`} preserveAspectRatio="none"
+                     style={{ display: 'block', width: '100%', height: 66, touchAction: 'none', cursor: 'ew-resize' }}
+                     onPointerDown={grab}
+                     onPointerMove={(e) => { if (e.currentTarget.__mv && e.buttons) e.currentTarget.__mv(e); }}
+                     onPointerUp={(e) => { e.currentTarget.__mv = null; }}>
+                  {/* сумерки и золотой час — полосами под кривой */}
+                  {gh && gh.a < gh.b && (
+                    <React.Fragment>
+                      <rect x={minX(gh.a)} y={TB_TOP} width={minX(gh.b) - minX(gh.a)} height={TB_BOT - TB_TOP}
+                            fill="var(--warn)" opacity=".07" />
+                      <rect x={minX(gh.a) - 14} y={TB_TOP} width={14} height={TB_BOT - TB_TOP} fill="var(--warn)" opacity=".16" />
+                      <rect x={minX(gh.b)} y={TB_TOP} width={14} height={TB_BOT - TB_TOP} fill="var(--warn)" opacity=".16" />
+                    </React.Fragment>
+                  )}
+                  <line x1="0" y1={altY(0)} x2={TB_W} y2={altY(0)} stroke="var(--border)" strokeWidth="1" />
+                  <polyline points={pts} fill="none" stroke="var(--warn)" strokeWidth="1.4" opacity=".85" />
+                  {[0, 6, 12, 18, 24].map(h => (
+                    <React.Fragment key={h}>
+                      <line x1={minX(h * 60)} y1={TB_BOT} x2={minX(h * 60)} y2={TB_BOT + 3} stroke="var(--muted-2)" strokeWidth="1" />
+                      <text x={Math.min(TB_W - 8, Math.max(8, minX(h * 60)))} y={TB_H - 2} textAnchor="middle"
+                            fontFamily="var(--font-mono)" fontSize="8" fill="var(--muted-2)">{h}</text>
+                    </React.Fragment>
+                  ))}
+                  {/* где мы сейчас по времени */}
+                  <line x1={minX(nowMin)} y1={TB_TOP - 4} x2={minX(nowMin)} y2={TB_BOT + 2}
+                        stroke="var(--accent)" strokeWidth="1.5" />
+                  {sunNow && <circle cx={minX(nowMin)} cy={altY(sunNow.alt)} r="3.5" fill="var(--accent)" />}
+                </svg>
+                <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 2 }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }}>{hhmm(when)}</span>
+                  {sunNow && (
+                    <span className="cf-meta">
+                      выс. {sunNow.alt.toFixed(0)}° · азимут {sunNow.az.toFixed(0)}°
+                      {sunNow.alt > 1 && ` · тень ×${(1 / Math.tan(sunNow.alt * SUN_RAD)).toFixed(1)}`}
+                    </span>
+                  )}
+                  {scrub !== null && (
+                    <button onClick={() => setScrub(null)} className="ml-auto" style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap-sm)' }}>
+                      сейчас
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+          // ------------------------------------------------------------------
+          // ВИД «ПЛАН» — доверенный. Ни камеры, ни компаса, ни разрешений.
+          // ------------------------------------------------------------------
+          const planView = () => {
+            // ПУСТОЕ СОСТОЯНИЕ РАЗНОЕ, как у галереи. Хозяину говорим, чем
+            // завести точку; гостю по ссылке кнопки не видно вовсе, и звать
+            // его нажать её — значит показать тупик: ему объясняем, что
+            // координат у объекта пока нет и кто их добавит.
+            if (!coords) return (
+              <div className="flex-1 flex flex-col items-center justify-center text-center px-8" style={{ gap: 14 }}>
+                <p style={{ fontSize: 'var(--fs-4)', color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 420 }}>
+                  {loc ? `У объекта «${loc.name}» нет координат — от них считается солнце.`
+                       : 'Скауту нужна точка на земле: от неё считается солнце.'}
+                </p>
+                <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', lineHeight: 1.6, maxWidth: 420 }}>
+                  {readOnly
+                    ? 'Их впишет тот, кто ведёт проект, — в карточке объекта. После этого здесь появятся восход, закат и золотой час.'
+                    : 'Нажмите «Я здесь» — приложение возьмёт координаты у приёмника и заведёт объект с адресом. Или впишите их в карточке объекта.'}
+                </p>
+                <button onClick={iAmHere} disabled={locating} className="cf-edit-only"
+                        style={{ minHeight: 'var(--tap)', padding: '0 20px', borderRadius: 'var(--r-md)',
+                                 background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                  {locating ? 'Определяю…' : 'Я здесь'}
+                </button>
+              </div>
+            );
+            const R = 100, C = 120;
+            const ring = (az, r) => ({ x: C + r * Math.sin(az * SUN_RAD), y: C - r * Math.cos(az * SUN_RAD) });
+            const day = arc.filter(p => p.alt > -0.833);
+            const rise = day[0], set = day[day.length - 1];
+            const shadowK = sunNow && sunNow.alt > 1 ? 1 / Math.tan(sunNow.alt * SUN_RAD) : null;
+            const sp = sunNow ? ring(sunNow.az, R) : null;
+            const shp = sunNow ? ring((sunNow.az + 180) % 360, R * 0.82) : null;
+            const arcPath = (list) => list.length < 2 ? '' : list.map((p, i) => {
+              // Радиус несёт ВЫСОТУ: у горизонта точка на ободе, в зените
+              // в центре. Так одна кривая отвечает и «откуда», и «как высоко».
+              const r = R * (1 - Math.max(0, Math.min(90, p.alt)) / 90);
+              const q = ring(p.az, r);
+              return `${i ? 'L' : 'M'}${q.x.toFixed(1)} ${q.y.toFixed(1)}`;
+            }).join(' ');
+            const num = (label, val) => (
+              <div className="flex items-baseline gap-2">
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', width: 96, flexShrink: 0 }}>{label}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>{val}</span>
+              </div>
+            );
+            return (
+              <div className="flex-1 overflow-y-auto" style={{ padding: '14px 16px 24px' }}>
+                <div className="flex gap-5 flex-wrap items-start">
+                  <svg data-cf="scout-rose" width="240" height="240" viewBox="0 0 240 240" className="shrink-0" style={{ maxWidth: '100%' }}>
+                    <circle cx={C} cy={C} r={R} fill="none" stroke="var(--border)" strokeWidth="1" />
+                    <circle cx={C} cy={C} r={R * 0.5} fill="none" stroke="var(--line)" strokeWidth="1" strokeDasharray="2 4" />
+                    {[['С', 0], ['В', 90], ['Ю', 180], ['З', 270]].map(([t, a]) => {
+                      const q = ring(a, R + 13);
+                      return <text key={t} x={q.x} y={q.y + 3.5} textAnchor="middle" fontFamily="var(--font-mono)"
+                                   fontSize="10" fill={a === 0 ? 'var(--muted)' : 'var(--muted-2)'}>{t}</text>;
+                    })}
+                    {/* солнцестояния — годовой размах за две кривые */}
+                    {sols && <path d={arcPath(sols.long.filter(p => p.alt > -0.833))} fill="none" stroke="var(--danger)" strokeWidth="1" opacity=".5" strokeDasharray="3 3" />}
+                    {sols && <path d={arcPath(sols.short.filter(p => p.alt > -0.833))} fill="none" stroke="#6f8fd9" strokeWidth="1" opacity=".5" strokeDasharray="3 3" />}
+                    <path d={arcPath(day)} fill="none" stroke={ARC_ABOVE} strokeWidth="1.8" />
+                    {rise && (() => { const q = ring(rise.az, R); return <circle cx={q.x} cy={q.y} r="3" fill="var(--accent)" />; })()}
+                    {set && (() => { const q = ring(set.az, R); return <circle cx={q.x} cy={q.y} r="3" fill="var(--accent)" />; })()}
+                    {shadowK && shp && (
+                      <React.Fragment>
+                        <line x1={C} y1={C} x2={shp.x} y2={shp.y} stroke="var(--muted)" strokeWidth="6" opacity=".3" strokeLinecap="round" />
+                        <text x={shp.x} y={shp.y - 8} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="8.5" fill="var(--muted)">тень</text>
+                      </React.Fragment>
+                    )}
+                    {sp && sunNow.alt > -0.833 && (() => {
+                      const r = R * (1 - Math.max(0, Math.min(90, sunNow.alt)) / 90);
+                      const q = ring(sunNow.az, r);
+                      return <React.Fragment>
+                        <line x1={C} y1={C} x2={sp.x} y2={sp.y} stroke="var(--warn)" strokeWidth="1" opacity=".45" />
+                        <circle cx={q.x} cy={q.y} r="6" fill="var(--warn)" />
+                      </React.Fragment>;
+                    })()}
+                    <circle cx={C} cy={C} r="3" fill="var(--accent)" />
+                  </svg>
+                  <div className="flex-1" style={{ minWidth: 220 }}>
+                    <p style={{ fontSize: 'var(--fs-4)', color: 'var(--text)', lineHeight: 1.5 }}>{sunWords(sunNow)}</p>
+                    <div className="mt-3" style={{ display: 'grid', gap: 5 }}>
+                      {times && times.sun.polar === 'day' && num('Солнце', 'не садится — полярный день')}
+                      {times && times.sun.polar === 'night' && num('Солнце', 'не встаёт — полярная ночь')}
+                      {times && !times.sun.polar && num('Восход', hhmm(times.sun.rise))}
+                      {times && !times.sun.polar && num('Закат', hhmm(times.sun.set))}
+                      {times && !times.golden.polar && times.golden.set && num('Золотой час', `${hhmm(times.golden.set)} — ${hhmm(times.sun.set)}`)}
+                      {times && times.transit && num('Полдень', hhmm(times.transit))}
+                      {rise && num('Встаёт с', `${rise.az.toFixed(0)}°`)}
+                      {set && num('Садится в', `${set.az.toFixed(0)}°`)}
+                      {shadowK && num('Длина тени', `×${shadowK.toFixed(1)} от высоты`)}
+                    </div>
+                    <label className="flex items-center gap-2 mt-3.5" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', minHeight: 'var(--tap-sm)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={showSolstice} onChange={(e) => setShowSolstice(e.target.checked)} data-ro-ok />
+                      Показать солнцестояния — самый длинный и самый короткий день
+                    </label>
+                    <p className="cf-meta" style={{ marginTop: 8, lineHeight: 1.6 }}>
+                      {shiftDate && date === shiftDate ? 'День смены из связанной сцены. ' : date === today ? 'Сегодня. ' : ''}
+                      Радиус кольца — высота: у обода солнце у горизонта, в центре над головой.
+                      Считается на месте, интернет не нужен.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          // ------------------------------------------------------------------
+          // ВИД «КАМЕРА» — визир с рамками и дуга солнца поверх живого кадра
+          // ------------------------------------------------------------------
+          // РАМКА РИСУЕТСЯ ПОВЕРХ ПОЛНОГО КАДРА, а не подрезает его, и это
+          // не лень. Обзор камеры устройства спросить НЕЧЕМ (см.
+          // PHONE_CAMS), а iOS 18 вдобавок сам переключает объективы
+          // посреди работы, и запретить это со стороны страницы нельзя ни
+          // deviceId, ни facingMode, ни zoom. Значит наше число про обзор
+          // может устареть прямо в руках. Чуть неверная РАМКА читается как
+          // ориентир и её видно, что она ориентир; неверно подрезанный КАДР
+          // молча врёт про план — а узнает об этом тот, кому раскадровку
+          // уже отправили.
+          const arView = () => {
+            const need = !cam.on;
+            // Обе просьбы — камеру и компас — из ОДНОГО нажатия: без жеста
+            // человека браузер отказывает, причём компас бросает ошибку,
+            // а камера просто молчит.
+            const wake = async () => { await head.ask(); await cam.start(camLabel); measure(); };
+            // ВЕРХНЕЕ ЖИВЁТ ПО КРАЯМ ЭКРАНА, а не по краям картинки.
+            // Привязав его к кадру, мы загнали «‹ План», компас, «по солнцу»
+            // и название объекта в 890 точек шириной — и они наехали друг
+            // на друга: «по солнцу» ушло ПОД чип объекта. У Cadrage полоса
+            // тоже во всю ширину экрана. Вставки нужны для чёлки: в
+            // горизонтальном положении она съедает как раз боковой край.
+            const edge = {
+              l: 'calc(env(safe-area-inset-left, 0px) + 10px)',
+              r: 'calc(env(safe-area-inset-right, 0px) + 10px)',
+              t: 'calc(var(--sat) + 10px)'
+            };
+            const frameW = hfov > 0 && devFov > 0
+              ? vbox.w * Math.tan(hfov * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2) : 0;
+            const frameH = frameW / ratio;
+            const tooWide = frameW > vbox.w * 1.001;
+            const rect = (w, h, stroke, sw, dash) => (
+              <rect x={(vbox.w - w) / 2} y={(vbox.h - h) / 2} width={Math.max(0, w)} height={Math.max(0, h)}
+                    fill="none" stroke={stroke} strokeWidth={sw} strokeDasharray={dash} />
+            );
+            // Дуга: точки, попавшие в кадр. Над горизонтом — сплошная,
+            // под ним пунктиром: ночная часть и есть ответ на «откуда
+            // утром выйдет свет», и стоя на точке до рассвета нужна она.
+            const seg = (list) => {
+              const out = []; let cur = [];
+              list.forEach(p => {
+                const q = yaw === null ? null : see(p.az, p.alt);
+                if (q && q.x > -vbox.w && q.x < vbox.w * 2 && q.y > -vbox.h && q.y < vbox.h * 2) cur.push(`${q.x.toFixed(1)},${q.y.toFixed(1)}`);
+                else if (cur.length) { out.push(cur); cur = []; }
+              });
+              if (cur.length) out.push(cur);
+              return out.filter(a => a.length > 1);
+            };
+            const above = seg(arc.filter(p => p.alt >= -0.833));
+            const below = seg(arc.filter(p => p.alt < -0.833));
+            const hourTicks = arc.filter(p => p.m % 60 === 0 && p.m < 1440);
+            const sunPt = (sunNow && yaw !== null) ? see(sunNow.az, sunNow.alt) : null;
+            const sunIn = sunPt && sunPt.x >= 0 && sunPt.x <= vbox.w && sunPt.y >= 0 && sunPt.y <= vbox.h;
+            const turn = (sunNow && yaw !== null) ? azDelta(sunNow.az, yaw) : null;
+            // Горизонт ведём только в пределах обзора с запасом: у самого
+            // края кадра точка уходит в бесконечность (делим на косинус,
+            // а он там стремится к нулю), и одна такая точка растянула бы
+            // линию через полэкрана.
+            const horizon = yaw === null ? [] : (() => {
+              const half = Math.min(80, devFov * 0.75);
+              const pts = [];
+              for (let d = -half; d <= half; d += 5) {
+                const q = see((yaw + d + 360) % 360, 0);
+                if (q && Math.abs(q.x) < vbox.w * 3 && Math.abs(q.y) < vbox.h * 3) pts.push(`${q.x.toFixed(1)},${q.y.toFixed(1)}`);
+              }
+              return pts;
+            })();
+            // Доверие компасу — числом, а не верой. webkitCompassAccuracy
+            // обычно отдаёт 10; больше 5 принято считать «плохо». Спрятать
+            // это нельзя: у Sun Seeker ровно такой индикатор, и все жалобы
+            // его пользователей — про застрявший компас.
+            const trust = head.acc === null ? null : head.acc < 0 ? 0 : head.acc <= 5 ? 3 : head.acc <= 15 ? 2 : 1;
+            return (
+              /* Щипок ловим В ФАЗЕ ПЕРЕХВАТА: поверх видео лежит накладка
+                 с дугой, а под пальцем бывают кнопки полосы — в обычной фазе
+                 второй палец до нас бы не дошёл. Кнопки и поля пропускаем:
+                 два пальца на «Снять» не должны менять обзор. */
+              <div className="flex-1 flex flex-col min-h-0" data-cf="scout-ar-view">
+              <div className="flex-1 relative" data-cf="scout-cam" ref={boxRef}
+                   onPointerDownCapture={(e) => { if (!e.target.closest('button, input, select, label')) pinchDown(e); }}
+                   onPointerMoveCapture={pinchMove}
+                   onPointerUpCapture={pinchUp}
+                   onPointerCancelCapture={pinchUp}
+                   style={{ background: '#000', overflow: 'hidden', minHeight: 200, touchAction: 'none' }}>
+                {/* Размер задаём САМИ, а не через object-fit: нам надо
+                    заполнить ширину и срезать только верх и низ, а `cover`
+                    срезал бы по любой оси — в том числе по горизонтали,
+                    на которой держится вся накладка. `fill` тут не тянет
+                    картинку: у vbox ровно пропорция потока. */}
+                {/* Невидимая подложка, с которой читаются настоящие вставки
+                    безопасной области. Размера у неё нет — только поля. */}
+                <div ref={insRef} aria-hidden="true"
+                     style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+                              visibility: 'hidden', pointerEvents: 'none',
+                              paddingTop: 'env(safe-area-inset-top, 0px)',
+                              paddingRight: 'env(safe-area-inset-right, 0px)',
+                              paddingLeft: 'env(safe-area-inset-left, 0px)' }} />
+                <video ref={cam.videoRef} playsInline muted autoPlay
+                       onLoadedMetadata={measure}
+                       style={{ position: 'absolute', left: vbox.x, top: vbox.y,
+                                width: vbox.w || '100%', height: vbox.h || '100%', objectFit: 'fill',
+                                // У Tailwind в preflight стоит `video { max-width: 100% }`,
+                                // и он МОЛЧА обрезал увеличение обратно до ширины
+                                // контейнера: в стиле стояло 904 точки, а на экране
+                                // выходило 844, то есть зум не работал вовсе.
+                                maxWidth: 'none', maxHeight: 'none' }} />
+                {need && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8" style={{ gap: 14 }}>
+                    <p style={{ fontSize: 'var(--fs-4)', color: 'var(--text)', lineHeight: 1.6, maxWidth: 380 }}>
+                      Визир смотрит через камеру, а дуга солнца — через компас.
+                    </p>
+                    {cam.err && <p style={{ fontSize: 'var(--fs-2)', color: 'var(--danger)', lineHeight: 1.6, maxWidth: 380 }}>{cam.err}</p>}
+                    <button onClick={wake}
+                            style={{ minHeight: 'var(--tap)', padding: '0 22px', borderRadius: 'var(--r-md)',
+                                     background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                      Включить камеру
+                    </button>
+                    <p className="cf-meta" style={{ maxWidth: 380, lineHeight: 1.6 }}>
+                      В установленном на экран приложении разрешение на камеру Safari не запоминает — его спрашивают заново.
+                      Это его особенность, обойти её нечем.
+                    </p>
+                  </div>
+                )}
+                {!need && vbox.w > 0 && (
+                  <svg data-cf="scout-ar" viewBox={`0 0 ${vbox.w} ${vbox.h}`} onPointerDown={calibTap}
+                       style={{ position: 'absolute', left: vbox.x, top: vbox.y, width: vbox.w, height: vbox.h,
+                                touchAction: 'none', pointerEvents: calib ? 'auto' : 'none' }}>
+                    {/* горизонт и дуга — до рамок: рамка главнее и лежит сверху */}
+                    {horizon.length > 1 && <polyline points={horizon.join(' ')} fill="none" stroke="var(--ok)" strokeWidth="1" opacity=".5" />}
+                    {below.map((a, i) => <polyline key={'b' + i} points={a.join(' ')} fill="none" stroke={ARC_BELOW} strokeWidth="1.2" strokeDasharray="5 5" opacity=".6" />)}
+                    {above.map((a, i) => <polyline key={'a' + i} points={a.join(' ')} fill="none" stroke={ARC_ABOVE} strokeWidth="1.8" opacity=".8" />)}
+                    {/* ЧАСЫ ПОДПИСЫВАЕМ ЧЕРЕЗ ОДИН. Кружок у каждого часа —
+                        дёшево, а вот цифры у всех подряд рассыпаются по
+                        всему кадру: на замере их бывает семь штук поперёк
+                        картинки. Дуга — наше преимущество перед Cadrage,
+                        у которого солнца нет вовсе, но подписывать её надо
+                        тише, чем сам кадр. */}
+                    {yaw !== null && hourTicks.map(p => {
+                      const q = see(p.az, p.alt);
+                      if (!q || q.x < 0 || q.x > vbox.w || q.y < 0 || q.y > vbox.h) return null;
+                      const h = p.m / 60;
+                      return (
+                        <React.Fragment key={p.m}>
+                          <circle cx={q.x} cy={q.y} r="2" fill={p.alt >= 0 ? ARC_ABOVE : ARC_BELOW} opacity=".85" />
+                          {h % 2 === 0 && (
+                            <text x={q.x} y={q.y - 6} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="8.5"
+                                  fill="#fff" opacity=".75" stroke="rgba(0,0,0,.55)" strokeWidth="2.2" paintOrder="stroke">{h}</text>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                    {sunIn && (
+                      <React.Fragment>
+                        <circle cx={sunPt.x} cy={sunPt.y} r="16" fill="var(--warn)" opacity=".2" />
+                        <circle cx={sunPt.x} cy={sunPt.y} r="8" fill="var(--warn)" />
+                      </React.Fragment>
+                    )}
+                    {/* СОСЕДНИЕ ОБЪЕКТИВЫ РИСУЮТСЯ ПО ЖЕЛАНИЮ, а не всегда.
+                        Три-четыре пунктирные рамки с цифрами по углам —
+                        это ровно то, из-за чего экран читался «кокпитом»:
+                        у Cadrage рамка ОДНА, и сразу понятно, на что
+                        смотришь. Возможность видеть всю лестницу разом
+                        полезна, но по умолчанию выключена (`bagOn`). */}
+                    {bagOn && bag.filter(f => f !== focal).map(f => {
+                      const w = vbox.w * Math.tan(frameHFov(sensor, ratio, f, squeeze) * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2);
+                      if (!(w > 0) || w > vbox.w) return null;
+                      return <React.Fragment key={f}>
+                        {rect(w, w / ratio, 'rgba(255,255,255,.42)', 1, '4 4')}
+                        <text x={(vbox.w + w) / 2 - 3} y={(vbox.h - w / ratio) / 2 - 5} textAnchor="end"
+                              fontFamily="var(--font-mono)" fontSize="9.5" fill="#fff" opacity=".65">{f}</text>
+                      </React.Fragment>;
+                    })}
+                    {frameW > 0 && !tooWide && (
+                      <rect x={(vbox.w - frameW) / 2} y={(vbox.h - frameH) / 2} width={frameW} height={frameH}
+                            fill="none" stroke="#000" strokeWidth="4" opacity=".25" />
+                    )}
+                    {frameW > 0 && !tooWide && React.cloneElement(rect(frameW, frameH, 'var(--accent)', 2), { 'data-cf': 'scout-frame' })}
+                    {/* ЕДИНСТВЕННАЯ НАДПИСЬ НА САМОЙ КАРТИНКЕ — пропорция,
+                        в углу рамки. Ровно как «2.35:1» у Cadrage: она
+                        говорит, на что смотришь, и не мешает смотреть. */}
+                    {frameW > 0 && !tooWide && (
+                      <text data-cf="scout-ratio"
+                            x={(vbox.w + frameW) / 2 - 5} y={(vbox.h + frameH) / 2 - 5} textAnchor="end"
+                            fontFamily="var(--font-mono)" fontSize="10" fill="#fff" opacity=".8"
+                            stroke="rgba(0,0,0,.55)" strokeWidth="2.4" paintOrder="stroke">
+                        {ratio.toFixed(2)}
+                      </text>
+                    )}
+                    {calib && (
+                      <React.Fragment>
+                        <rect x="0" y="0" width={vbox.w} height={vbox.h} fill="rgba(0,0,0,.35)" />
+                        <text x={vbox.w / 2} y={vbox.h / 2 - 8} textAnchor="middle" fontSize="13" fill="#fff"
+                              fontFamily="var(--font-ui)">Ткните в настоящее солнце</text>
+                        <text x={vbox.w / 2} y={vbox.h / 2 + 12} textAnchor="middle" fontSize="11" fill="#fff"
+                              opacity=".65" fontFamily="var(--font-ui)">не видно солнца — нажмите «Отмена» внизу</text>
+                      </React.Fragment>
+                    )}
+                  </svg>
+                )}
+                {/* ШИРЕ КАМЕРЫ — РАМКА РИСУЕТСЯ ВОКРУГ КАРТИНКИ, ОТДЕЛЬНЫМ
+                    СЛОЕМ. Верхний svg прибит к видео (там живёт дуга солнца,
+                    и её надо отсекать по кадру), а у корневого svg своё
+                    `overflow: hidden` от браузера — рамка шире картинки
+                    СРЕЗАЛАСЬ по её краям, и от неё оставались две горизонтальные
+                    линии непонятно от чего. Ошибок при этом никаких.
+                    Цвет другой намеренно (см. `SIM_LINE`): внутри рамки то, что
+                    камера даёт, снаружи — посчитанный кадр. Стрелки «камера
+                    кончается тут» убраны: край картинки и так виден — это
+                    граница с чёрным полем. */}
+                {!need && vbox.w > 0 && tooWide && cbox.cw > 0 && (
+                  <svg data-cf="scout-sim" viewBox={`0 0 ${cbox.cw} ${cbox.ch}`}
+                       style={{ position: 'absolute', left: 0, top: 0, width: cbox.cw, height: cbox.ch,
+                                pointerEvents: 'none' }}>
+                    {(() => {
+                      const cx = vbox.x + vbox.w / 2, cy = vbox.y + vbox.h / 2;
+                      const x = cx - frameW / 2, y = cy - frameH / 2;
+                      return (
+                        <React.Fragment>
+                          <rect x={x} y={y} width={frameW} height={frameH}
+                                fill="none" stroke="#000" strokeWidth="4" opacity=".25" />
+                          <rect data-cf="scout-frame" data-wide="1"
+                                x={x} y={y} width={frameW} height={frameH}
+                                fill="none" stroke={SIM_LINE} strokeWidth="2" />
+                          <text data-cf="scout-ratio" x={x + frameW - 5} y={y + frameH - 5} textAnchor="end"
+                                fontFamily="var(--font-mono)" fontSize="10" fill="#fff" opacity=".8"
+                                stroke="rgba(0,0,0,.55)" strokeWidth="2.4" paintOrder="stroke">
+                            {ratio.toFixed(2)}
+                          </text>
+                        </React.Fragment>
+                      );
+                    })()}
+                  </svg>
+                )}
+                {/* УКАЗАТЕЛЬ «СОЛНЦЕ ВОН ТАМ». Без него вид бесполезен ровно
+                    там, где нужен: солнца в кадре ещё нет, и куда повернуться
+                    — непонятно. */}
+                {!need && turn !== null && !sunIn && Math.abs(turn) > 3 && (
+                  <div className="absolute flex items-center gap-1.5" style={{
+                        top: '50%', ...(turn > 0 ? { right: edge.r } : { left: edge.l }), transform: 'translateY(-50%)',
+                        padding: '6px 10px', borderRadius: 'var(--r-md)', background: 'rgba(0,0,0,.6)',
+                        fontSize: 'var(--fs-2)', color: 'var(--warn)', fontFamily: 'var(--font-mono)', pointerEvents: 'none' }}>
+                    {turn > 0 ? `солнце ${Math.round(Math.abs(turn))}° →` : `← солнце ${Math.round(Math.abs(turn))}°`}
+                  </div>
+                )}
+                {/* ПОДПИСИ НА КАДРЕ НЕТ ВОВСЕ — она ушла в нижнюю полосу.
+                    Раньше тут лежала строка «объект · объектив · камера ·
+                    пропорция · азимут · дата · кто» — сто десять знаков,
+                    которые на широком телефоне растягивались во всю ширину,
+                    переносились на две строки и ложились ПОПЕРЁК кадра.
+                    Сверено с Cadrage: у него поверх картинки не написано
+                    НИЧЕГО, кроме метки пропорции в углу рамки, а камера
+                    и оптика стоят мелким серым в нижней полосе. В запись
+                    кадра подпись уходит целиком, как и уходила: там ей
+                    и место — оттуда она печатается в отчёт и ищется. */}
+                {/* СВЕРХУ — ТОЛЬКО ДВЕ ВЕЩИ: чем выйти и где мы. Раньше
+                    тут стояли ещё компас, «по солнцу» и поправка — пять
+                    плавающих пилюль в ряд, которые вдобавок наезжали друг
+                    на друга. Компас и подкрутка переехали в нижнюю полосу,
+                    к остальным органам управления: у Cadrage всё в одной
+                    полосе, и оттого сразу понятно, что на экране. */}
+                <button onClick={() => setMode('plan')} data-cf="scout-back" className="cf-hbtn absolute"
+                        style={{ left: edge.l, top: edge.t, padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                 background: 'rgba(0,0,0,.55)', color: '#fff',
+                                 fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }}>‹ План</button>
+
+                {/* ОБЪЕКТ — ЧИПОМ В УГЛУ, а выбор за ним. На выезде объект
+                    меняют раз в час, а кадр смотрят непрерывно: постоянная
+                    строка выбора отнимала у кадра полсотни точек. */}
+                <button onClick={() => setPlaceOpen(true)} data-cf="scout-place" data-spot={spot.kind}
+                        className="absolute flex items-center gap-1.5"
+                        title={spot.text}
+                        style={{ right: edge.r, top: edge.t, maxWidth: '52%', minHeight: 'var(--tap-sm)',
+                                 padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
+                                 color: '#fff', fontSize: 'var(--fs-2)' }}>
+                  {/* ТОЧКА СВЕРКИ. Зелёная — мы на объекте, жёлтая — стоим
+                      не там или у объекта нет координат, серая — приёмник
+                      ещё не отвечал. Кружок вместо слов потому, что место
+                      в углу кадра дороже подписи, а расстояние дописывается
+                      только когда оно и есть новость. */}
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: spotColor }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {loc ? (loc.name || 'без названия') : 'выбрать объект'}
+                  </span>
+                  {spot.kind === 'far' && (
+                    <span style={{ flexShrink: 0, fontFamily: 'var(--font-mono)', color: 'var(--warn)' }}>{fmtDist(drift)}</span>
+                  )}
+                  <span style={{ color: 'var(--muted)' }}>▾</span>
+                </button>
+
+                {/* ШКАЛА ДНЯ — ПО НАЖАТИЮ, а не всегда. Она в 92 точки
+                    высотой, и в горизонтальном положении телефона это
+                    четверть экрана: дуга солнца и так нарисована прямо
+                    в кадре, а шкала нужна тогда, когда спрашивают
+                    «а что будет в шесть». */}
+                {barOpen && coords && (
+                  <div className="absolute" data-cf="scout-timewrap"
+                       style={{ left: 0, right: 0, bottom: 0,
+                                background: 'rgba(0,0,0,.82)', borderTop: '1px solid var(--border)' }}>
+                    {timeBar()}
+                  </div>
+                )}
+
+                {/* ОДНА ПОЛОСА, И В НЕЙ ВСЁ. Раньше органы управления
+                    висели десятком отдельных пилюль — четыре сверху, шесть
+                    внизу, — растянутых по всей ширине экрана и вдобавок
+                    наезжавших друг на друга. Со стороны это «кокпит
+                    истребителя»: понять, что на экране, нельзя, пока не
+                    прочтёшь каждую.
+                      Сверено с Cadrage: у него ОДНА плотная полоса, вещи
+                    в ней стоят группами вплотную, а не разогнаны по краям,
+                    и картинка над ней чистая. Поэтому полоса тут:
+                    (1) СПЛОШНАЯ, а не градиентом — на градиенте мелкий
+                    серый текст ложился прямо на картинку и не читался;
+                    (2) содержимое собрано в РЯД ПО ЦЕНТРУ, и только
+                    «Снять» отделено — это главное действие;
+                    (3) компас и «по солнцу» теперь тоже здесь. */}
+                {/* Компаса нет вовсе — азимут ведут рукой. Это тот же выход,
+                    что «только гироскоп» у Sun Seeker: без него на устройстве
+                    без магнитометра дуга не показывалась бы никогда. */}
+                {!need && (head.heading === null) && (
+                  <input type="range" min="0" max="359" value={manualHead === null ? 0 : Math.round(manualHead)}
+                         onChange={(e) => setManualHead(parseFloat(e.target.value))} data-ro-ok
+                         title="Азимут рукой — компаса на этом устройстве нет"
+                         className="absolute" style={{ left: '50%', transform: 'translateX(-50%)',
+                                                       bottom: 8, width: 'min(70%, 380px)', opacity: .65 }} />
+                )}
+                </div>
+                <div className="flex items-center justify-center gap-2 shrink-0" data-cf="scout-bar"
+                     style={{ padding: '7px 10px calc(7px + var(--sab))',
+                              background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+                  <button onClick={() => setNoteOpen(true)} data-cf="scout-notes-open" title="Заметки с выезда"
+                          style={{ minHeight: 'var(--tap)', minWidth: 'var(--tap)', borderRadius: 'var(--r-sm)',
+                                   color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>
+                    {notes.length ? `☰ ${notes.length}` : '☰'}
+                  </button>
+
+                  {/* Камера и пропорция — двумя короткими строками мелким
+                      серым, ровно как у Cadrage. На узком экране прячутся:
+                      те же сведения в одном нажатии на «35 мм». */}
+                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-gear"
+                          className="cf-wide-only flex flex-col items-start justify-center"
+                          title="Камера, пропорция, сжатие, обзор устройства"
+                          style={{ minHeight: 'var(--tap)', maxWidth: 230, padding: '0 4px', lineHeight: 1.25,
+                                   fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>
+                    <span className="block max-w-full" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sensor.label.split(' · ')[0]}
+                    </span>
+                    <span className="block" style={{ fontFamily: 'var(--font-mono)' }}>
+                      {ratio.toFixed(2)}{squeeze > 1 ? ` · ${squeeze}×` : ''}
+                    </span>
+                  </button>
+
+                  {/* Объектив — группой вплотную, как «‹ 35.1mm ›» у них */}
+                  <span className="flex items-center" style={{ marginLeft: 4 }}>
+                    <button onClick={() => setFocal(stepLens(-1))} data-cf="scout-lens-minus"
+                            style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
+                                     background: 'var(--card)', color: '#fff', fontSize: 'var(--fs-4)' }}>−</button>
+                    <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" data-lens={focal}
+                            title="Камера, пропорция, сжатие, обзор устройства"
+                            style={{ minHeight: 'var(--tap)', padding: '0 10px' }}>
+                      {/* ЦИФРА СИНЕЕТ ВМЕСТЕ С РАМКОЙ. Один цвет на двоих —
+                          единственное, что связывает синюю рамку на кадре с тем,
+                          что этот объектив камере телефона не по силам. Надписи
+                          поверх кадра мы не пишем — объясняет цвет. */}
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-4)',
+                                     color: tooWide ? SIM_LINE : 'var(--text)' }}>{focal}</span>
+                      <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 3 }}>мм</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
+                    </button>
+                    <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
+                            style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
+                                     background: 'var(--card)', color: '#fff', fontSize: 'var(--fs-4)' }}>+</button>
+                  </span>
+
+                  {/* КОМПАС ЖИВЁТ ЗДЕСЬ, а не отдельной пилюлей поверх
+                      кадра. Нажатие — подкрутка по солнцу; поправка,
+                      если она есть, написана тут же и снимается долгим
+                      нажатием — прятать её нельзя, она переживёт переезд
+                      в другой город. */}
+                  {!need && (
+                    <button onClick={() => {
+                              if (calib) { setCalib(false); return; }
+                              // Солнца не видно — подкручивать по нему нечем.
+                              // Молча пустить сюда значило бы отдать компас
+                              // первому попавшемуся тычку в экран.
+                              if (!sunNow || sunNow.alt < -0.833) {
+                                showToast('Солнце сейчас под горизонтом — подкрутить по нему нельзя');
+                                return;
+                              }
+                              setCalib(true);
+                            }} data-cf="scout-compass"
+                            title={yaw === null ? 'Компаса нет' : `Азимут ${Math.round(yaw)}°, точность ${head.acc === null ? 'неизвестна' : head.acc + '°'}. Нажмите, чтобы подкрутить по солнцу`}
+                            className="flex items-center"
+                            style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)', gap: 5,
+                                     background: calib ? 'var(--accent)' : 'transparent',
+                                     color: calib ? 'var(--bg)' : 'var(--text)' }}>
+                      {calib ? (
+                        /* ИЗ ПОДКРУТКИ ОБЯЗАН БЫТЬ ВЫХОД. Накладка просит
+                           ткнуть в солнце и накрывает весь кадр — а внутри
+                           неё ЛЮБОЕ нажатие и есть подкрутка. Войдя сюда
+                           случайно (кнопка компаса — это же и показание,
+                           в неё легко попасть), человек оказывался заперт:
+                           отменить нечем, а первый же тык в экран уводил
+                           компас на десятки градусов. Так и вышло +93°
+                           в помещении, где солнца не видно вовсе. */
+                        <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600 }}>Отмена</span>
+                      ) : yaw === null ? (
+                        <span style={{ fontSize: 'var(--fs-1)', color: 'var(--danger)' }}>
+                          {head.denied ? 'компас не разрешён' : 'компаса нет'}
+                        </span>
+                      ) : (
+                        <React.Fragment>
+                          <span style={{ display: 'flex', alignItems: 'flex-end', gap: 2 }}>
+                            {[1, 2, 3].map(i => (
+                              <span key={i} style={{ width: 3, height: 4 + i * 3, borderRadius: 1,
+                                      background: trust === null ? 'var(--muted-2)'
+                                        : i <= trust ? (trust >= 3 ? 'var(--ok)' : trust === 2 ? 'var(--warn)' : 'var(--danger)')
+                                        : 'rgba(255,255,255,.22)' }} />
+                            ))}
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>{Math.round(yaw)}°</span>
+                        </React.Fragment>
+                      )}
+                    </button>
+                  )}
+
+                  {/* ПОПРАВКА СНИМАЕТСЯ ОБЫЧНЫМ НАЖАТИЕМ, и она тут одна
+                      из немногих кнопок, которых в покое нет: пока
+                      подкрутки нет, кнопки нет вовсе. Прятать её в долгое
+                      удержание нельзя — скрытая поправка однажды переживёт
+                      переезд в другой город. */}
+                  {/* ПОКА ИДЁТ ПОДГОНКА, ОБ ЭТОМ НАПИСАНО, и выход рядом.
+                      Режим, в котором жест делает не то, что обычно, обязан
+                      называть себя — иначе это ловушка. */}
+                  {fovTune && (
+                    <button onClick={() => { setFovTune(false); showToast(`Обзор устройства: ${devEq} мм · ${devFov.toFixed(0)}° — запомнено за этой камерой`); }}
+                            data-cf="scout-fovtune-done"
+                            style={{ minHeight: 'var(--tap)', padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                     background: 'var(--accent)', color: 'var(--bg)',
+                                     fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
+                      обзор {devEq} мм · готово
+                    </button>
+                  )}
+                  {!need && headOff !== 0 && (
+                    <button onClick={() => { setHeadOff(0); showToast('Подкрутка снята'); }}
+                            data-cf="scout-offset" title="Снять подкрутку компаса"
+                            style={{ minHeight: 'var(--tap)', padding: '0 8px', borderRadius: 'var(--r-sm)',
+                                     color: 'var(--warn)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)' }}>
+                      {headOff > 0 ? '+' : ''}{Math.round(headOff)}°
+                    </button>
+                  )}
+
+                  {coords && (
+                    <button onClick={() => setBarOpen(o => !o)} data-cf="scout-clock"
+                            title="Шкала дня: когда где будет солнце"
+                            style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)',
+                                     background: barOpen ? 'var(--accent)' : 'transparent',
+                                     color: barOpen ? 'var(--bg)' : 'var(--text)',
+                                     fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
+                      {hhmm(when)}{sunNow ? ` · ${sunNow.alt.toFixed(0)}°` : ''}
+                    </button>
+                  )}
+
+                  <button onClick={shoot} data-cf="scout-shoot" disabled={busy || !cam.on} className="cf-edit-only"
+                          style={{ minHeight: 'var(--tap)', padding: '0 18px', marginLeft: 10, borderRadius: 'var(--r-md)',
+                                   background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600,
+                                   opacity: (busy || !cam.on) ? .45 : 1 }}>
+                    {busy ? 'кладу…' : 'Снять'}
+                  </button>
+                </div>
+              </div>
+            );
+          };
+
+          // ------------------------------------------------------------------
+          // НАСТРОЙКИ ВИЗИРА
+          // ------------------------------------------------------------------
+          const [setupOpen, setSetupOpen] = React.useState(false);
+          const pill = (on) => ({
+            minHeight: 'var(--tap-sm)', padding: '0 10px', borderRadius: 'var(--r-sm)',
+            fontSize: 'var(--fs-2)', fontFamily: 'var(--font-mono)',
+            background: on ? 'var(--raised)' : 'transparent',
+            color: on ? 'var(--text)' : 'var(--muted)',
+            border: `1px solid ${on ? 'var(--border)' : 'transparent'}`
+          });
+          // ПОЯСНЕНИЯ СПРЯТАНЫ ЗА «?», А НЕ СТОЯТ НАД КАЖДЫМ РЯДОМ.
+          // Их тут десять, по два-четыре предложения, и вместе они дают
+          // свиток прозы там, где человек пришёл нажать «35». Причём
+          // читают их ОДИН раз: чем 2.39 отличается от 1.85, оператор
+          // знает лучше нас. Кнопка «?» видна всегда и открывает их все
+          // разом — то же правило, что у «развернуть» у гайда: возможность
+          // не спрятана, она просто не занимает места в покое.
+          const [hintsOn, setHintsOn] = React.useState(() => {
+            try { return localStorage.getItem('cf_scout_hints') === '1'; } catch (e) { return false; }
+          });
+          React.useEffect(() => {
+            try { localStorage.setItem('cf_scout_hints', hintsOn ? '1' : '0'); } catch (e) {}
+          }, [hintsOn]);
+          const group = (title, hint, children) => (
+            <div style={{ marginTop: 16 }}>
+              <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600, color: 'var(--muted)' }}>{title}</span>
+              {hint && hintsOn && <p className="cf-meta" style={{ marginTop: 3, lineHeight: 1.55 }}>{hint}</p>}
+              <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>{children}</div>
+            </div>
+          );
+          const setupModal = () => (
+            <Modal onClose={() => setSetupOpen(false)} z={260} box="p-5 max-w-lg" label="Настройки визира">
+              <div className="flex items-center gap-2">
+                <h3 style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>Визир</h3>
+                <button onClick={() => setHintsOn(o => !o)} data-cf="scout-hints"
+                        title={hintsOn ? 'Убрать пояснения' : 'Показать пояснения — что за чем стоит'}
+                        className="ml-auto flex items-center justify-center"
+                        style={{ width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: '50%',
+                                 background: hintsOn ? 'var(--accent)' : 'var(--card)',
+                                 border: '1px solid ' + (hintsOn ? 'var(--accent)' : 'var(--border)'),
+                                 color: hintsOn ? '#fff' : 'var(--muted)', fontSize: 'var(--fs-3)', fontWeight: 700 }}>?</button>
+              </div>
+              {group('Камера', 'Активная область сенсора в миллиметрах. Список короткий намеренно — угол обзора у объективов одного фокусного одинаков, чьи бы они ни были.',
+                <React.Fragment>
+                  {SCOUT_SENSORS.map(s => (
+                    <button key={s.id} onClick={() => setSensorId(s.id)} style={{ ...pill(sensorId === s.id), fontFamily: 'var(--font-ui)' }}>{s.label}</button>
+                  ))}
+                  <button onClick={() => setSensorId('own')} style={{ ...pill(sensorId === 'own'), fontFamily: 'var(--font-ui)' }}>своё</button>
+                  {sensorId === 'own' && (
+                    <input type="number" step="0.01" min="1" max="80" value={ownW || ''} placeholder="ширина, мм"
+                           onChange={(e) => setOwnW(parseFloat(e.target.value) || 0)}
+                           className="cf-inline-field" style={{ width: 120, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }} />
+                  )}
+                </React.Fragment>
+              )}
+              {group('Пропорция кадра', 'Пропорция проекта живёт в шаблоне раскадровки — здесь её можно посмотреть иначе, не меняя проект.',
+                SHOT_RATIOS.map(([label, val]) => (
+                  <button key={label} onClick={() => setRatio(val)} style={pill(Math.abs(ratio - val) < 0.005)}>{label}</button>
+                ))
+              )}
+              {group('Сжатие', 'Анаморфный объектив с фокусным F при сжатии K по горизонтали ведёт себя как F/K. Кадр с него «сжатый» — на монтаже его растянут до выбранной пропорции.',
+                SCOUT_SQUEEZES.map(([label, val]) => (
+                  <button key={label} onClick={() => setSqueeze(val)} style={{ ...pill(squeeze === val), fontFamily: 'var(--font-ui)' }}>{label}</button>
+                ))
+              )}
+              {group('Сумка объективов', 'Отмеченные рисуются на кадре тонкими рамками рядом с выбранным — видно сразу всю лестницу, а не по одному. По умолчанию не рисуются: рамка на экране должна быть одна, иначе непонятно, на какую смотреть.',
+                <React.Fragment>
+                <label className="w-full flex items-center gap-2" data-cf="scout-bagon"
+                       style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', minHeight: 'var(--tap-sm)', cursor: 'pointer', marginBottom: 4 }}>
+                  <input type="checkbox" checked={bagOn} onChange={(e) => setBagOn(e.target.checked)} data-ro-ok />
+                  Показывать соседние объективы на кадре
+                </label>
+                {SCOUT_LENSES.map(f => (
+                  <button key={f} onClick={() => setBag(b => b.includes(f) ? b.filter(x => x !== f) : [...b, f].sort((a, c) => a - c))}
+                          style={pill(bag.includes(f))}>{f}</button>
+                ))}
+                </React.Fragment>
+              )}
+              {group('Своё фокусное',
+                     'Настоящий объектив редко ведёт себя ровно по надписи на нём: 50-ка бывает как 53. Вписанное число встаёт текущим и попадает в сумку.',
+                <input type="number" step="0.5" min="4" max="1200" placeholder="например 53"
+                       onKeyDown={(e) => {
+                         if (e.key !== 'Enter') return;
+                         const v = parseFloat(e.currentTarget.value);
+                         if (!(v > 0)) return;
+                         setFocal(v);
+                         setBag(b => b.includes(v) ? b : [...b, v].sort((a, c) => a - c));
+                         e.currentTarget.value = '';
+                       }}
+                       className="cf-inline-field" style={{ width: 150, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }} />
+              )}
+              {/* ДАЛЬШЕ — ПРО ТЕЛЕФОН В РУКАХ, А НЕ ПРО СЪЁМОЧНУЮ КАМЕРУ.
+                  Разделитель тут не украшение: выше настройки, которые
+                  правят каждый день (сенсор, пропорция, оптика), ниже —
+                  те, что задают один раз и забывают. Без границы это
+                  читалось как один длинный список, в котором непонятно,
+                  где чьи миллиметры. */}
+              <div style={{ borderTop: '1px solid var(--border)', marginTop: 22, paddingTop: 14 }}>
+                <span style={{ fontSize: 'var(--fs-3)', fontWeight: 700, letterSpacing: '-.01em', color: 'var(--text)' }}>Чем смотрим</span>
+                {/* Эта строка остаётся ВСЕГДА, даже без пояснений: выше
+                    миллиметры съёмочной камеры, ниже — телефона в руках,
+                    и без границы это читается одним списком, в котором
+                    непонятно, где чьи числа. */}
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', marginLeft: 8 }}>телефон в руках</span>
+              </div>
+              {group('Какое устройство',
+                     guessed === 'ipad' ? 'Судя по экрану — планшет. Apple фокусное своих планшетов не публикует вовсе, поэтому 30 мм у нас посчитаны по снимкам: если рамка не сойдётся, подправьте числом ниже.'
+                   : guessed === 'se' ? 'Судя по экрану — iPhone SE.'
+                   : 'Экран говорит только «телефон это или планшет». Pro или обычный, он не скажет: у 16 Pro и 17 размер экрана один, а основная камера разная — 24 и 26 мм.',
+                <React.Fragment>
+                  {PHONE_CAMS.map(d => (
+                    <button key={d.id} data-cf="scout-device" data-dev={d.id} onClick={() => {
+                              setDevId(d.id);
+                              // Ставим основную камеру устройства: «1×» —
+                              // то, с чего начинают, и то, что браузер
+                              // отдаёт по умолчанию.
+                              const main = d.lens.find(l => l[0] === '1×') || d.lens[0];
+                              if (main) pickEq(main[1]);
+                            }}
+                            title={d.hint}
+                            style={{ ...pill(devId === d.id), fontFamily: 'var(--font-ui)' }}>
+                      {d.label}
+                      {d.id === guessed && <span style={{ marginLeft: 5, color: 'var(--accent)' }}>•</span>}
+                    </button>
+                  ))}
+                </React.Fragment>
+              )}
+              {group(device ? `Объектив · ${device.label}` : 'Объектив устройства',
+                     device
+                       ? 'Кратности те же, что пишет камера телефона. Миллиметры и градусы под ними — при нынешней пропорции кадра.'
+                       : null,
+                <React.Fragment>
+                  {/* Без выбранного устройства кнопок тут нет вовсе, и один
+                      заголовок над пустотой читается как поломка. Эта
+                      строка — не пояснение, а ответ на «почему пусто»,
+                      и она не прячется за «?». */}
+                  {!device && (
+                    <span className="cf-meta">Сначала выберите устройство выше.</span>
+                  )}
+                  {(device ? device.lens : []).map(([label, eq]) => (
+                    <button key={label} data-cf="scout-lenspreset" data-eq={eq} onClick={() => pickEq(eq)}
+                            style={{ ...pill(Math.abs(devEq - eq) < 0.01), flexDirection: 'column', alignItems: 'flex-start',
+                                     display: 'flex', justifyContent: 'center', padding: '4px 10px', minHeight: 'var(--tap)' }}>
+                      <span style={{ fontSize: 'var(--fs-2)', color: Math.abs(devEq - eq) < 0.01 ? 'var(--text)' : 'var(--text-2)' }}>{label}</span>
+                      <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>{eq} мм · {camFov(eq, aspect).toFixed(0)}°</span>
+                    </button>
+                  ))}
+                </React.Fragment>
+              )}
+              {/* ПОДГОНКА ОСТАЁТСЯ, И ЭТО НЕ ПОЛУМЕРА. Пресет может не
+                  подойти: у планшетов фокусное нигде не опубликовано,
+                  Android вдобавок подрезает кадр стабилизацией (Chrome
+                  делает это по умолчанию, а спросить, на сколько, нечем),
+                  да и телефон может оказаться не из списка. Без выхода
+                  человек оказался бы в тупике — та же беда, что «нечем
+                  закрыть окно». Шаг в полмиллиметра — это около градуса. */}
+              {group('Обзор камеры телефона',
+                     'СПРАВОЧНОЕ ЧИСЛО — ЭТО ПРО ФОТОГРАФИЮ, А НЕ ПРО БРАУЗЕР. Сколько видит поток, отданный странице, спросить нечем ни одним способом: Safari выбирает свой пресет съёмки, и обзор у него бывает уже фотографического. Камерная сторона при этом считается точно — 35 мм на ALEXA Mini LF в 2.39 это 55,3°, — а вот какую долю экрана займёт эта рамка, зависит от числа ниже. ЗАМЕРЕНО ПО СНИМКАМ: на iPhone 16e в Safari поток оказался уже фотографического в 1,31 раза — камера 26 мм отдала странице обзор как у 34 мм (54°). Сведите рамку с тем, что знаете верным: впишите число в поле, подвиньте кнопками или ЩИПКОМ прямо по кадру. Больше число — картинка шире и мельче, меньше — крупнее. Когда рамка выходит шире самого потока, она рисуется пунктиром со стрелками: шире этого телефон просто не видит — поможет только сверхширокая камера, если она у него есть. Число запомнится за этой камерой, и подгонять придётся один раз.',
+                <React.Fragment>
+                  <button data-cf="scout-eq-minus" onClick={() => pickEq(Math.max(4, Math.round((devEq - 0.5) * 10) / 10))}
+                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>−</button>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 4px', minHeight: 'var(--tap)',
+                                 fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }}>
+                    <input data-cf="scout-eq-input" type="number" inputMode="decimal" step="0.5" min="4" max="400"
+                           value={eqDraft === null ? String(devEq) : eqDraft}
+                           onChange={(e) => {
+                             const v = e.target.value;
+                             setEqDraft(v);
+                             const n = parseFloat(v.replace(',', '.'));
+                             if (n >= 4 && n <= 400) pickEq(Math.round(n * 10) / 10);
+                           }}
+                           onBlur={() => {
+                             const n = parseFloat(String(eqDraft === null ? devEq : eqDraft).replace(',', '.'));
+                             if (n > 0) pickEq(Math.min(400, Math.max(4, Math.round(n * 10) / 10)));
+                             setEqDraft(null);
+                           }}
+                           onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                           style={{ width: '4.2em', minHeight: 'var(--tap)', textAlign: 'right', background: 'var(--bg)',
+                                    border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 6px',
+                                    fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }} />
+                    мм
+                    <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>{devFov.toFixed(1)}°</span>
+                  </span>
+                  <button data-cf="scout-eq-plus" onClick={() => pickEq(Math.min(400, Math.round((devEq + 0.5) * 10) / 10))}
+                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>+</button>
+                  <button onClick={() => { setFovTune(true); setSetupOpen(false);
+                                           showToast('Щипок по кадру теперь меняет ОБЗОР, а не объектив. Сведите рамку с эталоном и нажмите «готово»'); }}
+                          data-cf="scout-fovtune" className="cf-edit-only"
+                          style={{ minHeight: 'var(--tap)', padding: '0 12px', marginLeft: 6, borderRadius: 'var(--r-sm)',
+                                   border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-2)' }}>
+                    Свести щипком
+                  </button>
+                  {/* ЧИСЛА, ПО КОТОРЫМ ЭТО МОЖНО ПРОВЕРИТЬ. Без них подгонка
+                      идёт вслепую: не видно ни что отдаёт камера, ни во что
+                      превращается наша догадка. */}
+                  <span className="w-full cf-meta" data-cf="scout-fovinfo" style={{ marginTop: 6, lineHeight: 1.55 }}>
+                    Поток {vbox.w > 0 ? `${Math.round(aspect * 100) / 100}` : '—'}
+                    {cam.videoRef.current && cam.videoRef.current.videoWidth
+                      ? ` · ${cam.videoRef.current.videoWidth}×${cam.videoRef.current.videoHeight}` : ''}
+                    {' · '}рамка {focal} мм займёт {(frameShare(devEq) * 100).toFixed(0)}% ширины кадра
+                    <br />Больше число — в рамку влезает больше сцены.
+                    {frameShare(devEq) > 1.001 && <React.Fragment>{' '}Рамка шире, чем видит камера — оттого пунктир и стрелки.</React.Fragment>}
+                  </span>
+                </React.Fragment>
+              )}
+              {cam.cams.length > 1 && group('Какой камерой смотрим',
+                     'iOS 16.3 и новее показывает странице все задние камеры по отдельности. Помним выбор ПО НАЗВАНИЮ: номер камеры меняется при каждой перезагрузке страницы. Переключив камеру, скажите её кратность выше — угол за ней запомнится, и дальше он будет возвращаться сам.',
+                cam.cams.map(d => (
+                  <button key={d.deviceId} data-cf="scout-camera" onClick={() => pickCam(d.label)}
+                          style={{ ...pill(camLabel === d.label), fontFamily: 'var(--font-ui)', maxWidth: '100%', textAlign: 'left' }}>
+                    {d.label || 'камера без названия'}
+                    {eqMap[d.label] > 0 && <span style={{ marginLeft: 6, fontFamily: 'var(--font-mono)', color: 'var(--muted-2)' }}>{eqMap[d.label]} мм</span>}
+                  </button>
+                ))
+              )}
+              {group('Подпись на снимке',
+                     'Где, когда, кем и чем снято всегда ложится В ЗАПИСЬ кадра: оттуда она печатается в отчёт по объекту и ищется. Выжечь её на самой картинке стоит, если кадр уходит наружу — с картинки её потом не снять.',
+                <label className="flex items-center gap-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', minHeight: 'var(--tap-sm)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={burn} onChange={(e) => setBurn(e.target.checked)} data-ro-ok />
+                  Выжигать подпись на кадре
+                </label>
+              )}
+            </Modal>
+          );
+
+          // ------------------------------------------------------------------
+          // ЗАМЕТКИ НА ХОДУ
+          // ------------------------------------------------------------------
+          // --- ОБЪЕКТ И ДЕНЬ ---
+          // В камере эти два поля живут в шторке, а не в шапке: на площадке
+          // объект выбирают один раз за выезд, а кадр смотрят всё время.
+          // Постоянная строка с ними отнимала у кадра полсотни точек
+          // ради двух нажатий в час.
+          const [placeOpen, setPlaceOpen] = React.useState(false);
+          // Шкала дня в камере — по нажатию. В плане она стоит всегда:
+          // там экран и заведён под разбор дня, и прятать её незачем.
+          const [barOpen, setBarOpen] = React.useState(false);
+          const placeModal = () => (
+            <Modal onClose={() => setPlaceOpen(false)} z={255} box="p-5 max-w-sm" label="Объект и день">
+              <h3 data-cf="scout-place-title" style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>Объект и день</h3>
+              <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.6 }}>
+                Куда лягут кадры и заметки, и на какой день считается солнце.
+              </p>
+              <select value={loc ? loc.id : ''} onChange={(e) => setActiveLocationId(e.target.value)} data-ro-ok
+                      className="w-full" data-cf="scout-place-pick"
+                      style={{ background: 'var(--card)', color: 'var(--text)', border: '1px solid var(--border)',
+                               borderRadius: 'var(--r-sm)', minHeight: 'var(--tap)', marginTop: 14,
+                               fontSize: 'var(--fs-3)', padding: '0 8px' }}>
+                {!loc && <option value="">— объекта нет —</option>}
+                {locations.map(l => <option key={l.id} value={l.id}>{l.name || 'без названия'}</option>)}
+              </select>
+              {/* СВЕРКА ПО КООРДИНАТАМ. Тут она целиком: что говорит
+                  приёмник, насколько точно, когда отвечал, и далеко ли
+                  это от записанной точки объекта. Сам ничего не выбирает
+                  и молча не пишет — какой это объект, знает только тот,
+                  кто на нём стоит. */}
+              <div data-cf="scout-spot" data-spot={spot.kind}
+                   style={{ marginTop: 14, padding: '10px 12px', borderRadius: 'var(--r-sm)',
+                            background: 'var(--card)', border: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-2">
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: spotColor }} />
+                  <span style={{ fontSize: 'var(--fs-3)', color: 'var(--text)' }}>{spot.text}</span>
+                </div>
+                <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.55 }}>
+                  {gps
+                    ? `Приёмник: ${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)}${gps.acc ? ` · ±${Math.round(gps.acc)} м` : ''} · ${fmtAgo(gps.at)}`
+                    : 'Приёмник ещё не отвечал. Нажмите «Я здесь» — дальше сверка идёт сама.'}
+                </p>
+                {spot.kind === 'far' && (
+                  <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.55 }}>
+                    {nearLoc
+                      ? `Рядом с нами «${nearLoc.l.name}» — ${fmtDist(nearLoc.d)}. «Я здесь» переключит на него.`
+                      : 'Солнце считается для точки объекта, а не для нас. «Я здесь» заведёт точку на этом месте.'}
+                  </p>
+                )}
+              </div>
+              <button onClick={iAmHere} disabled={locating} className="cf-edit-only w-full"
+                      data-cf="scout-here"
+                      title="Взять координаты у приёмника: найдётся объект рядом — откроется он, не найдётся — заведётся новый"
+                      style={{ minHeight: 'var(--tap)', marginTop: 10, borderRadius: 'var(--r-sm)',
+                               border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-3)' }}>
+                {locating ? 'ищу…' : gps ? 'Сверить заново' : 'Я здесь'}
+              </button>
+              {/* У объекта нет координат, а мы на нём стоим — записать их
+                  ему. Без этой кнопки единственным путём была бы «Я здесь»,
+                  а она в таком случае завела бы ВТОРОЙ объект на том же
+                  месте: точек без координат она не видит. */}
+              {spot.kind === 'nocoords' && gps && (
+                <button onClick={writeCoordsHere} className="cf-edit-only w-full" data-cf="scout-setcoords"
+                        style={{ minHeight: 'var(--tap)', marginTop: 8, borderRadius: 'var(--r-sm)',
+                                 border: '1px solid var(--border)', color: 'var(--text-2)', fontSize: 'var(--fs-3)' }}>
+                  Записать эту точку объекту «{loc.name}»
+                </button>
+              )}
+              <div className="flex items-center gap-3" style={{ marginTop: 14 }}>
+                <span className="cf-meta">День</span>
+                <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setScrub(null); }} data-ro-ok
+                       className="cf-inline-field" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', minHeight: 'var(--tap)' }} />
+              </div>
+              <button onClick={() => setPlaceOpen(false)} data-cf="scout-place-ok"
+                      className="w-full flex items-center justify-center"
+                      style={{ marginTop: 18, minHeight: 'var(--tap)', borderRadius: 10,
+                               background: 'var(--accent)', color: '#fff', fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                Готово
+              </button>
+            </Modal>
+          );
+
+          const notesModal = () => (
+            <Modal onClose={closeNotes} z={260} box="p-5 max-w-lg" label="Заметки с выезда">
+              <div className="flex items-center gap-2">
+                <h3 data-cf="scout-notes" style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>
+                  Заметки с выезда{notes.length ? ` · ${notes.length}` : ''}
+                </h3>
+                {loc && <button onClick={addNote} data-cf="scout-note-add" className="cf-edit-only ml-auto"
+                                style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap-sm)' }}>+ заметка</button>}
+              </div>
+              <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.6 }}>
+                {loc ? `Ложатся к объекту «${loc.name}» — и на доску, и в отчёт по объекту.` : 'Сначала выберите объект.'}
+              </p>
+              {notes.length === 0
+                ? <p style={{ fontSize: 'var(--fs-3)', color: 'var(--muted-2)', marginTop: 14, lineHeight: 1.6 }}>
+                    Пока пусто. Что заметили на месте — питание, подъезд, шум, с кем говорить, — пишите сюда.
+                  </p>
+                : notes.map((st, i) => (
+                    <textarea key={st.id} value={st.text} data-cf="scout-note" autoFocus={st.id === noteFresh}
+                              onChange={(e) => patchNote(st.id, e.target.value)}
+                              className="w-full bg-transparent focus:outline-none resize-none"
+                              style={{ fontSize: 'var(--fs-4)', lineHeight: 1.6, color: 'var(--text-2)',
+                                       marginTop: 10, paddingTop: i ? 10 : 0, minHeight: 66,
+                                       borderTop: i ? '1px solid var(--line)' : 'none' }}
+                              placeholder="Текст заметки…" />
+                  ))}
+              {/* ГЛАВНОЕ ДЕЙСТВИЕ ОКНА, и потому оно залито акцентом.
+                  Заметка пишется на каждую букву, но подтверждения этому
+                  не было ниоткуда: окно закрывалось молча, и оставалось
+                  гадать, записалось ли. Теперь «Готово» закрывает и
+                  говорит полоской, сколько заметок легло в объект. */}
+              <button onClick={closeNotes} data-cf="scout-note-ok"
+                      className="w-full flex items-center justify-center"
+                      style={{ marginTop: 18, minHeight: 'var(--tap)', borderRadius: 10,
+                               background: 'var(--accent)', color: '#fff',
+                               fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                Готово
+              </button>
+            </Modal>
+          );
+
+          // ------------------------------------------------------------------
+          // СБОРКА ЭКРАНА
+          // ------------------------------------------------------------------
+          const photoCount = loc ? references.filter(r => r.locationId === loc.id).length : 0;
+          return (
+            <div className="h-full w-full flex flex-col min-w-0" data-cf="scout"
+                 data-mode={mode} style={{ background: 'var(--bg)' }}>
+              {/* В КАМЕРЕ ШАПКИ МОДУЛЯ НЕТ ВОВСЕ. Кадр — это и есть
+                  содержимое экрана, а шапка, полоса визира и шкала дня
+                  стояли тремя полосами в потоке и отнимали у него около
+                  200 точек. На телефоне в горизонтальном положении кадру
+                  оставалось меньше сотни точек высоты, то есть смотреть
+                  было не на что. Всё, что было в этих полосах, осталось:
+                  объект и день — чипом в углу, объектив, снимок, заметки
+                  и часы — полосой ПОВЕРХ кадра, выход — кнопкой «‹ План».
+                  Ничего не удалено и не переименовано. */}
+              {mode === 'plan' && (
+                <div className="flex items-center gap-2 shrink-0 flex-wrap"
+                     style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+                  <select value={loc ? loc.id : ''} onChange={(e) => setActiveLocationId(e.target.value)} data-ro-ok
+                          style={{ background: 'var(--card)', color: 'var(--text)', border: '1px solid var(--border)',
+                                   borderRadius: 'var(--r-sm)', minHeight: 'var(--tap-sm)', maxWidth: 190,
+                                   fontSize: 'var(--fs-2)', padding: '0 6px' }}>
+                    {!loc && <option value="">— объекта нет —</option>}
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.name || 'без названия'}</option>)}
+                  </select>
+                  <button onClick={iAmHere} disabled={locating} className="cf-edit-only"
+                          title="Взять координаты у приёмника: найдётся объект рядом — откроется он, не найдётся — заведётся новый"
+                          style={{ minHeight: 'var(--tap-sm)', padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                   border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-2)' }}>
+                    {locating ? 'ищу…' : 'Я здесь'}
+                  </button>
+                  <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setScrub(null); }} data-ro-ok
+                         className="cf-inline-field" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }} />
+                  <div className="cf-seg ml-auto">
+                    {SCOUT_MODES.map(([id, label]) => (
+                      <button key={id} onClick={() => setMode(id)} className={mode === id ? 'on' : ''}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {mode === 'plan' ? planView() : arView()}
+
+              {mode === 'plan' && coords && <div className="shrink-0" style={{ borderTop: '1px solid var(--border)' }}>{timeBar()}</div>}
+
+              {/* Итог выезда — то, ради чего модуль и заведён: объект, фото, заметки */}
+              {mode === 'plan' && loc && (
+                <div className="flex items-center gap-3 shrink-0 flex-wrap"
+                     style={{ padding: '8px 14px', borderTop: '1px solid var(--border)' }}>
+                  {/* СВЕРКА И В ПЛАНЕ. Тут её читают до выезда — «а тот ли
+                      это двор» — и по возвращении. Кружок и строка те же,
+                      что на чипе в камере: два разных способа сказать одно
+                      и то же разъехались бы при первой правке. */}
+                  <button onClick={() => setPlaceOpen(true)} data-cf="scout-spot-plan" data-spot={spot.kind}
+                          className="flex items-center gap-1.5"
+                          style={{ minHeight: 'var(--tap-sm)', fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: spotColor }} />
+                    {spot.text}
+                  </button>
+                  <span className="cf-meta">
+                    «{loc.name}» · {photoCount} {plur(photoCount, 'кадр', 'кадра', 'кадров')} · {notes.length} {plur(notes.length, 'заметка', 'заметки', 'заметок')}
+                  </span>
+                  <button onClick={() => setNoteOpen(true)} style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap-sm)' }}>заметки</button>
+                  <button onClick={() => setMode('ar')} className="ml-auto"
+                          style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap-sm)' }}>снимать →</button>
+                </div>
+              )}
+
+              {setupOpen && setupModal()}
+              {placeOpen && placeModal()}
+              {noteOpen && notesModal()}
+            </div>
+          );
+        };
+
         function AppCore() {
           const [user, setUser] = useState(null);
           const [userName, setUserName] = useState('');
@@ -4955,6 +7326,20 @@
                         {/* Ролик на листе — постер с пометкой, иначе кадр читается как фотография точки;
                             в выгрузке одного объекта ещё и ссылка: PDF сделает её нажимаемой */}
                         {(ph.label || ph.video) && <div style={{marginTop: '2pt'}}>{ph.video ? `▶ видео · ${fmtDur(ph.dur)}${ph.label ? ' · ' + ph.label : ''}` : ph.label}</div>}
+                        {/* ПОДПИСЬ СО СКАУТА. Снято визиром — значит известно,
+                            чем и откуда: фокусное, камера, азимут и кто снимал.
+                            Ради отчёта эти сведения и кладутся в запись кадра,
+                            а не выжигаются на картинке. */}
+                        {ph.shot && (
+                          <div style={{marginTop: '1pt', fontSize: '7.5pt', color: '#555'}}>
+                            {[ph.shot.lens ? `${ph.shot.lens} мм` : '',
+                              ph.shot.squeeze > 1 ? `анаморф ${ph.shot.squeeze}×` : '',
+                              ph.shot.cam || '',
+                              ph.shot.az === null || ph.shot.az === undefined ? '' : `азимут ${ph.shot.az}°`,
+                              ph.shot.when ? new Date(ph.shot.when).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+                              ph.shot.who || ''].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                         {ph.video && solo && ph.full && <div style={{fontSize: '7.5pt', wordBreak: 'break-all', color: '#555'}}><a href={ph.full}>{ph.full}</a></div>}
                       </div>
                     ))}
@@ -8155,7 +10540,17 @@
 
           const canvasRef = useRef(null);
 
-          const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
+          // ТАЙМЕР ПРЕЖНЕЙ ПОЛОСКИ ОБЯЗАН СНИМАТЬСЯ. Без этого вторая
+          // полоска, показанная под конец чужих 3,5 секунды, гасла почти
+          // сразу — её убивал таймер ПЕРВОЙ. Ошибок при этом нет: полоска
+          // мигает и пропадает, и выглядит это как «приложение промолчало».
+          // А полоска у нас единственный способ что-то сказать человеку.
+          const toastTimer = useRef(null);
+          const showToast = (message) => {
+            clearTimeout(toastTimer.current);
+            setToast(message);
+            toastTimer.current = setTimeout(() => setToast(null), 3500);
+          };
 
           // В режиме просмотра поля не нажимаются мышью, но табуляцией до них
           // добраться можно — и печатать. Наружу ничего не уйдёт, а вот текст
@@ -9245,7 +11640,26 @@
           // во-вторых, только то, что реально изменилось: ссылка на массив
           // у нетронутых коллекций та же, сравнение по ней и отсекает.
           const savedSnap = useRef({});
-          const storageWarned = useRef(false);   // о переполнении говорим один раз за сеанс
+          // О ПЕРЕПОЛНЕНИИ ГОВОРИМ ОДИН РАЗ НАСОВСЕМ, а не раз в сеанс.
+          // У большого проекта это состояние ПОСТОЯННОЕ: фотографии
+          // в местную копию не влезут и завтра, — и полоска встречала
+          // человека при каждом открытии приложения, повторяя то, что
+          // он уже знает и уже решил не чинить. Новость бывает новостью
+          // один раз; дальше это просто шум поверх экрана. Само состояние
+          // никуда не спрятано: оно написано в меню «Проект», в блоке
+          // «Местная копия на устройстве», где рядом и способ его
+          // исправить. Флаг снимается, когда проект снова влез целиком:
+          // если once упрётся заново — это опять новость.
+          const storageWarned = useRef(null);
+          const warnOnce = (msg) => {
+            if (storageWarned.current) return;
+            storageWarned.current = true;
+            try {
+              if (localStorage.getItem('cf_light_warned') === '1') return;
+              localStorage.setItem('cf_light_warned', '1');
+            } catch (e) {}
+            showToast(msg);
+          };
           // Коллекции, которые в этот сеанс уже не влезли целиком. Повторять
           // попытку на каждую правку нельзя: у большого проекта одна только
           // упаковка в строку — это десятки мегабайт, и телефон честно
@@ -9283,18 +11697,14 @@
                     // чтобы снова упереться в предел. На телефоне это
                     // ощущается как «приложение думает».
                     savedSnap.current[k] = v;
-                    if (!storageWarned.current) {
-                      storageWarned.current = true;
-                      showToast('Проект перерос память устройства: местная копия теперь без фотографий. Сам проект цел в облаке. Чтобы он стал легче, подключите хранилище фото в меню «Проект»');
-                    }
+                    // Коротко: подробности и способ починить — там, куда
+                    // отправляем. Пересказывать их полоской незачем.
+                    warnOnce('Фотографии больше не помещаются в местную копию. Проект цел в облаке — подробности в меню «Проект»');
                     return;
                   } catch (e2) { console.warn('localStorage переполнен даже без картинок:', k); }
                 }
                 savedSnap.current[k] = v;   // не долбимся в закрытую дверь на каждую правку
-                if (!storageWarned.current) {
-                  storageWarned.current = true;
-                  showToast('⚠️ На устройстве кончилось место — местная копия больше не обновляется. Проект сохраняется в облако');
-                }
+                warnOnce('⚠️ На устройстве кончилось место — местная копия не обновляется. Проект сохраняется в облако');
               };
               save('cf_scenes', scenes); save('cf_storyboard', storyboard);
               save('cf_references', references); save('cf_stickies', stickies);
@@ -9302,6 +11712,15 @@
               save('cf_files', projectFiles); save('cf_geartypes', gearTypes);
               save('cf_lightgeartypes', lightGearTypes); save('cf_lightschemes', lightSchemes);
               save('cf_boards', boards); save('cf_locations', locations);
+              // ВЕСЬ ПРОЕКТ ВЛЕЗ ЦЕЛИКОМ — значит прежняя теснота прошла,
+              // и следующее переполнение снова будет новостью. Снимать
+              // флаг ПОКЛЮЧЕВО нельзя: тяжёлых ключей три, и мелкий
+              // (файлы проекта) успешно сохранялся сразу после
+              // отвергнутых референсов, стирая только что поставленный
+              // флаг, — отчего полоска возвращалась при каждом открытии.
+              if (!Object.keys(lightOnly.current).length) {
+                try { localStorage.removeItem('cf_light_warned'); } catch (e) {}
+              }
             };
             flushLocal.current = doSave;
             // Упаковка проекта в строку — это десятки мегабайт на проекте
@@ -9604,7 +12023,7 @@
             rd.readAsDataURL(f);
           };
 
-          const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '') => {
+          const handleMultiFileUpload = async (files, sceneId = null, place = null, locationId = null, folder = '', extra = null) => {
             // Загрузка фотографий — самая заметная правка проекта:
             // бросок файла на доску идёт сюда мимо кнопок.
             if (READ_ONLY) return;
@@ -9695,10 +12114,10 @@
                   const dupSet = new Set(dups.map(f => normName(f.name)));
                   const kept = imageFiles.filter(f => !dupSet.has(normName(f.name)));
                   if (kept.length === 0) { showToast('Все выбранные картинки уже есть — ничего не загружено'); return; }
-                  return finish(uploadFiles(kept, sceneId, place, locationId, folder));
+                  return finish(uploadFiles(kept, sceneId, place, locationId, folder, extra));
                 }
               }
-              return finish(uploadFiles(imageFiles, sceneId, place, locationId, folder));
+              return finish(uploadFiles(imageFiles, sceneId, place, locationId, folder, extra));
           };
 
           // Сжать файл к нужному размеру. Отдельно от uploadFiles, потому
@@ -10431,14 +12850,23 @@
           };
 
           // --- Объекты: завести, править, связать ---
-          const addLocation = () => {
+          // Заводит объект с готовыми полями и ОТДАЁТ его id — скауту нужен
+          // именно id, чтобы сразу положить туда снимок. addLocation идёт
+          // через него же: вторая ветка создания разъехалась бы с первой.
+          const createLocationAt = (fields) => {
+            if (READ_ONLY) return '';
             const loc = {
               id: `loc-${Date.now()}`, name: 'НОВЫЙ ОБЪЕКТ', address: '', coords: '',
-              description: '', sceneIds: [], lightSchemeId: '', order: Date.now()
+              description: '', sceneIds: [], lightSchemeId: '', order: Date.now(),
+              ...(fields || {})
             };
             setLocations(prev => [...prev, loc]);
             syncDoc('locations', loc.id, loc);
-            setActiveLocationId(loc.id);
+            return loc.id;
+          };
+          const addLocation = () => {
+            const id = createLocationAt(null);
+            if (id) setActiveLocationId(id);
           };
           const updateLocation = (id, field, val) => {
             if (READ_ONLY) return;
@@ -10700,13 +13128,6 @@
           // Склонение существительного после числа: plur(2, 'сцена', 'сцены',
           // 'сцен') → «сцены». «1 сцен» и «4 сцен» в шапке смены читаются
           // опечаткой, а КПП показывают всей группе.
-          const plur = (n, one, few, many) => {
-            const a = Math.abs(n) % 100, b = a % 10;
-            if (a > 10 && a < 20) return many;
-            if (b > 1 && b < 5) return few;
-            if (b === 1) return one;
-            return many;
-          };
           const formatDateDisplay = (dateStr) => { if (!dateStr) return '—'; const [y, m, d] = dateStr.split('-'); return `${d}.${m}.${y}`; };
 
           // --- Групповое перетаскивание на Whiteboard ---
@@ -11251,6 +13672,28 @@
             setDrawingSchemeId(nS.id);
           };
 
+          // Завести стикер и пустую карточку референса ПОСЕРЕДИНЕ ВИДИМОГО.
+          // Объявлены отдельно, потому что зовутся из двух мест: строкой
+          // кнопок над доской и, на телефоне, из «···» — там места
+          // на отдельные иконки нет. Вторая копия обработчика разъехалась
+          // бы с первой при первой же правке.
+          const addStickyHere = () => {
+            if (READ_ONLY) return;
+            const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: '',
+                         x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
+                         w: STICKY_W, h: STICKY_H, color: '#fef08a' };
+            setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+            setWbMode('select'); setSelectedWbItems([ns.id]); setEditCard({ id: ns.id, key: 'text' });
+          };
+          const addRefCardHere = () => {
+            if (READ_ONLY) return;
+            const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '',
+                         x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom,
+                         label: 'Референс', tags: [] };
+            setReferences([...references, nr]); syncDoc('references', nr.id, nr);
+            setWbMode('select'); setSelectedWbItems([nr.id]);
+          };
+
           // Выбор объекта в режиме «Связь». Ходов ровно два: первый объект,
           // второй объект. Зовётся и с холста (фигуры, надписи), и прямо
           // с карточки: выделенная карточка лежит ВЫШЕ холста, и нажатие по
@@ -11358,6 +13801,7 @@
             { id: 'whiteboard', label: 'Доски',        icon: <Icons.Board /> },
             { id: 'gallery',    label: 'Галерея',      icon: <Icons.Gallery /> },
             { id: 'locations',  label: 'Объекты',      icon: <Icons.Place /> },
+            { id: 'scout',      label: 'Скаут',        icon: <Icons.Scout /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
             { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
           ].filter(t => {
@@ -11460,6 +13904,9 @@
                          x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
                          w: STICKY_W, h: STICKY_H, color: '#fef08a' };
             setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+            // Отдаём id наружу: в скауте новая заметка сразу берёт курсор,
+            // а пустая строка без курсора читается как «ничего не добавилось».
+            return ns.id;
           };
 
           // --- Экран сцены: панели, развороты, меню ---
@@ -11501,6 +13948,12 @@
           // Что открыто шторкой снизу: техника, свет, солнце, экспликация,
           // «Ещё» с остальными модулями.
           const [phoneSheet, setPhoneSheet] = useState(null);
+          // ВИЗИР СКАУТА ЗАБИРАЕТ ЭКРАН ЦЕЛИКОМ. Флаг ставит сам модуль
+          // и снимает его при уходе; на всякий случай он действует ТОЛЬКО
+          // на экране «Скаут» — оставшийся поднятым, он спрятал бы
+          // навигацию на чужом экране, и вернуть её было бы нечем.
+          const [scoutFull, setScoutFull] = useState(false);
+          const fullScout = scoutFull && currentView === 'scout';
           // Заметка сцены, в которой сейчас курсор: ей одной показывается палитра.
           const [noteFocus, setNoteFocus] = useState(null);
           // Кадр раскадровки, который сейчас правят ({id, field}); остальные — картинка и текст.
@@ -11917,7 +14370,21 @@
                 </div>
               )}
 
-              {toast && (<div style={{ bottom: 'calc(24px + var(--sab))' }} className="fixed left-1/2 -translate-x-1/2 glass-panel text-white px-6 py-3 rounded-full text-sm font-medium z-[400] flex items-center gap-2"><Icons.Bot /> {toast}</div>)}
+              {/* ПОЛОСКА НЕ ДОЛЖНА ПРЕВРАЩАТЬСЯ В КЛЯКСУ. У неё стоял
+                  `rounded-full`, и на короткой строке это правильно —
+                  но длинное сообщение переносилось на шесть строк, а
+                  «радиус в половину высоты» превращал его в овал во
+                  весь экран поверх открытой шторки. Ширину ограничиваем,
+                  а полное скругление оставляем только однострочным. */}
+              {toast && (
+                <div style={{ bottom: 'calc(24px + var(--sab))', maxWidth: 'min(92vw, 460px)',
+                              borderRadius: String(toast).length > 60 ? 14 : 9999 }}
+                     data-cf="toast"
+                     className="fixed left-1/2 -translate-x-1/2 glass-panel text-white px-5 py-3 text-sm font-medium z-[400] flex items-start gap-2">
+                  <span className="shrink-0" style={{ marginTop: 1 }}><Icons.Bot /></span>
+                  <span style={{ lineHeight: 1.45 }}>{toast}</span>
+                </div>
+              )}
 
               {/* Возврат только что удалённого. Держится 15 секунд — этого
                   хватает, чтобы заметить промах, и не мешает дальше работать.
@@ -11944,7 +14411,7 @@
                     Здесь остаётся то, что отвечает на «где я»: название
                     модуля со счётчиком, точка связи и поиск. На карточке
                     сцены вместо этого — «‹ Сцены», режимы и «···». */}
-                {isPhone ? (
+                {fullScout ? null : isPhone ? (
                   <header className="flex items-center shrink-0 z-40 gap-2"
                           style={{ padding: 'env(safe-area-inset-top, 0px) 16px 0', minHeight: 'calc(var(--header-h) + env(safe-area-inset-top, 0px))', background: 'var(--bg)' }}>
                     {currentView === 'docs' && phoneDocOpen ? (
@@ -14255,15 +16722,29 @@
                           по высоте и молча срезались снизу. Слева рисуют,
                           здесь распоряжаются доской целиком. */}
                       <div className="ml-auto flex items-center gap-0.5 shrink-0 pb-1">
-                        {/* Единственный путь к уже загруженным референсам с самой
-                            доски. */}
-                        <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
-                                className={`cf-tool cf-edit-only ${scenePickerOpen ? 'on' : ''}`}><Icons.Scene/></button>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: '', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); setWbMode('select'); setSelectedWbItems([ns.id]); setEditCard({ id: ns.id, key: 'text' }); }}
-                                className="cf-tool cf-edit-only" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); setWbMode('select'); setSelectedWbItems([nr.id]); }}
-                                className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
-                        <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
+                        {/* НА ТЕЛЕФОНЕ ЭТИХ ТРЁХ ИКОНОК ТУТ НЕТ. Полоса
+                            вкладок на 390 точках занята досками и схемами,
+                            а кластер действий отъедал у неё полторы сотни
+                            и вдобавок стоял безымянными значками: что такое
+                            «сетка», «лист» и «картинка», по виду не понять,
+                            а подсказки на касании нет. Всё это переехало
+                            в «···», где рядом уже живут выгрузка и очистка
+                            и где у каждой строки есть НАЗВАНИЕ. На планшете
+                            и на столе места хватает, и там они остаются
+                            под рукой. */}
+                        {!isPhone && (
+                        <React.Fragment>
+                          {/* Единственный путь к уже загруженным референсам
+                              с самой доски. */}
+                          <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
+                                  className={`cf-tool cf-edit-only ${scenePickerOpen ? 'on' : ''}`}><Icons.Scene/></button>
+                          <button onClick={addStickyHere}
+                                  className="cf-tool cf-edit-only" title="Стикер"><Icons.Sticky/></button>
+                          <button onClick={addRefCardHere}
+                                  className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
+                          <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
+                        </React.Fragment>
+                        )}
                         {/* Выгрузка доски картинкой — то, что отправляют группе:
                             PNG для мессенджера, SVG для печати и правки в
                             векторном редакторе. Вместе с очисткой рисунка —
@@ -14275,6 +16756,20 @@
                                   className={`cf-tool ${boardMenu ? 'on' : ''}`} style={{ letterSpacing: 1 }}>···</button>
                           {boardMenu && (
                             <div className="cf-menu">
+                              {isPhone && (
+                                <React.Fragment>
+                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); setScenePickerOpen(true); }}>
+                                    <Icons.Scene/> Положить на доску…
+                                  </button>
+                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addStickyHere(); }}>
+                                    <Icons.Sticky/> Новый стикер
+                                  </button>
+                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addRefCardHere(); }}>
+                                    <Icons.Gallery/> Новый референс
+                                  </button>
+                                  <hr />
+                                </React.Fragment>
+                              )}
                               <button onClick={() => { setBoardMenu(false); exportBoard('png'); }} disabled={exportBusy} title="Картинка для мессенджера">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
                                 Выгрузить PNG
@@ -15764,6 +18259,28 @@
                     </div>
                   </div>
 
+                  {/* ЭКРАН «СКАУТ» — выезд на место: где солнце, что влезет
+                      в кадр, и заметки на ходу. Всё собранное ложится
+                      в УЖЕ СУЩЕСТВУЮЩИЕ вещи проекта: объект, референсы
+                      с тегом «скаут», стикеры. Собирается ТОЛЬКО когда
+                      открыт: внутри живая камера, и держать её включённой
+                      за спиной значит жечь батарею на площадке без всякой
+                      пользы — то же правило, что у печати и у вида
+                      «Все сцены» в КПП. */}
+                  <div className={`h-full w-full ${currentView === 'scout' ? 'flex' : 'hidden'}`}>
+                    {currentView === 'scout' && (
+                      <ScoutModule
+                        locations={sortedLocations} activeLocationId={activeLocationId}
+                        setActiveLocationId={setActiveLocationId} createLocationAt={createLocationAt}
+                        stickies={stickies} setStickies={setStickies} addLocationNote={addLocationNote}
+                        references={references} scenes={scenes}
+                        projectRatio={projectRatio} userName={userName}
+                        showToast={showToast} readOnly={READ_ONLY} syncDoc={syncDoc}
+                        onFull={setScoutFull} updateLocation={updateLocation}
+                        onCapture={(file, locId, extra) => handleMultiFileUpload([file], null, null, locId, '', extra)} />
+                    )}
+                  </div>
+
                   {/* КПП — ОДИН документ, два вида.
                       Рядом жила вкладка «Документ» с теми же сценами, только
                       другим порядком: два экрана про одно и то же, и человек
@@ -16240,14 +18757,24 @@
                   для остального. Стоит в потоке, а не поверх содержимого:
                   плавающая панель на телефоне закрывает последнюю строку
                   списка, и до неё не долистать. */}
-              {isPhone && (
+              {isPhone && !fullScout && (
                 <nav className="cf-tabbar z-40">
                   {/* По ссылке на одну страницу в таб-баре не должно быть
                       кнопок в никуда: они уводили бы на пустой экран. */}
                   {[
                     { id: 'notion', label: 'Сцены', icon: <Icons.Scene /> },
                     { id: 'gallery', label: 'Галерея', icon: <Icons.Gallery /> },
-                    { id: 'locations', label: 'Объекты', icon: <Icons.Place /> }
+                    { id: 'locations', label: 'Объекты', icon: <Icons.Place /> },
+                    /* СКАУТ СТОИТ В ТАБ-БАРЕ, А ЧАТ УШЁЛ В «ЕЩЁ». Пять
+                       вкладок — предел, за которым подписи не читаются,
+                       и на выезде камера с солнцем нужнее переписки:
+                       скаут это инструмент площадки, а телефон — то
+                       единственное, что на площадке в руках. Чат при
+                       этом НЕ пропал: он остался и в строке модулей
+                       шапки, и первой строкой в «Ещё» — иначе с телефона
+                       до него (и до запроса разрешения на уведомления,
+                       который просит его кнопка) было бы не добраться. */
+                    { id: 'scout', label: 'Скаут', icon: <Icons.Scout /> }
                   ].filter(t => CF_VIEWS.indexOf(t.id) >= 0).map(t => (
                     <button key={t.id} onClick={() => {
                               // Нажатие по вкладке, на которой уже стоишь,
@@ -16261,15 +18788,15 @@
                       {t.icon}<span>{t.label}</span>
                     </button>
                   ))}
-                  <button onClick={toggleChat} className={`cf-tab relative cf-edit-only ${showChat ? 'on' : ''}`}>
-                    <Icons.Chat /><span>Чат</span>
-                    {unreadCount > 0 && (
+                  <button onClick={() => setPhoneSheet(phoneSheet === 'more' ? null : 'more')}
+                          className={`cf-tab relative ${phoneSheet === 'more' ? 'on' : ''}`}>
+                    {/* Непрочитанные в чате считаются и здесь: чат уехал
+                        в «Ещё», и без метки о новом сообщении узнать было
+                        бы нечем. */}
+                    {unreadCount > 0 && !showChat && (
                       <span className="absolute flex items-center justify-center font-bold rounded-full"
                             style={{ top: 0, right: '24%', minWidth: 16, height: 16, padding: '0 4px', fontSize: 'var(--fs-1)', background: 'var(--accent)', color: 'var(--bg)' }}>{unreadCount}</span>
                     )}
-                  </button>
-                  <button onClick={() => setPhoneSheet(phoneSheet === 'more' ? null : 'more')}
-                          className={`cf-tab ${phoneSheet === 'more' ? 'on' : ''}`}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
                     <span>Ещё</span>
                   </button>
@@ -16295,7 +18822,20 @@
                     </div>
                     {phoneSheet === 'more' && (
                       <div className="px-3 pb-4">
-                        {navItems.filter(t => !['notion', 'gallery', 'locations'].includes(t.id)).map(t => (
+                        {/* ЧАТ ПЕРВОЙ СТРОКОЙ. Из таб-бара он уступил место
+                            скауту, и это единственная причина, по которой
+                            он тут обязателен: другого пути к нему с телефона
+                            в этой шторке нет. */}
+                        <button onClick={() => { setPhoneSheet(null); toggleChat(); }}
+                                className="w-full flex items-center gap-3 px-3 rounded-lg cf-edit-only"
+                                style={{ minHeight: 48, fontSize: 'var(--fs-3)', color: showChat ? 'var(--accent)' : 'var(--text-2)' }}>
+                          <Icons.Chat />Чат
+                          {unreadCount > 0 && (
+                            <span className="flex items-center justify-center font-bold rounded-full"
+                                  style={{ minWidth: 18, height: 18, padding: '0 5px', fontSize: 'var(--fs-1)', background: 'var(--accent)', color: 'var(--bg)' }}>{unreadCount}</span>
+                          )}
+                        </button>
+                        {navItems.filter(t => !['notion', 'gallery', 'locations', 'scout'].includes(t.id)).map(t => (
                           <button key={t.id} onClick={() => { setCurrentView(t.id); setPhoneSheet(null); setShowChat(false); }}
                                   className="w-full flex items-center gap-3 px-3 rounded-lg transition-colors"
                                   style={{ minHeight: 48, fontSize: 'var(--fs-3)', color: currentView === t.id ? 'var(--accent)' : 'var(--text-2)' }}>
@@ -16938,7 +19478,7 @@
                              className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
                     </label>
 
-                    <StorageInfo />
+                    <StorageInfo light={!!Object.keys(lightOnly.current || {}).length} />
 
                     <button onClick={() => {
                       // Рисунок у каждой доски свой (ключ cf_canvas_draw_{доска}).
