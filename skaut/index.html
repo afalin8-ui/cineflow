@@ -4731,6 +4731,13 @@
         const SCOUT_MODES = [['plan', 'План'], ['ar', 'Камера']];
         const ARC_ABOVE = 'var(--warn)';        // солнце над горизонтом
         const ARC_BELOW = 'var(--muted-2)';     // и под ним — пунктиром
+        // СИНЯЯ РАМКА — ЭТО СЧЁТ, А НЕ СНЯТОЕ. Когда объектив
+        // шире, чем видит камера телефона, рамка рисуется вокруг
+        // картинки, а не по ней: внутри то, что камера даёт, снаружи —
+        // посчитанный кадр. Цвет другой именно поэтому — терракотовая
+        // рамка всюду значит «это снимается», а тут снимается меньше.
+        // Так же поступает Cadrage — и это понятнее пунктира со стрелками.
+        const SIM_LINE = '#38bdf8';
 
         const ScoutModule = ({
           locations, activeLocationId, setActiveLocationId, createLocationAt,
@@ -5340,19 +5347,31 @@
               // за экраном человек НЕ видел: положив их в снимок, мы отдали
               // бы кадр шире того, который выбирали. Правило то же, что
               // у выгрузки доски: картинка обязана совпадать с экраном.
-              const kk = vbox.w > 0 ? v.videoWidth / vbox.w : 1;   // точки видео на точку экрана
-              const sx = Math.max(0, -vbox.x * kk);
-              const sy = Math.max(0, -vbox.y * kk);
-              const sw = Math.min(v.videoWidth - sx, cbox.cw * kk);
-              const sh = Math.min(v.videoHeight - sy, cbox.ch * kk);
+              //   ДВА МЕРИЛА НА ОДНОЙ КАРТИНКЕ — ВОТ ОТКУДА БРАЛАСЬ
+              // «РАМКА НЕ ПОЙМИ ОТ ЧЕГО». Раньше в холст ложился кусок
+              // ПОТОКА, а рамка считалась долей ОТ КОНТЕЙНЕРА. Пока
+              // картинка шире экрана, это одно и то же. Но стоит объективу
+              // оказаться шире камеры, картинка становится УЖЕ экрана —
+              // и рамка на снимке выходила вдвое мельче, чем была на экране.
+              // Замер по снимку пользователя: рамка заняла 53,6 % ширины
+              // фотографии вместо своих девяноста — ровно отношение
+              // ширины картинки к ширине экрана.
+              //   Теперь холст — ВСЯ ВИДИМАЯ ОБЛАСТЬ визира: видео ложится
+              // в неё туда же, где оно на экране, а по краям остаётся такая же
+              // тёмная полоса, какая была видна. Мерило стало ОДНО.
+              const px = vbox.w > 0 ? v.videoWidth / vbox.w : 1;   // точки видео на точку экрана
+              const cssW = Math.max(1, cbox.cw), cssH = Math.max(1, cbox.ch);
               // 1600 точек по длинной стороне: дальше растёт только вес.
               // Сжатие и отправку в облако делает общий путь загрузки.
-              const k = Math.min(1, 1600 / Math.max(sw, sh));
+              const k = Math.min(1, 1600 / Math.max(cssW * px, cssH * px));
+              const sc = px * k;                                   // точки холста на точку экрана
               const cv = document.createElement('canvas');
-              cv.width = Math.round(sw * k);
-              cv.height = Math.round(sh * k);
+              cv.width = Math.max(1, Math.round(cssW * sc));
+              cv.height = Math.max(1, Math.round(cssH * sc));
               const ctx = cv.getContext('2d');
-              ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+              ctx.fillStyle = '#000';
+              ctx.fillRect(0, 0, cv.width, cv.height);
+              ctx.drawImage(v, vbox.x * sc, vbox.y * sc, vbox.w * sc, vbox.h * sc);
 
               // РАМКА ОБЪЕКТИВА РИСУЕТСЯ НА САМОМ СНИМКЕ, И ВСЕГДА.
               // Раньше её тут не было вовсе: в объекте лежала обычная
@@ -5364,21 +5383,23 @@
               // рисует, а не режет.
               // Рамка на снимке — ровно та же доля ширины, что и на экране:
               // оба считаются от одного `frameW` в точках видео.
-              const fw = (vbox.w > 0 && frameShareNow > 0)
-                ? cv.width * (vbox.w * frameShareNow) / Math.max(1, cbox.cw) : 0;
+              const fw = (vbox.w > 0 && frameShareNow > 0) ? vbox.w * frameShareNow * sc : 0;
               if (fw > 0) {
-                const wide = fw > cv.width * 1.001;
-                const w = wide ? cv.width - 4 : fw, h = w / ratio;
-                const x = (cv.width - w) / 2, y = (cv.height - h) / 2;
+                // Шире камеры — рамка СИНЯЯ и целиком вокруг картинки,
+                // ровно как на экране: внутри то, что камера дала, снаружи —
+                // посчитанный кадр. Прижимать её к краю холста (было
+                // `cv.width - 4`) больше не надо — холст шире рамки всегда.
+                const wide = frameShareNow > 1.001;
+                const w = fw, h = w / ratio;
+                const x = (vbox.x + vbox.w / 2) * sc - w / 2;
+                const y = (vbox.y + vbox.h / 2) * sc - h / 2;
                 const lw = Math.max(2, Math.round(cv.width / 500));
                 // Тёмная подложка обязательна: белого кадра хватает,
-                // чтобы акцентная линия на нём пропала.
+                // чтобы линия на нём пропала.
                 ctx.lineWidth = lw * 2.4; ctx.strokeStyle = 'rgba(0,0,0,.35)';
                 ctx.setLineDash([]); ctx.strokeRect(x, y, w, h);
-                ctx.lineWidth = lw; ctx.strokeStyle = '#d97757';
-                if (wide) ctx.setLineDash([lw * 5, lw * 4]);
+                ctx.lineWidth = lw; ctx.strokeStyle = wide ? SIM_LINE : '#d97757';
                 ctx.strokeRect(x, y, w, h);
-                ctx.setLineDash([]);
                 // Метка пропорции в углу рамки — единственная надпись
                 // на картинке, ровно как «2.35:1» у Cadrage.
                 const rs = Math.max(10, Math.round(cv.width / 78));
@@ -5885,46 +5906,21 @@
                               fontFamily="var(--font-mono)" fontSize="9.5" fill="#fff" opacity=".65">{f}</text>
                       </React.Fragment>;
                     })}
-                    {frameW > 0 && !tooWide && React.cloneElement(rect(frameW, frameH, 'var(--accent)', 2), { 'data-cf': 'scout-frame' })}
-                    {frameW > 0 && (
+                    {frameW > 0 && !tooWide && (
                       <rect x={(vbox.w - frameW) / 2} y={(vbox.h - frameH) / 2} width={frameW} height={frameH}
                             fill="none" stroke="#000" strokeWidth="4" opacity=".25" />
                     )}
+                    {frameW > 0 && !tooWide && React.cloneElement(rect(frameW, frameH, 'var(--accent)', 2), { 'data-cf': 'scout-frame' })}
                     {/* ЕДИНСТВЕННАЯ НАДПИСЬ НА САМОЙ КАРТИНКЕ — пропорция,
                         в углу рамки. Ровно как «2.35:1» у Cadrage: она
                         говорит, на что смотришь, и не мешает смотреть. */}
-                    {frameW > 0 && (
+                    {frameW > 0 && !tooWide && (
                       <text data-cf="scout-ratio"
                             x={(vbox.w + frameW) / 2 - 5} y={(vbox.h + frameH) / 2 - 5} textAnchor="end"
                             fontFamily="var(--font-mono)" fontSize="10" fill="#fff" opacity=".8"
                             stroke="rgba(0,0,0,.55)" strokeWidth="2.4" paintOrder="stroke">
                         {ratio.toFixed(2)}
                       </text>
-                    )}
-                    {/* ТРЕТЬЕ СОСТОЯНИЕ: объектив шире, чем камера может показать.
-                        Молчать тут нельзя — рамка была бы за краем экрана,
-                        и человек решил бы, что она просто не нарисовалась. */}
-                    {tooWide && (
-                      <React.Fragment>
-                        {/* РАМКА РИСУЕТСЯ СВОЕГО НАСТОЯЩЕГО РАЗМЕРА, просто
-                            пунктиром. Раньше в этой ветке она рисовалась
-                            по краю КАРТИНКИ (`vbox.w - 4`) — от прежней
-                            поры, когда картинка занимала экран и рамке
-                            было некуда деться. Теперь картинка сама
-                            уменьшается под рамку, и рамка помещается
-                            целиком — а рисовалась всё равно по картинке.
-                            Отсюда скачок между соседними объективами:
-                            на 29 мм рамка выходила 525 точек, на 32 — 541,
-                            хотя обязана быть одна и та же. Пунктир
-                            по-прежнему значит «объектив шире, чем видит
-                            телефон», а стрелки теперь стоят у края
-                            КАРТИНКИ — там кончается то, что камера
-                            вообще может показать. */}
-                        {React.cloneElement(rect(frameW, frameH, 'var(--accent)', 2, '8 6'), { 'data-cf': 'scout-frame', 'data-wide': '1' })}
-                        {[[2, 0], [vbox.w - 2, 180]].map(([x, rot], i) => (
-                          <path key={i} data-cf="scout-wide-arrow" d={`M${x} ${vbox.h / 2} l${rot ? 14 : -14} -9 v18 z`} fill="var(--accent)" opacity=".9" />
-                        ))}
-                      </React.Fragment>
                     )}
                     {calib && (
                       <React.Fragment>
@@ -5935,6 +5931,40 @@
                               opacity=".65" fontFamily="var(--font-ui)">не видно солнца — нажмите «Отмена» внизу</text>
                       </React.Fragment>
                     )}
+                  </svg>
+                )}
+                {/* ШИРЕ КАМЕРЫ — РАМКА РИСУЕТСЯ ВОКРУГ КАРТИНКИ, ОТДЕЛЬНЫМ
+                    СЛОЕМ. Верхний svg прибит к видео (там живёт дуга солнца,
+                    и её надо отсекать по кадру), а у корневого svg своё
+                    `overflow: hidden` от браузера — рамка шире картинки
+                    СРЕЗАЛАСЬ по её краям, и от неё оставались две горизонтальные
+                    линии непонятно от чего. Ошибок при этом никаких.
+                    Цвет другой намеренно (см. `SIM_LINE`): внутри рамки то, что
+                    камера даёт, снаружи — посчитанный кадр. Стрелки «камера
+                    кончается тут» убраны: край картинки и так виден — это
+                    граница с чёрным полем. */}
+                {!need && vbox.w > 0 && tooWide && cbox.cw > 0 && (
+                  <svg data-cf="scout-sim" viewBox={`0 0 ${cbox.cw} ${cbox.ch}`}
+                       style={{ position: 'absolute', left: 0, top: 0, width: cbox.cw, height: cbox.ch,
+                                pointerEvents: 'none' }}>
+                    {(() => {
+                      const cx = vbox.x + vbox.w / 2, cy = vbox.y + vbox.h / 2;
+                      const x = cx - frameW / 2, y = cy - frameH / 2;
+                      return (
+                        <React.Fragment>
+                          <rect x={x} y={y} width={frameW} height={frameH}
+                                fill="none" stroke="#000" strokeWidth="4" opacity=".25" />
+                          <rect data-cf="scout-frame" data-wide="1"
+                                x={x} y={y} width={frameW} height={frameH}
+                                fill="none" stroke={SIM_LINE} strokeWidth="2" />
+                          <text data-cf="scout-ratio" x={x + frameW - 5} y={y + frameH - 5} textAnchor="end"
+                                fontFamily="var(--font-mono)" fontSize="10" fill="#fff" opacity=".8"
+                                stroke="rgba(0,0,0,.55)" strokeWidth="2.4" paintOrder="stroke">
+                            {ratio.toFixed(2)}
+                          </text>
+                        </React.Fragment>
+                      );
+                    })()}
                   </svg>
                 )}
                 {/* УКАЗАТЕЛЬ «СОЛНЦЕ ВОН ТАМ». Без него вид бесполезен ровно
@@ -6064,7 +6094,12 @@
                     <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" data-lens={focal}
                             title="Камера, пропорция, сжатие, обзор устройства"
                             style={{ minHeight: 'var(--tap)', padding: '0 10px' }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-4)', color: 'var(--text)' }}>{focal}</span>
+                      {/* ЦИФРА СИНЕЕТ ВМЕСТЕ С РАМКОЙ. Один цвет на двоих —
+                          единственное, что связывает синюю рамку на кадре с тем,
+                          что этот объектив камере телефона не по силам. Надписи
+                          поверх кадра мы не пишем — объясняет цвет. */}
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-4)',
+                                     color: tooWide ? SIM_LINE : 'var(--text)' }}>{focal}</span>
                       <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 3 }}>мм</span>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
                     </button>
