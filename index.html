@@ -5034,6 +5034,18 @@
           // открытии всё ок, а потом крупность уезжает». Режим не помнится
           // между запусками — это разовая настройка, а не состояние.
           const [fovTune, setFovTune] = React.useState(false);
+          // ЧИСЛО ВВОДЯТ РУКАМИ, А НЕ НАБИРАЮТ ПОЛУМИЛЛИМЕТРАМИ.
+          // Замер по двум снимкам пользователя (наш кадр против проверенного
+          // эталона) дал разницу в 1,31 раза: телефон с камерой 26 мм отдал
+          // странице поток обзором как у 34 мм. От 26 до 34 кнопкой «+» —
+          // шестнадцать нажатий, и это ровно тот случай, когда подгонка
+          // выглядит непосильной, хотя нужное число уже известно. Поэтому
+          // рядом с кнопками стоит поле: знаешь число — вписал.
+          //   Черновик отдельным состоянием: пока набирают «3» из «34»,
+          // применять нечего — 3 мм вне разумного, и кадр дёрнулся бы
+          // на каждую цифру. Живьём применяется только осмысленное
+          // значение, остальное ждёт ухода фокуса.
+          const [eqDraft, setEqDraft] = React.useState(null);
           const pinchRef = React.useRef(null);
           const frameShare = (eq) => {
             // Какую долю ширины кадра занимает рамка при таком обзоре.
@@ -6305,13 +6317,30 @@
                   человек оказался бы в тупике — та же беда, что «нечем
                   закрыть окно». Шаг в полмиллиметра — это около градуса. */}
               {group('Обзор камеры телефона',
-                     'СПРАВОЧНОЕ ЧИСЛО — ЭТО ПРО ФОТОГРАФИЮ, А НЕ ПРО БРАУЗЕР. Сколько видит поток, отданный странице, спросить нечем ни одним способом: Safari выбирает свой пресет съёмки, и обзор у него бывает уже фотографического. Камерная сторона при этом считается точно — 35 мм на ALEXA Mini LF в 2.39 это 55,3°, — а вот какую долю экрана займёт эта рамка, зависит от числа ниже. Сведите рамку с тем, что знаете верным: ЩИПКОМ прямо по кадру, или кнопками тут. Число запомнится за этой камерой, и подгонять придётся один раз.',
+                     'СПРАВОЧНОЕ ЧИСЛО — ЭТО ПРО ФОТОГРАФИЮ, А НЕ ПРО БРАУЗЕР. Сколько видит поток, отданный странице, спросить нечем ни одним способом: Safari выбирает свой пресет съёмки, и обзор у него бывает уже фотографического. Камерная сторона при этом считается точно — 35 мм на ALEXA Mini LF в 2.39 это 55,3°, — а вот какую долю экрана займёт эта рамка, зависит от числа ниже. ЗАМЕРЕНО ПО СНИМКАМ: на iPhone 16e в Safari поток оказался уже фотографического в 1,31 раза — камера 26 мм отдала странице обзор как у 34 мм (54°). Сведите рамку с тем, что знаете верным: впишите число в поле, подвиньте кнопками или ЩИПКОМ прямо по кадру. Больше число — картинка шире и мельче, меньше — крупнее. Когда рамка выходит шире самого потока, она рисуется пунктиром со стрелками: шире этого телефон просто не видит — поможет только сверхширокая камера, если она у него есть. Число запомнится за этой камерой, и подгонять придётся один раз.',
                 <React.Fragment>
                   <button data-cf="scout-eq-minus" onClick={() => pickEq(Math.max(4, Math.round((devEq - 0.5) * 10) / 10))}
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>−</button>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 10px', minHeight: 'var(--tap)',
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 4px', minHeight: 'var(--tap)',
                                  fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }}>
-                    {devEq} мм
+                    <input data-cf="scout-eq-input" type="number" inputMode="decimal" step="0.5" min="4" max="400"
+                           value={eqDraft === null ? String(devEq) : eqDraft}
+                           onChange={(e) => {
+                             const v = e.target.value;
+                             setEqDraft(v);
+                             const n = parseFloat(v.replace(',', '.'));
+                             if (n >= 4 && n <= 400) pickEq(Math.round(n * 10) / 10);
+                           }}
+                           onBlur={() => {
+                             const n = parseFloat(String(eqDraft === null ? devEq : eqDraft).replace(',', '.'));
+                             if (n > 0) pickEq(Math.min(400, Math.max(4, Math.round(n * 10) / 10)));
+                             setEqDraft(null);
+                           }}
+                           onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                           style={{ width: '4.2em', minHeight: 'var(--tap)', textAlign: 'right', background: 'var(--bg)',
+                                    border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 6px',
+                                    fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }} />
+                    мм
                     <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>{devFov.toFixed(1)}°</span>
                   </span>
                   <button data-cf="scout-eq-plus" onClick={() => pickEq(Math.min(400, Math.round((devEq + 0.5) * 10) / 10))}
@@ -6331,6 +6360,8 @@
                     {cam.videoRef.current && cam.videoRef.current.videoWidth
                       ? ` · ${cam.videoRef.current.videoWidth}×${cam.videoRef.current.videoHeight}` : ''}
                     {' · '}рамка {focal} мм займёт {(frameShare(devEq) * 100).toFixed(0)}% ширины кадра
+                    <br />Больше число — в рамку влезает больше сцены.
+                    {frameShare(devEq) > 1.001 && <React.Fragment>{' '}Рамка шире, чем видит камера — оттого пунктир и стрелки.</React.Fragment>}
                   </span>
                 </React.Fragment>
               )}

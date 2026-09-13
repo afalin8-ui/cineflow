@@ -729,6 +729,81 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('угол запомнился за этой камерой', Object.values(presets.eqmap).length >= 1,
          JSON.stringify(presets.eqmap));
 
+  // ------------------------------- 4б2. ОБЗОР ВПИСЫВАЕТСЯ ЧИСЛОМ, А НЕ НАБИРАЕТСЯ
+  // Замер по снимкам пользователя дал разницу в 1,31 раза: камера 26 мм
+  // отдала странице поток обзором как у 34 мм. От 26 до 34 кнопкой «+» —
+  // шестнадцать нажатий. Поле рядом с кнопками отвечает ровно на это.
+  log('\n4б2. Обзор телефона вписывается числом');
+  const typed = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const v = document.querySelector('[data-cf="scout-cam"] video');
+    const zoom = () => (v && box) ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0;
+    const type = (el, val) => {
+      // React слушает НАСТОЯЩИЙ сеттер значения: присваивание через
+      // el.value он не замечает вовсе, и проверка была бы зелёной
+      // при неработающем поле.
+      const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      set.call(el, String(val));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(450);
+    // Ставим заведомо известный обзор, чтобы считать от него
+    const inp = document.querySelector('[data-cf="scout-eq-input"]');
+    const found = !!inp;
+    if (!found) return { found };
+    // Окно настроек длинное и прокручивается внутри себя: без этого
+    // поле стоит ниже видимой полосы, elementFromPoint отдаёт пустоту,
+    // и проверка ловила бы не промах по полю, а прокрутку.
+    inp.scrollIntoView({ block: 'center' });
+    await wait(200);
+    const tap = inp.getBoundingClientRect();
+    const t = document.elementFromPoint(tap.left + tap.width / 2, tap.top + tap.height / 2);
+    const hit = !!t && (t === inp || inp.contains(t));
+    const hitWas = t ? (t.tagName + '.' + (t.className || '') + '#' + (t.dataset.cf || '')) : 'ничего';
+    const tall = tap.height;
+    type(inp, '26');
+    await wait(300);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(350);
+    const z26 = zoom();
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    // Недописанное число не применяется: «3» из «34» — это не 3 мм
+    type(document.querySelector('[data-cf="scout-eq-input"]'), '3');
+    await wait(250);
+    const midway = +(localStorage.getItem('cf_scout_deveq'));
+    type(document.querySelector('[data-cf="scout-eq-input"]'), '34');
+    await wait(300);
+    const stored = +(localStorage.getItem('cf_scout_deveq'));
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(350);
+    const z34 = zoom();
+    // Уход фокуса приводит недописанное в порядок, а не оставляет мусор
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    const el = document.querySelector('[data-cf="scout-eq-input"]');
+    type(el, '900');
+    el.focus(); el.blur();
+    await wait(300);
+    const clamped = +(localStorage.getItem('cf_scout_deveq'));
+    type(document.querySelector('[data-cf="scout-eq-input"]'), '26');
+    await wait(250);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(300);
+    return { found, hit, hitWas, tall, z26, z34, midway, stored, clamped };
+  });
+  expect('поле обзора есть и нажатие попадает в него', typed.found && typed.hit, typed.hitWas);
+  expect('поле ростом с палец', typed.tall >= 34, `${(typed.tall || 0).toFixed(0)} точек`);
+  expect('вписанное число применяется', typed.stored === 34, `${typed.stored} мм`);
+  expect('недописанное «3» НЕ применяется', typed.midway === 26, `${typed.midway} мм`);
+  expect('34 мм вместо 26 — картинка отъезжает примерно в 1,3 раза',
+         typed.z26 > 0 && typed.z34 > 0 && near(typed.z26 / typed.z34, 1.3, 0.06),
+         `${typed.z26.toFixed(2)}× -> ${typed.z34.toFixed(2)}× (в ${(typed.z26 / typed.z34).toFixed(2)} раза)`);
+  expect('бессмысленное число приводится к пределу, а не ломает визир',
+         typed.clamped === 400, `${typed.clamped} мм`);
+
   // ------------------------------------------- 4в. В НАСТРОЙКАХ НЕ СВИТОК
   // Мерило числовое: сколько СЛОВ видно в окне в покое. На глаз «вроде
   // немного» и при десяти абзацах — их же читают по одному разу.
