@@ -397,12 +397,27 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     }
     await new Promise(r => setTimeout(r, 250));
     const svg = document.querySelector('[data-cf="scout-ar"]');
-    const f = svg.querySelector('[data-cf="scout-frame"]');
+    // Рамка шире камеры живёт В ДРУГОМ слое (`scout-sim`),
+    // потому что верхний svg прибит к картинке и срезал бы её.
+    // Искать её внутри `scout-ar` значило бы не найти вовсе.
+    const f = document.querySelector('[data-cf="scout-frame"]');
     const v = document.querySelector('[data-cf="scout-cam"] video');
     const box = document.querySelector('[data-cf="scout-cam"]');
+    const fr = f ? f.getBoundingClientRect() : null;
+    const vr = v ? v.getBoundingClientRect() : null;
     return { lens: cur(), w: f ? +f.getAttribute('width') : 0,
              wide: !!(f && f.getAttribute('data-wide')),
-             arrows: svg.querySelectorAll('[data-cf="scout-wide-arrow"]').length,
+             // цвет линии: синий = посчитано, а не снято
+             stroke: f ? (f.getAttribute('stroke') || '') : '',
+             // целиком ли картинка внутри рамки
+             holds: !!(fr && vr) && fr.left <= vr.left + 1 && fr.right >= vr.right - 1,
+             frOnScreen: fr ? Math.round(fr.width) : 0,
+             // Ширина СВОЕГО svg у рамки: у корневого svg браузер сам
+             // ставит `overflow: hidden`, и всё, что шире его, СРЕЗАЕТСЯ.
+             // По габариту самого прямоугольника этого не видно вовсе:
+             // getBoundingClientRect отдаёт геометрию, а не то, что нарисовано.
+             hostW: (f && f.ownerSVGElement)
+               ? +f.ownerSVGElement.getAttribute('viewBox').split(' ')[2] : 0,
              svgW: +svg.getAttribute('viewBox').split(' ')[2],
              // во сколько раз картинка увеличена против ширины экрана
              zoom: v ? v.getBoundingClientRect().width / box.getBoundingClientRect().width : 0,
@@ -418,8 +433,17 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('а рамка при этом СТОИТ НА МЕСТЕ',
          Math.abs(r100.frameOfScreen - r35.frameOfScreen) < 0.02 && r35.frameOfScreen > 0.8,
          `${(r35.frameOfScreen * 100).toFixed(0)}% и ${(r100.frameOfScreen * 100).toFixed(0)}% ширины экрана`);
-  expect('12 мм ШИРЕ камеры — рамка пунктиром и стрелки наружу',
-         r12.lens === 12 && r12.wide && r12.arrows >= 2, `пунктир=${r12.wide}, стрелок=${r12.arrows}`);
+  expect('12 мм ШИРЕ камеры — рамка СИНЯЯ, а не терракотовая',
+         r12.lens === 12 && r12.wide && /38bdf8/i.test(r12.stroke),
+         `шире=${r12.wide}, цвет ${r12.stroke}`);
+  // ГЛАВНОЕ В ЭТОМ СОСТОЯНИИ — ЧТО РАМКА ВИДНА ЦЕЛИКОМ.
+  // Она рисовалась в слое, прибитом к самой картинке, а у корневого
+  // svg браузер сам ставит `overflow: hidden` — бока рамки СРЕЗАЛИСЬ,
+  // и на экране оставались две горизонтальные линии непонятно от чего.
+  expect('и картинка целиком ВНУТРИ неё',
+         r12.holds && r12.frOnScreen > 0, `рамка ${r12.frOnScreen} точек, картинка внутри=${r12.holds}`);
+  expect('и САМА РАМКА НЕ СРЕЗАНА — слой под неё шире её самой',
+         r12.hostW >= r12.w - 1, `слой ${r12.hostW}, рамка ${Math.round(r12.w)}`);
   // РАМКА ОБЯЗАНА БЫТЬ ВИДНА ЦЕЛИКОМ на любом объективе: увеличили
   // картинку так, что её края ушли за экран, — и выбирать стало нечем.
   const fits = await page.evaluate(() => {
@@ -1114,6 +1138,107 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
            Math.abs(fw / bx.w - shot.frameOfScreen) < 0.04,
            `${(fw / bx.w * 100).toFixed(0)}% на снимке против ${(shot.frameOfScreen * 100).toFixed(0)}% на экране`);
   }
+
+  // -------------------- 5б. СНИМОК НА ОБЪЕКТИВЕ ШИРЕ КАМЕРЫ
+  // ЖИВОЙ СЛУЧАЙ: 29 мм на iPhone 16e шире, чем отдаёт камера, и в галерее
+  // на снимке стояла рамка «не пойми от чего» — вдвое меньше, чем была
+  // на экране. Причина: в холст ложился кусок ПОТОКА, а рамка считалась
+  // долей ОТ КОНТЕЙНЕРА. Пока картинка шире экрана, это одно и то же;
+  // а когда она УЖЕ экрана, мерила расходятся. Замер по снимку
+  // пользователя: 53,6 % ширины фотографии вместо своих девяноста.
+  log('\n5б. Снимок на объективе шире камеры');
+  const wideShot = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    for (let i = 0; i < 40 && cur() !== 12; i++) {
+      document.querySelector(cur() < 12 ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]').click();
+      await wait(60);
+    }
+    await wait(350);
+    const boxEl = document.querySelector('[data-cf="scout-cam"]');
+    const fEl = document.querySelector('[data-cf="scout-frame"]');
+    const vEl = document.querySelector('[data-cf="scout-cam"] video');
+    if (!fEl) return { err: 'рамки на экране нет' };
+    const bw = boxEl.getBoundingClientRect().width;
+    const onScreen = fEl.getBoundingClientRect().width / bw;
+    const picOfScreen = vEl.getBoundingClientRect().width / bw;
+    const before = JSON.parse(localStorage.getItem('cf_references') || '[]').length;
+    document.querySelector('[data-cf="scout-shoot"]').click();
+    for (let i = 0; i < 60 && JSON.parse(localStorage.getItem('cf_references') || '[]').length === before; i++) await wait(200);
+    const refs = JSON.parse(localStorage.getItem('cf_references') || '[]');
+    const url = refs[refs.length - 1] && refs[refs.length - 1].url;
+    if (!url) return { err: 'снимок не сохранился' };
+    // Рамку на снимке ищем ПО ЦВЕТУ: она синяя — значит посчитана,
+    // а не снята. Заодно меряем, где кончается сама картинка.
+    const box = await new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const cx = c.getContext('2d');
+        cx.drawImage(im, 0, 0);
+        const d = cx.getImageData(0, 0, c.width, c.height).data;
+        let l = 1e9, r2 = -1, t = 1e9, b2 = -1, n = 0;
+        for (let y = 0; y < c.height; y += 2) {
+          for (let x = 0; x < c.width; x += 2) {
+            const i = (y * c.width + x) * 4;
+            const R = d[i], G = d[i + 1], B = d[i + 2];
+            if (B > 140 && B - R > 55 && B - G > 25) {
+              n++;
+              if (x < l) l = x; if (x > r2) r2 = x;
+              if (y < t) t = y; if (y > b2) b2 = y;
+            }
+          }
+        }
+        // КРАЯ САМОЙ КАРТИНКИ — САМЫЙ ДЛИННЫЙ НЕЧЁРНЫЙ ОТРЕЗОК
+        // средней строки, а НЕ крайние нечёрные точки: та же строка
+        // пересекает и бока самой рамки, и по крайним точкам выходила
+        // ширина РАМКИ, а не картинки — проверка сравнивала рамку с собой.
+        let pl = 0, pr = 0, runL = -1;
+        const y0 = Math.floor(c.height / 2);
+        for (let x = 0; x <= c.width; x++) {
+          const i = (y0 * c.width + x) * 4;
+          const on = x < c.width && (d[i] + d[i + 1] + d[i + 2]) > 40;
+          if (on && runL < 0) runL = x;
+          if (!on && runL >= 0) {
+            if (x - runL > pr - pl) { pl = runL; pr = x; }
+            runL = -1;
+          }
+        }
+        res({ l, r: r2, t, b: b2, n, w: c.width, h: c.height, pl, pr });
+      };
+      im.onerror = () => res(null);
+      im.src = url;
+    });
+    return { onScreen, picOfScreen, box };
+  });
+  if (wideShot.err) expect('снимок на широком объективе сделан', false, wideShot.err);
+  else {
+    const wb = wideShot.box || {};
+    expect('рамка на снимке СИНЯЯ — посчитана, а не снята', wb.n > 50, `синих точек ${wb.n || 0}`);
+    if (wb.n > 50) {
+      const fw = wb.r - wb.l, fh = wb.b - wb.t;
+      expect('и у неё пропорция кадра', Math.abs(fw / fh - 2.39) < 0.12, (fw / fh).toFixed(2));
+      expect('доля рамки на снимке та же, что была на экране',
+             Math.abs(fw / wb.w - wideShot.onScreen) < 0.05,
+             `${(fw / wb.w * 100).toFixed(0)}% на снимке против ${(wideShot.onScreen * 100).toFixed(0)}% на экране`);
+      expect('картинка на снимке УЖЕ рамки — кадр посчитан шире снятого',
+             (wb.pr - wb.pl) < fw * 0.98,
+             `картинка ${wb.pr - wb.pl}, рамка ${Math.round(fw)} из ${wb.w}`);
+      expect('и доля картинки на снимке та же, что была на экране',
+             Math.abs((wb.pr - wb.pl) / wb.w - wideShot.picOfScreen) < 0.06,
+             `${((wb.pr - wb.pl) / wb.w * 100).toFixed(0)}% против ${(wideShot.picOfScreen * 100).toFixed(0)}% на экране`);
+    }
+  }
+  // Возвращаем рабочий объектив, чтобы дальше всё шло как раньше
+  await page.evaluate(async () => {
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    for (let i = 0; i < 40 && cur() !== 35; i++) {
+      document.querySelector(cur() < 35 ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]').click();
+      await new Promise(r => setTimeout(r, 60));
+    }
+    await new Promise(r => setTimeout(r, 250));
+  });
 
   // ------------------------------------------------------------ 6. ЗАМЕТКИ
   log('\n6. Заметки на ходу ложатся к объекту');
