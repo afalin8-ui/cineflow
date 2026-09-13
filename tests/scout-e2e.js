@@ -435,6 +435,36 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
          fits.w <= fits.bw + 1 && fits.h <= fits.bh + 1, JSON.stringify(fits));
   await setLens(35);
 
+  // ------------------------------- 3в. СВОЁ ФОКУСНОЕ НЕ ТЕРЯЕТСЯ
+  log('\n3в. Своё фокусное не теряется');
+  // СВОЁ ФОКУСНОЕ НЕ ТЕРЯЕТСЯ. Вписал 29, ушёл на 35, вернулся — и попал
+  // не на 29, а на 27: в общем списке 29 нет, и лестница о нём не знала.
+  // Число на кнопке при этом другое, а человек видит «рамка не сошлась».
+  const custom = await page.evaluate(async () => {
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await new Promise(r => setTimeout(r, 450));
+    const inp = [...document.querySelectorAll('input[type="number"]')].find(i => /например/.test(i.placeholder || ''));
+    if (!inp) return { err: 'поля «своё фокусное» нет' };
+    const setV = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setV.call(inp, '29');
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 400));
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await new Promise(r => setTimeout(r, 350));
+    const at29 = cur();
+    // Уходим на два шага вверх и возвращаемся на два вниз
+    for (let i = 0; i < 2; i++) { document.querySelector('[data-cf="scout-lens-plus"]').click(); await new Promise(r => setTimeout(r, 120)); }
+    const up = cur();
+    for (let i = 0; i < 2; i++) { document.querySelector('[data-cf="scout-lens-minus"]').click(); await new Promise(r => setTimeout(r, 120)); }
+    return { at29, up, back: cur() };
+  });
+  expect('вписанное своё фокусное встаёт текущим', custom.at29 === 29, JSON.stringify(custom));
+  expect('и ВОЗВРАЩАЕТСЯ шагами назад, а не теряется',
+         custom.back === 29, `29 → ${custom.up} → ${custom.back}`);
+  await setLens(35);
+
   // ------------------------------------- 3б. КАДР ЗАНИМАЕТ ЭКРАН ЦЕЛИКОМ
   // Мерило числовое: сколько точек высоты досталось кадру против высоты
   // всего экрана. На глаз «вроде видно» и при полосе в сотню точек.
@@ -529,6 +559,19 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       const now = [...document.querySelectorAll('[data-cf="scout"] button')].find(b => b.textContent.trim() === 'сейчас');
       if (now) now.click();
       await new Promise(r => setTimeout(r, 200));
+      // ВРЕМЯ СТАВИМ САМИ, а не берём «сейчас»: у контейнера свои часы,
+      // и вечером солнце оказывается под горизонтом — подкрутить по нему
+      // нельзя (и приложение честно об этом говорит), а проверка от
+      // времени суток зависеть не должна. Тянем на полдень: ровно
+      // середина шкалы — 720 минут.
+      const tb = document.querySelector('[data-cf="scout-timebar"]');
+      if (tb) {
+        const r0 = tb.getBoundingClientRect();
+        const x = r0.left + r0.width * 0.5, y = r0.top + r0.height / 2;
+        tb.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 9 }));
+        tb.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true, pointerId: 9 }));
+        await new Promise(r => setTimeout(r, 300));
+      }
       clock.click();                                  // шкалу убираем — она закрывает кадр
       await new Promise(r => setTimeout(r, 200));
     }
@@ -545,7 +588,10 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   });
   await page.waitForTimeout(500);
   const sunAlt = await page.evaluate(() => {
-    const p = sunPosition(55.7558, 37.6173, new Date());
+    // Тот же миг, что показывает экран: сегодняшний день, 12:00 по часам
+    // устройства — именно так приложение строит `when` из даты и ползунка.
+    const at = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00');
+    const p = sunPosition(55.7558, 37.6173, at);
     return { alt: p.alt, az: p.az };
   });
   await aimAt(page, 200, 90 + sunAlt.alt, 0);
@@ -568,7 +614,9 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     const hits = !!t && (t === btn || btn.contains(t));
     btn.click();
     await new Promise(r2 => setTimeout(r2, 400));
+    const tt = document.querySelector('[data-cf="toast"]');
     return { inCalib, scrim, hits, out: !/Отмена/.test(btn.textContent),
+             toast: tt ? tt.innerText.trim().slice(0, 90) : '',
              off0, off1: localStorage.getItem('cf_scout_headoff') };
   });
   expect('кнопка компаса включает подкрутку и становится «Отмена»',
@@ -1231,6 +1279,39 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
            shortScreen.wide || Math.abs(shortScreen.fw / shortScreen.fh - 2.39) < 0.1,
            (shortScreen.fw / shortScreen.fh).toFixed(2));
   }
+
+  // РАЗРЫВ БЫЛ РОВНО МЕЖДУ 29 И 27 ММ. На ALEXA Mini LF в 2.39 доля
+  // ширины растёт 0.951 → 1.021, и особый случай «шире камеры — покажем
+  // всё» швырял картинку скачком во весь экран. Проходим лестницу подряд
+  // и смотрим, что соседние шаги не дают прыжка.
+  const sweep = await ph.evaluate(async () => {
+    const set = async (mm) => {
+      const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
+      for (let i = 0; i < 40 && cur() !== mm; i++) {
+        document.querySelector(cur() < mm ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]').click();
+        await new Promise(r => setTimeout(r, 60));
+      }
+      await new Promise(r => setTimeout(r, 220));
+      const v = document.querySelector('[data-cf="scout-cam"] video');
+      const box = document.querySelector('[data-cf="scout-cam"]');
+      return { mm: cur(), zoom: v.getBoundingClientRect().width / box.getBoundingClientRect().width };
+    };
+    const out = [];
+    for (const mm of [40, 35, 32, 27, 24, 21]) out.push(await set(mm));
+    return out;
+  });
+  const jumps = [];
+  for (let i = 1; i < sweep.length; i++) {
+    const a = sweep[i - 1].zoom, b = sweep[i].zoom;
+    const k = Math.max(a, b) / Math.max(0.001, Math.min(a, b));
+    if (k > 1.6) jumps.push(`${sweep[i - 1].mm}→${sweep[i].mm}: ${a.toFixed(2)}×→${b.toFixed(2)}×`);
+  }
+  expect('соседние объективы не дают скачка крупности', jumps.length === 0,
+         jumps.join(' · ') || sweep.map(x => `${x.mm}:${x.zoom.toFixed(2)}×`).join(' '));
+  expect('и крупность падает МОНОТОННО от длинного к короткому',
+         sweep.every((x, i) => i === 0 || x.zoom <= sweep[i - 1].zoom + 0.01),
+         sweep.map(x => `${x.mm}:${x.zoom.toFixed(2)}×`).join(' '));
+
 
   await ph.evaluate(async () => {
     const b = document.querySelector('[data-cf="scout-back"]');
