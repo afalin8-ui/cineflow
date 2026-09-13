@@ -2307,13 +2307,20 @@
         // 30 мм (iPad); сверхширокая у всех, у кого она есть, — 13 мм.
         // Тридцать кнопок с именами моделей отвечали бы на вопрос,
         // который человек и так про себя знает, вчетверо длиннее.
+        //   Но НАБОР важнее числа, и по нему делить приходится: у 16e,
+        // 17e и Air сверхширокой НЕТ ВОВСЕ, хотя основная у них та же
+        // 26 мм, что у обычного iPhone. Стой они в одном наборе, человек
+        // видел бы кнопку «0,5×», которой у его телефона не существует, —
+        // а нажав её, получил бы рамку вдвое шире, чем снимает камера.
         //   Подписи — теми кратностями, что пишет сама камера телефона
         // («0,5×», «1×»), потому что человек узнаёт их, а не миллиметры.
         const PHONE_CAMS = [
           { id: 'ipro',  label: 'iPhone Pro',   hint: '14 Pro и новее',
             lens: [['0,5×', 13], ['1×', 24], ['2×', 48], ['3×', 77], ['5×', 120]] },
-          { id: 'iph',   label: 'iPhone',       hint: '14, 15, 16, 17, Air',
+          { id: 'iph',   label: 'iPhone',       hint: '14 · 15 · 16 · 17',
             lens: [['0,5×', 13], ['1×', 26], ['2×', 52]] },
+          { id: 'ie',    label: 'iPhone e · Air', hint: '16e · 17e · Air — без сверхширокой',
+            lens: [['1×', 26], ['2×', 52]] },
           { id: 'iold',  label: 'iPhone до 14', hint: '11 · 12 · 13',
             lens: [['0,5×', 13], ['1×', 26], ['2×', 52], ['3×', 77]] },
           { id: 'se',    label: 'iPhone SE',    hint: '2-е и 3-е поколение',
@@ -4676,7 +4683,7 @@
         const ScoutModule = ({
           locations, activeLocationId, setActiveLocationId, createLocationAt,
           stickies, setStickies, addLocationNote, references, scenes,
-          projectRatio, userName, showToast, readOnly, syncDoc, onCapture
+          projectRatio, userName, showToast, readOnly, syncDoc, onCapture, onFull
         }) => {
           const loc = locations.find(x => x.id === activeLocationId) || locations[0] || null;
           // В ПРОСМОТРЕ ВСЕГДА ОТКРЫВАЕТСЯ «ПЛАН». Гость вид не выбирал, и
@@ -4693,6 +4700,19 @@
             if (readOnly) return;
             try { localStorage.setItem('cf_scout_mode', mode); } catch (e) {}
           }, [mode, readOnly]);
+          // КАМЕРА ЗАБИРАЕТ ВЕСЬ ЭКРАН, ВКЛЮЧАЯ ОБЩУЮ ШАПКУ И ТАБ-БАР.
+          // Визир — это видоискатель, и главное в нём кадр: любая полоса
+          // сверху и снизу стоит ему высоты, а в горизонтальном положении
+          // телефона она стоит ему всего. Выход при этом гарантирован
+          // и нарисован всегда — кнопка «‹ План» в самом кадре, — иначе
+          // это была бы ровно та ловушка «нечем закрыть», которую чинили
+          // во всплывающих окнах. Флаг снимается и при уходе с модуля:
+          // вернуться на другой экран без шапки нельзя.
+          React.useEffect(() => {
+            if (!onFull) return;
+            onFull(mode === 'ar');
+            return () => onFull(false);
+          }, [mode, onFull]);
 
           // --- ГДЕ И КОГДА ---
           // Координаты берём у объекта. Своего поля координат у скаута нет:
@@ -4984,6 +5004,26 @@
           const notes = React.useMemo(
             () => loc ? stickies.filter(st => st.locationId === loc.id) : [], [stickies, loc]);
           const [noteOpen, setNoteOpen] = React.useState(false);
+          // Курсор в ТОЛЬКО ЧТО заведённую заметку. Пустая строка без
+          // курсора выглядит как «ничего не добавилось» — то же правило,
+          // что у новой строки состава группы.
+          const [noteFresh, setNoteFresh] = React.useState('');
+          const addNote = () => {
+            if (!loc) return;
+            const id = addLocationNote(loc.id);
+            if (id) setNoteFresh(id);
+          };
+          // Закрытие заметок ГОВОРИТ, что записано и куда. Заметка
+          // сохраняется на каждую букву, но человеку это ниоткуда не видно:
+          // окно просто закрывалось, и оставалось гадать, дошло ли.
+          const closeNotes = () => {
+            setNoteOpen(false); setNoteFresh('');
+            if (readOnly || !loc) return;
+            const kept = notes.filter(st => (st.text || '').trim()).length;
+            showToast(kept
+              ? `${kept} ${plur(kept, 'заметка', 'заметки', 'заметок')} в объекте «${loc.name}»`
+              : 'Пустые заметки не сохраняются');
+          };
           const patchNote = (id, text) => {
             // Проверка первой строкой — правило всего приложения. Наружу
             // правка и так не ушла бы (syncDoc выходит по READ_ONLY), но
@@ -5375,7 +5415,7 @@
                 )}
                 {/* ПОДПИСЬ: где, когда, кем, чем. Она же ложится в запись кадра. */}
                 {!need && (
-                  <div className="absolute" data-cf="scout-stamp" style={{ left: 8, bottom: 8, right: 8, pointerEvents: 'none' }}>
+                  <div className="absolute" data-cf="scout-stamp" style={{ left: 8, bottom: 'calc(var(--tap) + 20px + var(--sab))', right: 8, pointerEvents: 'none' }}>
                     <span style={{ display: 'inline-block', maxWidth: '100%', padding: '4px 8px', borderRadius: 'var(--r-sm)',
                                    background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 'var(--fs-1)',
                                    fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
@@ -5384,8 +5424,18 @@
                   </div>
                 )}
                 {/* Доверие компасу и подкрутка */}
-                {!need && (
-                  <div className="absolute flex items-center gap-2" style={{ left: 8, top: 8 }}>
+                <div className="absolute flex items-center gap-2" style={{ left: 8, top: 'calc(8px + var(--sat))' }}>
+                  {/* ВЫХОД ИЗ КАМЕРЫ РИСУЕТСЯ ВСЕГДА, при любом состоянии
+                      камеры и разрешений. Шапки модуля в этом виде нет
+                      вовсе — кадр занимает весь экран, — и если спрятать
+                      эту кнопку заодно с остальным, из камеры нельзя будет
+                      выйти: та же беда «нечем закрыть», что чинили
+                      во всплывающих окнах. */}
+                  <button onClick={() => setMode('plan')} data-cf="scout-back" className="cf-hbtn"
+                          style={{ padding: '0 9px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
+                                   color: '#fff', fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }}>‹ План</button>
+                  {!need && (
+                  <React.Fragment>
                     {yaw === null ? (
                       <span style={{ padding: '4px 8px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
                                      color: 'var(--danger)', fontSize: 'var(--fs-1)' }}>
@@ -5420,15 +5470,87 @@
                         {headOff > 0 ? '+' : ''}{Math.round(headOff)}°
                       </button>
                     )}
+                  </React.Fragment>
+                  )}
+                </div>
+
+                {/* ОБЪЕКТ — ЧИПОМ В УГЛУ, а выбор за ним. На выезде объект
+                    меняют раз в час, а кадр смотрят непрерывно: постоянная
+                    строка выбора отнимала у кадра полсотни точек. */}
+                <button onClick={() => setPlaceOpen(true)} data-cf="scout-place"
+                        className="absolute flex items-center gap-1.5"
+                        style={{ right: 8, top: 'calc(8px + var(--sat))', maxWidth: '46%', minHeight: 'var(--tap-sm)',
+                                 padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
+                                 color: '#fff', fontSize: 'var(--fs-2)' }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {loc ? (loc.name || 'без названия') : 'выбрать объект'}
+                  </span>
+                  <span style={{ color: 'var(--muted)' }}>▾</span>
+                </button>
+
+                {/* ШКАЛА ДНЯ — ПО НАЖАТИЮ, а не всегда. Она в 92 точки
+                    высотой, и в горизонтальном положении телефона это
+                    четверть экрана: дуга солнца и так нарисована прямо
+                    в кадре, а шкала нужна тогда, когда спрашивают
+                    «а что будет в шесть». */}
+                {barOpen && coords && (
+                  <div className="absolute" data-cf="scout-timewrap"
+                       style={{ left: 0, right: 0, bottom: 'calc(var(--tap) + 16px + var(--sab))',
+                                background: 'rgba(0,0,0,.78)', borderTop: '1px solid var(--border)' }}>
+                    {timeBar()}
                   </div>
                 )}
+
+                {/* НИЖНЯЯ ПОЛОСА ЛЕЖИТ ПОВЕРХ КАДРА, а не под ним. Раньше
+                    она, шапка модуля и шкала дня стояли отдельными полосами
+                    в потоке и съедали около 200 точек: на телефоне в
+                    горизонтальном положении кадру оставалось меньше сотни,
+                    то есть ровно «ничего не видно». Затемнение градиентом,
+                    а не плашкой: под полосой всё ещё кадр. */}
+                <div className="absolute flex items-center gap-2" data-cf="scout-bar"
+                     style={{ left: 0, right: 0, bottom: 0, padding: '6px 10px calc(6px + var(--sab))',
+                              background: 'linear-gradient(to top, rgba(0,0,0,.74), rgba(0,0,0,0))' }}>
+                  <button onClick={() => setFocal(stepLens(-1))} data-cf="scout-lens-minus"
+                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
+                                   background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-4)' }}>−</button>
+                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" title="Камера, пропорция, сжатие, обзор устройства"
+                          style={{ minHeight: 'var(--tap)', padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                   background: 'rgba(0,0,0,.6)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: '#fff' }}>{focal} мм</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
+                  </button>
+                  <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
+                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
+                                   background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-4)' }}>+</button>
+                  {coords && (
+                    <button onClick={() => setBarOpen(o => !o)} data-cf="scout-clock"
+                            title="Шкала дня: когда где будет солнце"
+                            style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)',
+                                     background: barOpen ? 'var(--accent)' : 'rgba(0,0,0,.6)',
+                                     color: barOpen ? 'var(--bg)' : '#fff',
+                                     fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
+                      {hhmm(when)}{sunNow ? ` · ${sunNow.alt.toFixed(0)}°` : ''}
+                    </button>
+                  )}
+                  <button onClick={shoot} data-cf="scout-shoot" disabled={busy || !cam.on} className="cf-edit-only ml-auto"
+                          style={{ minHeight: 'var(--tap)', padding: '0 18px', borderRadius: 'var(--r-md)',
+                                   background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600,
+                                   opacity: (busy || !cam.on) ? .45 : 1 }}>
+                    {busy ? 'кладу…' : 'Снять'}
+                  </button>
+                  <button onClick={() => setNoteOpen(true)} data-cf="scout-notes-open" title="Заметки с выезда"
+                          style={{ minHeight: 'var(--tap)', minWidth: 'var(--tap)', borderRadius: 'var(--r-sm)',
+                                   background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-2)' }}>
+                    {notes.length ? `☰ ${notes.length}` : '☰'}
+                  </button>
+                </div>
                 {/* Компаса нет вовсе — азимут ведут рукой. Это тот же выход,
                     что «только гироскоп» у Sun Seeker: без него на устройстве
                     без магнитометра дуга не показывалась бы никогда. */}
                 {!need && (head.heading === null) && (
                   <input type="range" min="0" max="359" value={manualHead === null ? 0 : Math.round(manualHead)}
                          onChange={(e) => setManualHead(parseFloat(e.target.value))} data-ro-ok
-                         className="absolute" style={{ left: 12, right: 12, bottom: 40, width: 'auto' }} />
+                         className="absolute" style={{ left: 12, right: 12, bottom: 'calc(var(--tap) + 58px + var(--sab))', width: 'auto' }} />
                 )}
               </div>
             );
@@ -5590,11 +5712,56 @@
           // ------------------------------------------------------------------
           // ЗАМЕТКИ НА ХОДУ
           // ------------------------------------------------------------------
+          // --- ОБЪЕКТ И ДЕНЬ ---
+          // В камере эти два поля живут в шторке, а не в шапке: на площадке
+          // объект выбирают один раз за выезд, а кадр смотрят всё время.
+          // Постоянная строка с ними отнимала у кадра полсотни точек
+          // ради двух нажатий в час.
+          const [placeOpen, setPlaceOpen] = React.useState(false);
+          // Шкала дня в камере — по нажатию. В плане она стоит всегда:
+          // там экран и заведён под разбор дня, и прятать её незачем.
+          const [barOpen, setBarOpen] = React.useState(false);
+          const placeModal = () => (
+            <Modal onClose={() => setPlaceOpen(false)} z={255} box="p-5 max-w-sm" label="Объект и день">
+              <h3 data-cf="scout-place-title" style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>Объект и день</h3>
+              <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.6 }}>
+                Куда лягут кадры и заметки, и на какой день считается солнце.
+              </p>
+              <select value={loc ? loc.id : ''} onChange={(e) => setActiveLocationId(e.target.value)} data-ro-ok
+                      className="w-full" data-cf="scout-place-pick"
+                      style={{ background: 'var(--card)', color: 'var(--text)', border: '1px solid var(--border)',
+                               borderRadius: 'var(--r-sm)', minHeight: 'var(--tap)', marginTop: 14,
+                               fontSize: 'var(--fs-3)', padding: '0 8px' }}>
+                {!loc && <option value="">— объекта нет —</option>}
+                {locations.map(l => <option key={l.id} value={l.id}>{l.name || 'без названия'}</option>)}
+              </select>
+              <button onClick={iAmHere} disabled={locating} className="cf-edit-only w-full"
+                      title="Взять координаты у приёмника: найдётся объект рядом — откроется он, не найдётся — заведётся новый"
+                      style={{ minHeight: 'var(--tap)', marginTop: 10, borderRadius: 'var(--r-sm)',
+                               border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-3)' }}>
+                {locating ? 'ищу…' : 'Я здесь'}
+              </button>
+              <div className="flex items-center gap-3" style={{ marginTop: 14 }}>
+                <span className="cf-meta">День</span>
+                <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setScrub(null); }} data-ro-ok
+                       className="cf-inline-field" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', minHeight: 'var(--tap)' }} />
+              </div>
+              <button onClick={() => setPlaceOpen(false)} data-cf="scout-place-ok"
+                      className="w-full flex items-center justify-center"
+                      style={{ marginTop: 18, minHeight: 'var(--tap)', borderRadius: 10,
+                               background: 'var(--accent)', color: '#fff', fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                Готово
+              </button>
+            </Modal>
+          );
+
           const notesModal = () => (
-            <Modal onClose={() => setNoteOpen(false)} z={260} box="p-5 max-w-lg" label="Заметки с выезда">
+            <Modal onClose={closeNotes} z={260} box="p-5 max-w-lg" label="Заметки с выезда">
               <div className="flex items-center gap-2">
-                <h3 data-cf="scout-notes" style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>Заметки с выезда</h3>
-                {loc && <button onClick={() => addLocationNote(loc.id)} data-cf="scout-note-add" className="cf-edit-only ml-auto"
+                <h3 data-cf="scout-notes" style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>
+                  Заметки с выезда{notes.length ? ` · ${notes.length}` : ''}
+                </h3>
+                {loc && <button onClick={addNote} data-cf="scout-note-add" className="cf-edit-only ml-auto"
                                 style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap-sm)' }}>+ заметка</button>}
               </div>
               <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.6 }}>
@@ -5605,13 +5772,26 @@
                     Пока пусто. Что заметили на месте — питание, подъезд, шум, с кем говорить, — пишите сюда.
                   </p>
                 : notes.map((st, i) => (
-                    <textarea key={st.id} value={st.text} data-cf="scout-note" onChange={(e) => patchNote(st.id, e.target.value)}
+                    <textarea key={st.id} value={st.text} data-cf="scout-note" autoFocus={st.id === noteFresh}
+                              onChange={(e) => patchNote(st.id, e.target.value)}
                               className="w-full bg-transparent focus:outline-none resize-none"
                               style={{ fontSize: 'var(--fs-4)', lineHeight: 1.6, color: 'var(--text-2)',
                                        marginTop: 10, paddingTop: i ? 10 : 0, minHeight: 66,
                                        borderTop: i ? '1px solid var(--line)' : 'none' }}
                               placeholder="Текст заметки…" />
                   ))}
+              {/* ГЛАВНОЕ ДЕЙСТВИЕ ОКНА, и потому оно залито акцентом.
+                  Заметка пишется на каждую букву, но подтверждения этому
+                  не было ниоткуда: окно закрывалось молча, и оставалось
+                  гадать, записалось ли. Теперь «Готово» закрывает и
+                  говорит полоской, сколько заметок легло в объект. */}
+              <button onClick={closeNotes} data-cf="scout-note-ok"
+                      className="w-full flex items-center justify-center"
+                      style={{ marginTop: 18, minHeight: 'var(--tap)', borderRadius: 10,
+                               background: 'var(--accent)', color: '#fff',
+                               fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                Готово
+              </button>
             </Modal>
           );
 
@@ -5620,64 +5800,46 @@
           // ------------------------------------------------------------------
           const photoCount = loc ? references.filter(r => r.locationId === loc.id).length : 0;
           return (
-            <div className="h-full w-full flex flex-col min-w-0" data-cf="scout" style={{ background: 'var(--bg)' }}>
-              {/* Шапка модуля: на каком объекте стоим, какой день смотрим, и вид */}
-              <div className="flex items-center gap-2 shrink-0 flex-wrap"
-                   style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-                <select value={loc ? loc.id : ''} onChange={(e) => setActiveLocationId(e.target.value)} data-ro-ok
-                        style={{ background: 'var(--card)', color: 'var(--text)', border: '1px solid var(--border)',
-                                 borderRadius: 'var(--r-sm)', minHeight: 'var(--tap-sm)', maxWidth: 190,
-                                 fontSize: 'var(--fs-2)', padding: '0 6px' }}>
-                  {!loc && <option value="">— объекта нет —</option>}
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name || 'без названия'}</option>)}
-                </select>
-                <button onClick={iAmHere} disabled={locating} className="cf-edit-only"
-                        title="Взять координаты у приёмника: найдётся объект рядом — откроется он, не найдётся — заведётся новый"
-                        style={{ minHeight: 'var(--tap-sm)', padding: '0 10px', borderRadius: 'var(--r-sm)',
-                                 border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-2)' }}>
-                  {locating ? 'ищу…' : 'Я здесь'}
-                </button>
-                <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setScrub(null); }} data-ro-ok
-                       className="cf-inline-field" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }} />
-                <div className="cf-seg ml-auto">
-                  {SCOUT_MODES.map(([id, label]) => (
-                    <button key={id} onClick={() => setMode(id)} className={mode === id ? 'on' : ''}>{label}</button>
-                  ))}
-                </div>
-              </div>
-
-              {mode === 'plan' ? planView() : arView()}
-
-              {/* Полоса визира: объектив, снимок, заметка. Стоит НИЖЕ кадра,
-                  а не поверх него: на телефоне поверх она закрыла бы как раз
-                  ту часть плана, ради которой камеру и подняли. */}
-              {mode === 'ar' && (
-                <div className="flex items-center gap-2 shrink-0" style={{ padding: '8px 12px', borderTop: '1px solid var(--border)' }}>
-                  <button onClick={() => setFocal(stepLens(-1))} data-cf="scout-lens-minus"
-                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>−</button>
-                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" title="Камера, пропорция, сжатие, обзор устройства"
-                          style={{ minHeight: 'var(--tap)', padding: '0 10px', borderRadius: 'var(--r-sm)',
-                                   border: '1px solid var(--border)', background: 'var(--card)' }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }}>{focal} мм</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
+            <div className="h-full w-full flex flex-col min-w-0" data-cf="scout"
+                 data-mode={mode} style={{ background: 'var(--bg)' }}>
+              {/* В КАМЕРЕ ШАПКИ МОДУЛЯ НЕТ ВОВСЕ. Кадр — это и есть
+                  содержимое экрана, а шапка, полоса визира и шкала дня
+                  стояли тремя полосами в потоке и отнимали у него около
+                  200 точек. На телефоне в горизонтальном положении кадру
+                  оставалось меньше сотни точек высоты, то есть смотреть
+                  было не на что. Всё, что было в этих полосах, осталось:
+                  объект и день — чипом в углу, объектив, снимок, заметки
+                  и часы — полосой ПОВЕРХ кадра, выход — кнопкой «‹ План».
+                  Ничего не удалено и не переименовано. */}
+              {mode === 'plan' && (
+                <div className="flex items-center gap-2 shrink-0 flex-wrap"
+                     style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+                  <select value={loc ? loc.id : ''} onChange={(e) => setActiveLocationId(e.target.value)} data-ro-ok
+                          style={{ background: 'var(--card)', color: 'var(--text)', border: '1px solid var(--border)',
+                                   borderRadius: 'var(--r-sm)', minHeight: 'var(--tap-sm)', maxWidth: 190,
+                                   fontSize: 'var(--fs-2)', padding: '0 6px' }}>
+                    {!loc && <option value="">— объекта нет —</option>}
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.name || 'без названия'}</option>)}
+                  </select>
+                  <button onClick={iAmHere} disabled={locating} className="cf-edit-only"
+                          title="Взять координаты у приёмника: найдётся объект рядом — откроется он, не найдётся — заведётся новый"
+                          style={{ minHeight: 'var(--tap-sm)', padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                   border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-2)' }}>
+                    {locating ? 'ищу…' : 'Я здесь'}
                   </button>
-                  <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
-                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>+</button>
-                  <button onClick={shoot} data-cf="scout-shoot" disabled={busy || !cam.on} className="cf-edit-only ml-auto"
-                          style={{ minHeight: 'var(--tap)', padding: '0 18px', borderRadius: 'var(--r-md)',
-                                   background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600,
-                                   opacity: (busy || !cam.on) ? .45 : 1 }}>
-                    {busy ? 'кладу…' : 'Снять'}
-                  </button>
-                  <button onClick={() => setNoteOpen(true)} title="Заметки с выезда"
-                          style={{ minHeight: 'var(--tap)', minWidth: 'var(--tap)', borderRadius: 'var(--r-sm)',
-                                   border: '1px solid var(--border)', color: 'var(--text-2)', fontSize: 'var(--fs-2)' }}>
-                    {notes.length ? `☰ ${notes.length}` : '☰'}
-                  </button>
+                  <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setScrub(null); }} data-ro-ok
+                         className="cf-inline-field" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }} />
+                  <div className="cf-seg ml-auto">
+                    {SCOUT_MODES.map(([id, label]) => (
+                      <button key={id} onClick={() => setMode(id)} className={mode === id ? 'on' : ''}>{label}</button>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {coords && <div className="shrink-0" style={{ borderTop: '1px solid var(--border)' }}>{timeBar()}</div>}
+              {mode === 'plan' ? planView() : arView()}
+
+              {mode === 'plan' && coords && <div className="shrink-0" style={{ borderTop: '1px solid var(--border)' }}>{timeBar()}</div>}
 
               {/* Итог выезда — то, ради чего модуль и заведён: объект, фото, заметки */}
               {mode === 'plan' && loc && (
@@ -5693,6 +5855,7 @@
               )}
 
               {setupOpen && setupModal()}
+              {placeOpen && placeModal()}
               {noteOpen && notesModal()}
             </div>
           );
@@ -9619,7 +9782,17 @@
 
           const canvasRef = useRef(null);
 
-          const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 3500); };
+          // ТАЙМЕР ПРЕЖНЕЙ ПОЛОСКИ ОБЯЗАН СНИМАТЬСЯ. Без этого вторая
+          // полоска, показанная под конец чужих 3,5 секунды, гасла почти
+          // сразу — её убивал таймер ПЕРВОЙ. Ошибок при этом нет: полоска
+          // мигает и пропадает, и выглядит это как «приложение промолчало».
+          // А полоска у нас единственный способ что-то сказать человеку.
+          const toastTimer = useRef(null);
+          const showToast = (message) => {
+            clearTimeout(toastTimer.current);
+            setToast(message);
+            toastTimer.current = setTimeout(() => setToast(null), 3500);
+          };
 
           // В режиме просмотра поля не нажимаются мышью, но табуляцией до них
           // добраться можно — и печатать. Наружу ничего не уйдёт, а вот текст
@@ -12927,6 +13100,9 @@
                          x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
                          w: STICKY_W, h: STICKY_H, color: '#fef08a' };
             setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+            // Отдаём id наружу: в скауте новая заметка сразу берёт курсор,
+            // а пустая строка без курсора читается как «ничего не добавилось».
+            return ns.id;
           };
 
           // --- Экран сцены: панели, развороты, меню ---
@@ -12968,6 +13144,12 @@
           // Что открыто шторкой снизу: техника, свет, солнце, экспликация,
           // «Ещё» с остальными модулями.
           const [phoneSheet, setPhoneSheet] = useState(null);
+          // ВИЗИР СКАУТА ЗАБИРАЕТ ЭКРАН ЦЕЛИКОМ. Флаг ставит сам модуль
+          // и снимает его при уходе; на всякий случай он действует ТОЛЬКО
+          // на экране «Скаут» — оставшийся поднятым, он спрятал бы
+          // навигацию на чужом экране, и вернуть её было бы нечем.
+          const [scoutFull, setScoutFull] = useState(false);
+          const fullScout = scoutFull && currentView === 'scout';
           // Заметка сцены, в которой сейчас курсор: ей одной показывается палитра.
           const [noteFocus, setNoteFocus] = useState(null);
           // Кадр раскадровки, который сейчас правят ({id, field}); остальные — картинка и текст.
@@ -13411,7 +13593,7 @@
                     Здесь остаётся то, что отвечает на «где я»: название
                     модуля со счётчиком, точка связи и поиск. На карточке
                     сцены вместо этого — «‹ Сцены», режимы и «···». */}
-                {isPhone ? (
+                {fullScout ? null : isPhone ? (
                   <header className="flex items-center shrink-0 z-40 gap-2"
                           style={{ padding: 'env(safe-area-inset-top, 0px) 16px 0', minHeight: 'calc(var(--header-h) + env(safe-area-inset-top, 0px))', background: 'var(--bg)' }}>
                     {currentView === 'docs' && phoneDocOpen ? (
@@ -17248,6 +17430,7 @@
                         references={references} scenes={scenes}
                         projectRatio={projectRatio} userName={userName}
                         showToast={showToast} readOnly={READ_ONLY} syncDoc={syncDoc}
+                        onFull={setScoutFull}
                         onCapture={(file, locId, extra) => handleMultiFileUpload([file], null, null, locId, '', extra)} />
                     )}
                   </div>
@@ -17728,7 +17911,7 @@
                   для остального. Стоит в потоке, а не поверх содержимого:
                   плавающая панель на телефоне закрывает последнюю строку
                   списка, и до неё не долистать. */}
-              {isPhone && (
+              {isPhone && !fullScout && (
                 <nav className="cf-tabbar z-40">
                   {/* По ссылке на одну страницу в таб-баре не должно быть
                       кнопок в никуда: они уводили бы на пустой экран. */}

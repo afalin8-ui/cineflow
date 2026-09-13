@@ -147,7 +147,8 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       // Таблица устройств обязана быть внутренне непротиворечивой
       cams: PHONE_CAMS.map(d => ({ id: d.id, n: d.lens.length,
               bad: d.lens.filter(l => !(l[1] >= 10 && l[1] <= 400)).length,
-              main: (d.lens.find(l => l[0] === '1×') || [])[1] })),
+              main: (d.lens.find(l => l[0] === '1×') || [])[1],
+              uw: d.lens.some(l => l[1] < 20) })),
       mainEq: { ipad: mainEqOf('ipad'), iph: mainEqOf('iph'), ipro: mainEqOf('ipro'), none: mainEqOf('') },
       azd: [azDelta(10, 350), azDelta(350, 10), azDelta(100, 100)],
       metres: Math.round(metersBetween({ lat: 55.7558, lon: 37.6173 }, { lat: 55.7568, lon: 37.6173 })),
@@ -183,6 +184,17 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('основная камера набора и его фокусное — одно решение',
          unit.mainEq.ipad === 30 && unit.mainEq.iph === 26 && unit.mainEq.ipro === 24 && unit.mainEq.none === 26,
          JSON.stringify(unit.mainEq));
+  // У 16e, 17e и Air СВЕРХШИРОКОЙ НЕТ ВОВСЕ. Стой они в одном наборе
+  // с обычным iPhone, человек видел бы кнопку «0,5×», которой у его
+  // телефона не существует, — и рамка была бы вдвое шире снимаемого.
+  expect('набор без сверхширокой (16e · 17e · Air) заведён',
+         unit.cams.some(c => c.id === 'ie'), unit.cams.map(c => c.id).join(' · '));
+  expect('в нём ровно 1× и 2×, и сверхширокой нет',
+         (unit.cams.find(c => c.id === 'ie') || {}).uw === false &&
+         (unit.cams.find(c => c.id === 'ie') || {}).n === 2,
+         JSON.stringify(unit.cams.find(c => c.id === 'ie')));
+  expect('у обычного iPhone сверхширокая осталась',
+         (unit.cams.find(c => c.id === 'iph') || {}).uw === true);
   expect('plur виден скауту (он объявлен выше AppCore)',
          unit.plurs[0] === 'кадр' && unit.plurs[1] === 'кадра' && unit.plurs[2] === 'кадров', JSON.stringify(unit.plurs));
 
@@ -324,6 +336,49 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
          r12.lens === 12 && r12.wide && r12.arrows >= 2, `пунктир=${r12.wide}, стрелок=${r12.arrows}`);
   await setLens(35);
 
+  // ------------------------------------- 3б. КАДР ЗАНИМАЕТ ЭКРАН ЦЕЛИКОМ
+  // Мерило числовое: сколько точек высоты досталось кадру против высоты
+  // всего экрана. На глаз «вроде видно» и при полосе в сотню точек.
+  log('\n3б. В камере кадр — во весь экран, и выход из неё нарисован всегда');
+  const fill = await page.evaluate(() => {
+    const root = document.querySelector('[data-cf="scout"]');
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const hdr = document.querySelector('header');
+    const back = document.querySelector('[data-cf="scout-back"]');
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    const bar = document.querySelector('[data-cf="scout-bar"]');
+    const r = root.getBoundingClientRect(), c = cam.getBoundingClientRect();
+    // Нижняя полоса обязана ЛЕЖАТЬ ПОВЕРХ кадра, а не под ним.
+    const over = bar ? bar.getBoundingClientRect() : null;
+    const hit = (el) => {
+      if (!el) return false;
+      const b = el.getBoundingClientRect();
+      const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return !!t && (t === el || el.contains(t));
+    };
+    return {
+      camH: Math.round(c.height), rootH: Math.round(r.height), winH: window.innerHeight,
+      header: !!hdr, seg: document.querySelectorAll('[data-cf="scout"] .cf-seg').length,
+      dateInFlow: document.querySelectorAll('[data-cf="scout"] input[type="date"]').length,
+      timebar: document.querySelectorAll('[data-cf="scout-timebar"]').length,
+      backHit: hit(back), chipHit: hit(chip),
+      barOverlays: !!over && over.bottom > c.bottom - 2 && over.top > c.top,
+      mode: root.getAttribute('data-mode')
+    };
+  });
+  expect('в камере шапки модуля нет — ни переключателя, ни поля даты в потоке',
+         fill.seg === 0 && fill.dateInFlow === 0, `сегментов ${fill.seg}, дат ${fill.dateInFlow}`);
+  expect('шкала дня в потоке не стоит — она по нажатию на часы',
+         fill.timebar === 0, String(fill.timebar));
+  expect('общая шапка приложения в камере убрана', !fill.header);
+  expect('кадр занял ВСЮ высоту модуля', fill.camH >= fill.rootH - 2,
+         `${fill.camH} из ${fill.rootH}`);
+  expect('кадру досталось больше 90% окна', fill.camH > fill.winH * 0.9,
+         `${fill.camH} из ${fill.winH}`);
+  expect('нижняя полоса лежит ПОВЕРХ кадра, а не под ним', fill.barOverlays);
+  expect('нажатие попадает в «‹ План» — из камеры есть выход', fill.backHit);
+  expect('нажатие попадает в чип объекта', fill.chipHit);
+
   // ------------------------------------------------ 4. ПОДКРУТКА ПО СОЛНЦУ
   log('\n4. Подкрутка компаса по настоящему солнцу');
   await aimAt(page, 180, 90, 0);
@@ -334,14 +389,29 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   // Сбрасываем отмотку и ставим сегодняшний день: в разделе 2 мы увели
   // ползунок на 6 утра дня смены, и целиться в солнце ДРУГОГО дня
   // бессмысленно — проверка мерила бы не то, что показывает экран.
+  // В КАМЕРЕ шапки модуля нет: кадр занимает экран целиком, а объект
+  // и день живут в шторке за чипом в углу, «сейчас» — в шкале дня,
+  // которая открывается часами в нижней полосе.
   await page.evaluate(async () => {
-    const now = [...document.querySelectorAll('[data-cf="scout"] button')].find(b => b.textContent.trim() === 'сейчас');
-    if (now) now.click();
-    const d = document.querySelector('[data-cf="scout"] input[type="date"]');
+    const clock = document.querySelector('[data-cf="scout-clock"]');
+    if (clock) {
+      clock.click();
+      await new Promise(r => setTimeout(r, 300));
+      const now = [...document.querySelectorAll('[data-cf="scout"] button')].find(b => b.textContent.trim() === 'сейчас');
+      if (now) now.click();
+      await new Promise(r => setTimeout(r, 200));
+      clock.click();                                  // шкалу убираем — она закрывает кадр
+      await new Promise(r => setTimeout(r, 200));
+    }
+    document.querySelector('[data-cf="scout-place"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    const d = document.querySelector('input[type="date"]');
     const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     set.call(d, new Date().toISOString().slice(0, 10));
     d.dispatchEvent(new Event('input', { bubbles: true }));
     d.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 300));
+    document.querySelector('[data-cf="scout-place-ok"]').click();
     await new Promise(r => setTimeout(r, 400));
   });
   await page.waitForTimeout(500);
@@ -510,6 +580,28 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
          `своих ${(notes.mine || []).length} из ${notes.all}`);
   expect('текст заметки сохранён', ((notes.mine[0] || {}).text || '') === NOTE, (notes.mine[0] || {}).text);
   expect('заметка лежит и на доске (boardId есть)', !!(notes.mine[0] || {}).boardId, (notes.mine[0] || {}).boardId);
+  // ЧТО ЗАМЕТКА ЗАПИСАНА, ДОЛЖНО БЫТЬ ВИДНО. Пишется она на каждую букву,
+  // но подтверждения этому не было ниоткуда: окно закрывалось молча.
+  const noteOk = await page.evaluate(async () => {
+    const ok = document.querySelector('[data-cf="scout-note-ok"]');
+    if (!ok) return { err: 'кнопки «Готово» нет' };
+    const b = ok.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    const hit = !!t && (t === ok || ok.contains(t));
+    ok.click();
+    await new Promise(r => setTimeout(r, 500));
+    return {
+      hit, closed: !document.querySelector('[data-cf="scout-notes"]'),
+      said: (() => {
+        const t = [...document.querySelectorAll('div')].find(d => /z-\[400\]/.test(d.className || ''));
+        return t ? t.innerText.trim() : '';
+      })()
+    };
+  });
+  expect('нажатие попадает в «Готово»', noteOk.hit === true, JSON.stringify(noteOk));
+  expect('«Готово» закрывает окно заметок', noteOk.closed === true, JSON.stringify(noteOk));
+  expect('и ГОВОРИТ, что записано и куда',
+         /\d+ заметк\S* в объекте/.test(noteOk.said || ''), noteOk.said || '(молчит)');
 
   // ------------------------------------------------------------ 7. ТЕЛЕФОН
   log('\n7. Телефон 390: Скаут в таб-баре, Чат в «Ещё»');
@@ -574,6 +666,71 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('переключатель «План / Камера» на месте', phScout.seg.join('/') === 'План/Камера', phScout.seg.join('/'));
   expect('ничего не уезжает за края экрана 390', phScout.over.length === 0, phScout.over.join(' | '));
   expect('ничего не залезло под таб-бар', phScout.hidden === 0, String(phScout.hidden));
+
+  // ГОРИЗОНТАЛЬНОЕ ПОЛОЖЕНИЕ ТЕЛЕФОНА — то, ради чего переделка. Раньше
+  // шапка приложения, шапка модуля, полоса визира и шкала дня съедали
+  // около 200 точек из 390, и кадру оставалось меньше сотни — «ничего
+  // не видно». Мерим числом: сколько досталось кадру и вернулась ли
+  // навигация после «‹ План».
+  await ph.setViewportSize({ width: 844, height: 390 });
+  await ph.waitForTimeout(600);
+  const land = await ph.evaluate(async () => {
+    const b = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (b) b.click();
+    await new Promise(r => setTimeout(r, 700));
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const c = cam ? cam.getBoundingClientRect() : { height: 0 };
+    const back = document.querySelector('[data-cf="scout-back"]');
+    const bb = back ? back.getBoundingClientRect() : null;
+    const hit = bb && (() => { const t = document.elementFromPoint(bb.left + bb.width / 2, bb.top + bb.height / 2);
+                               return !!t && (t === back || back.contains(t)); })();
+    const out = {
+      camH: Math.round(c.height), winH: window.innerHeight,
+      tabbar: document.querySelectorAll('.cf-tabbar').length,
+      header: document.querySelectorAll('header').length,
+      backHit: !!hit
+    };
+    if (back) { back.click(); await new Promise(r => setTimeout(r, 700)); }
+    out.tabbarBack = document.querySelectorAll('.cf-tabbar').length;
+    out.headerBack = document.querySelectorAll('header').length;
+    return out;
+  });
+  expect('в горизонтальном телефоне кадру досталось больше 90% высоты',
+         land.camH > land.winH * 0.9, `${land.camH} из ${land.winH}`);
+  // 844 точки в ширину — это уже НЕ телефонная раскладка (порог 768),
+  // таб-бара там нет и без камеры. Смотрим на шапку: в камере её быть
+  // не должно, а «‹ План» обязан её вернуть.
+  expect('в камере шапки нет — экран отдан кадру', land.header === 0, String(land.header));
+  expect('нажатие попадает в «‹ План» и в горизонтальном положении', land.backHit);
+  expect('«‹ План» возвращает навигацию', land.headerBack === 1, String(land.headerBack));
+  await ph.setViewportSize({ width: 390, height: 844 });
+  await ph.waitForTimeout(500);
+
+  // А вот В ПОРТРЕТЕ таб-бар есть, и в камере он тоже обязан уйти:
+  // это ещё полсотни точек, отнятых у кадра.
+  const port = await ph.evaluate(async () => {
+    const b = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (b) b.click();
+    await new Promise(r => setTimeout(r, 700));
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const out = {
+      camH: Math.round((cam ? cam.getBoundingClientRect() : { height: 0 }).height),
+      winH: window.innerHeight,
+      tabbar: document.querySelectorAll('.cf-tabbar').length,
+      header: document.querySelectorAll('header').length
+    };
+    const back = document.querySelector('[data-cf="scout-back"]');
+    if (back) { back.click(); await new Promise(r => setTimeout(r, 700)); }
+    out.tabbarBack = document.querySelectorAll('.cf-tabbar').length;
+    out.headerBack = document.querySelectorAll('header').length;
+    return out;
+  });
+  expect('в портрете камера тоже убирает таб-бар и шапку',
+         port.tabbar === 0 && port.header === 0, `таб-баров ${port.tabbar}, шапок ${port.header}`);
+  expect('и кадру достаётся весь экран', port.camH > port.winH * 0.9, `${port.camH} из ${port.winH}`);
+  expect('«‹ План» возвращает и таб-бар, и шапку',
+         port.tabbarBack === 1 && port.headerBack === 1,
+         `таб-баров ${port.tabbarBack}, шапок ${port.headerBack}`);
 
   // --------------------------------------------------- 8. РЕЖИМ ПРОСМОТРА
   log('\n8. Режим просмотра: гость смотрит, но не правит');
