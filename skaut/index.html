@@ -4912,11 +4912,16 @@
           // Шаг по объективам идёт по сумке, если она набрана, иначе по общему
           // ряду, и считается ОТ БЛИЖАЙШЕГО: своё фокусное (53) в ряду не
           // лежит, и поиск по индексу отправлял бы «+» в самое начало.
+          const lensLadder = () => (bag.length > 1 ? bag : SCOUT_LENSES).slice().sort((a, b) => a - b);
           const stepLens = (dir) => {
-            const list = (bag.length > 1 ? bag : SCOUT_LENSES).slice().sort((a, b) => a - b);
+            const list = lensLadder();
             const next = dir > 0 ? list.find(f => f > focal + 0.01) : list.slice().reverse().find(f => f < focal - 0.01);
             return next === undefined ? focal : next;
           };
+          // Ближайший объектив из лестницы — для щипка: он идёт плавно,
+          // а объективы в сумке стоят ступеньками.
+          const nearestLens = (mm) => lensLadder()
+            .reduce((best, f) => Math.abs(f - mm) < Math.abs(best - mm) ? f : best, focal);
 
           // --- КАМЕРА И КОМПАС ---
           const arOn = mode === 'ar';
@@ -4931,6 +4936,18 @@
           // его набор, а миллиметры оставит телефонные.
           const boot = React.useRef(null);
           if (!boot.current) {
+            // ОДНОРАЗОВЫЙ СБРОС ПОДГОНКИ. Пока щипок менял обзор
+            // устройства, случайный жест молча уводил его в сторону,
+            // и на устройстве осталось съехавшее число — то самое
+            // «потом крупность уезжает». Само оно не вернётся: человек
+            // про него не знает. Сбрасываем ОДИН раз, на справочное.
+            try {
+              if (localStorage.getItem('cf_scout_fovver') !== '2') {
+                localStorage.removeItem('cf_scout_deveq');
+                localStorage.removeItem('cf_scout_eqmap');
+                localStorage.setItem('cf_scout_fovver', '2');
+              }
+            } catch (e) {}
             let id = '';
             try { id = localStorage.getItem('cf_scout_device') || guessDevice() || ''; } catch (e) { id = ''; }
             boot.current = { id, eq: savedNum('cf_scout_deveq', mainEqOf(id)) };
@@ -4973,21 +4990,17 @@
             const key = cam.active || camLabel;
             if (key) setEqMap(m => ({ ...m, [key]: eq }));
           };
-          // --- ЩИПОК ПО КАДРУ ЗАДАЁТ ОБЗОР УСТРОЙСТВА ---
-          // Справочное фокусное телефона — это число для ФОТОГРАФИИ, а не
-          // для потока в браузере, и совпадают они не всегда: Safari отдаёт
-          // странице свой пресет съёмки, а какой у него обзор — спросить
-          // нечем ни одним способом. Отсюда и «по крупности не попали»:
-          // камерная сторона считается верно (35 мм на Mini LF в 2.39 —
-          // это 55,3°, сверено счётом), а вот доля ширины, которую рамка
-          // займёт на экране, целиком зависит от нашей догадки про телефон.
-          //   Поэтому обзор делается ПОДВИЖНЫМ: развели пальцы — рамка
-          // выросла, свели — уменьшилась, и она сходится с тем, что человек
-          // знает верным (хоть с проверенным визиром, хоть с настоящей
-          // камерой) за пару секунд. Число при этом помнится ЗА ЭТОЙ
-          // камерой, как и раньше, — то есть подгоняют один раз.
-          //   Ползунок ±0,5 мм остаётся: щипком не попасть в точное число,
-          // а дошагать до него — можно.
+          // --- ЩИПОК МЕНЯЕТ ОБЪЕКТИВ ---
+          // Развели пальцы — объектив длиннее и кадр крупнее, свели —
+          // короче и шире. То же, что делают «+» и «−», только плавно:
+          // так ведёт себя всякая камера, и объяснять это не нужно.
+          //   РАНЬШЕ ЩИПОК МЕНЯЛ ОБЗОР УСТРОЙСТВА, и это была ошибка:
+          // подгонка — вещь однократная и тонкая, а жест, который легко
+          // сделать случайно (хоть попыткой увеличить страницу), молча
+          // уводил её в сторону. Со стороны это «при первом открытии всё
+          // ок, а потом крупность уезжает»: рамка считалась от съехавшего
+          // числа, и вернуть его было нечем, кроме как знать про него.
+          // Подгонка обзора живёт в настройках, где случайно её не тронешь.
           // ЗАБЫТЫЙ ПАЛЕЦ — известная беда, и здесь она тоже есть.
           // Отпускание изредка теряется (а нажатие по накладке в режиме
           // подкрутки его и не присылает), и застрявший в списке палец
@@ -5011,7 +5024,7 @@
           };
           const pinchDown = (e) => {
             if (readOnly || e.pointerType === 'mouse') return;
-            const p = pinchRef.current || (pinchRef.current = { pts: new Map(), ids: null, eq0: 0, d0: 0 });
+            const p = pinchRef.current || (pinchRef.current = { pts: new Map(), ids: null, f0: 0, d0: 0 });
             const now = Date.now();
             p.pts.forEach((v, k) => { if (now - v.t > PINCH_STALE) p.pts.delete(k); });
             p.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
@@ -5021,7 +5034,7 @@
             if (two[0][1].t - two[1][1].t > PINCH_GAP) { p.ids = null; p.d0 = 0; return; }
             p.ids = [two[0][0], two[1][0]];
             p.d0 = Math.hypot(two[0][1].x - two[1][1].x, two[0][1].y - two[1][1].y);
-            p.eq0 = devEq;
+            p.f0 = focal;
           };
           const pinchMove = (e) => {
             const p = pinchRef.current;
@@ -5033,10 +5046,9 @@
             if (!a || !b) return;
             const d = Math.hypot(a.x - b.x, a.y - b.y);
             if (!(d > 0)) return;
-            // Развели пальцы — рамка должна ВЫРАСТИ. Рамка растёт, когда
-            // обзор устройства УЖЕ, то есть когда его фокусное БОЛЬШЕ.
-            const eq = Math.max(4, Math.min(400, Math.round(p.eq0 * (d / p.d0) * 10) / 10));
-            if (eq !== devEq) pickEq(eq);
+            // Развели пальцы — объектив длиннее, кадр крупнее.
+            const mm = nearestLens(p.f0 * (d / p.d0));
+            if (mm !== focal) setFocal(mm);
           };
           const pinchUp = (e) => {
             const p = pinchRef.current;
@@ -5126,19 +5138,40 @@
           const devFov = camFov(devEq, aspect);
           const frameShareNow = (hfov > 0 && devFov > 0)
             ? Math.tan(hfov * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2) : 0;
+          // РАМКА СТОИТ НА МЕСТЕ, А КАРТИНКА ЗУМИТСЯ ВМЕСТЕ С ОБЪЕКТИВОМ.
+          // Так устроен всякий визир режиссёра, и так же — Cadrage: в него
+          // СМОТРЯТ, как в объектив. Раньше было наоборот — картинка стояла,
+          // а рамка от смены фокусного росла и уменьшалась; со стороны это
+          // «крупность уезжает», потому что от нажатия на «+» кадр не
+          // приближался, а просто сужалась рамочка.
+          //   Считается так: рамке назначена ПОСТОЯННАЯ ширина на экране
+          // (`fwTarget`), и картинка увеличивается ровно настолько, чтобы
+          // выбранный объектив занял её: `Wd = fwTarget / share`. Длиннее
+          // объектив — меньше `share` — сильнее увеличение. Это ПРАВДА,
+          // а не эффект: обрезать поток по краям — ровно то же, что делает
+          // объектив подлиннее.
+          //   Два предела, и оба честные. Меньше, чем есть у камеры, мы
+          // не покажем никогда (`Wd` не меньше ширины экрана): дальше
+          // объектив шире того, что видит телефон, и тогда рамка рисуется
+          // пунктиром во весь кадр со стрелками наружу — как и раньше.
+          // И рамка обязана поместиться по высоте целиком.
           const vbox = React.useMemo(() => {
             const { cw, ch, vw, vh } = cbox;
             if (!cw || !ch) return { x: 0, y: 0, w: 0, h: 0 };
             if (!vw || !vh) return { x: 0, y: 0, w: cw, h: ch };
-            const fit = Math.min(cw / vw, ch / vh);   // вписать целиком
-            let k = cw / vw;                          // заполнить ширину
-            const fw = cw * Math.min(1, frameShareNow || 1);
-            const fh = fw / (ratio || 1.85);
-            if (fh > ch * 0.94) k *= (ch * 0.94) / fh;
-            k = Math.min(cw / vw, Math.max(fit, k));
-            const w = vw * k, h = vh * k;
+            // Постоянная ширина рамки: 90% экрана, но не выше 90% высоты.
+            // Поля вокруг неё оставлены намеренно — на скауте важно видеть,
+            // что стоит ЗА краем кадра.
+            const fwTarget = Math.min(cw * 0.9, ch * 0.9 * (ratio || 1.85));
+            const w = frameShareNow > 0
+              ? Math.max(cw, fwTarget / frameShareNow)
+              : cw;
+            const h = w * vh / vw;
             return { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
           }, [cbox, frameShareNow, ratio]);
+          // Во сколько раз картинка увеличена против того, что отдаёт
+          // камера. Ровно единица — снимаем как есть.
+          const vzoom = (cbox.cw > 0 && vbox.w > 0) ? vbox.w / cbox.cw : 1;
           const px = (p) => p ? { x: p.x * vbox.w, y: p.y * vbox.h } : null;
           const see = (az, alt) => px(projectSky(az, alt, yaw, pitch, roll, devFov, aspect));
 
@@ -5209,14 +5242,22 @@
             const shotNow = new Date();
             setBusy(true);
             try {
+              // СНИМОК — ЭТО ТО, ЧТО ВИДНО НА ЭКРАНЕ, а не весь поток.
+              // Картинка в визире увеличена под выбранный объектив, и края
+              // за экраном человек НЕ видел: положив их в снимок, мы отдали
+              // бы кадр шире того, который выбирали. Правило то же, что
+              // у выгрузки доски: картинка обязана совпадать с экраном.
+              const sw = Math.min(v.videoWidth, v.videoWidth / (vzoom || 1));
+              const sh = Math.min(v.videoHeight, (cbox.ch / Math.max(1, vbox.h)) * v.videoHeight);
+              const sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
               // 1600 точек по длинной стороне: дальше растёт только вес.
               // Сжатие и отправку в облако делает общий путь загрузки.
-              const k = Math.min(1, 1600 / Math.max(v.videoWidth, v.videoHeight));
+              const k = Math.min(1, 1600 / Math.max(sw, sh));
               const cv = document.createElement('canvas');
-              cv.width = Math.round(v.videoWidth * k);
-              cv.height = Math.round(v.videoHeight * k);
+              cv.width = Math.round(sw * k);
+              cv.height = Math.round(sh * k);
               const ctx = cv.getContext('2d');
-              ctx.drawImage(v, 0, 0, cv.width, cv.height);
+              ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
 
               // РАМКА ОБЪЕКТИВА РИСУЕТСЯ НА САМОМ СНИМКЕ, И ВСЕГДА.
               // Раньше её тут не было вовсе: в объекте лежала обычная
@@ -5226,9 +5267,10 @@
               // и в живом виде: обзор камеры узнать нечем, и подрезанный
               // кадр молча врёт про план. Cadrage поступает так же —
               // рисует, а не режет.
-              const dFov = camFov(devEq, cv.width / cv.height);
-              const fw = (hfov > 0 && dFov > 0)
-                ? cv.width * Math.tan(hfov * SUN_RAD / 2) / Math.tan(dFov * SUN_RAD / 2) : 0;
+              // Рамка на снимке — ровно та же доля ширины, что и на экране:
+              // оба считаются от одного `frameW` в точках видео.
+              const fw = (vbox.w > 0 && frameShareNow > 0)
+                ? cv.width * (vbox.w * frameShareNow) / Math.max(1, cbox.cw) : 0;
               if (fw > 0) {
                 const wide = fw > cv.width * 1.001;
                 const w = wide ? cv.width - 4 : fw, h = w / ratio;
@@ -5668,7 +5710,12 @@
                 <video ref={cam.videoRef} playsInline muted autoPlay
                        onLoadedMetadata={measure}
                        style={{ position: 'absolute', left: vbox.x, top: vbox.y,
-                                width: vbox.w || '100%', height: vbox.h || '100%', objectFit: 'fill' }} />
+                                width: vbox.w || '100%', height: vbox.h || '100%', objectFit: 'fill',
+                                // У Tailwind в preflight стоит `video { max-width: 100% }`,
+                                // и он МОЛЧА обрезал увеличение обратно до ширины
+                                // контейнера: в стиле стояло 904 точки, а на экране
+                                // выходило 844, то есть зум не работал вовсе.
+                                maxWidth: 'none', maxHeight: 'none' }} />
                 {need && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8" style={{ gap: 14 }}>
                     <p style={{ fontSize: 'var(--fs-4)', color: 'var(--text)', lineHeight: 1.6, maxWidth: 380 }}>
