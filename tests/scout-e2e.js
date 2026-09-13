@@ -1032,6 +1032,15 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     localStorage.setItem('cf_locations', JSON.stringify([loc]));
   }, [SEED_LOC]);
   const { page: ph, errors: phErr } = await mkPage(pctx);
+  // СТАТУС-БАР СВЕРХУ ЕСТЬ, И СЧИТАТЬ НАДО С НИМ. В браузере вставки
+  // равны нулю, и на стенде без них «кадру достался весь экран» — это
+  // замер того, чего на устройстве не бывает: в установленном приложении
+  // сверху лежат часы, а в горизонтальном положении сбоку — чёлка.
+  // Подменяем через CDP, ровно как в scratchpad/overlays3.js.
+  const phCdp = await pctx.newCDPSession(ph);
+  const setInsets = (ins) => phCdp.send('Emulation.setSafeAreaInsetsOverride', { insets: ins }).catch(() => {});
+  await setInsets({ top: 47, left: 0, right: 0, bottom: 34 });
+  await ph.waitForTimeout(400);
   const tabs = await ph.evaluate(() => {
     const bar = document.querySelector('.cf-tabbar');
     const btns = bar ? [...bar.querySelectorAll('button')] : [];
@@ -1087,6 +1096,10 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   // не видно». Мерим числом: сколько досталось кадру и вернулась ли
   // навигация после «‹ План».
   await ph.setViewportSize({ width: 844, height: 390 });
+  // В горизонтальном положении iPhone прячет часы, а чёлка уходит вбок,
+  // и полоска «домой» становится тоньше — вставки для этого положения
+  // свои, и считать надо с ними.
+  await setInsets({ top: 0, left: 47, right: 0, bottom: 21 });
   await ph.waitForTimeout(600);
   const land = await ph.evaluate(async () => {
     const b = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
@@ -1109,8 +1122,11 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     out.headerBack = document.querySelectorAll('header').length;
     return out;
   });
-  expect('в горизонтальном телефоне кадру досталось больше 80% высоты',
-         land.camH > land.winH * 0.8, `${land.camH} из ${land.winH}`);
+  // СЧИТАЕМ С ЧЁЛКОЙ И ПОЛОСКОЙ «ДОМОЙ». Замер без вставок показывал
+  // то, чего на устройстве не бывает: полоска «домой» съедает низ,
+  // и её высоту несёт нижняя полоса.
+  expect('в горизонтальном телефоне кадру достаётся больше 75% высоты',
+         land.camH > land.winH * 0.75, `${land.camH} из ${land.winH} (с полоской «домой» 21)`);
   // 844 точки в ширину — это уже НЕ телефонная раскладка (порог 768),
   // таб-бара там нет и без камеры. Смотрим на шапку: в камере её быть
   // не должно, а «‹ План» обязан её вернуть.
@@ -1118,6 +1134,7 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('нажатие попадает в «‹ План» и в горизонтальном положении', land.backHit);
   expect('«‹ План» возвращает навигацию', land.headerBack === 1, String(land.headerBack));
   await ph.setViewportSize({ width: 390, height: 844 });
+  await setInsets({ top: 47, left: 0, right: 0, bottom: 34 });
   await ph.waitForTimeout(500);
 
   // А вот В ПОРТРЕТЕ таб-бар есть, и в камере он тоже обязан уйти:
@@ -1141,10 +1158,73 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   });
   expect('в портрете камера тоже убирает таб-бар и шапку',
          port.tabbar === 0 && port.header === 0, `таб-баров ${port.tabbar}, шапок ${port.header}`);
-  expect('и кадру достаётся почти весь экран', port.camH > port.winH * 0.85, `${port.camH} из ${port.winH}`);
+  expect('и кадру достаётся почти весь экран — с часами и полоской «домой»',
+         port.camH > port.winH * 0.85, `${port.camH} из ${port.winH}`);
   expect('«‹ План» возвращает и таб-бар, и шапку',
          port.tabbarBack === 1 && port.headerBack === 1,
          `таб-баров ${port.tabbarBack}, шапок ${port.headerBack}`);
+
+  // ------------------------------ 7б. ВСТАВКИ: ЧАСЫ СВЕРХУ, ЧЁЛКА СБОКУ
+  log('\n7б. Статус-бар сверху и чёлка сбоку: рамка и кнопки под них не лезут');
+  const insets = async (w, h, ins, label) => {
+    await ph.setViewportSize({ width: w, height: h });
+    await setInsets(ins);
+    await ph.waitForTimeout(500);
+    return ph.evaluate(async (L) => {
+      const seg = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+      if (seg) { seg.click(); await new Promise(r => setTimeout(r, 700)); }
+      // Рамка есть только при живой камере — включаем её, если ещё не.
+      const on = [...document.querySelectorAll('button')].find(x => /Включить камеру/.test(x.textContent));
+      if (on) { on.click(); await new Promise(r => setTimeout(r, 2500)); }
+      await new Promise(r => setTimeout(r, 400));
+      const box = document.querySelector('[data-cf="scout-cam"]');
+      const svg = document.querySelector('[data-cf="scout-ar"]');
+      const f = document.querySelector('[data-cf="scout-frame"]');
+      const back = document.querySelector('[data-cf="scout-back"]');
+      const chip = document.querySelector('[data-cf="scout-place"]');
+      const b = box.getBoundingClientRect();
+      const out = { label: L, boxTop: Math.round(b.top), boxLeft: Math.round(b.left),
+                    boxBottom: Math.round(b.bottom), boxRight: Math.round(b.right),
+                    backTop: back ? Math.round(back.getBoundingClientRect().top) : -1,
+                    backLeft: back ? Math.round(back.getBoundingClientRect().left) : -1,
+                    chipRight: chip ? Math.round(window.innerWidth - chip.getBoundingClientRect().right) : -1 };
+      if (svg && f) {
+        const sr = svg.getBoundingClientRect();
+        const vb = +svg.getAttribute('viewBox').split(' ')[2];
+        const k = sr.width / vb;
+        const fw = (+f.getAttribute('width')) * k, fh = (+f.getAttribute('height')) * k;
+        out.frameTop = Math.round(sr.top + (sr.height - fh) / 2);
+        out.frameLeft = Math.round(sr.left + (sr.width - fw) / 2);
+        out.frameRight = Math.round(out.frameLeft + fw);
+        out.frameBottom = Math.round(out.frameTop + fh);
+      }
+      return out;
+    }, label);
+  };
+  // Вертикально: часы сверху 47
+  const up = await insets(390, 844, { top: 47, left: 0, right: 0, bottom: 34 }, 'портрет');
+  expect('верх рамки не под часами', up.frameTop >= up.boxTop + 47 - 1,
+         `${up.frameTop} при верхе кадра ${up.boxTop} и вставке 47`);
+  // ГЛАВНАЯ ПРОВЕРКА: рамка стоит по середине ВИДИМОЙ полосы, а не всей
+  // площади. Просто «не под часами» тут ничего не ловит — при 2.39
+  // в высоком экране запас и так велик; врёт именно центровка.
+  expect('рамка центрирована по видимой полосе, а не по всему экрану',
+         Math.abs((up.frameTop - (up.boxTop + 47)) - (up.boxBottom - up.frameBottom)) <= 3,
+         `сверху ${up.frameTop - up.boxTop - 47}, снизу ${up.boxBottom - up.frameBottom}`);
+  expect('и «‹ План» тоже не под часами',
+         up.backTop >= up.boxTop + 47 - 1, `${up.backTop} при ${up.boxTop}`);
+  // Горизонтально: чёлка слева 47, часов нет
+  const side = await insets(844, 390, { top: 0, left: 47, right: 0, bottom: 21 }, 'ландшафт');
+  expect('левый край рамки не под чёлкой', side.frameLeft >= side.boxLeft + 47 - 1,
+         `${side.frameLeft} при левом крае ${side.boxLeft} и вставке 47`);
+  expect('рамка сдвинута от чёлки, а не просто сужена',
+         Math.abs((side.frameLeft - (side.boxLeft + 47)) - (side.boxRight - side.frameRight)) <= 3,
+         `слева ${side.frameLeft - side.boxLeft - 47}, справа ${side.boxRight - side.frameRight}`);
+  expect('и «‹ План» отодвинут от чёлки',
+         side.backLeft >= side.boxLeft + 47 - 1, `${side.backLeft} при ${side.boxLeft}`);
+  await setInsets({ top: 0, left: 0, right: 0, bottom: 0 });
+  await ph.setViewportSize({ width: 390, height: 844 });
+  await ph.waitForTimeout(400);
 
   // --------------------------------------------------- 8. РЕЖИМ ПРОСМОТРА
   log('\n8. Режим просмотра: гость смотрит, но не правит');
