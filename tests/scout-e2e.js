@@ -45,6 +45,10 @@ const near = (a, b, eps) => Math.abs(a - b) <= eps;
 // наполнить, а день смены откуда взять.
 const SEED_LOC = { id: 'loc-t1', name: 'ДВОР ШКОЛЫ', address: 'Москва', coords: '55.75580, 37.61730',
                    description: '', sceneIds: ['scene-1'], lightSchemeId: '', order: 1 };
+// Второй объект БЕЗ КООРДИНАТ — их заводят руками, по названию, ещё
+// до выезда. Нужен, чтобы проверить «записать эту точку объекту».
+const SEED_LOC2 = { id: 'loc-t2', name: 'ГАРАЖИ', address: '', coords: '',
+                    description: '', sceneIds: [], lightSchemeId: '', order: 2 };
 
 const mkPage = async (ctx, query) => {
   const page = await ctx.newPage();
@@ -90,12 +94,12 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     permissions: ['geolocation', 'camera'],
     geolocation: { latitude: 55.7558, longitude: 37.6173 }
   });
-  await ctx.addInitScript(([loc]) => {
+  await ctx.addInitScript(([loc, loc2]) => {
     localStorage.setItem('cf_user_name', 'Тест Оператор');
     localStorage.setItem('cf_room', 'e2e-scout-test-room');
-    localStorage.setItem('cf_locations', JSON.stringify([loc]));
+    localStorage.setItem('cf_locations', JSON.stringify([loc, loc2]));
     localStorage.setItem('cf_scenes', JSON.stringify([{ id: 'scene-1', number: '1', title: 'ИНТ. ДВОР', content: '', date: '2026-06-29', x: 0, y: 0 }]));
-  }, [SEED_LOC]);
+  }, [SEED_LOC, SEED_LOC2]);
 
   // ---------------------------------------------------------------- 1. СЧЁТ
   log('\n1. Счёт: угол обзора, проекция, дуга');
@@ -247,6 +251,18 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     return { clock: clock && clock[1], hadNow: /сейчас/.test(svg.parentElement.innerText) };
   });
   expect('тянем ползунок на 6 утра — часы показали 06:00', /^06:0\d$/.test(scrub.clock || ''), scrub.clock);
+  // Сверка видна и в плане: её читают ДО выезда — «а тот ли это двор».
+  const planSpot = await page.evaluate(async () => {
+    const b = document.querySelector('[data-cf="scout-spot-plan"]');
+    if (!b) return { found: false };
+    const r = b.getBoundingClientRect();
+    const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { found: true, kind: b.dataset.spot, text: b.innerText.trim(),
+             hit: !!t && (t === b || b.contains(t)) };
+  });
+  expect('сверка точки показана и в плане', planSpot.found && planSpot.hit === true, JSON.stringify(planSpot));
+  expect('и она говорит словами, а не значком', /Мы|сверено|координат/.test(planSpot.text || ''), planSpot.text);
+
   expect('появилась кнопка «сейчас» — вернуться к живому времени', scrub.hadNow);
 
   // ----------------------------------------------------- 3. ВИД «КАМЕРА»
@@ -519,6 +535,121 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('угол запомнился за этой камерой', Object.values(presets.eqmap).length >= 1,
          JSON.stringify(presets.eqmap));
 
+  // ------------------------------------------- 4в. В НАСТРОЙКАХ НЕ СВИТОК
+  // Мерило числовое: сколько СЛОВ видно в окне в покое. На глаз «вроде
+  // немного» и при десяти абзацах — их же читают по одному разу.
+  log('\n4в. Настройки визира: пояснения по «?», а не свитком');
+  const words = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const box = () => document.querySelector('[data-cf="scout-hints"]').closest('[role="dialog"]')
+                   || document.querySelector('[data-cf="scout-hints"]').parentElement.parentElement;
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(450);
+    const q = document.querySelector('[data-cf="scout-hints"]');
+    const count = () => (box().innerText.trim().match(/[А-Яа-яЁёA-Za-z]+/g) || []).length;
+    const off = count();
+    const b = q.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    const hit = !!t && (t === q || q.contains(t));
+    q.click(); await wait(350);
+    const on = count();
+    const kept = localStorage.getItem('cf_scout_hints');
+    q.click(); await wait(350);
+    const back = count();
+    // Кнопки-то остались все до единой — прячется только проза.
+    const chips = box().querySelectorAll('button, input, select').length;
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(300);
+    return { off, on, back, hit, kept, chips };
+  });
+  expect('нажатие попадает в «?»', words.hit);
+  expect('в покое пояснений нет — текста стало заметно меньше',
+         words.off < words.on * 0.45, `${words.off} слов против ${words.on} с пояснениями`);
+  expect('«?» возвращает прежний вид', words.back === words.off, `${words.back} против ${words.off}`);
+  expect('выбор помнится', words.kept === '1', String(words.kept));
+  expect('органы управления НЕ спрятаны — прячется только проза',
+         words.chips > 30, String(words.chips));
+
+  // --------------------------------------- 4г. СВЕРКА ТОЧКИ ПО КООРДИНАТАМ
+  // Объект в списке и место, где мы стоим, расходятся МОЛЧА: переехали
+  // на другой двор, а кадры и заметки всё так же ложатся к прежнему
+  // объекту, и узнаётся это уже дома.
+  log('\n4г. Сверка: та ли это точка');
+  const spotHere = await page.evaluate(() => {
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    return { kind: chip && chip.dataset.spot, text: chip && chip.innerText.replace(/\s+/g, ' ').trim() };
+  });
+  expect('стоим на объекте — точка зелёная', spotHere.kind === 'here', JSON.stringify(spotHere));
+  expect('расстояние в покое не пишется — новостей нет',
+         !/км|\d+ м/.test(spotHere.text || ''), spotHere.text);
+
+  // Уезжаем на 3,8 км к северу, не трогая объект
+  await ctx.setGeolocation({ latitude: 55.79, longitude: 37.6173 });
+  await page.waitForTimeout(2500);
+  const spotFar = await page.evaluate(async () => {
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    const out = { kind: chip && chip.dataset.spot, text: chip && chip.innerText.replace(/\s+/g, ' ').trim() };
+    chip.click();
+    await new Promise(r => setTimeout(r, 500));
+    const blk = document.querySelector('[data-cf="scout-spot"]');
+    out.block = blk ? blk.innerText.replace(/\s+/g, ' ').trim() : '';
+    out.blockKind = blk && blk.dataset.spot;
+    document.querySelector('[data-cf="scout-place-ok"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    return out;
+  });
+  expect('уехали — точка жёлтая и на чипе написано, насколько',
+         spotFar.kind === 'far' && /3,8 км|3,9 км|4 км/.test(spotFar.text || ''), JSON.stringify(spotFar));
+  expect('в шторке сказано словами, где мы и что дальше',
+         spotFar.blockKind === 'far' && /Мы в .* от «ДВОР ШКОЛЫ»/.test(spotFar.block) &&
+         /Приёмник: 55\.79/.test(spotFar.block), spotFar.block);
+  expect('сказано, что солнце считается для ТОЧКИ ОБЪЕКТА, а не для нас',
+         /Солнце считается для точки объекта/.test(spotFar.block), spotFar.block);
+
+  // Объект БЕЗ координат: «Я здесь» завела бы второй такой же на том же
+  // месте — точек без координат она не видит. Поэтому отдельная кнопка.
+  const noCoords = await page.evaluate(async () => {
+    const chip = document.querySelector('[data-cf="scout-place"]');
+    chip.click();
+    await new Promise(r => setTimeout(r, 500));
+    const sel = document.querySelector('[data-cf="scout-place-pick"]');
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+    set.call(sel, 'loc-t2');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 600));
+    const blk = document.querySelector('[data-cf="scout-spot"]');
+    const btn = document.querySelector('[data-cf="scout-setcoords"]');
+    const out = { kind: blk && blk.dataset.spot, block: blk ? blk.innerText.replace(/\s+/g, ' ').trim() : '',
+                  hasBtn: !!btn };
+    if (btn) {
+      const b = btn.getBoundingClientRect();
+      const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      out.hit = !!t && (t === btn || btn.contains(t));
+      btn.click();
+      await new Promise(r => setTimeout(r, 800));
+    }
+    out.coords = (JSON.parse(localStorage.getItem('cf_locations') || '[]')
+                   .find(l => l.id === 'loc-t2') || {}).coords || '';
+    out.kindAfter = (document.querySelector('[data-cf="scout-spot"]') || {}).dataset
+                      ? document.querySelector('[data-cf="scout-spot"]').dataset.spot : '';
+    // Возвращаем прежний объект и прежнее место — дальше снимок
+    set.call(sel, 'loc-t1');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 500));
+    document.querySelector('[data-cf="scout-place-ok"]').click();
+    await new Promise(r => setTimeout(r, 400));
+    return out;
+  });
+  expect('у объекта без координат так и сказано', noCoords.kind === 'nocoords', noCoords.block);
+  expect('и предложено записать ему эту точку', noCoords.hasBtn && noCoords.hit === true, JSON.stringify(noCoords));
+  expect('точка записалась объекту', /^55\.79/.test(noCoords.coords), noCoords.coords || '(пусто)');
+  expect('после записи мы на нём и стоим', noCoords.kindAfter === 'here', noCoords.kindAfter);
+
+  await ctx.setGeolocation({ latitude: 55.7558, longitude: 37.6173 });
+  await page.waitForTimeout(2000);
+  const backHome = await page.evaluate(() => (document.querySelector('[data-cf="scout-place"]') || {}).dataset.spot);
+  expect('вернулись на объект — снова зелёная', backHome === 'here', String(backHome));
+
   // ------------------------------------------------------------ 5. СНИМОК
   log('\n5. Снимок ложится к объекту с подписью');
   const shot = await page.evaluate(async () => {
@@ -546,6 +677,10 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('подпись «чем снято» в записи', sh.lens > 0 && sh.sw > 0 && sh.ratio > 0, JSON.stringify({ lens: sh.lens, sw: sh.sw, ratio: sh.ratio }));
   expect('подпись «где снято» в записи', near(sh.lat, 55.7558, 0.01) && near(sh.lon, 37.6173, 0.01) && sh.az !== null,
          `${sh.lat}, ${sh.lon}, азимут ${sh.az}°`);
+  // «ГДЕ СНЯТО» — это где стояла КАМЕРА. Раньше в запись уходили
+  // координаты ОБЪЕКТА, и кадр, снятый за квартал, врал про своё место.
+  expect('«где снято» взято у приёмника, а не у объекта', sh.fix === 'gps', String(sh.fix));
+  expect('и точность ответа записана', sh.acc === null || sh.acc >= 0, String(sh.acc));
   expect('подпись «когда снято» в записи', !!sh.when && !isNaN(new Date(sh.when)), sh.when);
   expect('подпись «кем снято» в записи', sh.who === 'Тест Оператор', sh.who);
   expect('название объекта в подписи', sh.place === 'ДВОР ШКОЛЫ', sh.place);
