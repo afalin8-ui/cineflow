@@ -5024,6 +5024,16 @@
           // засчитывается, только если оба пальца легли почти
           // одновременно; всё остальное — одиночные касания.
           const PINCH_GAP = 300;
+          // РЕЖИМ «СВЕСТИ ОБЗОР». Справочное фокусное телефона — догадка:
+          // сколько видит поток, отданный странице, спросить нечем ни одним
+          // способом. Если оно мимо, рамка показывает не тот кусок сцены —
+          // на всех объективах одинаково мимо, и заметно это только рядом
+          // с проверенным эталоном. Свести за десять секунд можно щипком,
+          // но ВКЛЮЧАТЬ его надо НАРОЧНО: когда щипок менял обзор всегда,
+          // случайный жест молча уводил подгонку, и выходило «при первом
+          // открытии всё ок, а потом крупность уезжает». Режим не помнится
+          // между запусками — это разовая настройка, а не состояние.
+          const [fovTune, setFovTune] = React.useState(false);
           const pinchRef = React.useRef(null);
           const frameShare = (eq) => {
             // Какую долю ширины кадра занимает рамка при таком обзоре.
@@ -5042,7 +5052,7 @@
             if (two[0][1].t - two[1][1].t > PINCH_GAP) { p.ids = null; p.d0 = 0; return; }
             p.ids = [two[0][0], two[1][0]];
             p.d0 = Math.hypot(two[0][1].x - two[1][1].x, two[0][1].y - two[1][1].y);
-            p.f0 = focal;
+            p.f0 = focal; p.e0 = devEq;
           };
           const pinchMove = (e) => {
             const p = pinchRef.current;
@@ -5054,6 +5064,15 @@
             if (!a || !b) return;
             const d = Math.hypot(a.x - b.x, a.y - b.y);
             if (!(d > 0)) return;
+            if (fovTune) {
+              // Развели пальцы — картинка крупнее, значит в рамку попадает
+              // МЕНЬШЕ сцены: это и есть более узкий обзор устройства,
+              // то есть большее его фокусное… нет, наоборот — картинка
+              // растёт, когда обзор ШИРЕ, а фокусное МЕНЬШЕ.
+              const eq = Math.max(4, Math.min(400, Math.round(p.e0 * (p.d0 / d) * 10) / 10));
+              if (eq !== devEq) pickEq(eq);
+              return;
+            }
             // Развели пальцы — объектив длиннее, кадр крупнее.
             const mm = nearestLens(p.f0 * (d / p.d0));
             if (mm !== focal) setFocal(mm);
@@ -5841,14 +5860,14 @@
                       </React.Fragment>;
                     })}
                     {frameW > 0 && !tooWide && React.cloneElement(rect(frameW, frameH, 'var(--accent)', 2), { 'data-cf': 'scout-frame' })}
-                    {frameW > 0 && !tooWide && (
+                    {frameW > 0 && (
                       <rect x={(vbox.w - frameW) / 2} y={(vbox.h - frameH) / 2} width={frameW} height={frameH}
                             fill="none" stroke="#000" strokeWidth="4" opacity=".25" />
                     )}
                     {/* ЕДИНСТВЕННАЯ НАДПИСЬ НА САМОЙ КАРТИНКЕ — пропорция,
                         в углу рамки. Ровно как «2.35:1» у Cadrage: она
                         говорит, на что смотришь, и не мешает смотреть. */}
-                    {frameW > 0 && !tooWide && (
+                    {frameW > 0 && (
                       <text data-cf="scout-ratio"
                             x={(vbox.w + frameW) / 2 - 5} y={(vbox.h + frameH) / 2 - 5} textAnchor="end"
                             fontFamily="var(--font-mono)" fontSize="10" fill="#fff" opacity=".8"
@@ -5861,8 +5880,22 @@
                         и человек решил бы, что она просто не нарисовалась. */}
                     {tooWide && (
                       <React.Fragment>
-                        {React.cloneElement(rect(vbox.w - 4, (vbox.w - 4) / ratio, 'var(--accent)', 2, '8 6'), { 'data-cf': 'scout-frame', 'data-wide': '1' })}
-                        {[[10, 0], [vbox.w - 10, 180]].map(([x, rot], i) => (
+                        {/* РАМКА РИСУЕТСЯ СВОЕГО НАСТОЯЩЕГО РАЗМЕРА, просто
+                            пунктиром. Раньше в этой ветке она рисовалась
+                            по краю КАРТИНКИ (`vbox.w - 4`) — от прежней
+                            поры, когда картинка занимала экран и рамке
+                            было некуда деться. Теперь картинка сама
+                            уменьшается под рамку, и рамка помещается
+                            целиком — а рисовалась всё равно по картинке.
+                            Отсюда скачок между соседними объективами:
+                            на 29 мм рамка выходила 525 точек, на 32 — 541,
+                            хотя обязана быть одна и та же. Пунктир
+                            по-прежнему значит «объектив шире, чем видит
+                            телефон», а стрелки теперь стоят у края
+                            КАРТИНКИ — там кончается то, что камера
+                            вообще может показать. */}
+                        {React.cloneElement(rect(frameW, frameH, 'var(--accent)', 2, '8 6'), { 'data-cf': 'scout-frame', 'data-wide': '1' })}
+                        {[[2, 0], [vbox.w - 2, 180]].map(([x, rot], i) => (
                           <path key={i} data-cf="scout-wide-arrow" d={`M${x} ${vbox.h / 2} l${rot ? 14 : -14} -9 v18 z`} fill="var(--accent)" opacity=".9" />
                         ))}
                       </React.Fragment>
@@ -6071,6 +6104,18 @@
                       подкрутки нет, кнопки нет вовсе. Прятать её в долгое
                       удержание нельзя — скрытая поправка однажды переживёт
                       переезд в другой город. */}
+                  {/* ПОКА ИДЁТ ПОДГОНКА, ОБ ЭТОМ НАПИСАНО, и выход рядом.
+                      Режим, в котором жест делает не то, что обычно, обязан
+                      называть себя — иначе это ловушка. */}
+                  {fovTune && (
+                    <button onClick={() => { setFovTune(false); showToast(`Обзор устройства: ${devEq} мм · ${devFov.toFixed(0)}° — запомнено за этой камерой`); }}
+                            data-cf="scout-fovtune-done"
+                            style={{ minHeight: 'var(--tap)', padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                     background: 'var(--accent)', color: 'var(--bg)',
+                                     fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
+                      обзор {devEq} мм · готово
+                    </button>
+                  )}
                   {!need && headOff !== 0 && (
                     <button onClick={() => { setHeadOff(0); showToast('Подкрутка снята'); }}
                             data-cf="scout-offset" title="Снять подкрутку компаса"
@@ -6271,6 +6316,13 @@
                   </span>
                   <button data-cf="scout-eq-plus" onClick={() => pickEq(Math.min(400, Math.round((devEq + 0.5) * 10) / 10))}
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>+</button>
+                  <button onClick={() => { setFovTune(true); setSetupOpen(false);
+                                           showToast('Щипок по кадру теперь меняет ОБЗОР, а не объектив. Сведите рамку с эталоном и нажмите «готово»'); }}
+                          data-cf="scout-fovtune" className="cf-edit-only"
+                          style={{ minHeight: 'var(--tap)', padding: '0 12px', marginLeft: 6, borderRadius: 'var(--r-sm)',
+                                   border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-2)' }}>
+                    Свести щипком
+                  </button>
                   {/* ЧИСЛА, ПО КОТОРЫМ ЭТО МОЖНО ПРОВЕРИТЬ. Без них подгонка
                       идёт вслепую: не видно ни что отдаёт камера, ни во что
                       превращается наша догадка. */}

@@ -1294,7 +1294,11 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       await new Promise(r => setTimeout(r, 220));
       const v = document.querySelector('[data-cf="scout-cam"] video');
       const box = document.querySelector('[data-cf="scout-cam"]');
-      return { mm: cur(), zoom: v.getBoundingClientRect().width / box.getBoundingClientRect().width };
+      const svg = document.querySelector('[data-cf="scout-ar"]');
+      const f = document.querySelector('[data-cf="scout-frame"]');
+      const k = (svg && f) ? svg.getBoundingClientRect().width / (+svg.getAttribute('viewBox').split(' ')[2]) : 0;
+      return { mm: cur(), zoom: v.getBoundingClientRect().width / box.getBoundingClientRect().width,
+               frame: f ? (+f.getAttribute('width')) * k : 0 };
     };
     const out = [];
     for (const mm of [40, 35, 32, 27, 24, 21]) out.push(await set(mm));
@@ -1306,6 +1310,15 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     const k = Math.max(a, b) / Math.max(0.001, Math.min(a, b));
     if (k > 1.6) jumps.push(`${sweep[i - 1].mm}→${sweep[i].mm}: ${a.toFixed(2)}×→${b.toFixed(2)}×`);
   }
+  // РАМКА ОДНОГО РАЗМЕРА НА ВСЕХ ОБЪЕКТИВАХ, включая те, что шире камеры.
+  // В ветке «шире камеры» рамка рисовалась по краю КАРТИНКИ — от прежней
+  // поры, когда картинка занимала экран. Теперь картинка сама уменьшается
+  // под рамку, и рамка помещается целиком, а рисовалась всё равно
+  // по картинке: 525 точек против 541 у соседнего объектива.
+  const frames = sweep.map(x => x.frame).filter(v => v > 0);
+  expect('рамка ОДНОГО размера на всех объективах',
+         frames.length > 0 && Math.max(...frames) - Math.min(...frames) < 2,
+         sweep.map(x => `${x.mm}:${Math.round(x.frame)}`).join(' '));
   expect('соседние объективы не дают скачка крупности', jumps.length === 0,
          jumps.join(' · ') || sweep.map(x => `${x.mm}:${x.zoom.toFixed(2)}×`).join(' '));
   expect('и крупность падает МОНОТОННО от длинного к короткому',
