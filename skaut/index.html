@@ -2486,6 +2486,25 @@
           return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
         };
 
+        // «МЫ ЗДЕСЬ» — это 250 метров. То же число, что у «Я здесь»:
+        // заводить второй «двор школы» в двадцати метрах от первого нельзя,
+        // а двор в полкилометра — уже другое место.
+        const SCOUT_NEAR = 250;
+        // Расстояние СЛОВАМИ. «3247 м» человек в уме не переводит, а на
+        // площадке эту строку читают одним глазом.
+        const fmtDist = (m) => m < 1000 ? `${Math.round(m)} м`
+          : m < 10000 ? `${(m / 1000).toFixed(1).replace('.', ',')} км`
+          : `${Math.round(m / 1000)} км`;
+        // Когда приёмник отвечал в последний раз. Расстояние без давности —
+        // это половина правды: ответ часовой давности говорит о том, где мы
+        // были, а не где стоим.
+        const fmtAgo = (at) => {
+          const s = Math.max(0, (Date.now() - at) / 1000);
+          if (s < 45) return 'только что';
+          if (s < 3600) return `${Math.round(s / 60)} мин назад`;
+          return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        };
+
         class ErrorBoundary extends React.Component {
           constructor(props) { super(props); this.state = { hasError: false, msg: '' }; }
           // Текст ошибки показываем ЧЕЛОВЕКУ намеренно. Пользователь —
@@ -4697,7 +4716,8 @@
         const ScoutModule = ({
           locations, activeLocationId, setActiveLocationId, createLocationAt,
           stickies, setStickies, addLocationNote, references, scenes,
-          projectRatio, userName, showToast, readOnly, syncDoc, onCapture, onFull
+          projectRatio, userName, showToast, readOnly, syncDoc, onCapture, onFull,
+          updateLocation
         }) => {
           const loc = locations.find(x => x.id === activeLocationId) || locations[0] || null;
           // В ПРОСМОТРЕ ВСЕГДА ОТКРЫВАЕТСЯ «ПЛАН». Гость вид не выбирал, и
@@ -4733,7 +4753,73 @@
           // вторая копия разъехалась бы с той, что в карточке объекта.
           const locCoords = loc ? parseCoords(loc.coords) : null;
           const [gps, setGps] = React.useState(null);          // что сказал приёмник
+          // Солнце считаем ОТ ОБЪЕКТА, а не от нас: на скаут заходят
+          // и накануне, из дома, и тогда нужен свет НА ТОЧКЕ, а не
+          // за письменным столом. Что мы стоим не там, говорится отдельно
+          // (см. «сверку» ниже) — молчать об этом нельзя.
           const coords = locCoords || gps;
+
+          // --- СВЕРКА: ТА ЛИ ЭТО ТОЧКА ---
+          // Объект в списке и место, где мы стоим, — две разные вещи,
+          // и расходятся они МОЛЧА: переехали на другой двор, а кадры
+          // и заметки всё так же ложатся к прежнему объекту, и узнаётся
+          // это уже дома, при разборе. Поэтому приёмник слушаем всё
+          // время, пока открыт скаут, и расхождение показываем.
+          const watchRef = React.useRef(null);
+          const startWatch = React.useCallback(() => {
+            if (watchRef.current !== null || !navigator.geolocation) return;
+            try {
+              watchRef.current = navigator.geolocation.watchPosition(
+                (pos) => setGps({ lat: pos.coords.latitude, lon: pos.coords.longitude,
+                                  acc: pos.coords.accuracy, at: Date.now() }),
+                // Молчим: об отказе скажет сама кнопка «Я здесь», когда
+                // её нажмут. Полоска на ровном месте, которую человек
+                // не звал, — это шум.
+                () => {},
+                { enableHighAccuracy: false, timeout: 20000, maximumAge: 20000 });
+            } catch (e) {}
+          }, []);
+          React.useEffect(() => {
+            // РАЗРЕШЕНИЕ САМИ НЕ СПРАШИВАЕМ. Без жеста человека браузер
+            // откажет, а на iOS ещё и покажет окно там, где его не звали —
+            // то же правило, что у камеры, компаса и буфера обмена.
+            // Подписываемся, только если разрешение УЖЕ дано: тогда окна
+            // не будет вовсе. Не дано — сверка ждёт нажатия «Я здесь».
+            let alive = true;
+            try {
+              if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'geolocation' })
+                  .then(st => { if (alive && st.state === 'granted') startWatch(); })
+                  .catch(() => {});
+              }
+            } catch (e) {}
+            return () => {
+              alive = false;
+              if (watchRef.current !== null) {
+                try { navigator.geolocation.clearWatch(watchRef.current); } catch (e) {}
+                watchRef.current = null;
+              }
+            };
+          }, [startWatch]);
+          const drift = (locCoords && gps) ? metersBetween(gps, locCoords) : null;
+          const atSpot = drift !== null && drift <= SCOUT_NEAR;
+          // Какой объект РЯДОМ с нами — чтобы предложить переключиться,
+          // а не заводить второй такой же в двадцати метрах.
+          const nearLoc = React.useMemo(() => {
+            if (!gps) return null;
+            return locations
+              .map(l => { const c = parseCoords(l.coords); return c ? { l, d: metersBetween(gps, c) } : null; })
+              .filter(x => x && x.d <= SCOUT_NEAR).sort((a, b) => a.d - b.d)[0] || null;
+          }, [gps, locations]);
+          // Одно и то же говорится в трёх местах — на чипе объекта,
+          // в плане и в шторке, — поэтому считается один раз.
+          const spot = !loc ? { kind: 'noloc', text: 'Объект не выбран' }
+            : !locCoords ? { kind: 'nocoords', text: `У «${loc.name}» нет координат` }
+            : !gps ? { kind: 'unknown', text: 'Где мы — не сверено' }
+            : atSpot ? { kind: 'here', text: `Мы на объекте · ${fmtDist(drift)}` }
+            : { kind: 'far', text: `Мы в ${fmtDist(drift)} от «${loc.name}»` };
+          const SPOT_COLOR = { here: 'var(--ok)', far: 'var(--warn)', nocoords: 'var(--warn)' };
+          const spotColor = SPOT_COLOR[spot.kind] || 'var(--muted-2)';
           // День съёмки — из связанных сцен, как в отчёте по объектам.
           // Если смены нет, смотрим на сегодня и ГОВОРИМ об этом: пустая
           // строка вместо восхода бесполезна ровно там, где отчёт и нужен.
@@ -4961,6 +5047,15 @@
             if (userName) bits.push(userName);
             return bits.join(' · ');
           };
+          // «ГДЕ СНЯТО» — ЭТО ГДЕ СТОЯЛА КАМЕРА, а не где записана точка
+          // объекта. Раньше в запись кадра уходили координаты ОБЪЕКТА,
+          // и снимок, сделанный за квартал от него, врал про своё место
+          // молча — а по этой строке потом ищут, куда возвращаться.
+          // Свежий ответ приёмника вернее: точку объекта могли записать
+          // с другого конца двора или вовсе взять из адреса в картах.
+          const SHOT_FIX_AGE = 5 * 60 * 1000;
+          const freshFix = (gps && gps.at && Date.now() - gps.at < SHOT_FIX_AGE) ? gps : null;
+
           const shoot = async () => {
             // Проверка стоит ПЕРВОЙ строкой — правило всего приложения.
             if (readOnly) { showToast('Режим просмотра — менять проект нельзя'); return; }
@@ -4992,6 +5087,7 @@
               const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9));
               cv.width = 0; cv.height = 0;
               if (!blob) { showToast('Кадр не сохранился'); return; }
+              const shotPt = freshFix || coords;
               const name = `scout-${when.toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jpg`;
               const file = new File([blob], name, { type: 'image/jpeg' });
               await onCapture(file, loc.id, {
@@ -5000,8 +5096,14 @@
                   hfov: Math.round(hfov * 10) / 10,
                   az: yaw === null ? null : Math.round(yaw),
                   alt: Math.round(pitch),
-                  lat: coords ? Number(coords.lat.toFixed(6)) : null,
-                  lon: coords ? Number(coords.lon.toFixed(6)) : null,
+                  lat: shotPt ? Number(shotPt.lat.toFixed(6)) : null,
+                  lon: shotPt ? Number(shotPt.lon.toFixed(6)) : null,
+                  // Откуда взята точка, сказано прямо: «gps» — приёмник
+                  // в момент съёмки, «loc» — записанная точка объекта.
+                  // Без этого две разные по надёжности строки выглядели
+                  // бы одинаково.
+                  fix: shotPt ? (freshFix ? 'gps' : 'loc') : '',
+                  acc: freshFix && freshFix.acc ? Math.round(freshFix.acc) : null,
                   when: when.toISOString(), who: userName || '', place: loc.name || ''
                 }
               });
@@ -5058,7 +5160,10 @@
             setLocating(true);
             try {
               const p = await whereAmI();
-              setGps({ lat: p.lat, lon: p.lon });
+              setGps({ lat: p.lat, lon: p.lon, acc: p.acc, at: Date.now() });
+              // Разрешение только что дали — дальше следим сами, и второй
+              // раз нажимать «Я здесь» ради сверки уже не придётся.
+              startWatch();
               const near = locations
                 .map(l => { const c = parseCoords(l.coords); return c ? { l, d: metersBetween(p, c) } : null; })
                 .filter(x => x && x.d < 250).sort((a, b) => a.d - b.d)[0];
@@ -5080,6 +5185,17 @@
             } catch (e) {
               showToast((e && e.message) || 'Место не определилось');
             } finally { setLocating(false); }
+          };
+
+          // Записать объекту то место, где мы стоим. Только когда
+          // координат у него НЕТ вовсе: переписывать записанную точку
+          // потому, что мы отошли на километр, нельзя — она может быть
+          // верной, а мы ещё в дороге.
+          const writeCoordsHere = () => {
+            if (readOnly) { showToast('Режим просмотра — менять проект нельзя'); return; }
+            if (!loc || !gps) return;
+            updateLocation(loc.id, 'coords', `${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)}`);
+            showToast(`Точка записана объекту «${loc.name}»`);
           };
 
           // ------------------------------------------------------------------
@@ -5491,14 +5607,24 @@
                 {/* ОБЪЕКТ — ЧИПОМ В УГЛУ, а выбор за ним. На выезде объект
                     меняют раз в час, а кадр смотрят непрерывно: постоянная
                     строка выбора отнимала у кадра полсотни точек. */}
-                <button onClick={() => setPlaceOpen(true)} data-cf="scout-place"
+                <button onClick={() => setPlaceOpen(true)} data-cf="scout-place" data-spot={spot.kind}
                         className="absolute flex items-center gap-1.5"
-                        style={{ right: 8, top: 'calc(8px + var(--sat))', maxWidth: '46%', minHeight: 'var(--tap-sm)',
+                        title={spot.text}
+                        style={{ right: 8, top: 'calc(8px + var(--sat))', maxWidth: '52%', minHeight: 'var(--tap-sm)',
                                  padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
                                  color: '#fff', fontSize: 'var(--fs-2)' }}>
+                  {/* ТОЧКА СВЕРКИ. Зелёная — мы на объекте, жёлтая — стоим
+                      не там или у объекта нет координат, серая — приёмник
+                      ещё не отвечал. Кружок вместо слов потому, что место
+                      в углу кадра дороже подписи, а расстояние дописывается
+                      только когда оно и есть новость. */}
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: spotColor }} />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {loc ? (loc.name || 'без названия') : 'выбрать объект'}
                   </span>
+                  {spot.kind === 'far' && (
+                    <span style={{ flexShrink: 0, fontFamily: 'var(--font-mono)', color: 'var(--warn)' }}>{fmtDist(drift)}</span>
+                  )}
                   <span style={{ color: 'var(--muted)' }}>▾</span>
                 </button>
 
@@ -5581,16 +5707,38 @@
             color: on ? 'var(--text)' : 'var(--muted)',
             border: `1px solid ${on ? 'var(--border)' : 'transparent'}`
           });
+          // ПОЯСНЕНИЯ СПРЯТАНЫ ЗА «?», А НЕ СТОЯТ НАД КАЖДЫМ РЯДОМ.
+          // Их тут десять, по два-четыре предложения, и вместе они дают
+          // свиток прозы там, где человек пришёл нажать «35». Причём
+          // читают их ОДИН раз: чем 2.39 отличается от 1.85, оператор
+          // знает лучше нас. Кнопка «?» видна всегда и открывает их все
+          // разом — то же правило, что у «развернуть» у гайда: возможность
+          // не спрятана, она просто не занимает места в покое.
+          const [hintsOn, setHintsOn] = React.useState(() => {
+            try { return localStorage.getItem('cf_scout_hints') === '1'; } catch (e) { return false; }
+          });
+          React.useEffect(() => {
+            try { localStorage.setItem('cf_scout_hints', hintsOn ? '1' : '0'); } catch (e) {}
+          }, [hintsOn]);
           const group = (title, hint, children) => (
             <div style={{ marginTop: 16 }}>
               <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600, color: 'var(--muted)' }}>{title}</span>
-              {hint && <p className="cf-meta" style={{ marginTop: 3, lineHeight: 1.55 }}>{hint}</p>}
+              {hint && hintsOn && <p className="cf-meta" style={{ marginTop: 3, lineHeight: 1.55 }}>{hint}</p>}
               <div className="flex flex-wrap gap-1.5" style={{ marginTop: 8 }}>{children}</div>
             </div>
           );
           const setupModal = () => (
             <Modal onClose={() => setSetupOpen(false)} z={260} box="p-5 max-w-lg" label="Настройки визира">
-              <h3 style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>Визир</h3>
+              <div className="flex items-center gap-2">
+                <h3 style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)' }}>Визир</h3>
+                <button onClick={() => setHintsOn(o => !o)} data-cf="scout-hints"
+                        title={hintsOn ? 'Убрать пояснения' : 'Показать пояснения — что за чем стоит'}
+                        className="ml-auto flex items-center justify-center"
+                        style={{ width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: '50%',
+                                 background: hintsOn ? 'var(--accent)' : 'var(--card)',
+                                 border: '1px solid ' + (hintsOn ? 'var(--accent)' : 'var(--border)'),
+                                 color: hintsOn ? '#fff' : 'var(--muted)', fontSize: 'var(--fs-3)', fontWeight: 700 }}>?</button>
+              </div>
               {group('Камера', 'Активная область сенсора в миллиметрах. Список короткий намеренно — угол обзора у объективов одного фокусного одинаков, чьи бы они ни были.',
                 <React.Fragment>
                   {SCOUT_SENSORS.map(s => (
@@ -5641,9 +5789,11 @@
                   где чьи миллиметры. */}
               <div style={{ borderTop: '1px solid var(--border)', marginTop: 22, paddingTop: 14 }}>
                 <span style={{ fontSize: 'var(--fs-3)', fontWeight: 700, letterSpacing: '-.01em', color: 'var(--text)' }}>Чем смотрим</span>
-                <p className="cf-meta" style={{ marginTop: 3, lineHeight: 1.55 }}>
-                  Это про телефон или планшет в руках. Задаётся один раз.
-                </p>
+                {/* Эта строка остаётся ВСЕГДА, даже без пояснений: выше
+                    миллиметры съёмочной камеры, ниже — телефона в руках,
+                    и без границы это читается одним списком, в котором
+                    непонятно, где чьи числа. */}
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', marginLeft: 8 }}>телефон в руках</span>
               </div>
               {group('Какое устройство',
                      guessed === 'ipad' ? 'Судя по экрану — планшет. Apple фокусное своих планшетов не публикует вовсе, поэтому 30 мм у нас посчитаны по снимкам: если рамка не сойдётся, подправьте числом ниже.'
@@ -5669,9 +5819,16 @@
               )}
               {group(device ? `Объектив · ${device.label}` : 'Объектив устройства',
                      device
-                       ? `Кратности те же, что пишет камера телефона. Сейчас ${devEq} мм — это ${devFov.toFixed(0)}° по горизонтали при нынешней пропорции кадра, и объектив ${focal} мм даёт ${hfov.toFixed(0)}°.`
-                       : 'Сначала выберите устройство выше — тогда здесь появятся его кратности с верными числами.',
+                       ? 'Кратности те же, что пишет камера телефона. Миллиметры и градусы под ними — при нынешней пропорции кадра.'
+                       : null,
                 <React.Fragment>
+                  {/* Без выбранного устройства кнопок тут нет вовсе, и один
+                      заголовок над пустотой читается как поломка. Эта
+                      строка — не пояснение, а ответ на «почему пусто»,
+                      и она не прячется за «?». */}
+                  {!device && (
+                    <span className="cf-meta">Сначала выберите устройство выше.</span>
+                  )}
                   {(device ? device.lens : []).map(([label, eq]) => (
                     <button key={label} data-cf="scout-lenspreset" data-eq={eq} onClick={() => pickEq(eq)}
                             style={{ ...pill(Math.abs(devEq - eq) < 0.01), flexDirection: 'column', alignItems: 'flex-start',
@@ -5749,12 +5906,49 @@
                 {!loc && <option value="">— объекта нет —</option>}
                 {locations.map(l => <option key={l.id} value={l.id}>{l.name || 'без названия'}</option>)}
               </select>
+              {/* СВЕРКА ПО КООРДИНАТАМ. Тут она целиком: что говорит
+                  приёмник, насколько точно, когда отвечал, и далеко ли
+                  это от записанной точки объекта. Сам ничего не выбирает
+                  и молча не пишет — какой это объект, знает только тот,
+                  кто на нём стоит. */}
+              <div data-cf="scout-spot" data-spot={spot.kind}
+                   style={{ marginTop: 14, padding: '10px 12px', borderRadius: 'var(--r-sm)',
+                            background: 'var(--card)', border: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-2">
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: spotColor }} />
+                  <span style={{ fontSize: 'var(--fs-3)', color: 'var(--text)' }}>{spot.text}</span>
+                </div>
+                <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.55 }}>
+                  {gps
+                    ? `Приёмник: ${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)}${gps.acc ? ` · ±${Math.round(gps.acc)} м` : ''} · ${fmtAgo(gps.at)}`
+                    : 'Приёмник ещё не отвечал. Нажмите «Я здесь» — дальше сверка идёт сама.'}
+                </p>
+                {spot.kind === 'far' && (
+                  <p className="cf-meta" style={{ marginTop: 4, lineHeight: 1.55 }}>
+                    {nearLoc
+                      ? `Рядом с нами «${nearLoc.l.name}» — ${fmtDist(nearLoc.d)}. «Я здесь» переключит на него.`
+                      : 'Солнце считается для точки объекта, а не для нас. «Я здесь» заведёт точку на этом месте.'}
+                  </p>
+                )}
+              </div>
               <button onClick={iAmHere} disabled={locating} className="cf-edit-only w-full"
+                      data-cf="scout-here"
                       title="Взять координаты у приёмника: найдётся объект рядом — откроется он, не найдётся — заведётся новый"
                       style={{ minHeight: 'var(--tap)', marginTop: 10, borderRadius: 'var(--r-sm)',
                                border: '1px solid var(--accent-line)', color: 'var(--accent)', fontSize: 'var(--fs-3)' }}>
-                {locating ? 'ищу…' : 'Я здесь'}
+                {locating ? 'ищу…' : gps ? 'Сверить заново' : 'Я здесь'}
               </button>
+              {/* У объекта нет координат, а мы на нём стоим — записать их
+                  ему. Без этой кнопки единственным путём была бы «Я здесь»,
+                  а она в таком случае завела бы ВТОРОЙ объект на том же
+                  месте: точек без координат она не видит. */}
+              {spot.kind === 'nocoords' && gps && (
+                <button onClick={writeCoordsHere} className="cf-edit-only w-full" data-cf="scout-setcoords"
+                        style={{ minHeight: 'var(--tap)', marginTop: 8, borderRadius: 'var(--r-sm)',
+                                 border: '1px solid var(--border)', color: 'var(--text-2)', fontSize: 'var(--fs-3)' }}>
+                  Записать эту точку объекту «{loc.name}»
+                </button>
+              )}
               <div className="flex items-center gap-3" style={{ marginTop: 14 }}>
                 <span className="cf-meta">День</span>
                 <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setScrub(null); }} data-ro-ok
@@ -5859,6 +6053,16 @@
               {mode === 'plan' && loc && (
                 <div className="flex items-center gap-3 shrink-0 flex-wrap"
                      style={{ padding: '8px 14px', borderTop: '1px solid var(--border)' }}>
+                  {/* СВЕРКА И В ПЛАНЕ. Тут её читают до выезда — «а тот ли
+                      это двор» — и по возвращении. Кружок и строка те же,
+                      что на чипе в камере: два разных способа сказать одно
+                      и то же разъехались бы при первой правке. */}
+                  <button onClick={() => setPlaceOpen(true)} data-cf="scout-spot-plan" data-spot={spot.kind}
+                          className="flex items-center gap-1.5"
+                          style={{ minHeight: 'var(--tap-sm)', fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: spotColor }} />
+                    {spot.text}
+                  </button>
                   <span className="cf-meta">
                     «{loc.name}» · {photoCount} {plur(photoCount, 'кадр', 'кадра', 'кадров')} · {notes.length} {plur(notes.length, 'заметка', 'заметки', 'заметок')}
                   </span>
@@ -17444,7 +17648,7 @@
                         references={references} scenes={scenes}
                         projectRatio={projectRatio} userName={userName}
                         showToast={showToast} readOnly={READ_ONLY} syncDoc={syncDoc}
-                        onFull={setScoutFull}
+                        onFull={setScoutFull} updateLocation={updateLocation}
                         onCapture={(file, locId, extra) => handleMultiFileUpload([file], null, null, locId, '', extra)} />
                     )}
                   </div>
