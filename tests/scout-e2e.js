@@ -136,6 +136,19 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       rolled: projectSky(135, 0, 120, 0, 90, 60, 1),
       arcLen: sunArc(55.7558, 37.6173, '2026-06-29').length,
       arcNoon: (() => { const a = sunArc(55.7558, 37.6173, '2026-06-29'); return a[Math.round(a.length / 2)].alt; })(),
+      // Эквивалентное фокусное считается ПО ДИАГОНАЛИ 35-мм кадра, а не
+      // по его ширине. Сверка с числами Apple: у iPhone 13 Pro Max (26 мм)
+      // videoFieldOfView равен 67,1°, а заявленные «20°» у 120-мм теле —
+      // это диагональ.
+      halfs: [halfFrame(3 / 2), halfFrame(4 / 3), halfFrame(16 / 9)],
+      apple26: camFov(26, 4 / 3),
+      apple120diag: 2 * Math.atan(43.267 / 2 / 120) / SUN_RAD,
+      fov16x9: camFov(26, 16 / 9),
+      // Таблица устройств обязана быть внутренне непротиворечивой
+      cams: PHONE_CAMS.map(d => ({ id: d.id, n: d.lens.length,
+              bad: d.lens.filter(l => !(l[1] >= 10 && l[1] <= 400)).length,
+              main: (d.lens.find(l => l[0] === '1×') || [])[1] })),
+      mainEq: { ipad: mainEqOf('ipad'), iph: mainEqOf('iph'), ipro: mainEqOf('ipro'), none: mainEqOf('') },
       azd: [azDelta(10, 350), azDelta(350, 10), azDelta(100, 100)],
       metres: Math.round(metersBetween({ lat: 55.7558, lon: 37.6173 }, { lat: 55.7568, lon: 37.6173 })),
       plurs: [plur(1, 'кадр', 'кадра', 'кадров'), plur(3, 'кадр', 'кадра', 'кадров'), plur(11, 'кадр', 'кадра', 'кадров')]
@@ -157,6 +170,19 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('29 июня в Москве в 12:00 UTC солнце около 47°', near(unit.arcNoon, 47, 3), unit.arcNoon.toFixed(1) + '°');
   expect('разница азимутов по кратчайшей стороне', unit.azd[0] === 20 && unit.azd[1] === -20 && unit.azd[2] === 0, JSON.stringify(unit.azd));
   expect('расстояние по земле: 0.001° широты ≈ 111 м', near(unit.metres, 111, 2), unit.metres + ' м');
+  expect('полуширина кадра считается от диагонали: 18.00 / 17.31 / 18.86',
+         near(unit.halfs[0], 18, 0.01) && near(unit.halfs[1], 17.307, 0.01) && near(unit.halfs[2], 18.855, 0.01),
+         unit.halfs.map(h => h.toFixed(3)).join(' / '));
+  expect('26 мм на кадре 4:3 дают 67.3° — Apple отдаёт 67.1°', near(unit.apple26, 67.3, 0.3), unit.apple26.toFixed(1) + '°');
+  expect('120 мм по диагонали дают 20.4° — Apple пишет «20°»', near(unit.apple120diag, 20.4, 0.3), unit.apple120diag.toFixed(1) + '°');
+  expect('та же камера на 16:9 шире: 71.9°', near(unit.fov16x9, 71.9, 0.3), unit.fov16x9.toFixed(1) + '°');
+  expect('во всех наборах камер фокусные в разумных пределах',
+         unit.cams.every(c => c.bad === 0), JSON.stringify(unit.cams.filter(c => c.bad).map(c => c.id)));
+  expect('у каждого набора есть основная камера «1×»',
+         unit.cams.every(c => c.main > 0), JSON.stringify(unit.cams.map(c => c.id + ':' + c.main)));
+  expect('основная камера набора и его фокусное — одно решение',
+         unit.mainEq.ipad === 30 && unit.mainEq.iph === 26 && unit.mainEq.ipro === 24 && unit.mainEq.none === 26,
+         JSON.stringify(unit.mainEq));
   expect('plur виден скауту (он объявлен выше AppCore)',
          unit.plurs[0] === 'кадр' && unit.plurs[1] === 'кадра' && unit.plurs[2] === 'кадров', JSON.stringify(unit.plurs));
 
@@ -279,8 +305,7 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     const cur = () => parseInt((([...document.querySelectorAll('button')]
       .find(b => /^\d+ мм/.test(b.textContent)) || {}).textContent || '0').match(/(\d+) мм/)[1], 10);
     for (let i = 0; i < 30 && cur() !== mm; i++) {
-      const want = cur() < mm ? '+' : '−';
-      const b = [...document.querySelectorAll('button')].filter(x => x.textContent.trim() === want).pop();
+      const b = document.querySelector(cur() < mm ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]');
       b.click();
       await new Promise(r => setTimeout(r, 80));
     }
@@ -360,6 +385,69 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   });
   expect('солнце встало в центр кадра', centred && centred.dx < centred.w * 0.03,
          centred ? `сдвиг ${centred.dx.toFixed(1)} точек из ${centred.w}` : 'солнца в кадре нет');
+
+  // -------------------------------------------- 4б. ПРЕСЕТЫ КАМЕР УСТРОЙСТВ
+  log('\n4б. Пресеты камер устройств');
+  const presets = await page.evaluate(async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const frameW = () => {
+      const f = document.querySelector('[data-cf="scout-frame"]');
+      return f ? +f.getAttribute('width') : 0;
+    };
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(450);
+    const devBtns = [...document.querySelectorAll('[data-cf="scout-device"]')].map(b => b.dataset.dev);
+    // Обычный iPhone: основная 26 мм
+    document.querySelector('[data-cf="scout-device"][data-dev="iph"]').click();
+    await wait(350);
+    const lensesIphone = [...document.querySelectorAll('[data-cf="scout-lenspreset"]')].map(b => +b.dataset.eq);
+    const eqIphone = (document.body.innerText.match(/(\d+(?:\.\d+)?) мм\s+\d+/) || [])[1];
+    // iPhone Pro: основная 24 мм, и объективов больше
+    document.querySelector('[data-cf="scout-device"][data-dev="ipro"]').click();
+    await wait(350);
+    const lensesPro = [...document.querySelectorAll('[data-cf="scout-lenspreset"]')].map(b => +b.dataset.eq);
+    // Переключаемся на сверхширокую — рамка обязана заметно вырасти
+    document.querySelector('[data-cf="scout-setup"]').click();   // закрыть, чтобы увидеть кадр
+    await wait(300);
+    const wMain = frameW();
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    document.querySelector('[data-cf="scout-lenspreset"][data-eq="13"]').click();
+    await wait(300);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(350);
+    const wUw = frameW();
+    // Подгонка: шаг в полмиллиметра
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(400);
+    const before = +(localStorage.getItem('cf_scout_deveq'));
+    document.querySelector('[data-cf="scout-eq-plus"]').click();
+    await wait(300);
+    const after = +(localStorage.getItem('cf_scout_deveq'));
+    // Возвращаем основную камеру, чтобы дальше снимок был как раньше
+    document.querySelector('[data-cf="scout-lenspreset"][data-eq="24"]').click();
+    await wait(250);
+    document.querySelector('[data-cf="scout-setup"]').click();
+    await wait(300);
+    return { devBtns, lensesIphone, lensesPro, wMain, wUw, before, after,
+             eqmap: JSON.parse(localStorage.getItem('cf_scout_eqmap') || '{}'),
+             device: localStorage.getItem('cf_scout_device'),
+             deveq: +(localStorage.getItem('cf_scout_deveq')) };
+  });
+  expect('устройства на выбор есть', presets.devBtns.length >= 6, presets.devBtns.join(' · '));
+  expect('у обычного iPhone основная 26 мм, у Pro — 24 мм',
+         presets.lensesIphone.includes(26) && presets.lensesPro.includes(24) && !presets.lensesPro.includes(26),
+         `обычный ${presets.lensesIphone.join('/')} · Pro ${presets.lensesPro.join('/')}`);
+  expect('у Pro объективов больше', presets.lensesPro.length > presets.lensesIphone.length,
+         `${presets.lensesPro.length} против ${presets.lensesIphone.length}`);
+  expect('сверхширокая ДЕЛАЕТ рамку заметно меньше — обзор-то шире',
+         presets.wUw > 0 && presets.wMain > 0 && presets.wUw < presets.wMain * 0.75,
+         `${Math.round(presets.wMain)} -> ${Math.round(presets.wUw)} точек`);
+  expect('подгонка шагает на полмиллиметра', near(presets.after - presets.before, 0.5, 0.01),
+         `${presets.before} -> ${presets.after} мм`);
+  expect('выбор устройства запомнился', presets.device === 'ipro', presets.device);
+  expect('угол запомнился за этой камерой', Object.values(presets.eqmap).length >= 1,
+         JSON.stringify(presets.eqmap));
 
   // ------------------------------------------------------------ 5. СНИМОК
   log('\n5. Снимок ложится к объекту с подписью');

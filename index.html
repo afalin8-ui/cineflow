@@ -2282,16 +2282,84 @@
         // до сих пор ОБСУЖДАЕМОЕ предложение (w3c/mediacapture-main#416).
         // `zoom` с Safari 17 отдаётся, но это множитель от неизвестной
         // единицы — он не говорит, от чего считать.
-        //   Поэтому обзор мы ЗНАЕМ ПРИБЛИЗИТЕЛЬНО и даём его уточнить.
-        // Числа — общеизвестные эквиваленты объективов iPhone, пересчитанные
-        // в угол по горизонтали для кадра 36 мм: 2*atan(18/f).
-        const DEV_FOV_PRESETS = [
-          { id: 'uw',   label: 'Сверхширокая 0.5×', eq: 13, fov: 108.3 },
-          { id: 'main', label: 'Основная 1×',       eq: 26, fov: 69.4 },
-          { id: 'x2',   label: 'Двойная 2×',        eq: 48, fov: 41.1 },
-          { id: 'tele', label: 'Теле 5×',           eq: 120, fov: 17.1 }
+        //   Поэтому храним ЭКВИВАЛЕНТНОЕ ФОКУСНОЕ камеры устройства (те
+        // самые «26 мм», которые печатают в характеристиках), а угол
+        // считаем сами — и считаем от НАСТОЯЩЕЙ пропорции живого потока.
+        //
+        // ЭКВИВАЛЕНТНОЕ ФОКУСНОЕ ОПРЕДЕЛЕНО ПО ДИАГОНАЛИ 35-мм кадра
+        // (43,267 мм), А НЕ ПО ЕГО ШИРИНЕ. Это не придирка: считая от
+        // ширины 36 мм, для основной камеры получаешь 69,4° вместо 67,3° —
+        // рамка мимо на 3%. Сверено с числами Apple: у iPhone 13 Pro Max
+        // (26 мм) videoFieldOfView равен 67,1°, и правильная формула даёт
+        // 67,3°; заявленные Apple «20°» у 120-мм теле — это ДИАГОНАЛЬ,
+        // и она тоже сходится. Отсюда же следует, что все «120°»
+        // и «125°» в рекламе — диагональные, и в горизонтальную формулу
+        // их подставлять нельзя.
+        const FRAME_DIAG = 43.267;
+        const halfFrame = (aspect) => FRAME_DIAG * aspect / (2 * Math.sqrt(aspect * aspect + 1));
+        const camFov = (eq, aspect) => (eq > 0)
+          ? 2 * Math.atan(halfFrame(aspect > 0 ? aspect : 4 / 3) / eq) / SUN_RAD : 0;
+
+        // НАБОРЫ КАМЕР УСТРОЙСТВ. Список собран НЕ по маркетинговым именам,
+        // а по наборам объективов: моделей три десятка, а разных чисел
+        // всего четыре. Основная камера бывает 24 мм (все Pro начиная
+        // с 14 Pro), 26 мм (все обычные, Air и e), 28 мм (SE) и около
+        // 30 мм (iPad); сверхширокая у всех, у кого она есть, — 13 мм.
+        // Тридцать кнопок с именами моделей отвечали бы на вопрос,
+        // который человек и так про себя знает, вчетверо длиннее.
+        //   Подписи — теми кратностями, что пишет сама камера телефона
+        // («0,5×», «1×»), потому что человек узнаёт их, а не миллиметры.
+        const PHONE_CAMS = [
+          { id: 'ipro',  label: 'iPhone Pro',   hint: '14 Pro и новее',
+            lens: [['0,5×', 13], ['1×', 24], ['2×', 48], ['3×', 77], ['5×', 120]] },
+          { id: 'iph',   label: 'iPhone',       hint: '14, 15, 16, 17, Air',
+            lens: [['0,5×', 13], ['1×', 26], ['2×', 52]] },
+          { id: 'iold',  label: 'iPhone до 14', hint: '11 · 12 · 13',
+            lens: [['0,5×', 13], ['1×', 26], ['2×', 52], ['3×', 77]] },
+          { id: 'se',    label: 'iPhone SE',    hint: '2-е и 3-е поколение',
+            lens: [['1×', 28]] },
+          { id: 'ipad',  label: 'iPad',         hint: 'одна задняя камера',
+            lens: [['1×', 30]] },
+          { id: 'ipadp', label: 'iPad Pro до M4', hint: 'со сверхширокой',
+            lens: [['0,5×', 13], ['1×', 30]] },
+          { id: 'andr',  label: 'Android',      hint: 'Galaxy, Pixel',
+            lens: [['0,5×', 13], ['1×', 24], ['3×', 67]] }
         ];
-        const DEV_FOV_DEFAULT = 69.4;
+        const DEV_EQ_DEFAULT = 26;
+        // Основная камера набора. Нужна, чтобы догадка о планшете ставила
+        // и его фокусное: выбрать «iPad», но остаться на 26 мм от телефона
+        // — это молча неверная рамка, а выглядит как будто всё настроено.
+        const mainEqOf = (id) => {
+          const d = PHONE_CAMS.find(x => x.id === id);
+          const m = d && (d.lens.find(l => l[0] === '1×') || d.lens[0]);
+          return m ? m[1] : DEV_EQ_DEFAULT;
+        };
+
+        // ЧТО ЗА УСТРОЙСТВО — ТОЛЬКО ДОГАДКА, И ОНА НАМЕРЕННО СЛАБАЯ.
+        // Размер экрана определяет не модель, а ГРУППУ моделей, и группы
+        // эти смешанные: 402×874 — это и 16 Pro (24 мм), и 17 (26 мм),
+        // а 393×852 — сразу четыре телефона с разными камерами. То есть
+        // «Pro или обычный» экран не говорит, и притворяться, что говорит,
+        // нельзя. Надёжно различаются только три вещи: планшет от телефона
+        // (по ширине), SE (единственный с плотностью 2 при ширине 375)
+        // и касание от мыши. Остального человек не знает разве что про
+        // чужой телефон.
+        //   Всё прочее, что советуют для опознания, в Safari мертво:
+        // WEBGL_debug_renderer_info возвращает literal «Apple GPU» на всех
+        // устройствах, hardwareConcurrency округлён до 4 или 8 (а при
+        // усиленной защите вообще случаен), deviceMemory не реализован.
+        // На iPad Safari к тому же представляется Маком — поэтому планшет
+        // узнаём по касанию, а не по строке браузера.
+        const guessDevice = () => {
+          try {
+            if (!(navigator.maxTouchPoints > 0)) return null;      // мышь — не угадываем
+            const w = Math.min(screen.width, screen.height);
+            const dpr = window.devicePixelRatio || 1;
+            if (w >= 700) return 'ipad';
+            if (w <= 380 && dpr < 2.5) return 'se';
+            return null;                                            // телефон, но какой — не скажем
+          } catch (e) { return null; }
+        };
 
         // ЭКРАН ← НАПРАВЛЕНИЕ. Куда на экране попадает точка неба с азимутом
         // az и высотой alt, если устройство смотрит в азимут yaw с наклоном
@@ -2643,12 +2711,13 @@
         //      стоит в разборе ответа Dropbox при запуске — то есть мы
         //      случайно в безопасности. НЕ ЗАВОДИ replaceState/pushState,
         //      который может сработать при живой камере.
-        const useCamera = (active, preferLabel) => {
+        const useCamera = (active) => {
           const videoRef = React.useRef(null);
           const streamRef = React.useRef(null);
           const [cams, setCams] = React.useState([]);
           const [err, setErr] = React.useState('');
           const [on, setOn] = React.useState(false);
+          const [activeCam, setActiveCam] = React.useState('');
           const stop = React.useCallback(() => {
             const s = streamRef.current;
             if (s) { try { s.getTracks().forEach(t => t.stop()); } catch (e) {} }
@@ -2675,6 +2744,11 @@
               if (pick) want = { video: { deviceId: { exact: pick.deviceId } }, audio: false };
               const stream = await navigator.mediaDevices.getUserMedia(want);
               streamRef.current = stream;
+              // Название РАБОТАЮЩЕЙ камеры берём у самой дорожки: человек
+              // мог ничего не выбирать (камера одна), а запоминать угол
+              // всё равно надо за чем-то определённым.
+              const tr = stream.getVideoTracks()[0];
+              setActiveCam((tr && (tr.label || (tr.getSettings && tr.getSettings().deviceId))) || 'камера');
               if (videoRef.current) {
                 videoRef.current.srcObject = stream;
                 try { await videoRef.current.play(); } catch (e) {}
@@ -2695,7 +2769,7 @@
           }, [stop]);
           React.useEffect(() => { if (!active) stop(); }, [active, stop]);
           React.useEffect(() => () => stop(), [stop]);
-          return { videoRef, cams, err, on, start, stop };
+          return { videoRef, cams, err, on, active: activeCam, start, stop };
         };
 
         const useSheetSwipe = (onClose) => {
@@ -4713,9 +4787,32 @@
           const head = useDeviceHeading(arOn);
           const [camLabel, setCamLabel] = React.useState(() => { try { return localStorage.getItem('cf_scout_cam') || ''; } catch (e) { return ''; } });
           const cam = useCamera(arOn, camLabel);
-          // ОБЗОР КАМЕРЫ УСТРОЙСТВА спросить нельзя (см. DEV_FOV_PRESETS),
-          // поэтому он настраиваемый и помнится.
-          const [devFov, setDevFov] = React.useState(() => savedNum('cf_scout_devfov', DEV_FOV_DEFAULT));
+          // ЧЕМ СМОТРИМ. Храним эквивалентное фокусное камеры устройства
+          // в миллиметрах, а не угол: угол зависит ещё и от пропорции
+          // потока, а её мы узнаём только от живого видео.
+          // Первый запуск считаем ОДИН раз: и набор, и фокусное должны
+          // выйти из одного решения, иначе догадка про планшет поставит
+          // его набор, а миллиметры оставит телефонные.
+          const boot = React.useRef(null);
+          if (!boot.current) {
+            let id = '';
+            try { id = localStorage.getItem('cf_scout_device') || guessDevice() || ''; } catch (e) { id = ''; }
+            boot.current = { id, eq: savedNum('cf_scout_deveq', mainEqOf(id)) };
+          }
+          const [devEq, setDevEq] = React.useState(boot.current.eq);
+          const [devId, setDevId] = React.useState(boot.current.id);
+          const device = PHONE_CAMS.find(d => d.id === devId) || null;
+          const guessed = React.useMemo(guessDevice, []);
+          // УГОЛ КАЖДОЙ КАМЕРЫ ПОМНИТСЯ ОТДЕЛЬНО. Раньше переключение
+          // камеры в списке НЕ меняло угол: взял сверхширокую — а рамка
+          // осталась посчитанной для основной, то есть молча врала вдвое.
+          // Сопоставить название камеры с объективом надёжно нечем (у Safari
+          // они переведены на язык устройства и поля «какой это объектив»
+          // нет вовсе), поэтому спрашиваем ОДИН раз и запоминаем.
+          const [eqMap, setEqMap] = React.useState(() => {
+            try { const m = JSON.parse(localStorage.getItem('cf_scout_eqmap') || '{}'); return m && typeof m === 'object' ? m : {}; }
+            catch (e) { return {}; }
+          });
           // ПОДКРУТКА КОМПАСА. Обязательна, а не украшение: ошибка
           // магнитометра в 10–15° — обычное дело рядом с машиной, штативом
           // и арматурой, а на экране это уводит солнце на пятую часть
@@ -4726,10 +4823,27 @@
           const [headOff, setHeadOff] = React.useState(() => savedNum('cf_scout_headoff', 0));
           const [manualHead, setManualHead] = React.useState(null);   // компаса нет — ведём рукой
           React.useEffect(() => { try {
-            localStorage.setItem('cf_scout_devfov', String(devFov));
+            localStorage.setItem('cf_scout_deveq', String(devEq));
             localStorage.setItem('cf_scout_headoff', String(headOff));
+            localStorage.setItem('cf_scout_eqmap', JSON.stringify(eqMap));
+            if (devId) localStorage.setItem('cf_scout_device', devId);
             if (camLabel) localStorage.setItem('cf_scout_cam', camLabel);
-          } catch (e) {} }, [devFov, headOff, camLabel]);
+          } catch (e) {} }, [devEq, headOff, camLabel, devId, eqMap]);
+          // Выбрали объектив устройства — запоминаем его за ТОЙ камерой,
+          // которая сейчас включена, чтобы при следующем переключении
+          // угол вернулся сам.
+          const pickEq = (eq) => {
+            setDevEq(eq);
+            const key = cam.active || camLabel;
+            if (key) setEqMap(m => ({ ...m, [key]: eq }));
+          };
+          const pickCam = (label) => {
+            setCamLabel(label);
+            cam.start(label);
+            const known = eqMap[label];   // что за объектив у неё, мы уже спрашивали
+            if (known > 0) setDevEq(known);
+            else if (device) showToast(`Скажите, какой это объектив — иначе рамка будет считаться от ${devEq} мм`);
+          };
 
           const yaw = manualHead !== null ? manualHead
                     : (head.heading !== null ? (head.heading + headOff + 360) % 360 : null);
@@ -4764,7 +4878,11 @@
             return () => { if (ro) ro.disconnect(); window.removeEventListener('orientationchange', measure); };
           }, [arOn, measure, cam.on]);
 
-          const aspect = vbox.h > 0 ? vbox.w / vbox.h : 1;
+          // Пропорция ЖИВОГО потока. От неё зависит и вертикальный обзор,
+          // и сам угол устройства: 26 мм дают 67,3° на кадре 4:3 и 71,9°
+          // на 16:9 — это одна и та же камера, просто снятая полоса разная.
+          const aspect = vbox.h > 0 ? vbox.w / vbox.h : 4 / 3;
+          const devFov = camFov(devEq, aspect);
           const px = (p) => p ? { x: p.x * vbox.w, y: p.y * vbox.h } : null;
           const see = (az, alt) => px(projectSky(az, alt, yaw, pitch, roll, devFov, aspect));
 
@@ -5104,7 +5222,7 @@
           // ------------------------------------------------------------------
           // РАМКА РИСУЕТСЯ ПОВЕРХ ПОЛНОГО КАДРА, а не подрезает его, и это
           // не лень. Обзор камеры устройства спросить НЕЧЕМ (см.
-          // DEV_FOV_PRESETS), а iOS 18 вдобавок сам переключает объективы
+          // PHONE_CAMS), а iOS 18 вдобавок сам переключает объективы
           // посреди работы, и запретить это со стороны страницы нельзя ни
           // deviceId, ни facingMode, ни zoom. Значит наше число про обзор
           // может устареть прямо в руках. Чуть неверная РАМКА читается как
@@ -5379,25 +5497,83 @@
                        }}
                        className="cf-inline-field" style={{ width: 150, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }} />
               )}
-              {group('Обзор камеры устройства',
-                     `Спросить его у браузера НЕЧЕМ — такого способа нет ни в одном: в спецификации это до сих пор предложение. Поэтому выберите объектив устройства или подгоните число. Сейчас ${devFov.toFixed(0)}°, объектив ${focal} мм даёт ${hfov.toFixed(0)}°.`,
+              {/* ДАЛЬШЕ — ПРО ТЕЛЕФОН В РУКАХ, А НЕ ПРО СЪЁМОЧНУЮ КАМЕРУ.
+                  Разделитель тут не украшение: выше настройки, которые
+                  правят каждый день (сенсор, пропорция, оптика), ниже —
+                  те, что задают один раз и забывают. Без границы это
+                  читалось как один длинный список, в котором непонятно,
+                  где чьи миллиметры. */}
+              <div style={{ borderTop: '1px solid var(--border)', marginTop: 22, paddingTop: 14 }}>
+                <span style={{ fontSize: 'var(--fs-3)', fontWeight: 700, letterSpacing: '-.01em', color: 'var(--text)' }}>Чем смотрим</span>
+                <p className="cf-meta" style={{ marginTop: 3, lineHeight: 1.55 }}>
+                  Это про телефон или планшет в руках. Задаётся один раз.
+                </p>
+              </div>
+              {group('Какое устройство',
+                     guessed === 'ipad' ? 'Судя по экрану — планшет. Apple фокусное своих планшетов не публикует вовсе, поэтому 30 мм у нас посчитаны по снимкам: если рамка не сойдётся, подправьте числом ниже.'
+                   : guessed === 'se' ? 'Судя по экрану — iPhone SE.'
+                   : 'Экран говорит только «телефон это или планшет». Pro или обычный, он не скажет: у 16 Pro и 17 размер экрана один, а основная камера разная — 24 и 26 мм.',
                 <React.Fragment>
-                  {DEV_FOV_PRESETS.map(p => (
-                    <button key={p.id} onClick={() => setDevFov(p.fov)} style={{ ...pill(Math.abs(devFov - p.fov) < 0.5), fontFamily: 'var(--font-ui)' }}>
-                      {p.label}
+                  {PHONE_CAMS.map(d => (
+                    <button key={d.id} data-cf="scout-device" data-dev={d.id} onClick={() => {
+                              setDevId(d.id);
+                              // Ставим основную камеру устройства: «1×» —
+                              // то, с чего начинают, и то, что браузер
+                              // отдаёт по умолчанию.
+                              const main = d.lens.find(l => l[0] === '1×') || d.lens[0];
+                              if (main) pickEq(main[1]);
+                            }}
+                            title={d.hint}
+                            style={{ ...pill(devId === d.id), fontFamily: 'var(--font-ui)' }}>
+                      {d.label}
+                      {d.id === guessed && <span style={{ marginLeft: 5, color: 'var(--accent)' }}>•</span>}
                     </button>
                   ))}
-                  <input type="range" min="20" max="120" step="0.5" value={devFov} data-ro-ok
-                         onChange={(e) => setDevFov(parseFloat(e.target.value))}
-                         style={{ width: '100%', marginTop: 6 }} />
                 </React.Fragment>
               )}
-              {cam.cams.length > 1 && group('Какой объектив устройства',
-                     'iOS 16.3 и новее показывает странице все задние камеры. Помним выбор ПО НАЗВАНИЮ: номер камеры меняется при каждой перезагрузке страницы. И помните: iOS 18 переключает объективы сам, поэтому рамку мы рисуем поверх кадра, а не подрезаем его.',
+              {group(device ? `Объектив · ${device.label}` : 'Объектив устройства',
+                     device
+                       ? `Кратности те же, что пишет камера телефона. Сейчас ${devEq} мм — это ${devFov.toFixed(0)}° по горизонтали при нынешней пропорции кадра, и объектив ${focal} мм даёт ${hfov.toFixed(0)}°.`
+                       : 'Сначала выберите устройство выше — тогда здесь появятся его кратности с верными числами.',
+                <React.Fragment>
+                  {(device ? device.lens : []).map(([label, eq]) => (
+                    <button key={label} data-cf="scout-lenspreset" data-eq={eq} onClick={() => pickEq(eq)}
+                            style={{ ...pill(Math.abs(devEq - eq) < 0.01), flexDirection: 'column', alignItems: 'flex-start',
+                                     display: 'flex', justifyContent: 'center', padding: '4px 10px', minHeight: 'var(--tap)' }}>
+                      <span style={{ fontSize: 'var(--fs-2)', color: Math.abs(devEq - eq) < 0.01 ? 'var(--text)' : 'var(--text-2)' }}>{label}</span>
+                      <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>{eq} мм · {camFov(eq, aspect).toFixed(0)}°</span>
+                    </button>
+                  ))}
+                </React.Fragment>
+              )}
+              {/* ПОДГОНКА ОСТАЁТСЯ, И ЭТО НЕ ПОЛУМЕРА. Пресет может не
+                  подойти: у планшетов фокусное нигде не опубликовано,
+                  Android вдобавок подрезает кадр стабилизацией (Chrome
+                  делает это по умолчанию, а спросить, на сколько, нечем),
+                  да и телефон может оказаться не из списка. Без выхода
+                  человек оказался бы в тупике — та же беда, что «нечем
+                  закрыть окно». Шаг в полмиллиметра — это около градуса. */}
+              {group('Подогнать',
+                     'Если рамка не сходится с тем, что видно в кадре, поправьте фокусное на несколько десятых. Число помнится за этой камерой.',
+                <React.Fragment>
+                  <button data-cf="scout-eq-minus" onClick={() => pickEq(Math.max(4, Math.round((devEq - 0.5) * 10) / 10))}
+                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>−</button>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 10px', minHeight: 'var(--tap)',
+                                 fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }}>
+                    {devEq} мм
+                    <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>{devFov.toFixed(1)}°</span>
+                  </span>
+                  <button data-cf="scout-eq-plus" onClick={() => pickEq(Math.min(400, Math.round((devEq + 0.5) * 10) / 10))}
+                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>+</button>
+                </React.Fragment>
+              )}
+              {cam.cams.length > 1 && group('Какой камерой смотрим',
+                     'iOS 16.3 и новее показывает странице все задние камеры по отдельности. Помним выбор ПО НАЗВАНИЮ: номер камеры меняется при каждой перезагрузке страницы. Переключив камеру, скажите её кратность выше — угол за ней запомнится, и дальше он будет возвращаться сам.',
                 cam.cams.map(d => (
-                  <button key={d.deviceId} onClick={() => { setCamLabel(d.label); cam.start(d.label); }}
+                  <button key={d.deviceId} data-cf="scout-camera" onClick={() => pickCam(d.label)}
                           style={{ ...pill(camLabel === d.label), fontFamily: 'var(--font-ui)', maxWidth: '100%', textAlign: 'left' }}>
                     {d.label || 'камера без названия'}
+                    {eqMap[d.label] > 0 && <span style={{ marginLeft: 6, fontFamily: 'var(--font-mono)', color: 'var(--muted-2)' }}>{eqMap[d.label]} мм</span>}
                   </button>
                 ))
               )}
@@ -5477,15 +5653,15 @@
                   ту часть плана, ради которой камеру и подняли. */}
               {mode === 'ar' && (
                 <div className="flex items-center gap-2 shrink-0" style={{ padding: '8px 12px', borderTop: '1px solid var(--border)' }}>
-                  <button onClick={() => setFocal(stepLens(-1))}
+                  <button onClick={() => setFocal(stepLens(-1))} data-cf="scout-lens-minus"
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>−</button>
-                  <button onClick={() => setSetupOpen(true)} title="Камера, пропорция, сжатие, обзор устройства"
+                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" title="Камера, пропорция, сжатие, обзор устройства"
                           style={{ minHeight: 'var(--tap)', padding: '0 10px', borderRadius: 'var(--r-sm)',
                                    border: '1px solid var(--border)', background: 'var(--card)' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: 'var(--text)' }}>{focal} мм</span>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
                   </button>
-                  <button onClick={() => setFocal(stepLens(1))}
+                  <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>+</button>
                   <button onClick={shoot} data-cf="scout-shoot" disabled={busy || !cam.on} className="cf-edit-only ml-auto"
                           style={{ minHeight: 'var(--tap)', padding: '0 18px', borderRadius: 'var(--r-md)',
