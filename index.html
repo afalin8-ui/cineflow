@@ -13499,6 +13499,28 @@
             setDrawingSchemeId(nS.id);
           };
 
+          // Завести стикер и пустую карточку референса ПОСЕРЕДИНЕ ВИДИМОГО.
+          // Объявлены отдельно, потому что зовутся из двух мест: строкой
+          // кнопок над доской и, на телефоне, из «···» — там места
+          // на отдельные иконки нет. Вторая копия обработчика разъехалась
+          // бы с первой при первой же правке.
+          const addStickyHere = () => {
+            if (READ_ONLY) return;
+            const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: '',
+                         x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
+                         w: STICKY_W, h: STICKY_H, color: '#fef08a' };
+            setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+            setWbMode('select'); setSelectedWbItems([ns.id]); setEditCard({ id: ns.id, key: 'text' });
+          };
+          const addRefCardHere = () => {
+            if (READ_ONLY) return;
+            const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '',
+                         x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom,
+                         label: 'Референс', tags: [] };
+            setReferences([...references, nr]); syncDoc('references', nr.id, nr);
+            setWbMode('select'); setSelectedWbItems([nr.id]);
+          };
+
           // Выбор объекта в режиме «Связь». Ходов ровно два: первый объект,
           // второй объект. Зовётся и с холста (фигуры, надписи), и прямо
           // с карточки: выделенная карточка лежит ВЫШЕ холста, и нажатие по
@@ -16527,15 +16549,29 @@
                           по высоте и молча срезались снизу. Слева рисуют,
                           здесь распоряжаются доской целиком. */}
                       <div className="ml-auto flex items-center gap-0.5 shrink-0 pb-1">
-                        {/* Единственный путь к уже загруженным референсам с самой
-                            доски. */}
-                        <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
-                                className={`cf-tool cf-edit-only ${scenePickerOpen ? 'on' : ''}`}><Icons.Scene/></button>
-                        <button onClick={() => { const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: '', x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom, w: STICKY_W, h: STICKY_H, color: '#fef08a' }; setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns); setWbMode('select'); setSelectedWbItems([ns.id]); setEditCard({ id: ns.id, key: 'text' }); }}
-                                className="cf-tool cf-edit-only" title="Стикер"><Icons.Sticky/></button>
-                        <button onClick={() => { const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '', x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom, label: 'Референс', tags: [] }; setReferences([...references, nr]); syncDoc('references', nr.id, nr); setWbMode('select'); setSelectedWbItems([nr.id]); }}
-                                className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
-                        <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
+                        {/* НА ТЕЛЕФОНЕ ЭТИХ ТРЁХ ИКОНОК ТУТ НЕТ. Полоса
+                            вкладок на 390 точках занята досками и схемами,
+                            а кластер действий отъедал у неё полторы сотни
+                            и вдобавок стоял безымянными значками: что такое
+                            «сетка», «лист» и «картинка», по виду не понять,
+                            а подсказки на касании нет. Всё это переехало
+                            в «···», где рядом уже живут выгрузка и очистка
+                            и где у каждой строки есть НАЗВАНИЕ. На планшете
+                            и на столе места хватает, и там они остаются
+                            под рукой. */}
+                        {!isPhone && (
+                        <React.Fragment>
+                          {/* Единственный путь к уже загруженным референсам
+                              с самой доски. */}
+                          <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
+                                  className={`cf-tool cf-edit-only ${scenePickerOpen ? 'on' : ''}`}><Icons.Scene/></button>
+                          <button onClick={addStickyHere}
+                                  className="cf-tool cf-edit-only" title="Стикер"><Icons.Sticky/></button>
+                          <button onClick={addRefCardHere}
+                                  className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
+                          <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
+                        </React.Fragment>
+                        )}
                         {/* Выгрузка доски картинкой — то, что отправляют группе:
                             PNG для мессенджера, SVG для печати и правки в
                             векторном редакторе. Вместе с очисткой рисунка —
@@ -16547,6 +16583,20 @@
                                   className={`cf-tool ${boardMenu ? 'on' : ''}`} style={{ letterSpacing: 1 }}>···</button>
                           {boardMenu && (
                             <div className="cf-menu">
+                              {isPhone && (
+                                <React.Fragment>
+                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); setScenePickerOpen(true); }}>
+                                    <Icons.Scene/> Положить на доску…
+                                  </button>
+                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addStickyHere(); }}>
+                                    <Icons.Sticky/> Новый стикер
+                                  </button>
+                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addRefCardHere(); }}>
+                                    <Icons.Gallery/> Новый референс
+                                  </button>
+                                  <hr />
+                                </React.Fragment>
+                              )}
                               <button onClick={() => { setBoardMenu(false); exportBoard('png'); }} disabled={exportBusy} title="Картинка для мессенджера">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
                                 Выгрузить PNG
