@@ -293,7 +293,37 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       frameW: svg && svg.querySelector('[data-cf="scout-frame"]')
               ? +svg.querySelector('[data-cf="scout-frame"]').getAttribute('width') : 0,
       svgW: svg ? +svg.getAttribute('viewBox').split(' ')[2] : 0,
-      stamp: (document.querySelector('[data-cf="scout-stamp"]') || {}).innerText || ''
+      ratioTag: (document.querySelector('[data-cf="scout-ratio"]') || {}).textContent || '',
+      // СКОЛЬКО ЗНАКОВ ЛЕЖИТ ПОВЕРХ САМОЙ КАРТИНКИ. Мерило числовое:
+      // на глаз «вроде немного» и при строке в сто десять знаков поперёк
+      // кадра. Считаем всё, что нарисовано в границах видео.
+      onPic: (() => {
+        const v2 = document.querySelector('[data-cf="scout-cam"] video');
+        if (!v2) return -1;
+        const r = v2.getBoundingClientRect();
+        // Настоящие границы картинки внутри <video> при object-fit: contain
+        const k = Math.min(r.width / v2.videoWidth, r.height / v2.videoHeight);
+        const iw = v2.videoWidth * k, ih = v2.videoHeight * k;
+        const box = { l: r.left + (r.width - iw) / 2, t: r.top + (r.height - ih) / 2 };
+        box.r = box.l + iw; box.b = box.t + ih;
+        // Кнопки не считаем: это органы управления, они и у Cadrage
+        // лежат полосой поверх картинки. Считаем НАДПИСИ — то, что просто
+        // написано на кадре и читать его мешает.
+        let n = 0, longest = 0, worst = '';
+        document.querySelectorAll('[data-cf="scout-cam"] *').forEach(el => {
+          if (el.children.length) return;
+          if (el.closest('button, input, select, label')) return;
+          const t = (el.textContent || '').trim();
+          if (!t) return;
+          const q = el.getBoundingClientRect();
+          if (!q.width || !q.height) return;
+          const cx = q.left + q.width / 2, cy = q.top + q.height / 2;
+          if (cx < box.l || cx > box.r || cy < box.t || cy > box.b) return;
+          n += t.length;
+          if (t.length > longest) { longest = t.length; worst = t; }
+        });
+        return { n, longest, worst };
+      })()
     };
   });
   expect('камера отдала кадр', ar.video, `${ar.vw}×${ar.vh}`);
@@ -303,9 +333,19 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('рамка объектива есть', ar.frame, `ширина ${Math.round(ar.frameW)} из ${Math.round(ar.svgW)}`);
   expect('рамка уже кадра — 35 мм на Super 35 это ~58% ширины',
          ar.frameW > ar.svgW * 0.45 && ar.frameW < ar.svgW * 0.7, (ar.frameW / ar.svgW * 100).toFixed(0) + '%');
-  expect('подпись «где, когда, кем, чем» на кадре',
-         /ДВОР ШКОЛЫ/.test(ar.stamp) && /мм/.test(ar.stamp) && /Тест Оператор/.test(ar.stamp) && /азимут/.test(ar.stamp),
-         ar.stamp.slice(0, 120));
+  // ПОВЕРХ КАРТИНКИ НЕ ПИШЕМ НИЧЕГО, кроме пропорции в углу рамки и
+  // подписей часов у дуги. Раньше тут лежала строка из ста десяти знаков
+  // («объект · объектив · камера · пропорция · азимут · дата · кто»),
+  // которая на широком телефоне растягивалась во всю ширину, переносилась
+  // на две строки и ложилась ПОПЕРЁК кадра. Сверено с Cadrage: у него
+  // поверх картинки нет ничего, кроме «2.35:1» в углу рамки.
+  expect('метка пропорции стоит в углу рамки — как «2.35:1» у Cadrage',
+         ar.ratioTag === '2.39', ar.ratioTag || '(нет)');
+  expect('поверх картинки нет длинных надписей',
+         ar.onPic && ar.onPic.longest > 0 && ar.onPic.longest <= 24,
+         `самая длинная — ${ar.onPic && ar.onPic.longest} знаков: «${ar.onPic && ar.onPic.worst}»`);
+  expect('и всего надписей на кадре немного',
+         ar.onPic && ar.onPic.n < 60, `${ar.onPic && ar.onPic.n} знаков`);
 
   // Ночная часть дуги — пунктиром. Смотреть надо НА СЕВЕР: в Москве в конце
   // июня солнце уходит под горизонт неглубоко и как раз с северной стороны,
@@ -570,6 +610,75 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('органы управления НЕ спрятаны — прячется только проза',
          words.chips > 30, String(words.chips));
 
+  // --------------------------------- 4д. ОБЗОР ТЕЛЕФОНА СВОДИТСЯ ЩИПКОМ
+  // Камерная сторона считается точно (35 мм на Mini LF в 2.39 — это 55,3°),
+  // а вот какую долю экрана займёт эта рамка, зависит от обзора САМОГО
+  // телефона. Спросить его нечем ни одним способом: Safari отдаёт странице
+  // свой пресет съёмки. Поэтому обзор подвижен — щипком прямо по кадру.
+  log('\n4д. Крупность: обзор телефона сводится щипком');
+  const pinch = await page.evaluate(async () => {
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const fw = () => { const f = document.querySelector('[data-cf="scout-frame"]');
+                       return f ? +f.getAttribute('width') : 0; };
+    const eq = () => +(localStorage.getItem('cf_scout_deveq'));
+    const ev = (type, id, x, y) => box.dispatchEvent(new PointerEvent(type, {
+      pointerId: id, clientX: x, clientY: y, pointerType: 'touch', bubbles: true, cancelable: true }));
+    const r = box.getBoundingClientRect();
+    const cy = r.top + r.height / 2, cx = r.left + r.width / 2;
+    const was = { eq: eq(), w: fw() };
+    // Разводим пальцы вдвое — рамка обязана вырасти
+    ev('pointerdown', 11, cx - 100, cy); ev('pointerdown', 12, cx + 100, cy);
+    await new Promise(t => setTimeout(t, 60));
+    ev('pointermove', 11, cx - 200, cy); ev('pointermove', 12, cx + 200, cy);
+    await new Promise(t => setTimeout(t, 350));
+    const wide = { eq: eq(), w: fw() };
+    ev('pointerup', 11, cx - 200, cy); ev('pointerup', 12, cx + 200, cy);
+    await new Promise(t => setTimeout(t, 250));
+    const kept = { eq: eq(), map: JSON.parse(localStorage.getItem('cf_scout_eqmap') || '{}') };
+    // И обратно, чтобы дальше всё было как было
+    ev('pointerdown', 13, cx - 200, cy); ev('pointerdown', 14, cx + 200, cy);
+    await new Promise(t => setTimeout(t, 60));
+    ev('pointermove', 13, cx - 100, cy); ev('pointermove', 14, cx + 100, cy);
+    await new Promise(t => setTimeout(t, 350));
+    ev('pointerup', 13, cx - 100, cy); ev('pointerup', 14, cx + 100, cy);
+    await new Promise(t => setTimeout(t, 250));
+    return { was, wide, kept, back: { eq: eq(), w: fw() } };
+  });
+  expect('щипок меняет обзор устройства', pinch.wide.eq > pinch.was.eq * 1.5,
+         `${pinch.was.eq} → ${pinch.wide.eq} мм`);
+  expect('и рамка от этого РАСТЁТ — развели пальцы, стало крупнее',
+         pinch.wide.w > pinch.was.w * 1.5, `${Math.round(pinch.was.w)} → ${Math.round(pinch.wide.w)} точек`);
+  expect('число запомнилось за этой камерой',
+         Object.values(pinch.kept.map).some(v => Math.abs(v - pinch.wide.eq) < 0.6),
+         JSON.stringify(pinch.kept.map));
+  expect('сведение обратимо — свели пальцы, вернулось',
+         Math.abs(pinch.back.eq - pinch.was.eq) < pinch.was.eq * 0.15,
+         `${pinch.wide.eq} → ${pinch.back.eq} мм`);
+  // ЗАСТРЯВШИЙ ПАЛЕЦ НЕ ДОЛЖЕН ПРЕВРАЩАТЬ КАСАНИЕ В ЩИПОК. Отпускание
+  // изредка теряется, а нажатие по накладке в режиме подкрутки его
+  // и не присылает: без подчистки обзор менялся бы сам собой от
+  // обычного касания — та же беда, что была у доски.
+  const stuck = await page.evaluate(async () => {
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const eq = () => +(localStorage.getItem('cf_scout_deveq'));
+    const ev = (type, id, x, y) => box.dispatchEvent(new PointerEvent(type, {
+      pointerId: id, clientX: x, clientY: y, pointerType: 'touch', bubbles: true, cancelable: true }));
+    const r = box.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    ev('pointerdown', 91, cx - 150, cy);            // палец, который «потеряли»
+    await new Promise(t => setTimeout(t, 900));
+    const was = eq();
+    ev('pointerdown', 92, cx + 40, cy);             // обычное одиночное касание
+    ev('pointermove', 92, cx + 90, cy);
+    await new Promise(t => setTimeout(t, 300));
+    const after = eq();
+    ev('pointerup', 92, cx + 90, cy); ev('pointerup', 91, cx - 150, cy);
+    await new Promise(t => setTimeout(t, 200));
+    return { was, after };
+  });
+  expect('одиночное касание рядом с застрявшим пальцем обзор НЕ меняет',
+         Math.abs(stuck.after - stuck.was) < 3, `${stuck.was} → ${stuck.after} мм`);
+
   // --------------------------------------- 4г. СВЕРКА ТОЧКИ ПО КООРДИНАТАМ
   // Объект в списке и место, где мы стоим, расходятся МОЛЧА: переехали
   // на другой двор, а кадры и заметки всё так же ложатся к прежнему
@@ -653,6 +762,24 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   // ------------------------------------------------------------ 5. СНИМОК
   log('\n5. Снимок ложится к объекту с подписью');
   const shot = await page.evaluate(async () => {
+    // Отматываем солнце на другой час ПЕРЕД съёмкой: время в подписи
+    // обязано остаться настоящим. Раньше туда уходило время с ползунка,
+    // и в записи кадра стояло «19:55» при часах 13:46.
+    const clock = document.querySelector('[data-cf="scout-clock"]');
+    if (clock) {
+      clock.click();
+      await new Promise(r => setTimeout(r, 400));
+      const tb = document.querySelector('[data-cf="scout-timebar"]');
+      if (tb) {
+        const r0 = tb.getBoundingClientRect();
+        const x = r0.left + r0.width * 0.82;          // около 19:40
+        tb.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: r0.top + r0.height / 2, bubbles: true, pointerId: 7 }));
+        tb.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: r0.top + r0.height / 2, bubbles: true, pointerId: 7 }));
+        await new Promise(r => setTimeout(r, 400));
+      }
+      clock.click();
+      await new Promise(r => setTimeout(r, 300));
+    }
     const before = JSON.parse(localStorage.getItem('cf_references') || '[]').length;
     const b = document.querySelector('[data-cf="scout-shoot"]');
     if (!b) return { err: 'кнопки «Снять» нет' };
@@ -664,7 +791,39 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       await new Promise(r2 => setTimeout(r2, 200));
     }
     const refs = JSON.parse(localStorage.getItem('cf_references') || '[]');
-    return { hits, before, after: refs.length, last: refs[refs.length - 1] || null };
+    const out = { hits, before, after: refs.length, last: refs[refs.length - 1] || null, at: Date.now() };
+    // РАМКА НА САМОМ СНИМКЕ. Ищем её по цвету: акцентная линия — заметно
+    // краснее всего остального, — и смотрим габарит найденного. У рамки
+    // он обязан быть пропорции кадра и стоять по центру.
+    const url = out.last && out.last.url;
+    if (url) {
+      out.box = await new Promise(res => {
+        const im = new Image();
+        im.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = im.naturalWidth; c.height = im.naturalHeight;
+          const cx = c.getContext('2d');
+          cx.drawImage(im, 0, 0);
+          const d = cx.getImageData(0, 0, c.width, c.height).data;
+          let l = 1e9, t = 1e9, r2 = -1, b2 = -1, n = 0;
+          for (let y = 0; y < c.height; y += 2) {
+            for (let x = 0; x < c.width; x += 2) {
+              const i = (y * c.width + x) * 4;
+              const R = d[i], G = d[i + 1], B = d[i + 2];
+              if (R > 150 && R - B > 55 && R - G > 35) {
+                n++;
+                if (x < l) l = x; if (x > r2) r2 = x;
+                if (y < t) t = y; if (y > b2) b2 = y;
+              }
+            }
+          }
+          res(n > 50 ? { l, t, r: r2, b: b2, n, w: c.width, h: c.height } : { n, w: c.width, h: c.height });
+        };
+        im.onerror = () => res(null);
+        im.src = url;
+      });
+    }
+    return out;
   });
   expect('нажатие попадает в кнопку «Снять»', shot.hits);
   expect('кадр добавился в проект', shot.after === shot.before + 1, `${shot.before} → ${shot.after}`);
@@ -684,6 +843,29 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('подпись «когда снято» в записи', !!sh.when && !isNaN(new Date(sh.when)), sh.when);
   expect('подпись «кем снято» в записи', sh.who === 'Тест Оператор', sh.who);
   expect('название объекта в подписи', sh.place === 'ДВОР ШКОЛЫ', sh.place);
+  // ВРЕМЯ В ЗАПИСИ — НАСТОЯЩЕЕ, а отмотанное лежит отдельным полем.
+  expect('«когда снято» — это время СЪЁМКИ, а не положение ползунка',
+         Math.abs(new Date(sh.when).getTime() - shot.at) < 60000,
+         `${sh.when} против ${new Date(shot.at).toISOString()}`);
+  expect('а отмотанное время не потеряно — лежит отдельно',
+         !!sh.sunAt && sh.sunAt !== sh.when, `sunAt=${sh.sunAt}`);
+
+  // РАМКА ОБЪЕКТИВА НА САМОМ СНИМКЕ. Без неё в объекте лежит обычная
+  // фотография с телефона и подписью «35 мм · ALEXA · 2.39», проверить
+  // которую нечем — а ради этой рамки визир и заведён.
+  const bx = shot.box || {};
+  expect('на снимке нарисована рамка', bx.n > 50, `красных точек ${bx.n || 0}`);
+  if (bx.n > 50) {
+    const fw = bx.r - bx.l, fh = bx.b - bx.t;
+    expect('у рамки на снимке пропорция кадра — 2.39',
+           Math.abs(fw / fh - 2.39) < 0.12, (fw / fh).toFixed(2));
+    expect('рамка стоит по центру снимка',
+           Math.abs((bx.l + bx.r) / 2 - bx.w / 2) < bx.w * 0.03 &&
+           Math.abs((bx.t + bx.b) / 2 - bx.h / 2) < bx.h * 0.03,
+           `центр ${Math.round((bx.l + bx.r) / 2)},${Math.round((bx.t + bx.b) / 2)} при ${bx.w}×${bx.h}`);
+    expect('рамка не режет снимок — кадр остаётся целиком',
+           fw < bx.w * 0.995, `${Math.round(fw)} из ${bx.w}`);
+  }
 
   // ------------------------------------------------------------ 6. ЗАМЕТКИ
   log('\n6. Заметки на ходу ложатся к объекту');

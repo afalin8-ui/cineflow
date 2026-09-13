@@ -2760,14 +2760,24 @@
             try {
               // Сначала общий запрос: пока разрешения нет, enumerateDevices
               // отдаёт список БЕЗ названий, и выбрать из него нечего.
-              let want = { video: { facingMode: { ideal: 'environment' } }, audio: false };
+              // ФОРМАТ ПОТОКА ПРОСИМ ЯВНО, И ЭТО НЕ ПРИДИРКА. Без заявки
+              // Safari сам выбирает пресет съёмки, и от запуска к запуску
+              // выбирает разный: то 4:3, то 16:9, а на мелких пресетах
+              // ещё и ПОДРЕЗАННЫЙ по центру. Обзор от этого гуляет, рамка
+              // считается по прежнему числу — и выходит «каждый раз разная
+              // крупность, а я не двигался с места». Просим 4:3 (родная
+              // для сенсора пропорция, и именно к ней относятся
+              // опубликованные фокусные) и побольше точек: крупные пресеты
+              // читают сенсор целиком, мелкие — из середины.
+              const fmt = { aspectRatio: { ideal: 4 / 3 }, width: { ideal: 1920 }, height: { ideal: 1440 } };
+              let want = { video: { facingMode: { ideal: 'environment' }, ...fmt }, audio: false };
               const list = await navigator.mediaDevices.enumerateDevices().catch(() => []);
               const named = list.filter(d => d.kind === 'videoinput' && d.label);
               // Помним камеру ПО НАЗВАНИЮ, а не по deviceId: id меняется при
               // каждой перезагрузке страницы (WebKit 179220), и сохранённый
               // никуда не привёл бы.
               const pick = label && named.find(d => d.label === label);
-              if (pick) want = { video: { deviceId: { exact: pick.deviceId } }, audio: false };
+              if (pick) want = { video: { deviceId: { exact: pick.deviceId }, ...fmt }, audio: false };
               const stream = await navigator.mediaDevices.getUserMedia(want);
               streamRef.current = stream;
               // Название РАБОТАЮЩЕЙ камеры берём у самой дорожки: человек
@@ -4943,6 +4953,78 @@
             const key = cam.active || camLabel;
             if (key) setEqMap(m => ({ ...m, [key]: eq }));
           };
+          // --- ЩИПОК ПО КАДРУ ЗАДАЁТ ОБЗОР УСТРОЙСТВА ---
+          // Справочное фокусное телефона — это число для ФОТОГРАФИИ, а не
+          // для потока в браузере, и совпадают они не всегда: Safari отдаёт
+          // странице свой пресет съёмки, а какой у него обзор — спросить
+          // нечем ни одним способом. Отсюда и «по крупности не попали»:
+          // камерная сторона считается верно (35 мм на Mini LF в 2.39 —
+          // это 55,3°, сверено счётом), а вот доля ширины, которую рамка
+          // займёт на экране, целиком зависит от нашей догадки про телефон.
+          //   Поэтому обзор делается ПОДВИЖНЫМ: развели пальцы — рамка
+          // выросла, свели — уменьшилась, и она сходится с тем, что человек
+          // знает верным (хоть с проверенным визиром, хоть с настоящей
+          // камерой) за пару секунд. Число при этом помнится ЗА ЭТОЙ
+          // камерой, как и раньше, — то есть подгоняют один раз.
+          //   Ползунок ±0,5 мм остаётся: щипком не попасть в точное число,
+          // а дошагать до него — можно.
+          // ЗАБЫТЫЙ ПАЛЕЦ — известная беда, и здесь она тоже есть.
+          // Отпускание изредка теряется (а нажатие по накладке в режиме
+          // подкрутки его и не присылает), и застрявший в списке палец
+          // превращал бы следующее обычное касание в щипок: обзор менялся
+          // бы сам собой. Поэтому у каждого пальца стоит время, старые
+          // выбрасываются, и жест держится за ДВА выбранных id, а не за
+          // «сколько сейчас в списке» — то же лечение, что у доски.
+          const PINCH_STALE = 3000;
+          // А ГЛАВНОЕ — НАСТОЯЩИЙ ЩИПОК НАЧИНАЮТ ДВУМЯ ПАЛЬЦАМИ СРАЗУ.
+          // Одной подчистки по времени мало: палец, застрявший секунду
+          // назад, вместе со следующим обычным касанием давал «щипок»,
+          // и обзор уезжал от простого тычка в кадр. Поэтому жест
+          // засчитывается, только если оба пальца легли почти
+          // одновременно; всё остальное — одиночные касания.
+          const PINCH_GAP = 300;
+          const pinchRef = React.useRef(null);
+          const frameShare = (eq) => {
+            // Какую долю ширины кадра занимает рамка при таком обзоре.
+            const d = camFov(eq, aspect);
+            return (hfov > 0 && d > 0) ? Math.tan(hfov * SUN_RAD / 2) / Math.tan(d * SUN_RAD / 2) : 0;
+          };
+          const pinchDown = (e) => {
+            if (readOnly || e.pointerType === 'mouse') return;
+            const p = pinchRef.current || (pinchRef.current = { pts: new Map(), ids: null, eq0: 0, d0: 0 });
+            const now = Date.now();
+            p.pts.forEach((v, k) => { if (now - v.t > PINCH_STALE) p.pts.delete(k); });
+            p.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+            if (p.pts.size < 2) { p.ids = null; p.d0 = 0; return; }
+            // Берём ДВА САМЫХ СВЕЖИХ пальца: их человек и свёл только что.
+            const two = [...p.pts.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, 2);
+            if (two[0][1].t - two[1][1].t > PINCH_GAP) { p.ids = null; p.d0 = 0; return; }
+            p.ids = [two[0][0], two[1][0]];
+            p.d0 = Math.hypot(two[0][1].x - two[1][1].x, two[0][1].y - two[1][1].y);
+            p.eq0 = devEq;
+          };
+          const pinchMove = (e) => {
+            const p = pinchRef.current;
+            if (!p || !p.ids || !p.pts.has(e.pointerId)) return;
+            const was = p.pts.get(e.pointerId);
+            p.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: was ? was.t : Date.now() });
+            if (p.ids.indexOf(e.pointerId) < 0 || !(p.d0 > 0)) return;
+            const a = p.pts.get(p.ids[0]), b = p.pts.get(p.ids[1]);
+            if (!a || !b) return;
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (!(d > 0)) return;
+            // Развели пальцы — рамка должна ВЫРАСТИ. Рамка растёт, когда
+            // обзор устройства УЖЕ, то есть когда его фокусное БОЛЬШЕ.
+            const eq = Math.max(4, Math.min(400, Math.round(p.eq0 * (d / p.d0) * 10) / 10));
+            if (eq !== devEq) pickEq(eq);
+          };
+          const pinchUp = (e) => {
+            const p = pinchRef.current;
+            if (!p) return;
+            p.pts.delete(e.pointerId);
+            if (p.pts.size < 2) { p.ids = null; p.d0 = 0; }
+          };
+
           const pickCam = (label) => {
             setCamLabel(label);
             cam.start(label);
@@ -4974,14 +5056,36 @@
             const w = vw * k, h = vh * k;
             setVbox({ x: (cw - w) / 2, y: (ch - h) / 2, w, h });
           }, []);
+          // ПОТОК МОЖЕТ ПЕРЕЕХАТЬ САМ, И МОЛЧАТЬ ОБ ЭТОМ НЕЛЬЗЯ. iOS 18
+          // переключает задние объективы посреди работы, а Safari умеет
+          // сменить пресет съёмки: обзор становится другим, а наше число
+          // в миллиметрах остаётся прежним — то есть рамка молча врёт.
+          // Запретить это нечем, а вот ЗАМЕТИТЬ можно: у <video> на смену
+          // videoWidth/videoHeight приходит событие `resize`.
+          const geoRef = React.useRef('');
           React.useEffect(() => {
             if (!arOn) return;
             measure();
-            const el = boxRef.current;
+            const el = boxRef.current, v = cam.videoRef.current;
+            const onResize = () => {
+              measure();
+              const g = v ? `${v.videoWidth}x${v.videoHeight}` : '';
+              if (!g || g === geoRef.current) return;
+              const was = geoRef.current;
+              geoRef.current = g;
+              // Первый ответ камеры — это не смена, это её запуск.
+              if (was) showToast(`Камера сама сменила формат: ${was} → ${g}. Обзор мог измениться — сверьте рамку`);
+            };
+            onResize();
             let ro = null;
             try { ro = new ResizeObserver(measure); if (el) ro.observe(el); } catch (e) {}
+            if (v) v.addEventListener('resize', onResize);
             window.addEventListener('orientationchange', measure);
-            return () => { if (ro) ro.disconnect(); window.removeEventListener('orientationchange', measure); };
+            return () => {
+              if (ro) ro.disconnect();
+              if (v) v.removeEventListener('resize', onResize);
+              window.removeEventListener('orientationchange', measure);
+            };
           }, [arOn, measure, cam.on]);
 
           // Пропорция ЖИВОГО потока. От неё зависит и вертикальный обзор,
@@ -5024,12 +5128,18 @@
           const [burn, setBurn] = React.useState(() => { try { return localStorage.getItem('cf_scout_burn') === '1'; } catch (e) { return false; } });
           React.useEffect(() => { try { localStorage.setItem('cf_scout_burn', burn ? '1' : '0'); } catch (e) {} }, [burn]);
           const [busy, setBusy] = React.useState(false);
-          const stampLine = () => {
+          // ВРЕМЯ В ПОДПИСИ — НАСТОЯЩЕЕ, А НЕ С ПОЛЗУНКА. `when` — это
+          // время, на которое отмотали СОЛНЦЕ: отмотали на вечер посмотреть
+          // свет, сняли кадр — и в записи стояло «19:55» при часах 13:46.
+          // По этой строке потом ищут, а она врала. Отмотанное время не
+          // потеряно: оно уходит в запись отдельным полем `sunAt`.
+          const stampLine = (at) => {
+            const t = at || new Date();
             const bits = [];
             if (loc) bits.push(loc.name || 'объект без названия');
             bits.push(`${focal} мм · ${sensor.label.split(' · ')[0]} · ${ratio.toFixed(2)}${squeeze > 1 ? ` · ${squeeze}×` : ''}`);
             if (yaw !== null) bits.push(`азимут ${Math.round(yaw)}°`);
-            bits.push(when.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }));
+            bits.push(t.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }));
             if (userName) bits.push(userName);
             return bits.join(' · ');
           };
@@ -5048,6 +5158,9 @@
             const v = cam.videoRef.current;
             if (!v || !v.videoWidth) { showToast('Камера ещё не отдала кадр'); return; }
             if (!loc) { showToast('Сначала выберите объект — снимок кладётся к нему'); return; }
+            // Настоящее время съёмки берём ОДИН раз на весь вызов: подпись
+            // на картинке и запись кадра обязаны говорить одно и то же.
+            const shotNow = new Date();
             setBusy(true);
             try {
               // 1600 точек по длинной стороне: дальше растёт только вес.
@@ -5058,11 +5171,48 @@
               cv.height = Math.round(v.videoHeight * k);
               const ctx = cv.getContext('2d');
               ctx.drawImage(v, 0, 0, cv.width, cv.height);
+
+              // РАМКА ОБЪЕКТИВА РИСУЕТСЯ НА САМОМ СНИМКЕ, И ВСЕГДА.
+              // Раньше её тут не было вовсе: в объекте лежала обычная
+              // фотография с телефона и подписью «35 мм · ALEXA Mini LF ·
+              // 2.39», проверить которую нечем — а ради этой рамки визир
+              // и заведён. Резать по ней НЕ режем, по той же причине, что
+              // и в живом виде: обзор камеры узнать нечем, и подрезанный
+              // кадр молча врёт про план. Cadrage поступает так же —
+              // рисует, а не режет.
+              const dFov = camFov(devEq, cv.width / cv.height);
+              const fw = (hfov > 0 && dFov > 0)
+                ? cv.width * Math.tan(hfov * SUN_RAD / 2) / Math.tan(dFov * SUN_RAD / 2) : 0;
+              if (fw > 0) {
+                const wide = fw > cv.width * 1.001;
+                const w = wide ? cv.width - 4 : fw, h = w / ratio;
+                const x = (cv.width - w) / 2, y = (cv.height - h) / 2;
+                const lw = Math.max(2, Math.round(cv.width / 500));
+                // Тёмная подложка обязательна: белого кадра хватает,
+                // чтобы акцентная линия на нём пропала.
+                ctx.lineWidth = lw * 2.4; ctx.strokeStyle = 'rgba(0,0,0,.35)';
+                ctx.setLineDash([]); ctx.strokeRect(x, y, w, h);
+                ctx.lineWidth = lw; ctx.strokeStyle = '#d97757';
+                if (wide) ctx.setLineDash([lw * 5, lw * 4]);
+                ctx.strokeRect(x, y, w, h);
+                ctx.setLineDash([]);
+                // Метка пропорции в углу рамки — единственная надпись
+                // на картинке, ровно как «2.35:1» у Cadrage.
+                const rs = Math.max(10, Math.round(cv.width / 78));
+                ctx.font = `600 ${rs}px ui-monospace, Menlo, monospace`;
+                ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+                ctx.lineWidth = Math.max(2, rs / 5); ctx.strokeStyle = 'rgba(0,0,0,.55)';
+                ctx.strokeText(ratio.toFixed(2), x + w - rs * 0.5, y + h - rs * 0.5);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(ratio.toFixed(2), x + w - rs * 0.5, y + h - rs * 0.5);
+                ctx.textAlign = 'left';
+              }
+
               if (burn) {
                 const fs = Math.max(11, Math.round(cv.width / 62));
                 const pad = Math.round(fs * 0.7);
                 ctx.font = `600 ${fs}px -apple-system, Helvetica, Arial, sans-serif`;
-                const txt = stampLine();
+                const txt = stampLine(shotNow);
                 const tw = ctx.measureText(txt).width;
                 ctx.fillStyle = 'rgba(0,0,0,.55)';
                 ctx.fillRect(0, cv.height - fs - pad * 2, Math.min(cv.width, tw + pad * 2), fs + pad * 2);
@@ -5074,7 +5224,7 @@
               cv.width = 0; cv.height = 0;
               if (!blob) { showToast('Кадр не сохранился'); return; }
               const shotPt = freshFix || coords;
-              const name = `scout-${when.toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jpg`;
+              const name = `scout-${shotNow.toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jpg`;
               const file = new File([blob], name, { type: 'image/jpeg' });
               await onCapture(file, loc.id, {
                 shot: {
@@ -5090,7 +5240,12 @@
                   // бы одинаково.
                   fix: shotPt ? (freshFix ? 'gps' : 'loc') : '',
                   acc: freshFix && freshFix.acc ? Math.round(freshFix.acc) : null,
-                  when: when.toISOString(), who: userName || '', place: loc.name || ''
+                  when: shotNow.toISOString(),
+                  // Отмотанное время не теряется: если солнце смотрели
+                  // на другой час, это сказано отдельно и видно, что это
+                  // не время съёмки.
+                  sunAt: (scrub !== null || !liveDay) ? when.toISOString() : '',
+                  who: userName || '', place: loc.name || ''
                 }
               });
             } catch (e) {
@@ -5391,6 +5546,19 @@
             // человека браузер отказывает, причём компас бросает ошибку,
             // а камера просто молчит.
             const wake = async () => { await head.ask(); await cam.start(camLabel); measure(); };
+            // ВСЁ, ЧТО ЛЕЖИТ ПОВЕРХ, ПРИВЯЗАНО К ПРЯМОУГОЛЬНИКУ КАДРА,
+            // а не к краю экрана. Видео стоит с `contain`, и на широком
+            // телефоне по бокам от него остаются чёрные поля в четверть
+            // экрана: подписи и кнопки лежали на этих полях, то есть мимо
+            // картинки. Кадр центрирован, поэтому отступ слева и справа
+            // один и тот же — это `vbox.x`. `max()` с вставками нужен
+            // для чёлки: в горизонтальном положении она съедает как раз
+            // боковой край, а сверху — при кадре во всю высоту.
+            const edge = {
+              l: `calc(max(${Math.round(vbox.x)}px, env(safe-area-inset-left, 0px)) + 8px)`,
+              r: `calc(max(${Math.round(vbox.x)}px, env(safe-area-inset-right, 0px)) + 8px)`,
+              t: `calc(max(${Math.round(vbox.y)}px, var(--sat)) + 8px)`
+            };
             const frameW = hfov > 0 && devFov > 0
               ? vbox.w * Math.tan(hfov * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2) : 0;
             const frameH = frameW / ratio;
@@ -5437,7 +5605,16 @@
             // его пользователей — про застрявший компас.
             const trust = head.acc === null ? null : head.acc < 0 ? 0 : head.acc <= 5 ? 3 : head.acc <= 15 ? 2 : 1;
             return (
-              <div className="flex-1 relative" data-cf="scout-cam" ref={boxRef} style={{ background: '#000', overflow: 'hidden', minHeight: 240 }}>
+              /* Щипок ловим В ФАЗЕ ПЕРЕХВАТА: поверх видео лежит накладка
+                 с дугой, а под пальцем бывают кнопки полосы — в обычной фазе
+                 второй палец до нас бы не дошёл. Кнопки и поля пропускаем:
+                 два пальца на «Снять» не должны менять обзор. */
+              <div className="flex-1 relative" data-cf="scout-cam" ref={boxRef}
+                   onPointerDownCapture={(e) => { if (!e.target.closest('button, input, select, label')) pinchDown(e); }}
+                   onPointerMoveCapture={pinchMove}
+                   onPointerUpCapture={pinchUp}
+                   onPointerCancelCapture={pinchUp}
+                   style={{ background: '#000', overflow: 'hidden', minHeight: 240, touchAction: 'none' }}>
                 <video ref={cam.videoRef} playsInline muted autoPlay
                        onLoadedMetadata={measure}
                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -5464,16 +5641,25 @@
                                 touchAction: 'none', pointerEvents: calib ? 'auto' : 'none' }}>
                     {/* горизонт и дуга — до рамок: рамка главнее и лежит сверху */}
                     {horizon.length > 1 && <polyline points={horizon.join(' ')} fill="none" stroke="var(--ok)" strokeWidth="1" opacity=".5" />}
-                    {below.map((a, i) => <polyline key={'b' + i} points={a.join(' ')} fill="none" stroke={ARC_BELOW} strokeWidth="1.6" strokeDasharray="5 5" opacity=".75" />)}
-                    {above.map((a, i) => <polyline key={'a' + i} points={a.join(' ')} fill="none" stroke={ARC_ABOVE} strokeWidth="2.2" opacity=".95" />)}
+                    {below.map((a, i) => <polyline key={'b' + i} points={a.join(' ')} fill="none" stroke={ARC_BELOW} strokeWidth="1.2" strokeDasharray="5 5" opacity=".6" />)}
+                    {above.map((a, i) => <polyline key={'a' + i} points={a.join(' ')} fill="none" stroke={ARC_ABOVE} strokeWidth="1.8" opacity=".8" />)}
+                    {/* ЧАСЫ ПОДПИСЫВАЕМ ЧЕРЕЗ ОДИН. Кружок у каждого часа —
+                        дёшево, а вот цифры у всех подряд рассыпаются по
+                        всему кадру: на замере их бывает семь штук поперёк
+                        картинки. Дуга — наше преимущество перед Cadrage,
+                        у которого солнца нет вовсе, но подписывать её надо
+                        тише, чем сам кадр. */}
                     {yaw !== null && hourTicks.map(p => {
                       const q = see(p.az, p.alt);
                       if (!q || q.x < 0 || q.x > vbox.w || q.y < 0 || q.y > vbox.h) return null;
+                      const h = p.m / 60;
                       return (
                         <React.Fragment key={p.m}>
-                          <circle cx={q.x} cy={q.y} r="2.5" fill={p.alt >= 0 ? ARC_ABOVE : ARC_BELOW} />
-                          <text x={q.x} y={q.y - 7} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9"
-                                fill="#fff" stroke="rgba(0,0,0,.6)" strokeWidth="2.4" paintOrder="stroke">{p.m / 60}</text>
+                          <circle cx={q.x} cy={q.y} r="2" fill={p.alt >= 0 ? ARC_ABOVE : ARC_BELOW} opacity=".85" />
+                          {h % 2 === 0 && (
+                            <text x={q.x} y={q.y - 6} textAnchor="middle" fontFamily="var(--font-mono)" fontSize="8.5"
+                                  fill="#fff" opacity=".75" stroke="rgba(0,0,0,.55)" strokeWidth="2.2" paintOrder="stroke">{h}</text>
+                          )}
                         </React.Fragment>
                       );
                     })}
@@ -5497,6 +5683,17 @@
                     {frameW > 0 && !tooWide && (
                       <rect x={(vbox.w - frameW) / 2} y={(vbox.h - frameH) / 2} width={frameW} height={frameH}
                             fill="none" stroke="#000" strokeWidth="4" opacity=".25" />
+                    )}
+                    {/* ЕДИНСТВЕННАЯ НАДПИСЬ НА САМОЙ КАРТИНКЕ — пропорция,
+                        в углу рамки. Ровно как «2.35:1» у Cadrage: она
+                        говорит, на что смотришь, и не мешает смотреть. */}
+                    {frameW > 0 && !tooWide && (
+                      <text data-cf="scout-ratio"
+                            x={(vbox.w + frameW) / 2 - 5} y={(vbox.h + frameH) / 2 - 5} textAnchor="end"
+                            fontFamily="var(--font-mono)" fontSize="10" fill="#fff" opacity=".8"
+                            stroke="rgba(0,0,0,.55)" strokeWidth="2.4" paintOrder="stroke">
+                        {ratio.toFixed(2)}
+                      </text>
                     )}
                     {/* ТРЕТЬЕ СОСТОЯНИЕ: объектив шире, чем камера может показать.
                         Молчать тут нельзя — рамка была бы за краем экрана,
@@ -5523,24 +5720,24 @@
                     — непонятно. */}
                 {!need && turn !== null && !sunIn && Math.abs(turn) > 3 && (
                   <div className="absolute flex items-center gap-1.5" style={{
-                        top: '50%', [turn > 0 ? 'right' : 'left']: 10, transform: 'translateY(-50%)',
+                        top: '50%', ...(turn > 0 ? { right: edge.r } : { left: edge.l }), transform: 'translateY(-50%)',
                         padding: '6px 10px', borderRadius: 'var(--r-md)', background: 'rgba(0,0,0,.6)',
                         fontSize: 'var(--fs-2)', color: 'var(--warn)', fontFamily: 'var(--font-mono)', pointerEvents: 'none' }}>
                     {turn > 0 ? `солнце ${Math.round(Math.abs(turn))}° →` : `← солнце ${Math.round(Math.abs(turn))}°`}
                   </div>
                 )}
-                {/* ПОДПИСЬ: где, когда, кем, чем. Она же ложится в запись кадра. */}
-                {!need && (
-                  <div className="absolute" data-cf="scout-stamp" style={{ left: 8, bottom: 'calc(var(--tap) + 20px + var(--sab))', right: 8, pointerEvents: 'none' }}>
-                    <span style={{ display: 'inline-block', maxWidth: '100%', padding: '4px 8px', borderRadius: 'var(--r-sm)',
-                                   background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 'var(--fs-1)',
-                                   fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
-                      {stampLine()}
-                    </span>
-                  </div>
-                )}
+                {/* ПОДПИСИ НА КАДРЕ НЕТ ВОВСЕ — она ушла в нижнюю полосу.
+                    Раньше тут лежала строка «объект · объектив · камера ·
+                    пропорция · азимут · дата · кто» — сто десять знаков,
+                    которые на широком телефоне растягивались во всю ширину,
+                    переносились на две строки и ложились ПОПЕРЁК кадра.
+                    Сверено с Cadrage: у него поверх картинки не написано
+                    НИЧЕГО, кроме метки пропорции в углу рамки, а камера
+                    и оптика стоят мелким серым в нижней полосе. В запись
+                    кадра подпись уходит целиком, как и уходила: там ей
+                    и место — оттуда она печатается в отчёт и ищется. */}
                 {/* Доверие компасу и подкрутка */}
-                <div className="absolute flex items-center gap-2" style={{ left: 8, top: 'calc(8px + var(--sat))' }}>
+                <div className="absolute flex items-center gap-2" style={{ left: edge.l, top: edge.t }}>
                   {/* ВЫХОД ИЗ КАМЕРЫ РИСУЕТСЯ ВСЕГДА, при любом состоянии
                       камеры и разрешений. Шапки модуля в этом виде нет
                       вовсе — кадр занимает весь экран, — и если спрятать
@@ -5596,7 +5793,7 @@
                 <button onClick={() => setPlaceOpen(true)} data-cf="scout-place" data-spot={spot.kind}
                         className="absolute flex items-center gap-1.5"
                         title={spot.text}
-                        style={{ right: 8, top: 'calc(8px + var(--sat))', maxWidth: '52%', minHeight: 'var(--tap-sm)',
+                        style={{ right: edge.r, top: edge.t, maxWidth: '52%', minHeight: 'var(--tap-sm)',
                                  padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
                                  color: '#fff', fontSize: 'var(--fs-2)' }}>
                   {/* ТОЧКА СВЕРКИ. Зелёная — мы на объекте, жёлтая — стоим
@@ -5648,6 +5845,22 @@
                   <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
                                    background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-4)' }}>+</button>
+                  {/* КАМЕРА И ПРОПОРЦИЯ — мелким серым в полосе, двумя
+                      короткими строками, как у Cadrage. Раньше они стояли
+                      внутри длинной подписи ПОПЕРЁК кадра. На узком экране
+                      блок прячется: там эти же сведения в одном нажатии
+                      на «35 мм». */}
+                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-gear"
+                          className="cf-wide-only text-left"
+                          style={{ minHeight: 'var(--tap)', maxWidth: 240, lineHeight: 1.25,
+                                   fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>
+                    <span className="block" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sensor.label.split(' · ')[0]}
+                    </span>
+                    <span className="block" style={{ fontFamily: 'var(--font-mono)' }}>
+                      {ratio.toFixed(2)}{squeeze > 1 ? ` · ${squeeze}×` : ''}
+                    </span>
+                  </button>
                   {coords && (
                     <button onClick={() => setBarOpen(o => !o)} data-cf="scout-clock"
                             title="Шкала дня: когда где будет солнце"
@@ -5676,7 +5889,7 @@
                 {!need && (head.heading === null) && (
                   <input type="range" min="0" max="359" value={manualHead === null ? 0 : Math.round(manualHead)}
                          onChange={(e) => setManualHead(parseFloat(e.target.value))} data-ro-ok
-                         className="absolute" style={{ left: 12, right: 12, bottom: 'calc(var(--tap) + 58px + var(--sab))', width: 'auto' }} />
+                         className="absolute" style={{ left: edge.l, right: edge.r, bottom: 'calc(var(--tap) + 26px + var(--sab))', width: 'auto' }} />
                 )}
               </div>
             );
@@ -5832,8 +6045,8 @@
                   да и телефон может оказаться не из списка. Без выхода
                   человек оказался бы в тупике — та же беда, что «нечем
                   закрыть окно». Шаг в полмиллиметра — это около градуса. */}
-              {group('Подогнать',
-                     'Если рамка не сходится с тем, что видно в кадре, поправьте фокусное на несколько десятых. Число помнится за этой камерой.',
+              {group('Обзор камеры телефона',
+                     'СПРАВОЧНОЕ ЧИСЛО — ЭТО ПРО ФОТОГРАФИЮ, А НЕ ПРО БРАУЗЕР. Сколько видит поток, отданный странице, спросить нечем ни одним способом: Safari выбирает свой пресет съёмки, и обзор у него бывает уже фотографического. Камерная сторона при этом считается точно — 35 мм на ALEXA Mini LF в 2.39 это 55,3°, — а вот какую долю экрана займёт эта рамка, зависит от числа ниже. Сведите рамку с тем, что знаете верным: ЩИПКОМ прямо по кадру, или кнопками тут. Число запомнится за этой камерой, и подгонять придётся один раз.',
                 <React.Fragment>
                   <button data-cf="scout-eq-minus" onClick={() => pickEq(Math.max(4, Math.round((devEq - 0.5) * 10) / 10))}
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>−</button>
@@ -5844,6 +6057,15 @@
                   </span>
                   <button data-cf="scout-eq-plus" onClick={() => pickEq(Math.min(400, Math.round((devEq + 0.5) * 10) / 10))}
                           style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)', border: '1px solid var(--border)', fontSize: 'var(--fs-4)' }}>+</button>
+                  {/* ЧИСЛА, ПО КОТОРЫМ ЭТО МОЖНО ПРОВЕРИТЬ. Без них подгонка
+                      идёт вслепую: не видно ни что отдаёт камера, ни во что
+                      превращается наша догадка. */}
+                  <span className="w-full cf-meta" data-cf="scout-fovinfo" style={{ marginTop: 6, lineHeight: 1.55 }}>
+                    Поток {vbox.w > 0 ? `${Math.round(aspect * 100) / 100}` : '—'}
+                    {cam.videoRef.current && cam.videoRef.current.videoWidth
+                      ? ` · ${cam.videoRef.current.videoWidth}×${cam.videoRef.current.videoHeight}` : ''}
+                    {' · '}рамка {focal} мм займёт {(frameShare(devEq) * 100).toFixed(0)}% ширины кадра
+                  </span>
                 </React.Fragment>
               )}
               {cam.cams.length > 1 && group('Какой камерой смотрим',
