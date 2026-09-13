@@ -5175,9 +5175,19 @@
             // но не выше 90% её высоты. Поля вокруг рамки оставлены
             // намеренно — на скауте важно видеть, что стоит ЗА краем кадра.
             const safeW = Math.max(1, cw - il - ir), safeH = Math.max(1, ch - it);
-            const fwTarget = Math.min(safeW * 0.9, safeH * 0.9 * (ratio || 1.85));
+            const fwTarget = Math.min(safeW * 0.9, safeH * 0.94 * (ratio || 1.85));
+            // РАМКА ВАЖНЕЕ ЗАПОЛНЕННОЙ ШИРИНЫ. `Math.max(cw, …)` тут стоял
+            // затем, чтобы картинка не сидела полоской, — и перебивал
+            // ограничение по высоте: на коротком экране (Safari в
+            // горизонтальном положении отдаёт приложению полосу в четверть
+            // высоты) рамка выходила выше экрана, и у неё не было ни верха,
+            // ни низа — две вертикальные палки, и всё.
+            //   Одновременно «во всю ширину» и «рамка целиком» на таком
+            // экране не бывает: 2.39 при ширине в 64% требует высоты
+            // больше, чем есть. Выбираем рамку — ради неё визир и заведён,
+            // а поля по краям честнее обрезанной рамки.
             const w = frameShareNow > 0
-              ? Math.max(cw, fwTarget / frameShareNow)
+              ? (frameShareNow >= 1 ? cw : fwTarget / frameShareNow)
               : cw;
             const h = w * vh / vw;
             // Середина видимой полосы, а не всей площади: иначе рамка
@@ -5210,7 +5220,14 @@
             if (cur === null) { setManualHead((wantYaw + 360) % 360); }
             else setHeadOff(((wantYaw - cur + 540) % 360) - 180);
             setCalib(false);
-            showToast('Компас подкручен по солнцу');
+            // ГОВОРИМ ЧИСЛО. «Подкручен» без него не даёт заметить промах:
+            // ошибка компаса бывает 10–15°, и поправка в девяносто — это
+            // не подкрутка, а тычок мимо. Увидев число, человек снимает
+            // её тут же кнопкой рядом с компасом.
+            const got = ((wantYaw - (cur === null ? wantYaw : cur) + 540) % 360) - 180;
+            showToast(Math.abs(got) > 45
+              ? `Компас подкручен на ${got > 0 ? '+' : ''}${Math.round(got)}° — это очень много. Ошибка компаса обычно 10–15°; если ткнули мимо солнца, снимите поправку кнопкой рядом с компасом`
+              : `Компас подкручен: ${got > 0 ? '+' : ''}${Math.round(got)}°`);
           };
 
           // --- СНИМОК ---
@@ -5837,8 +5854,10 @@
                     {calib && (
                       <React.Fragment>
                         <rect x="0" y="0" width={vbox.w} height={vbox.h} fill="rgba(0,0,0,.35)" />
-                        <text x={vbox.w / 2} y={vbox.h / 2} textAnchor="middle" fontSize="13" fill="#fff"
+                        <text x={vbox.w / 2} y={vbox.h / 2 - 8} textAnchor="middle" fontSize="13" fill="#fff"
                               fontFamily="var(--font-ui)">Ткните в настоящее солнце</text>
+                        <text x={vbox.w / 2} y={vbox.h / 2 + 12} textAnchor="middle" fontSize="11" fill="#fff"
+                              opacity=".65" fontFamily="var(--font-ui)">не видно солнца — нажмите «Отмена» внизу</text>
                       </React.Fragment>
                     )}
                   </svg>
@@ -5985,13 +6004,33 @@
                       нажатием — прятать её нельзя, она переживёт переезд
                       в другой город. */}
                   {!need && (
-                    <button onClick={() => setCalib(c => !c)} data-cf="scout-compass"
+                    <button onClick={() => {
+                              if (calib) { setCalib(false); return; }
+                              // Солнца не видно — подкручивать по нему нечем.
+                              // Молча пустить сюда значило бы отдать компас
+                              // первому попавшемуся тычку в экран.
+                              if (!sunNow || sunNow.alt < -0.833) {
+                                showToast('Солнце сейчас под горизонтом — подкрутить по нему нельзя');
+                                return;
+                              }
+                              setCalib(true);
+                            }} data-cf="scout-compass"
                             title={yaw === null ? 'Компаса нет' : `Азимут ${Math.round(yaw)}°, точность ${head.acc === null ? 'неизвестна' : head.acc + '°'}. Нажмите, чтобы подкрутить по солнцу`}
                             className="flex items-center"
                             style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)', gap: 5,
                                      background: calib ? 'var(--accent)' : 'transparent',
                                      color: calib ? 'var(--bg)' : 'var(--text)' }}>
-                      {yaw === null ? (
+                      {calib ? (
+                        /* ИЗ ПОДКРУТКИ ОБЯЗАН БЫТЬ ВЫХОД. Накладка просит
+                           ткнуть в солнце и накрывает весь кадр — а внутри
+                           неё ЛЮБОЕ нажатие и есть подкрутка. Войдя сюда
+                           случайно (кнопка компаса — это же и показание,
+                           в неё легко попасть), человек оказывался заперт:
+                           отменить нечем, а первый же тык в экран уводил
+                           компас на десятки градусов. Так и вышло +93°
+                           в помещении, где солнца не видно вовсе. */
+                        <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600 }}>Отмена</span>
+                      ) : yaw === null ? (
                         <span style={{ fontSize: 'var(--fs-1)', color: 'var(--danger)' }}>
                           {head.denied ? 'компас не разрешён' : 'компаса нет'}
                         </span>

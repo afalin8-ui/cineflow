@@ -550,6 +550,34 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   });
   await aimAt(page, 200, 90 + sunAlt.alt, 0);
   await page.waitForTimeout(400);
+  // ИЗ ПОДКРУТКИ ОБЯЗАН БЫТЬ ВЫХОД. Накладка накрывает весь кадр и просит
+  // ткнуть в солнце, а внутри неё ЛЮБОЕ нажатие и есть подкрутка: войдя
+  // случайно, человек оказывался заперт — и первый же тык уводил компас
+  // на десятки градусов. Так и вышло +93° в помещении, где солнца не видно.
+  const escape = await page.evaluate(async () => {
+    const btn = document.querySelector('[data-cf="scout-compass"]');
+    if (!btn) return { err: 'компаса в полосе нет' };
+    const off0 = localStorage.getItem('cf_scout_headoff');
+    btn.click();
+    await new Promise(r => setTimeout(r, 400));
+    const inCalib = /Отмена/.test(btn.textContent);
+    const scrim = !!document.querySelector('[data-cf="scout-ar"]');
+    // Выходим кнопкой, НЕ трогая кадр
+    const r = btn.getBoundingClientRect();
+    const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const hits = !!t && (t === btn || btn.contains(t));
+    btn.click();
+    await new Promise(r2 => setTimeout(r2, 400));
+    return { inCalib, scrim, hits, out: !/Отмена/.test(btn.textContent),
+             off0, off1: localStorage.getItem('cf_scout_headoff') };
+  });
+  expect('кнопка компаса включает подкрутку и становится «Отмена»',
+         escape.inCalib === true, JSON.stringify(escape));
+  expect('нажатие попадает в неё', escape.hits === true);
+  expect('«Отмена» выводит из подкрутки', escape.out === true);
+  expect('и поправка при этом НЕ меняется',
+         String(escape.off0) === String(escape.off1), `${escape.off0} → ${escape.off1}`);
+
   const calib = await page.evaluate(async () => {
     // Подкрутка живёт на КОМПАСЕ в нижней полосе: отдельная пилюля
     // «по солнцу» поверх кадра убрана — их там было пять в ряд.
@@ -1163,6 +1191,53 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('«‹ План» возвращает и таб-бар, и шапку',
          port.tabbarBack === 1 && port.headerBack === 1,
          `таб-баров ${port.tabbarBack}, шапок ${port.headerBack}`);
+
+  // ------------------- 7в. КОРОТКИЙ ЭКРАН: РАМКА ВАЖНЕЕ ЗАПОЛНЕННОЙ ШИРИНЫ
+  // Safari в горизонтальном положении отдаёт приложению полосу в четверть
+  // высоты — адресная строка и закладки съедают остальное. На такой полосе
+  // «во всю ширину» и «рамка целиком» одновременно не бывает: 2.39 при
+  // ширине в 64% требует высоты больше, чем есть. Рамка обязана победить —
+  // без верха и низа она превращается в две вертикальные палки.
+  log('\n7в. Короткий экран: рамка видна целиком, даже ценой полей');
+  // 844×250 — примерно то, что остаётся приложению в Safari, когда сверху
+  // стоят адресная строка и полоса закладок.
+  await ph.setViewportSize({ width: 844, height: 250 });
+  await setInsets({ top: 0, left: 0, right: 0, bottom: 21 });
+  await ph.waitForTimeout(600);
+  const shortScreen = await ph.evaluate(async () => {
+    const seg = [...document.querySelectorAll('[data-cf="scout"] .cf-seg button')].find(x => x.textContent.trim() === 'Камера');
+    if (seg) { seg.click(); await new Promise(r => setTimeout(r, 700)); }
+    const on = [...document.querySelectorAll('button')].find(x => /Включить камеру/.test(x.textContent));
+    if (on) { on.click(); await new Promise(r => setTimeout(r, 2500)); }
+    await new Promise(r => setTimeout(r, 500));
+    const box = document.querySelector('[data-cf="scout-cam"]');
+    const svg = document.querySelector('[data-cf="scout-ar"]');
+    const f = document.querySelector('[data-cf="scout-frame"]');
+    if (!box || !svg || !f) return { err: 'рамки нет' };
+    const b = box.getBoundingClientRect(), sr = svg.getBoundingClientRect();
+    const vb = +svg.getAttribute('viewBox').split(' ')[2];
+    const k = sr.width / vb;
+    const w = (+f.getAttribute('width')) * k, h = (+f.getAttribute('height')) * k;
+    return { fw: Math.round(w), fh: Math.round(h),
+             bw: Math.round(b.width), bh: Math.round(b.height),
+             wide: !!f.getAttribute('data-wide') };
+  });
+  if (shortScreen.err) expect('рамка есть', false, shortScreen.err);
+  else {
+    expect('на коротком экране рамка помещается ЦЕЛИКОМ',
+           shortScreen.fh <= shortScreen.bh + 1 && shortScreen.fw <= shortScreen.bw + 1,
+           `рамка ${shortScreen.fw}×${shortScreen.fh} при экране ${shortScreen.bw}×${shortScreen.bh}`);
+    expect('и у неё сохранилась пропорция кадра',
+           shortScreen.wide || Math.abs(shortScreen.fw / shortScreen.fh - 2.39) < 0.1,
+           (shortScreen.fw / shortScreen.fh).toFixed(2));
+  }
+
+  await ph.evaluate(async () => {
+    const b = document.querySelector('[data-cf="scout-back"]');
+    if (b) { b.click(); await new Promise(r => setTimeout(r, 600)); }
+  });
+  await ph.setViewportSize({ width: 390, height: 844 });
+  await ph.waitForTimeout(400);
 
   // ------------------------------ 7б. ВСТАВКИ: ЧАСЫ СВЕРХУ, ЧЁЛКА СБОКУ
   log('\n7б. Статус-бар сверху и чёлка сбоку: рамка и кнопки под них не лезут');
