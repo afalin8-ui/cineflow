@@ -4871,6 +4871,12 @@
           const [bag, setBag] = React.useState(() => {
             try { const a = JSON.parse(localStorage.getItem('cf_scout_bag') || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
           });
+          // Показывать ли соседние объективы сумки. По умолчанию НЕТ:
+          // рамка должна быть одна, иначе непонятно, на какую смотреть.
+          const [bagOn, setBagOn] = React.useState(() => {
+            try { return localStorage.getItem('cf_scout_bagon') === '1'; } catch (e) { return false; }
+          });
+          React.useEffect(() => { try { localStorage.setItem('cf_scout_bagon', bagOn ? '1' : '0'); } catch (e) {} }, [bagOn]);
           React.useEffect(() => { try {
             localStorage.setItem('cf_scout_sensor', sensorId);
             localStorage.setItem('cf_scout_lens', String(focal));
@@ -5038,23 +5044,28 @@
           const pitch = manualHead !== null ? 0 : head.pitch;
           const roll = manualHead !== null ? 0 : head.roll;
 
-          // РАМКА ЖИВОГО КАДРА НА ЭКРАНЕ. Видео показываем БЕЗ обрезки
-          // (`contain`), и накладку рисуем ровно по нему, а не по всему
-          // контейнеру: с `cover` браузер срезает кадр по одной из осей,
-          // и настоящий обзор на экране становится не тем, из которого мы
-          // считаем, — то есть накладка уехала бы, а понять это было бы
-          // нечем. Чёрные поля по краям честнее неверной рамки.
+          // КАРТИНКА ЗАПОЛНЯЕТ ШИРИНУ, А НЕ СИДИТ В ПОЛОСКЕ ПОСЕРЕДИНЕ.
+          // Поток приходит 4:3, а телефон в горизонтальном положении почти
+          // втрое шире, чем выше: вписанный целиком кадр занимал 890 точек
+          // из 2000 — 44% экрана, — а остальное было чёрными полями, вокруг
+          // которых и рассыпался весь интерфейс. У Cadrage картинка
+          // заполняет экран, и оттого сразу видно, на что смотришь.
+          //   ПО ГОРИЗОНТАЛИ НЕ СРЕЗАЕМ НИКОГДА (`k` не больше `cw/vw`):
+          // на горизонтальном обзоре держится вся накладка, и срезав его,
+          // мы получили бы неверную рамку, о которой никто бы не узнал.
+          // Срезается только верх и низ — то, что в кадр всё равно
+          // не войдёт. И рамка обязана поместиться целиком: если при
+          // заполнении ширины она выше экрана, масштаб уменьшается ровно
+          // настолько, чтобы она влезла, но не мельче «вписать целиком».
           const boxRef = React.useRef(null);
-          const [vbox, setVbox] = React.useState({ x: 0, y: 0, w: 0, h: 0 });
+          const [cbox, setCbox] = React.useState({ cw: 0, ch: 0, vw: 0, vh: 0 });
           const measure = React.useCallback(() => {
             const el = boxRef.current, v = cam.videoRef.current;
             if (!el) return;
-            const cw = el.clientWidth, ch = el.clientHeight;
-            const vw = (v && v.videoWidth) || 0, vh = (v && v.videoHeight) || 0;
-            if (!vw || !vh) { setVbox({ x: 0, y: 0, w: cw, h: ch }); return; }
-            const k = Math.min(cw / vw, ch / vh);
-            const w = vw * k, h = vh * k;
-            setVbox({ x: (cw - w) / 2, y: (ch - h) / 2, w, h });
+            setCbox({
+              cw: el.clientWidth, ch: el.clientHeight,
+              vw: (v && v.videoWidth) || 0, vh: (v && v.videoHeight) || 0
+            });
           }, []);
           // ПОТОК МОЖЕТ ПЕРЕЕХАТЬ САМ, И МОЛЧАТЬ ОБ ЭТОМ НЕЛЬЗЯ. iOS 18
           // переключает задние объективы посреди работы, а Safari умеет
@@ -5069,7 +5080,10 @@
             const el = boxRef.current, v = cam.videoRef.current;
             const onResize = () => {
               measure();
-              const g = v ? `${v.videoWidth}x${v.videoHeight}` : '';
+              // Пока камера не отдала кадр, размер нулевой — это НЕ формат,
+              // и объявлять «0x0 → 1920x1440» сменой нельзя: так полоска
+              // ругалась на каждый обычный запуск камеры.
+              const g = (v && v.videoWidth && v.videoHeight) ? `${v.videoWidth}x${v.videoHeight}` : '';
               if (!g || g === geoRef.current) return;
               const was = geoRef.current;
               geoRef.current = g;
@@ -5091,8 +5105,26 @@
           // Пропорция ЖИВОГО потока. От неё зависит и вертикальный обзор,
           // и сам угол устройства: 26 мм дают 67,3° на кадре 4:3 и 71,9°
           // на 16:9 — это одна и та же камера, просто снятая полоса разная.
-          const aspect = vbox.h > 0 ? vbox.w / vbox.h : 4 / 3;
+          // Пропорцию берём у САМОГО ПОТОКА, а не у нарисованного
+          // прямоугольника: он теперь может быть срезан по высоте, а обзор
+          // от этого не меняется.
+          const aspect = cbox.vh > 0 ? cbox.vw / cbox.vh : 4 / 3;
           const devFov = camFov(devEq, aspect);
+          const frameShareNow = (hfov > 0 && devFov > 0)
+            ? Math.tan(hfov * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2) : 0;
+          const vbox = React.useMemo(() => {
+            const { cw, ch, vw, vh } = cbox;
+            if (!cw || !ch) return { x: 0, y: 0, w: 0, h: 0 };
+            if (!vw || !vh) return { x: 0, y: 0, w: cw, h: ch };
+            const fit = Math.min(cw / vw, ch / vh);   // вписать целиком
+            let k = cw / vw;                          // заполнить ширину
+            const fw = cw * Math.min(1, frameShareNow || 1);
+            const fh = fw / (ratio || 1.85);
+            if (fh > ch * 0.94) k *= (ch * 0.94) / fh;
+            k = Math.min(cw / vw, Math.max(fit, k));
+            const w = vw * k, h = vh * k;
+            return { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
+          }, [cbox, frameShareNow, ratio]);
           const px = (p) => p ? { x: p.x * vbox.w, y: p.y * vbox.h } : null;
           const see = (az, alt) => px(projectSky(az, alt, yaw, pitch, roll, devFov, aspect));
 
@@ -5546,18 +5578,16 @@
             // человека браузер отказывает, причём компас бросает ошибку,
             // а камера просто молчит.
             const wake = async () => { await head.ask(); await cam.start(camLabel); measure(); };
-            // ВСЁ, ЧТО ЛЕЖИТ ПОВЕРХ, ПРИВЯЗАНО К ПРЯМОУГОЛЬНИКУ КАДРА,
-            // а не к краю экрана. Видео стоит с `contain`, и на широком
-            // телефоне по бокам от него остаются чёрные поля в четверть
-            // экрана: подписи и кнопки лежали на этих полях, то есть мимо
-            // картинки. Кадр центрирован, поэтому отступ слева и справа
-            // один и тот же — это `vbox.x`. `max()` с вставками нужен
-            // для чёлки: в горизонтальном положении она съедает как раз
-            // боковой край, а сверху — при кадре во всю высоту.
+            // ВЕРХНЕЕ ЖИВЁТ ПО КРАЯМ ЭКРАНА, а не по краям картинки.
+            // Привязав его к кадру, мы загнали «‹ План», компас, «по солнцу»
+            // и название объекта в 890 точек шириной — и они наехали друг
+            // на друга: «по солнцу» ушло ПОД чип объекта. У Cadrage полоса
+            // тоже во всю ширину экрана. Вставки нужны для чёлки: в
+            // горизонтальном положении она съедает как раз боковой край.
             const edge = {
-              l: `calc(max(${Math.round(vbox.x)}px, env(safe-area-inset-left, 0px)) + 8px)`,
-              r: `calc(max(${Math.round(vbox.x)}px, env(safe-area-inset-right, 0px)) + 8px)`,
-              t: `calc(max(${Math.round(vbox.y)}px, var(--sat)) + 8px)`
+              l: 'calc(env(safe-area-inset-left, 0px) + 10px)',
+              r: 'calc(env(safe-area-inset-right, 0px) + 10px)',
+              t: 'calc(var(--sat) + 10px)'
             };
             const frameW = hfov > 0 && devFov > 0
               ? vbox.w * Math.tan(hfov * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2) : 0;
@@ -5609,15 +5639,22 @@
                  с дугой, а под пальцем бывают кнопки полосы — в обычной фазе
                  второй палец до нас бы не дошёл. Кнопки и поля пропускаем:
                  два пальца на «Снять» не должны менять обзор. */
+              <div className="flex-1 flex flex-col min-h-0" data-cf="scout-ar-view">
               <div className="flex-1 relative" data-cf="scout-cam" ref={boxRef}
                    onPointerDownCapture={(e) => { if (!e.target.closest('button, input, select, label')) pinchDown(e); }}
                    onPointerMoveCapture={pinchMove}
                    onPointerUpCapture={pinchUp}
                    onPointerCancelCapture={pinchUp}
-                   style={{ background: '#000', overflow: 'hidden', minHeight: 240, touchAction: 'none' }}>
+                   style={{ background: '#000', overflow: 'hidden', minHeight: 200, touchAction: 'none' }}>
+                {/* Размер задаём САМИ, а не через object-fit: нам надо
+                    заполнить ширину и срезать только верх и низ, а `cover`
+                    срезал бы по любой оси — в том числе по горизонтали,
+                    на которой держится вся накладка. `fill` тут не тянет
+                    картинку: у vbox ровно пропорция потока. */}
                 <video ref={cam.videoRef} playsInline muted autoPlay
                        onLoadedMetadata={measure}
-                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+                       style={{ position: 'absolute', left: vbox.x, top: vbox.y,
+                                width: vbox.w || '100%', height: vbox.h || '100%', objectFit: 'fill' }} />
                 {need && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8" style={{ gap: 14 }}>
                     <p style={{ fontSize: 'var(--fs-4)', color: 'var(--text)', lineHeight: 1.6, maxWidth: 380 }}>
@@ -5669,8 +5706,13 @@
                         <circle cx={sunPt.x} cy={sunPt.y} r="8" fill="var(--warn)" />
                       </React.Fragment>
                     )}
-                    {/* рамки объективов: выбранный — акцентом, остальные из сумки тонко */}
-                    {bag.filter(f => f !== focal).map(f => {
+                    {/* СОСЕДНИЕ ОБЪЕКТИВЫ РИСУЮТСЯ ПО ЖЕЛАНИЮ, а не всегда.
+                        Три-четыре пунктирные рамки с цифрами по углам —
+                        это ровно то, из-за чего экран читался «кокпитом»:
+                        у Cadrage рамка ОДНА, и сразу понятно, на что
+                        смотришь. Возможность видеть всю лестницу разом
+                        полезна, но по умолчанию выключена (`bagOn`). */}
+                    {bagOn && bag.filter(f => f !== focal).map(f => {
                       const w = vbox.w * Math.tan(frameHFov(sensor, ratio, f, squeeze) * SUN_RAD / 2) / Math.tan(devFov * SUN_RAD / 2);
                       if (!(w > 0) || w > vbox.w) return null;
                       return <React.Fragment key={f}>
@@ -5736,56 +5778,16 @@
                     и оптика стоят мелким серым в нижней полосе. В запись
                     кадра подпись уходит целиком, как и уходила: там ей
                     и место — оттуда она печатается в отчёт и ищется. */}
-                {/* Доверие компасу и подкрутка */}
-                <div className="absolute flex items-center gap-2" style={{ left: edge.l, top: edge.t }}>
-                  {/* ВЫХОД ИЗ КАМЕРЫ РИСУЕТСЯ ВСЕГДА, при любом состоянии
-                      камеры и разрешений. Шапки модуля в этом виде нет
-                      вовсе — кадр занимает весь экран, — и если спрятать
-                      эту кнопку заодно с остальным, из камеры нельзя будет
-                      выйти: та же беда «нечем закрыть», что чинили
-                      во всплывающих окнах. */}
-                  <button onClick={() => setMode('plan')} data-cf="scout-back" className="cf-hbtn"
-                          style={{ padding: '0 9px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
-                                   color: '#fff', fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }}>‹ План</button>
-                  {!need && (
-                  <React.Fragment>
-                    {yaw === null ? (
-                      <span style={{ padding: '4px 8px', borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)',
-                                     color: 'var(--danger)', fontSize: 'var(--fs-1)' }}>
-                        {head.denied ? 'компас не разрешён' : 'компаса нет — ведите азимут рукой'}
-                      </span>
-                    ) : (
-                      <span title={`Точность компаса: ${head.acc === null ? 'неизвестна' : head.acc + '°'}`}
-                            style={{ display: 'flex', alignItems: 'flex-end', gap: 2, padding: '5px 7px',
-                                     borderRadius: 'var(--r-sm)', background: 'rgba(0,0,0,.6)' }}>
-                        {[1, 2, 3].map(i => (
-                          <span key={i} style={{ width: 3, height: 4 + i * 3, borderRadius: 1,
-                                  background: trust === null ? 'var(--muted-2)'
-                                    : i <= trust ? (trust >= 3 ? 'var(--ok)' : trust === 2 ? 'var(--warn)' : 'var(--danger)')
-                                    : 'rgba(255,255,255,.22)' }} />
-                        ))}
-                        <span style={{ marginLeft: 4, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: '#fff' }}>
-                          {Math.round(yaw)}°
-                        </span>
-                      </span>
-                    )}
-                    <button onClick={() => setCalib(c => !c)}
-                            style={{ minHeight: 'var(--tap-sm)', padding: '0 9px', borderRadius: 'var(--r-sm)',
-                                     background: calib ? 'var(--accent)' : 'rgba(0,0,0,.6)',
-                                     color: calib ? 'var(--bg)' : '#fff', fontSize: 'var(--fs-1)' }}>
-                      {calib ? 'отмена' : 'по солнцу'}
-                    </button>
-                    {headOff !== 0 && (
-                      <button onClick={() => { setHeadOff(0); showToast('Подкрутка снята'); }}
-                              style={{ minHeight: 'var(--tap-sm)', padding: '0 8px', borderRadius: 'var(--r-sm)',
-                                       background: 'rgba(0,0,0,.6)', color: 'var(--warn)', fontSize: 'var(--fs-1)',
-                                       fontFamily: 'var(--font-mono)' }}>
-                        {headOff > 0 ? '+' : ''}{Math.round(headOff)}°
-                      </button>
-                    )}
-                  </React.Fragment>
-                  )}
-                </div>
+                {/* СВЕРХУ — ТОЛЬКО ДВЕ ВЕЩИ: чем выйти и где мы. Раньше
+                    тут стояли ещё компас, «по солнцу» и поправка — пять
+                    плавающих пилюль в ряд, которые вдобавок наезжали друг
+                    на друга. Компас и подкрутка переехали в нижнюю полосу,
+                    к остальным органам управления: у Cadrage всё в одной
+                    полосе, и оттого сразу понятно, что на экране. */}
+                <button onClick={() => setMode('plan')} data-cf="scout-back" className="cf-hbtn absolute"
+                        style={{ left: edge.l, top: edge.t, padding: '0 10px', borderRadius: 'var(--r-sm)',
+                                 background: 'rgba(0,0,0,.55)', color: '#fff',
+                                 fontSize: 'var(--fs-2)', minHeight: 'var(--tap-sm)' }}>‹ План</button>
 
                 {/* ОБЪЕКТ — ЧИПОМ В УГЛУ, а выбор за ним. На выезде объект
                     меняют раз в час, а кадр смотрят непрерывно: постоянная
@@ -5818,79 +5820,143 @@
                     «а что будет в шесть». */}
                 {barOpen && coords && (
                   <div className="absolute" data-cf="scout-timewrap"
-                       style={{ left: 0, right: 0, bottom: 'calc(var(--tap) + 16px + var(--sab))',
-                                background: 'rgba(0,0,0,.78)', borderTop: '1px solid var(--border)' }}>
+                       style={{ left: 0, right: 0, bottom: 0,
+                                background: 'rgba(0,0,0,.82)', borderTop: '1px solid var(--border)' }}>
                     {timeBar()}
                   </div>
                 )}
 
-                {/* НИЖНЯЯ ПОЛОСА ЛЕЖИТ ПОВЕРХ КАДРА, а не под ним. Раньше
-                    она, шапка модуля и шкала дня стояли отдельными полосами
-                    в потоке и съедали около 200 точек: на телефоне в
-                    горизонтальном положении кадру оставалось меньше сотни,
-                    то есть ровно «ничего не видно». Затемнение градиентом,
-                    а не плашкой: под полосой всё ещё кадр. */}
-                <div className="absolute flex items-center gap-2" data-cf="scout-bar"
-                     style={{ left: 0, right: 0, bottom: 0, padding: '6px 10px calc(6px + var(--sab))',
-                              background: 'linear-gradient(to top, rgba(0,0,0,.74), rgba(0,0,0,0))' }}>
-                  <button onClick={() => setFocal(stepLens(-1))} data-cf="scout-lens-minus"
-                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
-                                   background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-4)' }}>−</button>
-                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" title="Камера, пропорция, сжатие, обзор устройства"
-                          style={{ minHeight: 'var(--tap)', padding: '0 10px', borderRadius: 'var(--r-sm)',
-                                   background: 'rgba(0,0,0,.6)' }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', color: '#fff' }}>{focal} мм</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
-                  </button>
-                  <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
-                          style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
-                                   background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-4)' }}>+</button>
-                  {/* КАМЕРА И ПРОПОРЦИЯ — мелким серым в полосе, двумя
-                      короткими строками, как у Cadrage. Раньше они стояли
-                      внутри длинной подписи ПОПЕРЁК кадра. На узком экране
-                      блок прячется: там эти же сведения в одном нажатии
-                      на «35 мм». */}
-                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-gear"
-                          className="cf-wide-only text-left"
-                          style={{ minHeight: 'var(--tap)', maxWidth: 240, lineHeight: 1.25,
-                                   fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>
-                    <span className="block" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {sensor.label.split(' · ')[0]}
-                    </span>
-                    <span className="block" style={{ fontFamily: 'var(--font-mono)' }}>
-                      {ratio.toFixed(2)}{squeeze > 1 ? ` · ${squeeze}×` : ''}
-                    </span>
-                  </button>
-                  {coords && (
-                    <button onClick={() => setBarOpen(o => !o)} data-cf="scout-clock"
-                            title="Шкала дня: когда где будет солнце"
-                            style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)',
-                                     background: barOpen ? 'var(--accent)' : 'rgba(0,0,0,.6)',
-                                     color: barOpen ? 'var(--bg)' : '#fff',
-                                     fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
-                      {hhmm(when)}{sunNow ? ` · ${sunNow.alt.toFixed(0)}°` : ''}
-                    </button>
-                  )}
-                  <button onClick={shoot} data-cf="scout-shoot" disabled={busy || !cam.on} className="cf-edit-only ml-auto"
-                          style={{ minHeight: 'var(--tap)', padding: '0 18px', borderRadius: 'var(--r-md)',
-                                   background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600,
-                                   opacity: (busy || !cam.on) ? .45 : 1 }}>
-                    {busy ? 'кладу…' : 'Снять'}
-                  </button>
-                  <button onClick={() => setNoteOpen(true)} data-cf="scout-notes-open" title="Заметки с выезда"
-                          style={{ minHeight: 'var(--tap)', minWidth: 'var(--tap)', borderRadius: 'var(--r-sm)',
-                                   background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 'var(--fs-2)' }}>
-                    {notes.length ? `☰ ${notes.length}` : '☰'}
-                  </button>
-                </div>
+                {/* ОДНА ПОЛОСА, И В НЕЙ ВСЁ. Раньше органы управления
+                    висели десятком отдельных пилюль — четыре сверху, шесть
+                    внизу, — растянутых по всей ширине экрана и вдобавок
+                    наезжавших друг на друга. Со стороны это «кокпит
+                    истребителя»: понять, что на экране, нельзя, пока не
+                    прочтёшь каждую.
+                      Сверено с Cadrage: у него ОДНА плотная полоса, вещи
+                    в ней стоят группами вплотную, а не разогнаны по краям,
+                    и картинка над ней чистая. Поэтому полоса тут:
+                    (1) СПЛОШНАЯ, а не градиентом — на градиенте мелкий
+                    серый текст ложился прямо на картинку и не читался;
+                    (2) содержимое собрано в РЯД ПО ЦЕНТРУ, и только
+                    «Снять» отделено — это главное действие;
+                    (3) компас и «по солнцу» теперь тоже здесь. */}
                 {/* Компаса нет вовсе — азимут ведут рукой. Это тот же выход,
                     что «только гироскоп» у Sun Seeker: без него на устройстве
                     без магнитометра дуга не показывалась бы никогда. */}
                 {!need && (head.heading === null) && (
                   <input type="range" min="0" max="359" value={manualHead === null ? 0 : Math.round(manualHead)}
                          onChange={(e) => setManualHead(parseFloat(e.target.value))} data-ro-ok
-                         className="absolute" style={{ left: edge.l, right: edge.r, bottom: 'calc(var(--tap) + 26px + var(--sab))', width: 'auto' }} />
+                         title="Азимут рукой — компаса на этом устройстве нет"
+                         className="absolute" style={{ left: '50%', transform: 'translateX(-50%)',
+                                                       bottom: 8, width: 'min(70%, 380px)', opacity: .65 }} />
                 )}
+                </div>
+                <div className="flex items-center justify-center gap-2 shrink-0" data-cf="scout-bar"
+                     style={{ padding: '7px 10px calc(7px + var(--sab))',
+                              background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+                  <button onClick={() => setNoteOpen(true)} data-cf="scout-notes-open" title="Заметки с выезда"
+                          style={{ minHeight: 'var(--tap)', minWidth: 'var(--tap)', borderRadius: 'var(--r-sm)',
+                                   color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>
+                    {notes.length ? `☰ ${notes.length}` : '☰'}
+                  </button>
+
+                  {/* Камера и пропорция — двумя короткими строками мелким
+                      серым, ровно как у Cadrage. На узком экране прячутся:
+                      те же сведения в одном нажатии на «35 мм». */}
+                  <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-gear"
+                          className="cf-wide-only flex flex-col items-start justify-center"
+                          title="Камера, пропорция, сжатие, обзор устройства"
+                          style={{ minHeight: 'var(--tap)', maxWidth: 230, padding: '0 4px', lineHeight: 1.25,
+                                   fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>
+                    <span className="block max-w-full" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sensor.label.split(' · ')[0]}
+                    </span>
+                    <span className="block" style={{ fontFamily: 'var(--font-mono)' }}>
+                      {ratio.toFixed(2)}{squeeze > 1 ? ` · ${squeeze}×` : ''}
+                    </span>
+                  </button>
+
+                  {/* Объектив — группой вплотную, как «‹ 35.1mm ›» у них */}
+                  <span className="flex items-center" style={{ marginLeft: 4 }}>
+                    <button onClick={() => setFocal(stepLens(-1))} data-cf="scout-lens-minus"
+                            style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
+                                     background: 'var(--card)', color: '#fff', fontSize: 'var(--fs-4)' }}>−</button>
+                    <button onClick={() => setSetupOpen(o => !o)} data-cf="scout-setup" data-lens={focal}
+                            title="Камера, пропорция, сжатие, обзор устройства"
+                            style={{ minHeight: 'var(--tap)', padding: '0 10px' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-4)', color: 'var(--text)' }}>{focal}</span>
+                      <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)', marginLeft: 3 }}>мм</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)', marginLeft: 6 }}>{hfov.toFixed(0)}°</span>
+                    </button>
+                    <button onClick={() => setFocal(stepLens(1))} data-cf="scout-lens-plus"
+                            style={{ ...pill(false), minWidth: 'var(--tap)', minHeight: 'var(--tap)',
+                                     background: 'var(--card)', color: '#fff', fontSize: 'var(--fs-4)' }}>+</button>
+                  </span>
+
+                  {/* КОМПАС ЖИВЁТ ЗДЕСЬ, а не отдельной пилюлей поверх
+                      кадра. Нажатие — подкрутка по солнцу; поправка,
+                      если она есть, написана тут же и снимается долгим
+                      нажатием — прятать её нельзя, она переживёт переезд
+                      в другой город. */}
+                  {!need && (
+                    <button onClick={() => setCalib(c => !c)} data-cf="scout-compass"
+                            title={yaw === null ? 'Компаса нет' : `Азимут ${Math.round(yaw)}°, точность ${head.acc === null ? 'неизвестна' : head.acc + '°'}. Нажмите, чтобы подкрутить по солнцу`}
+                            className="flex items-center"
+                            style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)', gap: 5,
+                                     background: calib ? 'var(--accent)' : 'transparent',
+                                     color: calib ? 'var(--bg)' : 'var(--text)' }}>
+                      {yaw === null ? (
+                        <span style={{ fontSize: 'var(--fs-1)', color: 'var(--danger)' }}>
+                          {head.denied ? 'компас не разрешён' : 'компаса нет'}
+                        </span>
+                      ) : (
+                        <React.Fragment>
+                          <span style={{ display: 'flex', alignItems: 'flex-end', gap: 2 }}>
+                            {[1, 2, 3].map(i => (
+                              <span key={i} style={{ width: 3, height: 4 + i * 3, borderRadius: 1,
+                                      background: trust === null ? 'var(--muted-2)'
+                                        : i <= trust ? (trust >= 3 ? 'var(--ok)' : trust === 2 ? 'var(--warn)' : 'var(--danger)')
+                                        : 'rgba(255,255,255,.22)' }} />
+                            ))}
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>{Math.round(yaw)}°</span>
+                        </React.Fragment>
+                      )}
+                    </button>
+                  )}
+
+                  {/* ПОПРАВКА СНИМАЕТСЯ ОБЫЧНЫМ НАЖАТИЕМ, и она тут одна
+                      из немногих кнопок, которых в покое нет: пока
+                      подкрутки нет, кнопки нет вовсе. Прятать её в долгое
+                      удержание нельзя — скрытая поправка однажды переживёт
+                      переезд в другой город. */}
+                  {!need && headOff !== 0 && (
+                    <button onClick={() => { setHeadOff(0); showToast('Подкрутка снята'); }}
+                            data-cf="scout-offset" title="Снять подкрутку компаса"
+                            style={{ minHeight: 'var(--tap)', padding: '0 8px', borderRadius: 'var(--r-sm)',
+                                     color: 'var(--warn)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)' }}>
+                      {headOff > 0 ? '+' : ''}{Math.round(headOff)}°
+                    </button>
+                  )}
+
+                  {coords && (
+                    <button onClick={() => setBarOpen(o => !o)} data-cf="scout-clock"
+                            title="Шкала дня: когда где будет солнце"
+                            style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)',
+                                     background: barOpen ? 'var(--accent)' : 'transparent',
+                                     color: barOpen ? 'var(--bg)' : 'var(--text)',
+                                     fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
+                      {hhmm(when)}{sunNow ? ` · ${sunNow.alt.toFixed(0)}°` : ''}
+                    </button>
+                  )}
+
+                  <button onClick={shoot} data-cf="scout-shoot" disabled={busy || !cam.on} className="cf-edit-only"
+                          style={{ minHeight: 'var(--tap)', padding: '0 18px', marginLeft: 10, borderRadius: 'var(--r-md)',
+                                   background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 600,
+                                   opacity: (busy || !cam.on) ? .45 : 1 }}>
+                    {busy ? 'кладу…' : 'Снять'}
+                  </button>
+                </div>
               </div>
             );
           };
@@ -5961,11 +6027,18 @@
                   <button key={label} onClick={() => setSqueeze(val)} style={{ ...pill(squeeze === val), fontFamily: 'var(--font-ui)' }}>{label}</button>
                 ))
               )}
-              {group('Сумка объективов', 'Отмеченные рисуются на кадре тонкими рамками рядом с выбранным — видно сразу всю лестницу, а не по одному.',
-                SCOUT_LENSES.map(f => (
+              {group('Сумка объективов', 'Отмеченные рисуются на кадре тонкими рамками рядом с выбранным — видно сразу всю лестницу, а не по одному. По умолчанию не рисуются: рамка на экране должна быть одна, иначе непонятно, на какую смотреть.',
+                <React.Fragment>
+                <label className="w-full flex items-center gap-2" data-cf="scout-bagon"
+                       style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', minHeight: 'var(--tap-sm)', cursor: 'pointer', marginBottom: 4 }}>
+                  <input type="checkbox" checked={bagOn} onChange={(e) => setBagOn(e.target.checked)} data-ro-ok />
+                  Показывать соседние объективы на кадре
+                </label>
+                {SCOUT_LENSES.map(f => (
                   <button key={f} onClick={() => setBag(b => b.includes(f) ? b.filter(x => x !== f) : [...b, f].sort((a, c) => a - c))}
                           style={pill(bag.includes(f))}>{f}</button>
-                ))
+                ))}
+                </React.Fragment>
               )}
               {group('Своё фокусное',
                      'Настоящий объектив редко ведёт себя ровно по надписи на нём: 50-ка бывает как 53. Вписанное число встаёт текущим и попадает в сумку.',

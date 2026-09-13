@@ -286,7 +286,16 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     return {
       video: !!v && v.videoWidth > 0 && !v.paused,
       vw: v ? v.videoWidth : 0, vh: v ? v.videoHeight : 0,
-      objectFit: v ? getComputedStyle(v).objectFit : '',
+      // ПО ГОРИЗОНТАЛИ КАДР НЕ СРЕЗАЕТСЯ НИКОГДА: на горизонтальном
+      // обзоре держится вся накладка. По вертикали срезать можно и нужно —
+      // иначе на широком телефоне 4:3 сидит полоской в 44% ширины.
+      fill: (() => {
+        if (!v) return null;
+        const box = v.parentElement.getBoundingClientRect();
+        const r = v.getBoundingClientRect();
+        return { vidW: Math.round(r.width), boxW: Math.round(box.width),
+                 vidH: Math.round(r.height), boxH: Math.round(box.height) };
+      })(),
       overlay: !!svg,
       polylines: polys.length,
       frame: !!svg && !!svg.querySelector('[data-cf="scout-frame"]'),
@@ -327,7 +336,11 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     };
   });
   expect('камера отдала кадр', ar.video, `${ar.vw}×${ar.vh}`);
-  expect('кадр показан БЕЗ обрезки (contain) — иначе накладка уедет', ar.objectFit === 'contain', ar.objectFit);
+  expect('по горизонтали кадр НЕ срезан — на этом держится вся накладка',
+         ar.fill && ar.fill.vidW <= ar.fill.boxW + 1, JSON.stringify(ar.fill));
+  expect('и картинка заполняет ширину, а не сидит полоской посередине',
+         ar.fill && ar.fill.vidW > ar.fill.boxW * 0.92,
+         `${ar.fill && ar.fill.vidW} из ${ar.fill && ar.fill.boxW}`);
   expect('накладка лежит ровно по кадру', ar.overlay && ar.svgW > 0, 'ширина ' + ar.svgW);
   expect('дуга солнца нарисована', ar.polylines >= 1, ar.polylines + ' линий');
   expect('рамка объектива есть', ar.frame, `ширина ${Math.round(ar.frameW)} из ${Math.round(ar.svgW)}`);
@@ -370,8 +383,9 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
 
   // Рамка обязана СЖИМАТЬСЯ с ростом фокусного и упираться в «шире не покажу»
   const setLens = (mm) => page.evaluate(async (mm) => {
-    const cur = () => parseInt((([...document.querySelectorAll('button')]
-      .find(b => /^\d+ мм/.test(b.textContent)) || {}).textContent || '0').match(/(\d+) мм/)[1], 10);
+    // Число читаем МЕТКОЙ, а не разбором текста кнопки: «35» и «мм»
+    // лежат в разных строчках, и текст у неё слитный.
+    const cur = () => +((document.querySelector('[data-cf="scout-setup"]') || {}).dataset || {}).lens || 0;
     for (let i = 0; i < 30 && cur() !== mm; i++) {
       const b = document.querySelector(cur() < mm ? '[data-cf="scout-lens-plus"]' : '[data-cf="scout-lens-minus"]');
       b.click();
@@ -418,7 +432,7 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
       dateInFlow: document.querySelectorAll('[data-cf="scout"] input[type="date"]').length,
       timebar: document.querySelectorAll('[data-cf="scout-timebar"]').length,
       backHit: hit(back), chipHit: hit(chip),
-      barOverlays: !!over && over.bottom > c.bottom - 2 && over.top > c.top,
+      barBelow: !!over && over.top >= c.bottom - 2,
       mode: root.getAttribute('data-mode')
     };
   });
@@ -427,13 +441,43 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   expect('шкала дня в потоке не стоит — она по нажатию на часы',
          fill.timebar === 0, String(fill.timebar));
   expect('общая шапка приложения в камере убрана', !fill.header);
-  expect('кадр занял ВСЮ высоту модуля', fill.camH >= fill.rootH - 2,
-         `${fill.camH} из ${fill.rootH}`);
-  expect('кадру досталось больше 90% окна', fill.camH > fill.winH * 0.9,
+  // ПОЛОСА РОВНО ОДНА — как у Cadrage. Она в потоке и картинку не
+  // закрывает; всё остальное живёт в ней, а не пилюлями поверх кадра.
+  expect('полос ровно одна, и кадру достаётся всё остальное',
+         fill.camH > fill.rootH * 0.82, `${fill.camH} из ${fill.rootH}`);
+  expect('кадру досталось больше 82% окна', fill.camH > fill.winH * 0.82,
          `${fill.camH} из ${fill.winH}`);
-  expect('нижняя полоса лежит ПОВЕРХ кадра, а не под ним', fill.barOverlays);
+  expect('полоса НЕ закрывает картинку — она под ней', fill.barBelow);
   expect('нажатие попадает в «‹ План» — из камеры есть выход', fill.backHit);
   expect('нажатие попадает в чип объекта', fill.chipHit);
+  // «КОКПИТ ИСТРЕБИТЕЛЯ» — ЭТО ЧИСЛО ПЛАВАЮЩИХ ОРГАНОВ ПОВЕРХ КАДРА.
+  // Было десять: четыре пилюли сверху (и они наезжали друг на друга)
+  // и шесть внизу, разогнанных по всей ширине. У Cadrage поверх картинки
+  // НЕТ НИ ОДНОГО — всё в одной полосе. У нас осталось два: чем выйти
+  // и где мы; остальное переехало в полосу.
+  const cockpit = await page.evaluate(() => {
+    const cam = document.querySelector('[data-cf="scout-cam"]');
+    const c = cam.getBoundingClientRect();
+    const items = [...cam.querySelectorAll('button, input, select')].filter(el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+    });
+    // И ничто из них не должно накрывать соседа: «по солнцу» уходило
+    // ПОД чип объекта, и нажать его было нечем.
+    let over = 0;
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i].getBoundingClientRect(), b = items[j].getBoundingClientRect();
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) over++;
+      }
+    }
+    return { n: items.length, over, labels: items.map(e => (e.textContent || e.tagName).trim().slice(0, 18)),
+             barItems: document.querySelectorAll('[data-cf="scout-bar"] button').length, camH: Math.round(c.height) };
+  });
+  expect('поверх кадра плавает не больше двух кнопок', cockpit.n <= 2,
+         `${cockpit.n}: ${cockpit.labels.join(' · ')}`);
+  expect('и они не наезжают друг на друга', cockpit.over === 0, `наложений ${cockpit.over}`);
+  expect('всё остальное собрано в одной полосе', cockpit.barItems >= 5, String(cockpit.barItems));
 
   // ------------------------------------------------ 4. ПОДКРУТКА ПО СОЛНЦУ
   log('\n4. Подкрутка компаса по настоящему солнцу');
@@ -478,8 +522,10 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   await aimAt(page, 200, 90 + sunAlt.alt, 0);
   await page.waitForTimeout(400);
   const calib = await page.evaluate(async () => {
-    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'по солнцу');
-    if (!btn) return { err: 'кнопки «по солнцу» нет' };
+    // Подкрутка живёт на КОМПАСЕ в нижней полосе: отдельная пилюля
+    // «по солнцу» поверх кадра убрана — их там было пять в ряд.
+    const btn = document.querySelector('[data-cf="scout-compass"]');
+    if (!btn) return { err: 'компаса в полосе нет' };
     btn.click();
     await new Promise(r => setTimeout(r, 350));
     const svg = document.querySelector('[data-cf="scout-ar"]');
@@ -1012,8 +1058,8 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
     out.headerBack = document.querySelectorAll('header').length;
     return out;
   });
-  expect('в горизонтальном телефоне кадру досталось больше 90% высоты',
-         land.camH > land.winH * 0.9, `${land.camH} из ${land.winH}`);
+  expect('в горизонтальном телефоне кадру досталось больше 80% высоты',
+         land.camH > land.winH * 0.8, `${land.camH} из ${land.winH}`);
   // 844 точки в ширину — это уже НЕ телефонная раскладка (порог 768),
   // таб-бара там нет и без камеры. Смотрим на шапку: в камере её быть
   // не должно, а «‹ План» обязан её вернуть.
@@ -1044,7 +1090,7 @@ const aimAt = (page, az, beta, gamma) => page.evaluate(([az, beta, gamma]) => {
   });
   expect('в портрете камера тоже убирает таб-бар и шапку',
          port.tabbar === 0 && port.header === 0, `таб-баров ${port.tabbar}, шапок ${port.header}`);
-  expect('и кадру достаётся весь экран', port.camH > port.winH * 0.9, `${port.camH} из ${port.winH}`);
+  expect('и кадру достаётся почти весь экран', port.camH > port.winH * 0.85, `${port.camH} из ${port.winH}`);
   expect('«‹ План» возвращает и таб-бар, и шапку',
          port.tabbarBack === 1 && port.headerBack === 1,
          `таб-баров ${port.tabbarBack}, шапок ${port.headerBack}`);
