@@ -5084,13 +5084,29 @@
           // заполнении ширины она выше экрана, масштаб уменьшается ровно
           // настолько, чтобы она влезла, но не мельче «вписать целиком».
           const boxRef = React.useRef(null);
-          const [cbox, setCbox] = React.useState({ cw: 0, ch: 0, vw: 0, vh: 0 });
+          // ВСТАВКИ МЕРЯЕМ, А НЕ ДОГАДЫВАЕМСЯ. Кадр занимает весь экран,
+          // и в установленном приложении сверху лежит статус-бар, а в
+          // горизонтальном положении чёлка съедает боковой край. Считать
+          // рамку от всей площади значило бы завести её верх под часы,
+          // а край — под чёлку. Читаем настоящие значения с невидимой
+          // подложки: `env()` внутри CSS-переменной надёжно из JS
+          // не достаётся, а вычисленный `padding` — достаётся всегда.
+          const insRef = React.useRef(null);
+          const [cbox, setCbox] = React.useState({ cw: 0, ch: 0, vw: 0, vh: 0, it: 0, il: 0, ir: 0 });
           const measure = React.useCallback(() => {
-            const el = boxRef.current, v = cam.videoRef.current;
+            const el = boxRef.current, v = cam.videoRef.current, ip = insRef.current;
             if (!el) return;
+            let it = 0, il = 0, ir = 0;
+            if (ip) {
+              const cs = getComputedStyle(ip);
+              it = parseFloat(cs.paddingTop) || 0;
+              il = parseFloat(cs.paddingLeft) || 0;
+              ir = parseFloat(cs.paddingRight) || 0;
+            }
             setCbox({
               cw: el.clientWidth, ch: el.clientHeight,
-              vw: (v && v.videoWidth) || 0, vh: (v && v.videoHeight) || 0
+              vw: (v && v.videoWidth) || 0, vh: (v && v.videoHeight) || 0,
+              it, il, ir
             });
           }, []);
           // ПОТОК МОЖЕТ ПЕРЕЕХАТЬ САМ, И МОЛЧАТЬ ОБ ЭТОМ НЕЛЬЗЯ. iOS 18
@@ -5156,18 +5172,22 @@
           // пунктиром во весь кадр со стрелками наружу — как и раньше.
           // И рамка обязана поместиться по высоте целиком.
           const vbox = React.useMemo(() => {
-            const { cw, ch, vw, vh } = cbox;
+            const { cw, ch, vw, vh, it, il, ir } = cbox;
             if (!cw || !ch) return { x: 0, y: 0, w: 0, h: 0 };
             if (!vw || !vh) return { x: 0, y: 0, w: cw, h: ch };
-            // Постоянная ширина рамки: 90% экрана, но не выше 90% высоты.
-            // Поля вокруг неё оставлены намеренно — на скауте важно видеть,
-            // что стоит ЗА краем кадра.
-            const fwTarget = Math.min(cw * 0.9, ch * 0.9 * (ratio || 1.85));
+            // Считаем от ВИДИМОЙ полосы — без статус-бара сверху и без
+            // чёлки по бокам. Постоянная ширина рамки: 90% этой полосы,
+            // но не выше 90% её высоты. Поля вокруг рамки оставлены
+            // намеренно — на скауте важно видеть, что стоит ЗА краем кадра.
+            const safeW = Math.max(1, cw - il - ir), safeH = Math.max(1, ch - it);
+            const fwTarget = Math.min(safeW * 0.9, safeH * 0.9 * (ratio || 1.85));
             const w = frameShareNow > 0
               ? Math.max(cw, fwTarget / frameShareNow)
               : cw;
             const h = w * vh / vw;
-            return { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
+            // Середина видимой полосы, а не всей площади: иначе рамка
+            // встала бы по центру экрана, верхний её край — под часами.
+            return { x: (cw - w) / 2 + (il - ir) / 2, y: (ch - h) / 2 + it / 2, w, h };
           }, [cbox, frameShareNow, ratio]);
           // Во сколько раз картинка увеличена против того, что отдаёт
           // камера. Ровно единица — снимаем как есть.
@@ -5247,9 +5267,11 @@
               // за экраном человек НЕ видел: положив их в снимок, мы отдали
               // бы кадр шире того, который выбирали. Правило то же, что
               // у выгрузки доски: картинка обязана совпадать с экраном.
-              const sw = Math.min(v.videoWidth, v.videoWidth / (vzoom || 1));
-              const sh = Math.min(v.videoHeight, (cbox.ch / Math.max(1, vbox.h)) * v.videoHeight);
-              const sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
+              const kk = vbox.w > 0 ? v.videoWidth / vbox.w : 1;   // точки видео на точку экрана
+              const sx = Math.max(0, -vbox.x * kk);
+              const sy = Math.max(0, -vbox.y * kk);
+              const sw = Math.min(v.videoWidth - sx, cbox.cw * kk);
+              const sh = Math.min(v.videoHeight - sy, cbox.ch * kk);
               // 1600 точек по длинной стороне: дальше растёт только вес.
               // Сжатие и отправку в облако делает общий путь загрузки.
               const k = Math.min(1, 1600 / Math.max(sw, sh));
@@ -5707,6 +5729,14 @@
                     срезал бы по любой оси — в том числе по горизонтали,
                     на которой держится вся накладка. `fill` тут не тянет
                     картинку: у vbox ровно пропорция потока. */}
+                {/* Невидимая подложка, с которой читаются настоящие вставки
+                    безопасной области. Размера у неё нет — только поля. */}
+                <div ref={insRef} aria-hidden="true"
+                     style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+                              visibility: 'hidden', pointerEvents: 'none',
+                              paddingTop: 'env(safe-area-inset-top, 0px)',
+                              paddingRight: 'env(safe-area-inset-right, 0px)',
+                              paddingLeft: 'env(safe-area-inset-left, 0px)' }} />
                 <video ref={cam.videoRef} playsInline muted autoPlay
                        onLoadedMetadata={measure}
                        style={{ position: 'absolute', left: vbox.x, top: vbox.y,
