@@ -30,7 +30,7 @@ enum {
     ID_PAGE_ADD,
     // вкладка «Вид»
     ID_EDGE = 200, ID_ALIGN, ID_MM, ID_MM_MINUS, ID_MM_PLUS, ID_OPACITY,
-    ID_PUSH, ID_SWIPE, ID_HANDLE, ID_AUTOSTART, ID_SHOWSTART,
+    ID_PUSH, ID_SWIPE, ID_HANDLE, ID_AUTOSTART, ID_SHOWSTART, ID_PENCAM,
     ID_DPI, ID_DPI_MINUS, ID_DPI_PLUS, ID_DPI_AUTO,
     // вкладка «Проверка»
     ID_DIAG = 300, ID_DIAG_COPY, ID_DIAG_REFRESH, ID_LOG, ID_ADMIN, ID_RESET,
@@ -197,6 +197,7 @@ static void FillView() {
     SendMessageW(C(ID_HANDLE),    BM_SETCHECK, g_cfg.handle      ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(C(ID_SHOWSTART), BM_SETCHECK, g_cfg.showOnStart ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(C(ID_AUTOSTART), BM_SETCHECK, GetAutostart()    ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(C(ID_PENCAM),    BM_SETCHECK, g_cfg.penCam      ? BST_CHECKED : BST_UNCHECKED, 0);
     swprintf(b, 64, L"%.0f", ScreenDPI());
     SetWindowTextW(C(ID_DPI), b);
     g_fill = false;
@@ -520,6 +521,10 @@ static void OnCommand(int id, int code) {
             g_cfg.swipe = SendMessageW(C(ID_SWIPE), BM_GETCHECK, 0, 0) == BST_CHECKED;
             PanelHelpersUpdate();
             return;
+        case ID_PENCAM:
+            g_cfg.penCam = SendMessageW(C(ID_PENCAM), BM_GETCHECK, 0, 0) == BST_CHECKED;
+            ConfigSave();
+            return;
         case ID_HANDLE:
             g_cfg.handle = SendMessageW(C(ID_HANDLE), BM_GETCHECK, 0, 0) == BST_CHECKED;
             PanelHelpersUpdate();
@@ -803,6 +808,13 @@ void SettingsOpen() {
     Add(L"BUTTON", L"Показывать язычок у края",             WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 224, 460, 30, ID_HANDLE, 1);
     Add(L"BUTTON", L"Показывать панель сразу при запуске",   WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 258, 460, 30, ID_SHOWSTART, 1);
     Add(L"BUTTON", L"Запускать вместе с Windows",            WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 292, 460, 30, ID_AUTOSTART, 1);
+    Add(L"BUTTON", L"Вести камеру пером по всему экрану",     WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 326, 460, 30, ID_PENCAM, 1);
+    Add(L"STATIC",
+        L"Пока полоска держит кнопку мыши, движение пера по экрану переводится "
+        L"в движение мыши. Это нужно для Unreal: он не принимает перо вовсе — "
+        L"ни нажатий, ни движения, — а мышь принимает. Настоящей мыши это "
+        L"не мешает: её программа узнаёт и мост не включает.",
+        WS_VISIBLE, 52, T + 356, 438, 76, -1, 1);
 
     Add(L"STATIC", L"Точек на дюйм экрана (от этого зависят миллиметры)", WS_VISIBLE, 30, T + 336, 460, 22, -1, 1);
     Add(L"EDIT", L"", EDS | WS_VISIBLE, 30, T + 360, 90, 32, ID_DPI, 1);

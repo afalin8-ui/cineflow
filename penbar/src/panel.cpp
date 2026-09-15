@@ -659,7 +659,7 @@ void PanelShow(bool show) {
     if (show) {
         ShowWindow(g_panel, SW_SHOWNOACTIVATE);
         PanelLayout();
-        if (g_main) SetTimer(g_main, TIMER_TICK, 30, nullptr);
+        if (g_main) SetTimer(g_main, TIMER_TICK, 16, nullptr);
     } else {
         ReleaseEverything();          // с залипшим Shift панель прятать нельзя
         g_pageIdx = -1;               // и открытой страницей осей тоже
@@ -794,7 +794,7 @@ static void OnDown(UINT32 id, POINT client) {
         if (kv.second.idx == idx) return;
     // повтор и ожидание пера считаются по таймеру — заводим его сразу,
     // а не ждём до секунды общей проверки
-    if (g_main) SetTimer(g_main, TIMER_TICK, 30, nullptr);
+    if (g_main) SetTimer(g_main, TIMER_TICK, 16, nullptr);
     Touch t;
     t.idx   = idx;
     t.start = t.last = client;
@@ -1077,6 +1077,7 @@ void PanelTick() {
         onPanel = PtInRect(&r, cur) != 0;
     }
     if (!onPanel) TargetSeen(cur);      // якорь считаем один раз, а не на каждую кнопку
+    PenBridgeTick();                    // перо → мышь, пока держим кнопку
 
     // Отпускание изредка теряется совсем. Тогда кнопка остаётся «занятой»
     // навсегда: следующее нажатие по ней мы примем за второй палец и не

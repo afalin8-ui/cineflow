@@ -111,6 +111,11 @@ std::wstring ComboText(const std::vector<WORD>& vks) {
 // Держим список того, что зажали САМИ: если программа закроется с залипшим
 // Shift, он останется зажатым во всей системе, и человек решит, что сломалась
 // клавиатура. Всё зажатое отпускается при выходе.
+// Метка на наших собственных событиях. По ней мы узнаём свой ввод в «сыром»
+// потоке и не принимаем его за настоящую мышь — иначе мост из пера в мышь
+// сам себя бы и отключал.
+static const ULONG_PTR PENBAR_TAG = 0x50425200;
+
 static std::vector<WORD> g_heldVk;
 static bool g_heldMouse[4] = {false, false, false, false};
 
@@ -125,7 +130,8 @@ static void RawKey(WORD vk, bool up) {
     in.type       = INPUT_KEYBOARD;
     in.ki.wVk     = vk;
     in.ki.wScan   = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-    in.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+    in.ki.dwFlags    = up ? KEYEVENTF_KEYUP : 0;
+    in.ki.dwExtraInfo = PENBAR_TAG;
     if (IsExtended(vk)) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
     SendInput(1, &in, sizeof(INPUT));
     RememberVk(vk, !up);
@@ -224,9 +230,10 @@ static void MouseEvent(DWORD flags, DWORD data) {
     bool known = false;
     POINT go = InjectPoint(known);
     INPUT in{};
-    in.type         = INPUT_MOUSE;
-    in.mi.dwFlags   = flags;
-    in.mi.mouseData = data;
+    in.type          = INPUT_MOUSE;
+    in.mi.dwFlags    = flags;
+    in.mi.mouseData  = data;
+    in.mi.dwExtraInfo = PENBAR_TAG;
     if (known) {
         int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
         int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
@@ -294,9 +301,10 @@ void SendMouseMove(int dx, int dy) {
     if (!dx && !dy) return;
     INPUT in{};
     in.type       = INPUT_MOUSE;
-    in.mi.dx      = dx;
-    in.mi.dy      = dy;
-    in.mi.dwFlags = MOUSEEVENTF_MOVE;      // именно относительное: при зажатой
+    in.mi.dx         = dx;
+    in.mi.dy         = dy;
+    in.mi.dwFlags    = MOUSEEVENTF_MOVE;
+    in.mi.dwExtraInfo = PENBAR_TAG;      // именно относительное: при зажатой
     SendInput(1, &in, sizeof(INPUT));      // ПКМ Unreal читает приращения, а не точку
 }
 
@@ -313,8 +321,9 @@ void SendMouseBtn(int mb, bool down) {
         MouseEvent(f, 0);            // нажатие — вместе с переносом указателя
     } else {
         INPUT in{};                  // отпускать можно где угодно: окно держит захват
-        in.type       = INPUT_MOUSE;
-        in.mi.dwFlags = f;
+        in.type          = INPUT_MOUSE;
+        in.mi.dwFlags    = f;
+        in.mi.dwExtraInfo = PENBAR_TAG;
         SendInput(1, &in, sizeof(INPUT));
     }
     g_heldMouse[slot] = down;
@@ -333,6 +342,36 @@ void SendMouseClick(int mb) {
 void SendWheel(int mb) {
     // колесо достаётся окну под указателем — переносим его тем же событием
     MouseEvent(MOUSEEVENTF_WHEEL, (DWORD)((mb == PB_WUP) ? WHEEL_DELTA : -WHEEL_DELTA));
+}
+
+// ---- перо вместо мыши ----------------------------------------------------
+static POINT g_penLast{};
+static bool  g_penLastOk   = false;
+static DWORD g_realMouseAt = 0;
+
+void RawMouseSeen() { g_realMouseAt = GetTickCount(); }
+
+static bool AnyMouseHeldNow() { return g_heldMouse[1] || g_heldMouse[2] || g_heldMouse[3]; }
+
+// Работает, только пока МЫ держим кнопку мыши: в остальное время перо должно
+// оставаться пером. Настоящая мышь мост выключает — она и так даёт «сырой»
+// ввод, и перевод удвоил бы движение.
+void PenBridgeTick() {
+    if (!g_cfg.penCam || !AnyMouseHeldNow()) { g_penLastOk = false; return; }
+    POINT cur;
+    GetCursorPos(&cur);
+    if (PointOnPanel(cur)) { g_penLastOk = false; return; }   // на полоске мост не нужен
+    if (GetTickCount() - g_realMouseAt < 200) { g_penLastOk = false; return; }
+    if (!g_penLastOk) { g_penLast = cur; g_penLastOk = true; return; }
+
+    int dx = cur.x - g_penLast.x, dy = cur.y - g_penLast.y;
+    g_penLast = cur;
+    if (!dx && !dy) return;
+    SendMouseMove(dx, dy);
+    // Наше событие сдвинуло указатель ещё раз — возвращаем его туда, где перо.
+    // SetCursorPos «сырого» ввода не даёт, поэтому до Unreal доходит ровно
+    // один сдвиг, наш.
+    SetCursorPos(cur.x, cur.y);
 }
 
 // ---- поведение кнопок ----------------------------------------------------

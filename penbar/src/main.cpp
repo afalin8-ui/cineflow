@@ -122,6 +122,22 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             else if (LOWORD(lp) == WM_RBUTTONUP) TrayMenu();
             return 0;
 
+        // «Сырой» ввод мыши приходит нам, даже когда мы не на переднем плане.
+        // Он и есть признак НАСТОЯЩЕЙ мыши: перо такого не даёт — потому его
+        // и не видит Unreal. Свои события узнаём по метке и пропускаем.
+        case WM_INPUT: {
+            UINT sz = 0;
+            GetRawInputData((HRAWINPUT)lp, RID_INPUT, nullptr, &sz, sizeof(RAWINPUTHEADER));
+            RAWINPUT ri{};
+            if (sz && sz <= sizeof(RAWINPUT) &&
+                GetRawInputData((HRAWINPUT)lp, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) == sz &&
+                ri.header.dwType == RIM_TYPEMOUSE &&
+                ri.data.mouse.ulExtraInformation != 0x50425200 &&
+                (ri.data.mouse.lLastX || ri.data.mouse.lLastY))
+                RawMouseSeen();
+            break;          // WM_INPUT обязан дойти до DefWindowProc
+        }
+
         case WM_PROFILECH:
             CheckForeground(false);
             return 0;
@@ -219,6 +235,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     g_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
                              WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     CheckForeground(true);
+    {
+        RAWINPUTDEVICE rid{};
+        rid.usUsagePage = 0x01;     // обычные устройства
+        rid.usUsage     = 0x02;     // мышь
+        rid.dwFlags     = RIDEV_INPUTSINK;
+        rid.hwndTarget  = g_main;
+        if (!RegisterRawInputDevices(&rid, 1, sizeof(rid)))
+            Log(L"не удалось подписаться на сырой ввод мыши (%u): перо от мыши "
+                L"отличать будет нечем", GetLastError());
+    }
     SetTimer(g_main, TIMER_FG, 1000, nullptr);
 
     if (g_cfg.showOnStart) PanelShow(true);
