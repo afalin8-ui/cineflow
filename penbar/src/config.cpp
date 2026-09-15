@@ -247,7 +247,7 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
 
 bool ConfigSave() {
     JPtr root = JVal::mkObj();
-    root->set(L"version", 4.0);
+    root->set(L"version", 6.0);
     root->set(L"edge",        std::wstring(EDGE_NAMES[g_cfg.edge  & 3]));
     root->set(L"align",       std::wstring(ALIGN_NAMES[g_cfg.align % 3]));
     root->set(L"buttonMM",    g_cfg.buttonMM);
@@ -302,42 +302,16 @@ bool ConfigSave() {
 // правки набора доносим сюда. Площадку обзора и джойстик убираем: камерой
 // водят мышью, а W A S D на полоске не нужны — нужны Q и E.
 static void ConfigUpgrade(Config& c, double ver) {
-    if (ver >= 5.0) return;
-    if (ver >= 1.0) {
-        // Набор Unreal пересобираем начисто. В старом файле рядом с залипающим
-        // «Полёт (ПКМ)» лежала ещё и РАЗОВАЯ кнопка «ПКМ» — нажав её, человек
-        // получал щелчок, а не удержание, и решал, что залипание сломалось.
-        for (auto& p : c.profiles) {
-            if (LowerW(p.match).find(L"unreal") == std::wstring::npos) continue;
-            p.btns = UnrealBtns();
-            for (auto& b : p.btns) BtnCompile(b);
-            Log(L"набор \"%s\" пересобран начисто", p.name.c_str());
-        }
-    }
+    if (ver >= 6.0) return;
+    // Набор Unreal пересобираем начисто. Чинить накопившееся по кусочкам уже
+    // нельзя: в файле у человека успели полежать и разовая кнопка «ПКМ»
+    // (она давала щелчок вместо удержания), и отдельные W A S D, и площадки,
+    // которые следующая же правка удаляла. Один заход, один понятный итог.
     for (auto& p : c.profiles) {
-        // Площадка обзора не нужна: камерой водят мышью.
-        p.btns.erase(std::remove_if(p.btns.begin(), p.btns.end(),
-                                    [](const Btn& b) { return b.kind == K_PAD; }),
-                     p.btns.end());
-        if (LowerW(p.match).find(L"unrealeditor.exe") == std::wstring::npos) continue;
-
-        // Отдельные W A S D с полоски убираем — вместо них джойстик.
-        p.btns.erase(std::remove_if(p.btns.begin(), p.btns.end(), [](const Btn& b) {
-            return b.kind == K_KEY && b.mode == M_HOLD &&
-                   (b.keys == L"w" || b.keys == L"a" || b.keys == L"s" || b.keys == L"d");
-        }), p.btns.end());
-
-        bool hasJoy = false;
-        for (auto& b : p.btns) if (b.kind == K_JOY) hasJoy = true;
-        if (!hasJoy) {
-            Btn joy = Z(L"Ходьба", K_JOY, 2, L"w,a,s,d");
-            BtnCompile(joy);
-            size_t at = p.btns.size() > 2 ? 2 : p.btns.size();   // под кнопками мыши
-            p.btns.insert(p.btns.begin() + at, joy);
-            Log(L"в набор \"%s\" добавлен джойстик вместо кнопок W A S D", p.name.c_str());
-        }
-        for (auto& b : p.btns)
-            if (b.keys == L"ctrl+z" && b.keys2.empty()) { b.keys2 = L"ctrl+y"; BtnCompile(b); }
+        if (LowerW(p.match).find(L"unreal") == std::wstring::npos) continue;
+        p.btns = UnrealBtns();
+        for (auto& b : p.btns) BtnCompile(b);
+        Log(L"набор \"%s\" пересобран начисто", p.name.c_str());
     }
 }
 
