@@ -356,25 +356,25 @@ static bool AnyMouseHeldNow() { return g_heldMouse[1] || g_heldMouse[2] || g_hel
 // Работает, только пока МЫ держим кнопку мыши: в остальное время перо должно
 // оставаться пером. Настоящая мышь мост выключает — она и так даёт «сырой»
 // ввод, и перевод удвоил бы движение.
+// Перо, коснувшееся экрана, Windows показывает программам ещё и как нажатую
+// ЛЕВУЮ кнопку мыши. Unreal её принимает, а вместе с нашей правой это уже
+// панорама, а не поворот — «нажаты две клавиши разом». Отпускать её вдогонку
+// поздно: Unreal успевает начать своё. Значит её надо ГАСИТЬ до того, как она
+// туда попадёт, — этим и занят низкоуровневый перехватчик в main.cpp. Гасим
+// узко: только левую, только от пера (метку ставит сама Windows), только пока
+// мы держим свою кнопку и только если мост включён.
+bool PenLeftShouldDie(ULONG_PTR extra) {
+    if (!g_cfg.penCam || extra == PENBAR_TAG) return false;
+    if ((extra & 0xFFFFFF00) != 0xFF515700) return false;
+    return AnyMouseHeldNow();
+}
+
 void PenBridgeTick() {
     if (!g_cfg.penCam || !AnyMouseHeldNow()) { g_penLastOk = false; return; }
     POINT cur;
     GetCursorPos(&cur);
     if (PointOnPanel(cur)) { g_penLastOk = false; return; }   // на полоске мост не нужен
     if (GetTickCount() - g_realMouseAt < 200) { g_penLastOk = false; return; }
-
-    // Перо, коснувшееся экрана, для Unreal — НАЖАТАЯ ЛЕВАЯ КНОПКА. Вместе
-    // с нашей правой это уже панорама, а не поворот: со стороны выглядит как
-    // «нажаты две клавиши разом». Движение пера Unreal при этом не берёт,
-    // то есть от чужой левой кнопки нам только вред. Пока держим свою —
-    // чужую отпускаем.
-    if (!MouseHeld(PB_LEFT) && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
-        INPUT up{};
-        up.type           = INPUT_MOUSE;
-        up.mi.dwFlags     = MOUSEEVENTF_LEFTUP;
-        up.mi.dwExtraInfo = PENBAR_TAG;
-        SendInput(1, &up, sizeof(INPUT));
-    }
 
     if (!g_penLastOk) { g_penLast = cur; g_penLastOk = true; return; }
 
@@ -393,7 +393,7 @@ void PenBridgeTick() {
 // и держишь. Ответ квадратичный: у середины ход мелкий и точный, у края
 // быстрый.
 static const double STICK_DEAD = 0.15;
-static const double STICK_MAX  = 26.0;      // точек за такт при полном отклонении
+static const double STICK_MAX  = 8.0;       // точек за такт при полном отклонении
 
 void StickTick(Btn& b) {
     double r = sqrt(b.joyX * b.joyX + b.joyY * b.joyY);

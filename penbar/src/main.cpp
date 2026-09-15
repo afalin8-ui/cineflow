@@ -59,6 +59,24 @@ static void CheckForeground(bool force) {
     PanelSetNeedAdmin(!IsElevated() && ForegroundIsElevated());
 }
 
+// Низкоуровневый перехватчик мыши. Он НИЧЕГО не подменяет и не подделывает —
+// только гасит левую кнопку от пера, пока полоска держит свою (см. объяснение
+// в keys.cpp). Всё остальное проходит насквозь.
+static HHOOK g_mouseHook = nullptr;
+
+static LRESULT CALLBACK MouseLL(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION && (wp == WM_LBUTTONDOWN || wp == WM_LBUTTONUP)) {
+        MSLLHOOKSTRUCT* m = (MSLLHOOKSTRUCT*)lp;
+        if (m && PenLeftShouldDie(m->dwExtraInfo)) {
+            static DWORD said = 0;
+            DWORD now = GetTickCount();
+            if (now - said > 3000) { said = now; Log(L"гашу левую кнопку от пера"); }
+            return 1;
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
 static void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
     PostMessageW(g_main, WM_PROFILECH, 0, 0);
 }
@@ -176,6 +194,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_DESTROY:
+            if (g_mouseHook) { UnhookWindowsHookEx(g_mouseHook); g_mouseHook = nullptr; }
             ReleaseEverything();
             Shell_NotifyIconW(NIM_DELETE, &g_ni);
             PostQuitMessage(0);
@@ -245,6 +264,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             Log(L"не удалось подписаться на сырой ввод мыши (%u): перо от мыши "
                 L"отличать будет нечем", GetLastError());
     }
+    g_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseLL, g_inst, 0);
+    if (!g_mouseHook)
+        Log(L"не удалось поставить перехватчик мыши (%u): левая кнопка от пера "
+            L"будет мешать правой", GetLastError());
     SetTimer(g_main, TIMER_FG, 1000, nullptr);
 
     if (g_cfg.showOnStart) PanelShow(true);

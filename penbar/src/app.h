@@ -139,6 +139,7 @@ void  TargetGuard();                    // цель ушла надолго — 
 void  PenBridgeTick();
 void  StickTick(Btn& b);                // камера-джойстик: едем, пока отклонён
 void  RawMouseSeen();                   // пришёл «сырой» ввод настоящей мыши
+bool  PenLeftShouldDie(ULONG_PTR extra); // эту левую кнопку от пера гасим?
 
 // ---- панель --------------------------------------------------------------
 extern HINSTANCE g_inst;
