@@ -1,0 +1,36 @@
+# Сборка «Пульта» — экранных кнопок для Windows.
+# Собирается кросс-компилятором на обычной машине сборки: тот же mingw-w64,
+# которым файл собирается вручную, поэтому результат совпадает знак в знак.
+name: PenBar
+
+on:
+  push:
+    paths:
+      - 'penbar/**'
+      - '.github/workflows/penbar.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Поставить кросс-компилятор
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++-mingw-w64-x86-64-win32
+
+      - name: Проверить разбор настроек
+        run: |
+          cd penbar
+          g++ -std=c++17 -O1 tests/test_json.cpp -o /tmp/test_json
+          /tmp/test_json
+
+      - name: Собрать PenBar.exe
+        run: cd penbar && ./build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PenBar
+          path: penbar/PenBar.exe
