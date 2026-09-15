@@ -812,7 +812,11 @@ static void OnDown(UINT32 id, POINT client) {
     // касается вьюпорта, а касание пера — это ЛКМ, и Unreal получает ЛКМ
     // поверх нашей кнопки. Здесь перо касается ПАНЕЛИ, её нажатие забирает
     // себе наше окно, и до Unreal доходит только то, что посылаем мы.
-    if (b->kind == K_PAD && (b->mouse == PB_LEFT || b->mouse == PB_RIGHT || b->mouse == PB_MID)) {
+    // Если эта кнопка мыши уже зажата залипанием, площадка её НЕ трогает:
+    // нажать второй раз и отпустить на подъёме пальца значило бы сорвать
+    // чужое залипание. Просто ведём — кнопка и так держится.
+    if (b->kind == K_PAD && (b->mouse == PB_LEFT || b->mouse == PB_RIGHT || b->mouse == PB_MID)
+        && !MouseHeld(b->mouse)) {
         SendMouseBtn(b->mouse, true);
         b->padDown = true;
     }

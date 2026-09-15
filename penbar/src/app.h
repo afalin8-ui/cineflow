@@ -103,6 +103,7 @@ void         SendCombo(const std::vector<WORD>& vks, bool down);
 void         SendComboTap(const std::vector<WORD>& vks);
 void         SendMouseBtn(int mb, bool down);
 void         SendMouseMove(int dx, int dy);      // относительное движение указателя
+bool         MouseHeld(int mb);                  // эта кнопка мыши сейчас зажата нами?
 void         SendMouseClick(int mb);
 void         SendWheel(int mb);
 void         ReleaseEverything();       // отпустить всё зажатое (страховка)

@@ -320,6 +320,11 @@ void SendMouseBtn(int mb, bool down) {
     g_heldMouse[slot] = down;
 }
 
+bool MouseHeld(int mb) {
+    int slot = (mb == PB_LEFT) ? 1 : (mb == PB_RIGHT) ? 2 : (mb == PB_MID) ? 3 : 0;
+    return slot && g_heldMouse[slot];
+}
+
 void SendMouseClick(int mb) {
     SendMouseBtn(mb, true);
     SendMouseBtn(mb, false);
