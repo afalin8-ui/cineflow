@@ -91,7 +91,8 @@ static void FillButtonList() {
         std::wstring s = b.label;
         for (auto& ch : s) if (ch == L'\n') ch = L' ';
         s += L"   —   ";
-        if (b.kind == K_PAD)   s += L"зона обзора";
+        if (b.kind == K_PAD)   s += L"площадка";
+        if (b.kind == K_STICK) s += L"камера-джойстик";
         if (b.kind == K_JOY)   s += L"джойстик ";
         if (b.kind == K_WHEEL) s += L"крутилка";
         if (!b.keys.empty() && b.kind != K_WHEEL && b.kind != K_PAD) s += b.keys;
@@ -127,7 +128,7 @@ static void FillButtonFields() {
     bool zone = b && b->kind != K_KEY;
     // У площадки кнопка мыши ЕСТЬ и она главная: это та кнопка, которую
     // площадка держит, пока по ней ведут.
-    EnableWindow(C(ID_MOUSE),  !zone || b->kind == K_PAD);
+    EnableWindow(C(ID_MOUSE),  !zone || b->kind == K_PAD || b->kind == K_STICK);
     EnableWindow(C(ID_MODE),   !zone);
     EnableWindow(C(ID_REPEAT), !zone);
     EnableWindow(C(ID_PAGE),   !zone);
@@ -404,7 +405,8 @@ static void OnCommand(int id, int code) {
             HMENU m = CreatePopupMenu();
             AppendMenuW(m, MF_STRING, 1, L"Обычная кнопка");
             AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(m, MF_STRING, 2, L"Зона «Обзор» — вести камерой");
+            AppendMenuW(m, MF_STRING, 2, L"Камера-джойстик — отклонил, камера едет");
+            AppendMenuW(m, MF_STRING, 5, L"Площадка — вести камерой, как по трекпаду");
             AppendMenuW(m, MF_STRING, 3, L"Джойстик — ходьба W A S D");
             AppendMenuW(m, MF_STRING, 4, L"Крутилка — колесо мыши");
             RECT br{};
@@ -414,7 +416,8 @@ static void OnCommand(int id, int code) {
             DestroyMenu(m);
             if (!cmd) return;
             Btn nb;
-            if (cmd == 2)      { nb.label = L"Обзор";    nb.kind = K_PAD;   nb.span = 2; }
+            if (cmd == 2)      { nb.label = L"Обзор";    nb.kind = K_STICK; nb.span = 2; nb.mouse = PB_RIGHT; }
+            else if (cmd == 5) { nb.label = L"Обзор";    nb.kind = K_PAD;   nb.span = 2; nb.mouse = PB_RIGHT; }
             else if (cmd == 3) { nb.label = L"Ходьба";   nb.kind = K_JOY;   nb.span = 2; nb.keys = L"w,a,s,d"; }
             else if (cmd == 4) { nb.label = L"Скорость"; nb.kind = K_WHEEL; nb.span = 2; }
             else                 nb.label = L"Новая";

@@ -23,7 +23,7 @@ std::wstring TrimW(const std::wstring& s);
 enum Mode  { M_TAP = 0, M_HOLD = 1, M_LATCH = 2 };
 // Вид клетки на полоске. Обычная кнопка — K_KEY; остальные три это ЗОНЫ:
 // по ним не стучат, по ним ВЕДУТ пальцем или пером.
-enum Kind  { K_KEY = 0, K_PAD, K_JOY, K_WHEEL };
+enum Kind  { K_KEY = 0, K_PAD, K_JOY, K_WHEEL, K_STICK };
 enum MBtn  { PB_NONE = 0, PB_LEFT, PB_RIGHT, PB_MID, PB_WUP, PB_WDN };
 enum Edge  { E_LEFT = 0, E_RIGHT, E_TOP, E_BOTTOM };
 enum Align { A_START = 0, A_CENTER, A_END };
@@ -137,6 +137,7 @@ void  TargetGuard();                    // цель ушла надолго — 
 // нет). Зато синтетическую мышь он принимает как настоящую. Отсюда мост:
 // пока мы держим кнопку мыши, движение пера переводится в движение мыши.
 void  PenBridgeTick();
+void  StickTick(Btn& b);                // камера-джойстик: едем, пока отклонён
 void  RawMouseSeen();                   // пришёл «сырой» ввод настоящей мыши
 
 // ---- панель --------------------------------------------------------------

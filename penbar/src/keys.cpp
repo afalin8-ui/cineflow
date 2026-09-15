@@ -362,6 +362,20 @@ void PenBridgeTick() {
     GetCursorPos(&cur);
     if (PointOnPanel(cur)) { g_penLastOk = false; return; }   // на полоске мост не нужен
     if (GetTickCount() - g_realMouseAt < 200) { g_penLastOk = false; return; }
+
+    // Перо, коснувшееся экрана, для Unreal — НАЖАТАЯ ЛЕВАЯ КНОПКА. Вместе
+    // с нашей правой это уже панорама, а не поворот: со стороны выглядит как
+    // «нажаты две клавиши разом». Движение пера Unreal при этом не берёт,
+    // то есть от чужой левой кнопки нам только вред. Пока держим свою —
+    // чужую отпускаем.
+    if (!MouseHeld(PB_LEFT) && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
+        INPUT up{};
+        up.type           = INPUT_MOUSE;
+        up.mi.dwFlags     = MOUSEEVENTF_LEFTUP;
+        up.mi.dwExtraInfo = PENBAR_TAG;
+        SendInput(1, &up, sizeof(INPUT));
+    }
+
     if (!g_penLastOk) { g_penLast = cur; g_penLastOk = true; return; }
 
     int dx = cur.x - g_penLast.x, dy = cur.y - g_penLast.y;
@@ -372,6 +386,22 @@ void PenBridgeTick() {
     // SetCursorPos «сырого» ввода не даёт, поэтому до Unreal доходит ровно
     // один сдвиг, наш.
     SetCursorPos(cur.x, cur.y);
+}
+
+// Камера-джойстик: пока палец отклонён от середины, камера едет — как правый
+// стик на геймпаде. Площадка-трекпад требует водить и водить, а тут отклонил
+// и держишь. Ответ квадратичный: у середины ход мелкий и точный, у края
+// быстрый.
+static const double STICK_DEAD = 0.15;
+static const double STICK_MAX  = 26.0;      // точек за такт при полном отклонении
+
+void StickTick(Btn& b) {
+    double r = sqrt(b.joyX * b.joyX + b.joyY * b.joyY);
+    if (r < STICK_DEAD) return;
+    double k = (r - STICK_DEAD) / (1.0 - STICK_DEAD);
+    double sp = k * k * STICK_MAX;
+    int dx = (int)lround(b.joyX / r * sp), dy = (int)lround(b.joyY / r * sp);
+    SendMouseMove(dx, dy);
 }
 
 // ---- поведение кнопок ----------------------------------------------------

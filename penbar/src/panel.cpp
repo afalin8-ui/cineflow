@@ -427,13 +427,14 @@ static void DrawZone(Graphics& g, const Btn& b, REAL rad) {
     REAL side = rf.Width < rf.Height ? rf.Width : rf.Height;
     Pen pen(C_ZONE_LN, Hair() * 2);
 
-    if (b.kind == K_JOY) {
+    if (b.kind == K_JOY || b.kind == K_STICK) {
         REAL ring = side * 0.40f;
         g.DrawEllipse(&pen, cx - ring, cy - ring, ring * 2, ring * 2);
         REAL kr = ring * 0.44f;
         REAL kx = cx + (REAL)(b.joyX * (ring - kr));
         REAL ky = cy + (REAL)(b.joyY * (ring - kr));
-        SolidBrush knob(b.joyMask ? C_KNOB : Color(255, 92, 88, 82));
+        SolidBrush knob((b.joyMask || (b.kind == K_STICK && b.down))
+                        ? C_KNOB : Color(255, 92, 88, 82));
         g.FillEllipse(&knob, kx - kr, ky - kr, kr * 2, kr * 2);
         return;
     }
@@ -771,14 +772,25 @@ static int WheelStep() {
     return s < 10 ? 10 : s;
 }
 
-static void JoyFromPoint(Btn& b, POINT p) {
+// доля отклонения от середины зоны, -1..1 по обеим осям
+static void ZoneOffset(const Btn& b, POINT p, double& nx, double& ny) {
     double w = (double)(b.rc.right - b.rc.left), h = (double)(b.rc.bottom - b.rc.top);
     double cx = b.rc.left + w / 2, cy = b.rc.top + h / 2;
     double ring = (w < h ? w : h) * 0.40;
-    if (ring < 1) return;
-    double nx = (p.x - cx) / ring, ny = (p.y - cy) / ring;
+    if (ring < 1) { nx = ny = 0; return; }
+    nx = (p.x - cx) / ring;
+    ny = (p.y - cy) / ring;
     double r = sqrt(nx * nx + ny * ny);
     if (r > 1) { nx /= r; ny /= r; }        // ручка не уезжает за кольцо
+}
+
+static void StickFromPoint(Btn& b, POINT p) {
+    ZoneOffset(b, p, b.joyX, b.joyY);
+}
+
+static void JoyFromPoint(Btn& b, POINT p) {
+    double nx = 0, ny = 0;
+    ZoneOffset(b, p, nx, ny);
     JoyMove(b, nx, ny);
 }
 
@@ -807,6 +819,7 @@ static void OnDown(UINT32 id, POINT client) {
     FlushArmed();               // взялись за зону — ждать ухода пера больше незачем
     b->down = true;
     if (b->kind == K_JOY) JoyFromPoint(*b, client);   // ткнул в край — сразу полетели
+    if (b->kind == K_STICK) StickFromPoint(*b, client);
     // Площадка САМА держит свою кнопку мыши, пока по ней ведут. Это не то же
     // самое, что залипить кнопку и водить пером по вьюпорту: там перо сначала
     // касается вьюпорта, а касание пера — это ЛКМ, и Unreal получает ЛКМ
@@ -815,7 +828,8 @@ static void OnDown(UINT32 id, POINT client) {
     // Если эта кнопка мыши уже зажата залипанием, площадка её НЕ трогает:
     // нажать второй раз и отпустить на подъёме пальца значило бы сорвать
     // чужое залипание. Просто ведём — кнопка и так держится.
-    if (b->kind == K_PAD && (b->mouse == PB_LEFT || b->mouse == PB_RIGHT || b->mouse == PB_MID)
+    if ((b->kind == K_PAD || b->kind == K_STICK)
+        && (b->mouse == PB_LEFT || b->mouse == PB_RIGHT || b->mouse == PB_MID)
         && !MouseHeld(b->mouse)) {
         SendMouseBtn(b->mouse, true);
         b->padDown = true;
@@ -844,7 +858,8 @@ static void OnMove(UINT32 id, POINT client) {
         t.last = client;
         return;
     }
-    if (b->kind == K_JOY) { JoyFromPoint(*b, client); PanelRedraw(); return; }
+    if (b->kind == K_JOY)   { JoyFromPoint(*b, client);   PanelRedraw(); return; }
+    if (b->kind == K_STICK) { StickFromPoint(*b, client); PanelRedraw(); return; }
 
     int step = WheelStep();
     t.accum += g_vertical ? dy : dx;
@@ -864,6 +879,7 @@ static void OnUp(UINT32 id, POINT client) {
     if (zone && zone->kind != K_KEY) {
         zone->down = false;
         if (zone->kind == K_JOY) JoyOff(*zone);
+        if (zone->kind == K_STICK) zone->joyX = zone->joyY = 0;
         if (zone->padDown) { SendMouseBtn(zone->mouse, false); zone->padDown = false; }
         // Короткий тык по крутилке — один щелчок. Тянуть ради одного шага
         // скорости неудобно, а шаг её меняют как раз поштучно.
@@ -1078,6 +1094,9 @@ void PanelTick() {
     }
     if (!onPanel) TargetSeen(cur);      // якорь считаем один раз, а не на каждую кнопку
     PenBridgeTick();                    // перо → мышь, пока держим кнопку
+    if (std::vector<Btn>* sl = CurBtns())
+        for (auto& sb : *sl)
+            if (sb.kind == K_STICK && sb.down) StickTick(sb);
 
     // Отпускание изредка теряется совсем. Тогда кнопка остаётся «занятой»
     // навсегда: следующее нажатие по ней мы примем за второй палец и не
@@ -1107,6 +1126,7 @@ void PanelTick() {
             if (held) continue;
             zb.down = false;
             if (zb.kind == K_JOY) JoyOff(zb);
+            if (zb.kind == K_STICK) zb.joyX = zb.joyY = 0;
             if (zb.padDown) { SendMouseBtn(zb.mouse, false); zb.padDown = false; }
             redrawZones = true;
         }

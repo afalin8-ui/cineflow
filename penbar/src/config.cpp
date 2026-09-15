@@ -44,16 +44,15 @@ static Btn Long(Btn b, const wchar_t* keys2) {   // второе действи�
 // зоне «Обзор» на самой панели, а не пером по вьюпорту.
 static std::vector<Btn> UnrealBtns() {
     return {
-        Z(L"Обзор", K_PAD, 2, nullptr, PB_RIGHT),      // ведут — держится ПКМ
-        Z(L"Панорама", K_PAD, 2, nullptr, PB_MID),     // ведут — держится СКМ
+        Z(L"Обзор", K_STICK, 2, nullptr, PB_RIGHT),    // отклонил — камера едет
+        Z(L"Панорама", K_STICK, 2, nullptr, PB_MID),
         Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
         B(L"Вверх E",     L"e", M_HOLD),
         B(L"Вниз Q",      L"q", M_HOLD),
         B(L"Быстро Shift",L"shift", M_LATCH),
         B(L"Фокус F",     L"f"),
         Long(B(L"Отмена", L"ctrl+z"), L"ctrl+y"),
-        B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),  // для тех, кто с мышью
-        Z(L"Скорость", K_WHEEL, 2),
+        B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),
     };
 }
 
@@ -199,7 +198,7 @@ static const wchar_t* EDGE_NAMES[]  = {L"left", L"right", L"top", L"bottom"};
 static const wchar_t* ALIGN_NAMES[] = {L"start", L"center", L"end"};
 static const wchar_t* MODE_NAMES[]  = {L"tap", L"hold", L"latch"};
 static const wchar_t* MOUSE_NAMES[] = {L"", L"left", L"right", L"middle", L"wheelup", L"wheeldown"};
-static const wchar_t* KIND_NAMES[]  = {L"key", L"pad", L"joy", L"wheel"};
+static const wchar_t* KIND_NAMES[]  = {L"key", L"pad", L"joy", L"wheel", L"stick"};
 
 static int NameIdx(const std::wstring& s, const wchar_t* const* names, int n, int def) {
     for (int i = 0; i < n; i++) if (s == names[i]) return i;
@@ -213,7 +212,7 @@ static JPtr BtnsToJson(const std::vector<Btn>& btns) {
         jb->set(L"label", b.label);
         if (!b.keys.empty())    jb->set(L"keys",  b.keys);
         if (!b.keys2.empty())   jb->set(L"keys2", b.keys2);
-        if (b.kind != K_KEY)    jb->set(L"kind",  std::wstring(KIND_NAMES[b.kind % 4]));
+        if (b.kind != K_KEY)    jb->set(L"kind",  std::wstring(KIND_NAMES[b.kind % 5]));
         if (b.span > 1)         jb->set(L"span",  (double)b.span);
         if (b.mouse != PB_NONE) jb->set(L"mouse", std::wstring(MOUSE_NAMES[b.mouse]));
         jb->set(L"mode", std::wstring(MODE_NAMES[b.mode % 3]));
@@ -232,7 +231,7 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
         b.label  = jb->gets(L"label", L"?");
         b.keys   = jb->gets(L"keys", L"");
         b.keys2  = jb->gets(L"keys2", L"");
-        b.kind   = NameIdx(jb->gets(L"kind", L"key"), KIND_NAMES, 4, K_KEY);
+        b.kind   = NameIdx(jb->gets(L"kind", L"key"), KIND_NAMES, 5, K_KEY);
         b.span   = (int)jb->getn(L"span", 1);
         if (b.span < 1) b.span = 1;
         if (b.span > 6) b.span = 6;
@@ -247,7 +246,7 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
 
 bool ConfigSave() {
     JPtr root = JVal::mkObj();
-    root->set(L"version", 6.0);
+    root->set(L"version", 7.0);
     root->set(L"edge",        std::wstring(EDGE_NAMES[g_cfg.edge  & 3]));
     root->set(L"align",       std::wstring(ALIGN_NAMES[g_cfg.align % 3]));
     root->set(L"buttonMM",    g_cfg.buttonMM);
@@ -303,7 +302,7 @@ bool ConfigSave() {
 // правки набора доносим сюда. Площадку обзора и джойстик убираем: камерой
 // водят мышью, а W A S D на полоске не нужны — нужны Q и E.
 static void ConfigUpgrade(Config& c, double ver) {
-    if (ver >= 6.0) return;
+    if (ver >= 7.0) return;
     // Набор Unreal пересобираем начисто. Чинить накопившееся по кусочкам уже
     // нельзя: в файле у человека успели полежать и разовая кнопка «ПКМ»
     // (она давала щелчок вместо удержания), и отдельные W A S D, и площадки,
