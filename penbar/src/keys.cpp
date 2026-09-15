@@ -393,13 +393,12 @@ void PenBridgeTick() {
 // и держишь. Ответ квадратичный: у середины ход мелкий и точный, у края
 // быстрый.
 static const double STICK_DEAD = 0.15;
-static const double STICK_MAX  = 8.0;       // точек за такт при полном отклонении
 
 void StickTick(Btn& b) {
     double r = sqrt(b.joyX * b.joyX + b.joyY * b.joyY);
     if (r < STICK_DEAD) return;
     double k = (r - STICK_DEAD) / (1.0 - STICK_DEAD);
-    double sp = k * k * STICK_MAX;
+    double sp = k * k * g_cfg.stickSpeed;
     int dx = (int)lround(b.joyX / r * sp), dy = (int)lround(b.joyY / r * sp);
     SendMouseMove(dx, dy);
 }

@@ -31,6 +31,7 @@ enum {
     // вкладка «Вид»
     ID_EDGE = 200, ID_ALIGN, ID_MM, ID_MM_MINUS, ID_MM_PLUS, ID_OPACITY,
     ID_PUSH, ID_SWIPE, ID_HANDLE, ID_AUTOSTART, ID_SHOWSTART, ID_PENCAM,
+    ID_STICK, ID_STICK_MINUS, ID_STICK_PLUS,
     ID_DPI, ID_DPI_MINUS, ID_DPI_PLUS, ID_DPI_AUTO,
     // вкладка «Проверка»
     ID_DIAG = 300, ID_DIAG_COPY, ID_DIAG_REFRESH, ID_LOG, ID_ADMIN, ID_RESET,
@@ -199,6 +200,11 @@ static void FillView() {
     SendMessageW(C(ID_SHOWSTART), BM_SETCHECK, g_cfg.showOnStart ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(C(ID_AUTOSTART), BM_SETCHECK, GetAutostart()    ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(C(ID_PENCAM),    BM_SETCHECK, g_cfg.penCam      ? BST_CHECKED : BST_UNCHECKED, 0);
+    {
+        wchar_t sb[32];
+        swprintf(sb, 32, L"%.1f", g_cfg.stickSpeed);
+        SetWindowTextW(C(ID_STICK), sb);
+    }
     swprintf(b, 64, L"%.0f", ScreenDPI());
     SetWindowTextW(C(ID_DPI), b);
     g_fill = false;
@@ -524,6 +530,25 @@ static void OnCommand(int id, int code) {
             g_cfg.swipe = SendMessageW(C(ID_SWIPE), BM_GETCHECK, 0, 0) == BST_CHECKED;
             PanelHelpersUpdate();
             return;
+        case ID_STICK:
+            if (code == EN_CHANGE) {
+                double v = _wtof(GetText(ID_STICK).c_str());
+                if (v >= 0.5 && v <= 40) { g_cfg.stickSpeed = v; ConfigSave(); }
+            }
+            return;
+        case ID_STICK_MINUS:
+        case ID_STICK_PLUS: {
+            g_cfg.stickSpeed += (id == ID_STICK_PLUS ? 1.0 : -1.0);
+            if (g_cfg.stickSpeed < 0.5) g_cfg.stickSpeed = 0.5;
+            if (g_cfg.stickSpeed > 40)  g_cfg.stickSpeed = 40;
+            wchar_t sb[32];
+            swprintf(sb, 32, L"%.1f", g_cfg.stickSpeed);
+            g_fill = true;
+            SetWindowTextW(C(ID_STICK), sb);
+            g_fill = false;
+            ConfigSave();
+            return;
+        }
         case ID_PENCAM:
             g_cfg.penCam = SendMessageW(C(ID_PENCAM), BM_GETCHECK, 0, 0) == BST_CHECKED;
             ConfigSave();
@@ -811,13 +836,25 @@ void SettingsOpen() {
     Add(L"BUTTON", L"Показывать язычок у края",             WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 224, 460, 30, ID_HANDLE, 1);
     Add(L"BUTTON", L"Показывать панель сразу при запуске",   WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 258, 460, 30, ID_SHOWSTART, 1);
     Add(L"BUTTON", L"Запускать вместе с Windows",            WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 292, 460, 30, ID_AUTOSTART, 1);
-    Add(L"BUTTON", L"Вести камеру пером по всему экрану",     WS_VISIBLE | BS_AUTOCHECKBOX, 30, T + 326, 460, 30, ID_PENCAM, 1);
+    // Правый столбец вкладки свободен: галочки слева занимают 460 точек
+    // из 900. Всё про перо и камеру живёт здесь, не налезая на «точки на дюйм».
+    Add(L"BUTTON", L"Вести камеру пером по всему экрану",
+        WS_VISIBLE | BS_AUTOCHECKBOX, 520, T + 156, 350, 30, ID_PENCAM, 1);
     Add(L"STATIC",
         L"Пока полоска держит кнопку мыши, движение пера по экрану переводится "
-        L"в движение мыши. Это нужно для Unreal: он не принимает перо вовсе — "
-        L"ни нажатий, ни движения, — а мышь принимает. Настоящей мыши это "
-        L"не мешает: её программа узнаёт и мост не включает.",
-        WS_VISIBLE, 52, T + 356, 438, 76, -1, 1);
+        L"в движение мыши, а левая кнопка от пера гасится. Это нужно для Unreal: "
+        L"он берёт мышь, а перо нет. Настоящей мыши не мешает — её программа "
+        L"узнаёт и мост не включает.",
+        WS_VISIBLE, 542, T + 188, 328, 100, -1, 1);
+
+    Add(L"STATIC", L"Ход камера-джойстика", WS_VISIBLE, 520, T + 296, 350, 22, -1, 1);
+    Add(L"EDIT", L"", EDS | WS_VISIBLE, 520, T + 320, 90, 32, ID_STICK, 1);
+    Add(L"BUTTON", L"−", WS_VISIBLE, 616, T + 320, 44, 32, ID_STICK_MINUS, 1);
+    Add(L"BUTTON", L"+", WS_VISIBLE, 666, T + 320, 44, 32, ID_STICK_PLUS, 1);
+    Add(L"STATIC",
+        L"Насколько быстро едет камера при полном отклонении «Обзора» "
+        L"и «Панорамы». Меньше число — спокойнее ход.",
+        WS_VISIBLE, 520, T + 358, 350, 56, -1, 1);
 
     Add(L"STATIC", L"Точек на дюйм экрана (от этого зависят миллиметры)", WS_VISIBLE, 30, T + 336, 460, 22, -1, 1);
     Add(L"EDIT", L"", EDS | WS_VISIBLE, 30, T + 360, 90, 32, ID_DPI, 1);

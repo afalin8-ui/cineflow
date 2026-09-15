@@ -256,6 +256,7 @@ bool ConfigSave() {
     root->set(L"handle",      g_cfg.handle);
     root->set(L"showOnStart", g_cfg.showOnStart);
     root->set(L"penCam",      g_cfg.penCam);
+    root->set(L"stickSpeed",  g_cfg.stickSpeed);
     root->set(L"screenDPI",   g_cfg.screenDPI);
 
     JPtr profs = JVal::mkArr();
@@ -340,6 +341,8 @@ bool ConfigLoad() {
     c.handle      = root->getb(L"handle", true);
     c.showOnStart = root->getb(L"showOnStart", true);
     c.penCam      = root->getb(L"penCam", true);
+    c.stickSpeed  = root->getn(L"stickSpeed", 4.0);
+    if (c.stickSpeed < 0.5 || c.stickSpeed > 40) c.stickSpeed = 4.0;
     c.screenDPI   = root->getn(L"screenDPI", 0);
     if (c.buttonMM < 6 || c.buttonMM > 40) c.buttonMM = 11.5;
     if (c.opacity < 60 || c.opacity > 255) c.opacity = 232;

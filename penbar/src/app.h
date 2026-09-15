@@ -84,6 +84,7 @@ struct Config {
     bool   autostart   = false;
     bool   showOnStart = true;
     bool   penCam      = true;   // вести камеру пером по всему экрану
+    double stickSpeed  = 4.0;    // ход камера-джойстика, точек за такт
     double screenDPI   = 0;      // 0 = определить самим
     std::vector<Profile> profiles;
 };

@@ -151,6 +151,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 GetRawInputData((HRAWINPUT)lp, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) == sz &&
                 ri.header.dwType == RIM_TYPEMOUSE &&
                 ri.data.mouse.ulExtraInformation != 0x50425200 &&
+                // Windows шлёт сырой ввод и от ПЕРА тоже, с той же меткой
+                // 0xFF515700. Не отсеяв её, мы считали перо мышью — и мост,
+                // заведённый ради пера, сам себя и выключал.
+                (ri.data.mouse.ulExtraInformation & 0xFFFFFF00) != 0xFF515700 &&
                 (ri.data.mouse.lLastX || ri.data.mouse.lLastY))
                 RawMouseSeen();
             break;          // WM_INPUT обязан дойти до DefWindowProc
