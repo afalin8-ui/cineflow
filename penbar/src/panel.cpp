@@ -807,6 +807,15 @@ static void OnDown(UINT32 id, POINT client) {
     FlushArmed();               // взялись за зону — ждать ухода пера больше незачем
     b->down = true;
     if (b->kind == K_JOY) JoyFromPoint(*b, client);   // ткнул в край — сразу полетели
+    // Площадка САМА держит свою кнопку мыши, пока по ней ведут. Это не то же
+    // самое, что залипить кнопку и водить пером по вьюпорту: там перо сначала
+    // касается вьюпорта, а касание пера — это ЛКМ, и Unreal получает ЛКМ
+    // поверх нашей кнопки. Здесь перо касается ПАНЕЛИ, её нажатие забирает
+    // себе наше окно, и до Unreal доходит только то, что посылаем мы.
+    if (b->kind == K_PAD && (b->mouse == PB_LEFT || b->mouse == PB_RIGHT || b->mouse == PB_MID)) {
+        SendMouseBtn(b->mouse, true);
+        b->padDown = true;
+    }
     PanelRedraw();
 }
 
@@ -851,6 +860,7 @@ static void OnUp(UINT32 id, POINT client) {
     if (zone && zone->kind != K_KEY) {
         zone->down = false;
         if (zone->kind == K_JOY) JoyOff(*zone);
+        if (zone->padDown) { SendMouseBtn(zone->mouse, false); zone->padDown = false; }
         // Короткий тык по крутилке — один щелчок. Тянуть ради одного шага
         // скорости неудобно, а шаг её меняют как раз поштучно.
         if (zone->kind == K_WHEEL && !t.moved) {
@@ -1086,12 +1096,13 @@ void PanelTick() {
     if (std::vector<Btn>* zl = CurBtns()) {
         for (int i = 0; i < (int)zl->size(); i++) {
             Btn& zb = (*zl)[i];
-            if (zb.kind == K_KEY || (!zb.down && !zb.joyMask)) continue;
+            if (zb.kind == K_KEY || (!zb.down && !zb.joyMask && !zb.padDown)) continue;
             bool held = false;
             for (auto& kv : g_ptr) if (kv.second.idx == i) { held = true; break; }
             if (held) continue;
             zb.down = false;
             if (zb.kind == K_JOY) JoyOff(zb);
+            if (zb.padDown) { SendMouseBtn(zb.mouse, false); zb.padDown = false; }
             redrawZones = true;
         }
     }

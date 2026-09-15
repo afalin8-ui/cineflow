@@ -22,12 +22,14 @@ static Btn B(const wchar_t* label, const wchar_t* keys, int mode = M_TAP,
 
 // Зона: по ней ведут пальцем, а не стучат. span — сколько клеток полоски
 // она занимает: джойстик в одну клетку — это пятак, в который не попасть.
-static Btn Z(const wchar_t* label, int kind, int span, const wchar_t* keys = nullptr) {
+static Btn Z(const wchar_t* label, int kind, int span, const wchar_t* keys = nullptr,
+             int mouse = PB_NONE) {
     Btn b;
     b.label = label;
     b.kind  = kind;
     b.span  = span;
     b.keys  = keys ? keys : L"";
+    b.mouse = mouse;      // у площадки это кнопка, которую она держит, пока ведут
     return b;
 }
 
@@ -42,15 +44,15 @@ static Btn Long(Btn b, const wchar_t* keys2) {   // второе действи�
 // зоне «Обзор» на самой панели, а не пером по вьюпорту.
 static std::vector<Btn> UnrealBtns() {
     return {
-        B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),
-        B(L"Панор. СКМ", nullptr, M_LATCH, PB_MID),
+        Z(L"Обзор", K_PAD, 2, nullptr, PB_RIGHT),      // ведут — держится ПКМ
+        Z(L"Панорама", K_PAD, 2, nullptr, PB_MID),     // ведут — держится СКМ
         Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
         B(L"Вверх E",     L"e", M_HOLD),
         B(L"Вниз Q",      L"q", M_HOLD),
         B(L"Быстро Shift",L"shift", M_LATCH),
         B(L"Фокус F",     L"f"),
         Long(B(L"Отмена", L"ctrl+z"), L"ctrl+y"),
-        B(L"Сохр.",       L"ctrl+s"),
+        B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),  // для тех, кто с мышью
         Z(L"Скорость", K_WHEEL, 2),
     };
 }
@@ -300,7 +302,18 @@ bool ConfigSave() {
 // правки набора доносим сюда. Площадку обзора и джойстик убираем: камерой
 // водят мышью, а W A S D на полоске не нужны — нужны Q и E.
 static void ConfigUpgrade(Config& c, double ver) {
-    if (ver >= 4.0) return;
+    if (ver >= 5.0) return;
+    if (ver >= 1.0) {
+        // Набор Unreal пересобираем начисто. В старом файле рядом с залипающим
+        // «Полёт (ПКМ)» лежала ещё и РАЗОВАЯ кнопка «ПКМ» — нажав её, человек
+        // получал щелчок, а не удержание, и решал, что залипание сломалось.
+        for (auto& p : c.profiles) {
+            if (LowerW(p.match).find(L"unreal") == std::wstring::npos) continue;
+            p.btns = UnrealBtns();
+            for (auto& b : p.btns) BtnCompile(b);
+            Log(L"набор \"%s\" пересобран начисто", p.name.c_str());
+        }
+    }
     for (auto& p : c.profiles) {
         // Площадка обзора не нужна: камерой водят мышью.
         p.btns.erase(std::remove_if(p.btns.begin(), p.btns.end(),

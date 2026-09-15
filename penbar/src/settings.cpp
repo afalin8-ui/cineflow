@@ -125,7 +125,9 @@ static void FillButtonFields() {
     // У зоны нет ни кнопки мыши, ни способа нажатия: по ней ВЕДУТ. Гасим эти
     // поля, а не прячем — иначе на их месте была бы дыра непонятно от чего.
     bool zone = b && b->kind != K_KEY;
-    EnableWindow(C(ID_MOUSE),  !zone);
+    // У площадки кнопка мыши ЕСТЬ и она главная: это та кнопка, которую
+    // площадка держит, пока по ней ведут.
+    EnableWindow(C(ID_MOUSE),  !zone || b->kind == K_PAD);
     EnableWindow(C(ID_MODE),   !zone);
     EnableWindow(C(ID_REPEAT), !zone);
     EnableWindow(C(ID_PAGE),   !zone);

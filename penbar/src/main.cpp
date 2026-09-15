@@ -13,18 +13,33 @@ static std::wstring g_lastExe;
 static UINT WM_PENBAR_SHOW = 0;
 
 // ---- какой набор кнопок подходит программе -------------------------------
+// Сначала ищем точное совпадение имени программы, потом — вхождение.
+// Второй заход нужен вот зачем: Unreal встречается и как UnrealEditor.exe,
+// и как UnrealEditor-Win64-DebugGame.exe, и под именем сборки проекта.
+// Не узнав программу, полоска молча показывает набор «Общий», а в нём
+// другие кнопки — и человек жмёт «ПКМ», которая там разовая.
 static int MatchProfile(const std::wstring& exe) {
     int fallback = -1;
-    for (int i = 0; i < (int)g_cfg.profiles.size(); i++) {
-        std::wstring m = LowerW(g_cfg.profiles[i].match);
-        if (TrimW(m).empty()) { if (fallback < 0) fallback = i; continue; }
-        size_t pos = 0;
-        while (pos <= m.size()) {
-            size_t e = m.find(L';', pos);
-            if (e == std::wstring::npos) e = m.size();
-            std::wstring one = TrimW(m.substr(pos, e - pos));
-            if (!one.empty() && one == exe) return i;
-            pos = e + 1;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < (int)g_cfg.profiles.size(); i++) {
+            std::wstring m = LowerW(g_cfg.profiles[i].match);
+            if (TrimW(m).empty()) { if (fallback < 0) fallback = i; continue; }
+            size_t pos = 0;
+            while (pos <= m.size()) {
+                size_t e = m.find(L';', pos);
+                if (e == std::wstring::npos) e = m.size();
+                std::wstring one = TrimW(m.substr(pos, e - pos));
+                if (!one.empty()) {
+                    if (pass == 0 && one == exe) return i;
+                    if (pass == 1) {
+                        std::wstring stem = one;
+                        size_t dot = stem.rfind(L".exe");
+                        if (dot != std::wstring::npos) stem = stem.substr(0, dot);
+                        if (stem.size() >= 4 && exe.find(stem) != std::wstring::npos) return i;
+                    }
+                }
+                pos = e + 1;
+            }
         }
     }
     return fallback >= 0 ? fallback : 0;

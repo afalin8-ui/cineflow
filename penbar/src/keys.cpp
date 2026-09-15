@@ -177,13 +177,29 @@ void TargetSeen(const POINT& cur) {
     if (CursorInTarget(cur)) { g_anchor = cur; g_anchorOk = true; }
 }
 
-// Куда должно прийтись нажатие: указатель, если он уже в цели; иначе якорь;
-// иначе середина окна цели. Ничего не знаем — там, где указатель стоит.
+static bool PointOnPanel(const POINT& p) {
+    if (!g_panel || !IsWindowVisible(g_panel)) return false;
+    RECT r;
+    GetWindowRect(g_panel, &r);
+    return PtInRect(&r, p) != 0;
+}
+
+// Куда должно прийтись нажатие.
+//
+// ГЛАВНОЕ ПРАВИЛО: там, где стоит указатель. Так было в первой версии, и так
+// оно работало — нажатие приходится ровно под перо. Якорь заведён НЕ вместо
+// этого, а на единственный случай, когда указатель стоит на самой полоске:
+// нажать мышь там значит нажать по нашей же кнопке. Спрашивать «а внутри ли
+// указатель окна цели» нельзя: стоит нам ошибиться с тем, какое окно цель, —
+// и нажатие уезжает в сторону от того места, куда человек смотрит.
 static POINT InjectPoint(bool& known) {
     POINT cur;
     GetCursorPos(&cur);
     known = true;
-    if (CursorInTarget(cur)) { g_anchor = cur; g_anchorOk = true; return cur; }
+    if (!PointOnPanel(cur)) {
+        if (CursorInTarget(cur)) { g_anchor = cur; g_anchorOk = true; }
+        return cur;
+    }
     if (g_anchorOk) return g_anchor;
     HWND w = TargetWindow();
     RECT r;
@@ -254,7 +270,17 @@ void TargetFocus() {
 void TargetGuard() {
     HWND w  = TargetWindow();
     HWND fg = GetForegroundWindow();
-    if (!w || fg == w || ForegroundIsOurs() || !AnyHeld()) { g_targetGone = 0; return; }
+    // Сравниваем ПРОГРАММЫ, а не окна: у Unreal окон много, и переход между
+    // ними — это не «человек ушёл из программы». Ошибись мы тут, и всё
+    // зажатое отпускалось бы само через две секунды работы.
+    bool same = false;
+    if (w && fg) {
+        DWORD p1 = 0, p2 = 0;
+        GetWindowThreadProcessId(w, &p1);
+        GetWindowThreadProcessId(fg, &p2);
+        same = (p1 && p1 == p2);
+    }
+    if (!w || same || ForegroundIsOurs() || !AnyHeld()) { g_targetGone = 0; return; }
     DWORD now = GetTickCount();
     if (!g_targetGone) { g_targetGone = now; return; }
     if (now - g_targetGone >= 2000) {
@@ -448,6 +474,16 @@ void BtnPress(Btn& b) {
         GetWindowRect(g_panel, &r);
         onPanel = PtInRect(&r, cur) != 0;
     }
+    // Пишем в журнал КАЖДОЕ нажатие вместе с набором: «кнопка не работает»
+    // чаще всего означает, что нажали не ту кнопку не того набора.
+    {
+        Profile* pr = CurProfile();
+        Log(L"набор \"%s\", кнопка \"%s\": %s%s",
+            pr ? pr->name.c_str() : L"?", b.label.c_str(),
+            b.mode == M_LATCH ? L"залипающая" : b.mode == M_HOLD ? L"держать" : L"разовая",
+            b.mouse == PB_RIGHT ? L", ПКМ" : b.mouse == PB_MID ? L", СКМ" :
+            b.mouse == PB_LEFT ? L", ЛКМ" : L"");
+    }
     bool wasDown = b.down;              // спросить НАДО до того, как выставим флаг
     b.down     = true;
     b.downAt   = GetTickCount();
@@ -567,10 +603,10 @@ void FlushArmed() {
 bool AnyHeld() {
     for (auto& p : g_cfg.profiles) {
         for (auto& b : p.btns)
-            if (b.latched || b.down || b.armed || b.joyMask) return true;
+            if (b.latched || b.down || b.armed || b.joyMask || b.padDown) return true;
         for (auto& pg : p.pages)
             for (auto& b : pg.btns)
-                if (b.latched || b.down || b.armed || b.joyMask) return true;
+                if (b.latched || b.down || b.armed || b.joyMask || b.padDown) return true;
     }
     return !g_heldVk.empty() || g_heldMouse[1] || g_heldMouse[2] || g_heldMouse[3];
 }
@@ -578,6 +614,7 @@ bool AnyHeld() {
 static void ReleaseList(std::vector<Btn>& list) {
     for (auto& b : list) {
         if (b.kind == K_JOY) { JoyOff(b); continue; }
+        if (b.padDown) { SendMouseBtn(b.mouse, false); b.padDown = false; b.down = false; continue; }
         if ((b.latched || b.down) && !b.armed) ApplyUp(b);
         b.latched = b.down = b.armed = b.longDone = false;
     }
