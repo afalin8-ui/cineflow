@@ -1,5 +1,6 @@
 #include "app.h"
 #include "json.h"
+#include <algorithm>
 
 Config g_cfg;
 
@@ -41,16 +42,15 @@ static Btn Long(Btn b, const wchar_t* keys2) {   // второе действи�
 // зоне «Обзор» на самой панели, а не пером по вьюпорту.
 static std::vector<Btn> UnrealBtns() {
     return {
-        Z(L"Обзор", K_PAD, 2),
         B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),
         B(L"Панор. СКМ", nullptr, M_LATCH, PB_MID),
-        Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
-        Z(L"Скорость", K_WHEEL, 2),
         B(L"Вверх E",     L"e", M_HOLD),
         B(L"Вниз Q",      L"q", M_HOLD),
         B(L"Быстро Shift",L"shift", M_LATCH),
         B(L"Фокус F",     L"f"),
         Long(B(L"Отмена", L"ctrl+z"), L"ctrl+y"),
+        B(L"Сохр.",       L"ctrl+s"),
+        Z(L"Скорость", K_WHEEL, 2),
     };
 }
 
@@ -244,7 +244,7 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
 
 bool ConfigSave() {
     JPtr root = JVal::mkObj();
-    root->set(L"version", 2.0);
+    root->set(L"version", 3.0);
     root->set(L"edge",        std::wstring(EDGE_NAMES[g_cfg.edge  & 3]));
     root->set(L"align",       std::wstring(ALIGN_NAMES[g_cfg.align % 3]));
     root->set(L"buttonMM",    g_cfg.buttonMM);
@@ -295,26 +295,20 @@ bool ConfigSave() {
     return true;
 }
 
-// Файл настроек у человека уже лежит, и defaults до него не доходят. Поэтому
-// недостающие зоны досылаем в уже существующий набор Unreal — добавляем,
-// а не переписываем: остальные кнопки человек мог поправить под себя.
+// Файл настроек у человека уже лежит, и defaults до него не доходят, поэтому
+// правки набора доносим сюда. Площадку обзора и джойстик убираем: камерой
+// водят мышью, а W A S D на полоске не нужны — нужны Q и E.
 static void ConfigUpgrade(Config& c, double ver) {
-    if (ver >= 2.0) return;
+    if (ver >= 3.0) return;
     for (auto& p : c.profiles) {
+        size_t was = p.btns.size();
+        p.btns.erase(std::remove_if(p.btns.begin(), p.btns.end(),
+                                    [](const Btn& b) { return b.kind == K_PAD || b.kind == K_JOY; }),
+                     p.btns.end());
+        if (p.btns.size() != was) Log(L"из набора \"%s\" убраны площадка обзора и джойстик", p.name.c_str());
         if (LowerW(p.match).find(L"unrealeditor.exe") == std::wstring::npos) continue;
-        bool hasZone = false;
-        for (auto& b : p.btns) if (b.kind != K_KEY) hasZone = true;
-        if (hasZone) continue;
-        std::vector<Btn> add = {
-            Z(L"Обзор", K_PAD, 2),
-            Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
-            Z(L"Скорость", K_WHEEL, 2),
-        };
-        for (auto& b : add) BtnCompile(b);
-        p.btns.insert(p.btns.begin(), add.begin(), add.end());
         for (auto& b : p.btns)
             if (b.keys == L"ctrl+z" && b.keys2.empty()) { b.keys2 = L"ctrl+y"; BtnCompile(b); }
-        Log(L"в набор \"%s\" добавлены зоны обзора, ходьбы и скорости", p.name.c_str());
     }
 }
 

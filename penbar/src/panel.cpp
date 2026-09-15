@@ -747,8 +747,14 @@ static void ProfileMenu() {
 
 // Мышиное сообщение, порождённое пером или касанием, несёт в «лишних
 // сведениях» подпись 0xFF515700 — так их отличает сама Windows.
+static DWORD g_pointerAt = 0;      // когда последний раз приходило сообщение указателя
+
 static bool FromPenOrTouch() {
-    return ((ULONG_PTR)GetMessageExtraInfo() & 0xFFFFFF00) == 0xFF515700;
+    if (((ULONG_PTR)GetMessageExtraInfo() & 0xFFFFFF00) != 0xFF515700) return false;
+    // Метку ставит сама Windows, но полагаться на неё одну нельзя: если
+    // сообщений указателя нет вовсе, отбросив двойники, мы остались бы совсем
+    // без нажатий. Отбрасываем, только когда указатель точно работает.
+    return GetTickCount() - g_pointerAt < 2000;
 }
 
 static Btn* BtnAt(int idx) {
@@ -779,6 +785,13 @@ static void JoyFromPoint(Btn& b, POINT p) {
 static void OnDown(UINT32 id, POINT client) {
     int idx = HitTest(client);
     if (idx == -100) return;
+    // Одно касание Windows умеет показать ДВАЖДЫ — сообщением указателя и
+    // следом мышиным двойником. Для залипающей кнопки это смертельно: первое
+    // нажатие её включает, второе тут же выключает, и со стороны залипание
+    // просто «не срабатывает». Кнопку, за которую уже держатся, второй раз
+    // не нажимаем.
+    for (auto& kv : g_ptr)
+        if (kv.second.idx == idx) return;
     // повтор и ожидание пера считаются по таймеру — заводим его сразу,
     // а не ждём до секунды общей проверки
     if (g_main) SetTimer(g_main, TIMER_TICK, 30, nullptr);
@@ -805,7 +818,7 @@ static void OnMove(UINT32 id, POINT client) {
     Btn* b = BtnAt(t.idx);
     if (!b || b->kind == K_KEY) return;
     int dx = client.x - t.last.x, dy = client.y - t.last.y;
-    if (dx || dy) t.moved = true;
+    if (dx || dy) { t.moved = true; t.at = GetTickCount(); }
 
     if (b->kind == K_PAD) {
         if (!dx && !dy) return;
@@ -886,6 +899,7 @@ static LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};   // экранные
             ScreenToClient(hwnd, &pt);
             UINT32 id = GET_POINTERID_WPARAM(wp);
+            g_pointerAt = GetTickCount();
             if (msg == WM_POINTERDOWN) OnDown(id, pt);
             else if (msg == WM_POINTERUP) OnUp(id, pt);
             else OnMove(id, pt);
@@ -1038,7 +1052,8 @@ bool PanelCreate() {
 
 // вызывается по таймеру из главного окна
 void PanelTick() {
-    bool redrawZones = false;
+    bool  redrawZones = false;
+    DWORD now0 = GetTickCount();
     POINT cur;
     GetCursorPos(&cur);
     bool onPanel = false;
@@ -1049,10 +1064,25 @@ void PanelTick() {
     }
     if (!onPanel) TargetSeen(cur);      // якорь считаем один раз, а не на каждую кнопку
 
-    // Отпускание пальца изредка теряется (то же, что было со щипком на доске).
-    // У зоны это дорого: потерянный палец на джойстике оставляет зажатой W, и
-    // камера уезжает сама. Поэтому зону, за которую никто не держится,
-    // отпускаем сами.
+    // Отпускание изредка теряется совсем. Тогда кнопка остаётся «занятой»
+    // навсегда: следующее нажатие по ней мы примем за второй палец и не
+    // засчитаем — то есть кнопка молча умрёт до перезапуска. Поэтому палец,
+    // от которого давно нет вестей, считаем отпущенным.
+    for (auto it = g_ptr.begin(); it != g_ptr.end(); ) {
+        bool gone = (int)(now0 - it->second.at) > 20000;
+        if (!gone && it->first == 0xFFFF && GetAsyncKeyState(VK_LBUTTON) >= 0) gone = true;
+        if (!gone) { ++it; continue; }
+        int i = it->second.idx;
+        it = g_ptr.erase(it);
+        std::vector<Btn>* pl = CurBtns();
+        if (!pl || i < 0 || i >= (int)pl->size()) continue;
+        Log(L"палец на кнопке \"%s\" потерялся — отпускаю", (*pl)[i].label.c_str());
+        BtnRelease((*pl)[i]);
+        redrawZones = true;
+    }
+
+    // У зоны потерянный палец дороже вдвое: он оставляет зажатой клавишу
+    // джойстика, и камера уезжает сама.
     if (std::vector<Btn>* zl = CurBtns()) {
         for (int i = 0; i < (int)zl->size(); i++) {
             Btn& zb = (*zl)[i];

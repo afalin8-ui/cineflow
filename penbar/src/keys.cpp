@@ -177,19 +177,61 @@ void TargetSeen(const POINT& cur) {
     if (CursorInTarget(cur)) { g_anchor = cur; g_anchorOk = true; }
 }
 
-void CursorToTarget() {
+// Куда должно прийтись нажатие: указатель, если он уже в цели; иначе якорь;
+// иначе середина окна цели. Ничего не знаем — там, где указатель стоит.
+static POINT InjectPoint(bool& known) {
     POINT cur;
     GetCursorPos(&cur);
-    if (CursorInTarget(cur)) { g_anchor = cur; g_anchorOk = true; return; }
-    POINT go = g_anchor;
-    if (!g_anchorOk) {
-        HWND w = TargetWindow();
-        RECT r;
-        if (!w || !GetWindowRect(w, &r)) return;   // цели не знаем — жмём там, где стоим
-        go.x = (r.left + r.right) / 2;             // ни разу не наводили — середина окна
-        go.y = (r.top + r.bottom) / 2;
+    known = true;
+    if (CursorInTarget(cur)) { g_anchor = cur; g_anchorOk = true; return cur; }
+    if (g_anchorOk) return g_anchor;
+    HWND w = TargetWindow();
+    RECT r;
+    if (w && GetWindowRect(w, &r)) {
+        POINT c{(r.left + r.right) / 2, (r.top + r.bottom) / 2};
+        return c;
     }
-    SetCursorPos(go.x, go.y);
+    known = false;
+    return cur;
+}
+
+void CursorToTarget() {
+    bool known = false;
+    POINT go = InjectPoint(known);
+    if (known) SetCursorPos(go.x, go.y);
+}
+
+// Нажатие мыши уходит ВМЕСТЕ с переносом указателя, одним событием. Раньше
+// указатель переставлялся отдельным вызовом, и между ним и нажатием успевало
+// вклиниться движение настоящей мыши или пера — нажатие приходилось не туда.
+static void MouseEvent(DWORD flags, DWORD data) {
+    bool known = false;
+    POINT go = InjectPoint(known);
+    INPUT in{};
+    in.type         = INPUT_MOUSE;
+    in.mi.dwFlags   = flags;
+    in.mi.mouseData = data;
+    if (known) {
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (vw > 1 && vh > 1) {
+            in.mi.dx = (LONG)(((double)(go.x - vx) * 65535.0) / (vw - 1) + 0.5);
+            in.mi.dy = (LONG)(((double)(go.y - vy) * 65535.0) / (vh - 1) + 0.5);
+            in.mi.dwFlags |= MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+        }
+    }
+    UINT sent = SendInput(1, &in, sizeof(INPUT));
+    if (!sent) {
+        // Ноль значит, что Windows нажатие НЕ ПРОПУСТИЛА. Почти всегда это
+        // разные уровни прав: программа под администратором чужой ввод не
+        // принимает. Молчать тут нельзя — со стороны это «кнопка не работает».
+        Log(L"SendInput не прошёл (ошибка %u): нажатие мыши до программы не дошло",
+            GetLastError());
+        PanelSetNeedAdmin(true);
+    } else {
+        Log(L"мышь: флаги 0x%04X в точке %d,%d%s", (unsigned)flags, (int)go.x, (int)go.y,
+            known ? L"" : L" (окно цели неизвестно)");
+    }
 }
 
 static bool ForegroundIsOurs() {
@@ -241,11 +283,14 @@ void SendMouseBtn(int mb, bool down) {
         case PB_MID:   f = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; slot = 3; break;
         default: return;
     }
-    if (down) CursorToTarget();      // отпускать можно где угодно: окно уже держит захват
-    INPUT in{};
-    in.type         = INPUT_MOUSE;
-    in.mi.dwFlags   = f;
-    SendInput(1, &in, sizeof(INPUT));
+    if (down) {
+        MouseEvent(f, 0);            // нажатие — вместе с переносом указателя
+    } else {
+        INPUT in{};                  // отпускать можно где угодно: окно держит захват
+        in.type       = INPUT_MOUSE;
+        in.mi.dwFlags = f;
+        SendInput(1, &in, sizeof(INPUT));
+    }
     g_heldMouse[slot] = down;
 }
 
@@ -255,12 +300,8 @@ void SendMouseClick(int mb) {
 }
 
 void SendWheel(int mb) {
-    CursorToTarget();                // колесо достаётся окну под указателем
-    INPUT in{};
-    in.type       = INPUT_MOUSE;
-    in.mi.dwFlags = MOUSEEVENTF_WHEEL;
-    in.mi.mouseData = (DWORD)((mb == PB_WUP) ? WHEEL_DELTA : -WHEEL_DELTA);
-    SendInput(1, &in, sizeof(INPUT));
+    // колесо достаётся окну под указателем — переносим его тем же событием
+    MouseEvent(MOUSEEVENTF_WHEEL, (DWORD)((mb == PB_WUP) ? WHEEL_DELTA : -WHEEL_DELTA));
 }
 
 // ---- поведение кнопок ----------------------------------------------------
@@ -414,6 +455,7 @@ void BtnPress(Btn& b) {
 
     if (b.mode == M_LATCH) {
         if (b.latched) {                       // второе нажатие — отпускаем
+            Log(L"\"%s\": отпустили", b.label.c_str());
             if (!b.armed) ApplyUp(b);
             b.latched = false;
             b.armed   = false;
@@ -421,7 +463,12 @@ void BtnPress(Btn& b) {
         }
         if (HasMouseBtn(b)) DropOtherMouseLatches(b);
         b.latched = true;
-        if (NeedArm(b, onPanel)) { b.armed = true; return; }
+        if (NeedArm(b, onPanel)) {
+            b.armed = true;
+            Log(L"\"%s\": залипла, ждём ухода пера с панели", b.label.c_str());
+            return;
+        }
+        Log(L"\"%s\": залипла, жму сразу", b.label.c_str());
         ApplyDown(b);
         return;
     }
@@ -523,6 +570,7 @@ static void ReleaseList(std::vector<Btn>& list) {
 }
 
 void ReleaseEverything() {
+    if (AnyHeld()) Log(L"отпускаю всё зажатое");
     for (auto& p : g_cfg.profiles) {
         ReleaseList(p.btns);
         for (auto& pg : p.pages) ReleaseList(pg.btns);
