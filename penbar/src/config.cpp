@@ -44,6 +44,7 @@ static std::vector<Btn> UnrealBtns() {
     return {
         B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),
         B(L"Панор. СКМ", nullptr, M_LATCH, PB_MID),
+        Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
         B(L"Вверх E",     L"e", M_HOLD),
         B(L"Вниз Q",      L"q", M_HOLD),
         B(L"Быстро Shift",L"shift", M_LATCH),
@@ -244,7 +245,7 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
 
 bool ConfigSave() {
     JPtr root = JVal::mkObj();
-    root->set(L"version", 3.0);
+    root->set(L"version", 4.0);
     root->set(L"edge",        std::wstring(EDGE_NAMES[g_cfg.edge  & 3]));
     root->set(L"align",       std::wstring(ALIGN_NAMES[g_cfg.align % 3]));
     root->set(L"buttonMM",    g_cfg.buttonMM);
@@ -299,14 +300,29 @@ bool ConfigSave() {
 // правки набора доносим сюда. Площадку обзора и джойстик убираем: камерой
 // водят мышью, а W A S D на полоске не нужны — нужны Q и E.
 static void ConfigUpgrade(Config& c, double ver) {
-    if (ver >= 3.0) return;
+    if (ver >= 4.0) return;
     for (auto& p : c.profiles) {
-        size_t was = p.btns.size();
+        // Площадка обзора не нужна: камерой водят мышью.
         p.btns.erase(std::remove_if(p.btns.begin(), p.btns.end(),
-                                    [](const Btn& b) { return b.kind == K_PAD || b.kind == K_JOY; }),
+                                    [](const Btn& b) { return b.kind == K_PAD; }),
                      p.btns.end());
-        if (p.btns.size() != was) Log(L"из набора \"%s\" убраны площадка обзора и джойстик", p.name.c_str());
         if (LowerW(p.match).find(L"unrealeditor.exe") == std::wstring::npos) continue;
+
+        // Отдельные W A S D с полоски убираем — вместо них джойстик.
+        p.btns.erase(std::remove_if(p.btns.begin(), p.btns.end(), [](const Btn& b) {
+            return b.kind == K_KEY && b.mode == M_HOLD &&
+                   (b.keys == L"w" || b.keys == L"a" || b.keys == L"s" || b.keys == L"d");
+        }), p.btns.end());
+
+        bool hasJoy = false;
+        for (auto& b : p.btns) if (b.kind == K_JOY) hasJoy = true;
+        if (!hasJoy) {
+            Btn joy = Z(L"Ходьба", K_JOY, 2, L"w,a,s,d");
+            BtnCompile(joy);
+            size_t at = p.btns.size() > 2 ? 2 : p.btns.size();   // под кнопками мыши
+            p.btns.insert(p.btns.begin() + at, joy);
+            Log(L"в набор \"%s\" добавлен джойстик вместо кнопок W A S D", p.name.c_str());
+        }
         for (auto& b : p.btns)
             if (b.keys == L"ctrl+z" && b.keys2.empty()) { b.keys2 = L"ctrl+y"; BtnCompile(b); }
     }

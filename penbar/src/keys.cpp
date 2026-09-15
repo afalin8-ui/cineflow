@@ -448,12 +448,26 @@ void BtnPress(Btn& b) {
         GetWindowRect(g_panel, &r);
         onPanel = PtInRect(&r, cur) != 0;
     }
+    bool wasDown = b.down;              // спросить НАДО до того, как выставим флаг
     b.down     = true;
     b.downAt   = GetTickCount();
     b.longDone = false;
     b.repAt    = b.downAt + REP_DELAY;
 
     if (b.mode == M_LATCH) {
+        // ОДНО касание Windows умеет показать дважды: сообщением указателя и
+        // мышиным двойником следом, иногда уже после отпускания. Для залипания
+        // это смертельно — первое включает, второе тут же выключает, и выходит
+        // обычный щелчок вместо удержания. Отличить второе касание от двойника
+        // можно только временем: человек не переключает кнопку дважды за
+        // четверть секунды.
+        DWORD tnow = GetTickCount();
+        if (wasDown || (int)(tnow - b.toggleAt) < 250) {
+            Log(L"\"%s\": повторное нажатие через %d мс — это двойник, пропускаю",
+                b.label.c_str(), (int)(tnow - b.toggleAt));
+            return;
+        }
+        b.toggleAt = tnow;
         if (b.latched) {                       // второе нажатие — отпускаем
             Log(L"\"%s\": отпустили", b.label.c_str());
             if (!b.armed) ApplyUp(b);
