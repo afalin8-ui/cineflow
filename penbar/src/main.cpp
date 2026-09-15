@@ -34,6 +34,10 @@ static void CheckForeground(bool force) {
     std::wstring exe = ForegroundExe();
     if (exe.empty()) return;
     if (exe == L"penbar.exe") return;                 // наше же окно настроек
+    // Это и есть «цель»: окно, которому уходят нажатия и в котором стоит
+    // якорь указателя. Панель фокус не забирает, поэтому цель — просто
+    // последнее чужое активное окно.
+    TargetRemember(GetForegroundWindow());
     if (!force && exe == g_lastExe) return;
     g_lastExe = exe;
     PanelSetProfile(MatchProfile(exe));
@@ -113,6 +117,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (!PanelVisible() && !AnyHeld()) KillTimer(hwnd, TIMER_TICK);
             } else if (wp == TIMER_FG) {
                 CheckForeground(false);
+                TargetGuard();          // ушли из программы с залипшей ПКМ — отпустить
                 if (PanelVisible()) {
                     // держим панель поверх: полноэкранные окна и другие
                     // «поверх всех» иначе накрывают её

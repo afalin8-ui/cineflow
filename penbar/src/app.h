@@ -21,6 +21,9 @@ std::wstring TrimW(const std::wstring& s);
 
 // ---- настройки -----------------------------------------------------------
 enum Mode  { M_TAP = 0, M_HOLD = 1, M_LATCH = 2 };
+// Вид клетки на полоске. Обычная кнопка — K_KEY; остальные три это ЗОНЫ:
+// по ним не стучат, по ним ВЕДУТ пальцем или пером.
+enum Kind  { K_KEY = 0, K_PAD, K_JOY, K_WHEEL };
 enum MBtn  { PB_NONE = 0, PB_LEFT, PB_RIGHT, PB_MID, PB_WUP, PB_WDN };
 enum Edge  { E_LEFT = 0, E_RIGHT, E_TOP, E_BOTTOM };
 enum Align { A_START = 0, A_CENTER, A_END };
@@ -28,17 +31,26 @@ enum Align { A_START = 0, A_CENTER, A_END };
 struct Btn {
     std::wstring label;          // подпись на кнопке
     std::wstring keys;           // "ctrl+shift+z", может быть пустым
+    std::wstring keys2;          // долгое нажатие (>= 600 мс), может быть пустым
     int   mouse  = PB_NONE;      // кнопка мыши или колесо
     int   mode   = M_TAP;        // разовое / держать / залипает
+    int   kind   = K_KEY;        // кнопка или зона (обзор / джойстик / крутилка)
+    int   span   = 1;            // сколько клеток полоски занимает (у зон больше одной)
     bool  repeat = false;        // повтор при удержании
     std::wstring page;           // после нажатия открыть страницу; "-" = вернуться
     std::vector<WORD> vks;       // разобранное сочетание (считается один раз)
+    std::vector<WORD> vks2;      // то же для долгого нажатия
+    WORD  joyVk[4] = {0, 0, 0, 0};   // джойстик: вперёд, влево, назад, вправо
 
     // состояние во время работы (в файл не пишется)
     bool  latched = false;       // залипло
     bool  armed   = false;       // ждём, когда перо уйдёт с панели
     bool  down    = false;       // палец на кнопке
+    bool  longDone = false;      // долгое нажатие уже сработало
+    DWORD downAt  = 0;           // когда нажали (для долгого нажатия)
     DWORD repAt   = 0;           // время следующего повтора
+    int   joyMask = 0;           // какие стороны джойстика сейчас зажаты
+    double joyX = 0, joyY = 0;   // где ручка джойстика, -1..1 (для рисования)
     RECT  rc{};                  // место кнопки в окне панели
 };
 
@@ -88,6 +100,7 @@ std::wstring ComboText(const std::vector<WORD>& vks);
 void         SendCombo(const std::vector<WORD>& vks, bool down);
 void         SendComboTap(const std::vector<WORD>& vks);
 void         SendMouseBtn(int mb, bool down);
+void         SendMouseMove(int dx, int dy);      // относительное движение указателя
 void         SendMouseClick(int mb);
 void         SendWheel(int mb);
 void         ReleaseEverything();       // отпустить всё зажатое (страховка)
@@ -98,6 +111,21 @@ void  BtnPress(Btn& b);
 void  BtnRelease(Btn& b);
 void  BtnTick(Btn& b, DWORD now, const POINT& cur, bool cursorOnPanel);
 bool  AnyHeld();                        // есть ли залипшее/зажатое
+void  JoyMove(Btn& b, double nx, double ny);   // ручка джойстика, -1..1; центр = отпустить
+void  JoyOff(Btn& b);                          // убрали палец с джойстика
+void  FlushArmed();                            // дожать то, что ждало ухода пера
+
+// ---- окно, которым мы управляем -----------------------------------------
+// Синтетическое нажатие мыши достаётся окну ПОД УКАЗАТЕЛЕМ, а перо в этот
+// момент стоит на панели. Поэтому помним последнее чужое активное окно и
+// последнюю точку указателя внутри него — это и есть якорь.
+void  TargetRemember(HWND w);
+HWND  TargetWindow();
+void  TargetSeen(const POINT& cur);     // указатель внутри цели — запомнить якорь
+bool  CursorInTarget(const POINT& cur);
+void  CursorToTarget();                 // переставить указатель в якорь, если он не в цели
+void  TargetFocus();                    // вернуть цели передний план, если он ушёл
+void  TargetGuard();                    // цель ушла надолго — отпустить всё зажатое
 
 // ---- панель --------------------------------------------------------------
 extern HINSTANCE g_inst;

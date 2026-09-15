@@ -19,6 +19,41 @@ static Btn B(const wchar_t* label, const wchar_t* keys, int mode = M_TAP,
     return b;
 }
 
+// Зона: по ней ведут пальцем, а не стучат. span — сколько клеток полоски
+// она занимает: джойстик в одну клетку — это пятак, в который не попасть.
+static Btn Z(const wchar_t* label, int kind, int span, const wchar_t* keys = nullptr) {
+    Btn b;
+    b.label = label;
+    b.kind  = kind;
+    b.span  = span;
+    b.keys  = keys ? keys : L"";
+    return b;
+}
+
+static Btn Long(Btn b, const wchar_t* keys2) {   // второе действие долгим нажатием
+    b.keys2 = keys2;
+    return b;
+}
+
+// Набор для Unreal собран вокруг одной беды: перо, коснувшееся вьюпорта, —
+// это ЛКМ, а ЛКМ вместе с зажатой ПКМ в Unreal означает панорамирование,
+// то есть ровно то, что делает средняя кнопка. Поэтому камерой водят по
+// зоне «Обзор» на самой панели, а не пером по вьюпорту.
+static std::vector<Btn> UnrealBtns() {
+    return {
+        Z(L"Обзор", K_PAD, 2),
+        B(L"Полёт ПКМ",  nullptr, M_LATCH, PB_RIGHT),
+        B(L"Панор. СКМ", nullptr, M_LATCH, PB_MID),
+        Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
+        Z(L"Скорость", K_WHEEL, 2),
+        B(L"Вверх E",     L"e", M_HOLD),
+        B(L"Вниз Q",      L"q", M_HOLD),
+        B(L"Быстро Shift",L"shift", M_LATCH),
+        B(L"Фокус F",     L"f"),
+        Long(B(L"Отмена", L"ctrl+z"), L"ctrl+y"),
+    };
+}
+
 void ConfigDefaults() {
     g_cfg = Config();
 
@@ -85,20 +120,7 @@ void ConfigDefaults() {
         Profile p;
         p.name  = L"Unreal";
         p.match = L"unrealeditor.exe;ue4editor.exe;ue5editor.exe";
-        p.btns = {
-            B(L"Полёт (ПКМ)", nullptr,  M_LATCH, PB_RIGHT),
-            B(L"W",            L"w",     M_HOLD),
-            B(L"A",            L"a",     M_HOLD),
-            B(L"S",            L"s",     M_HOLD),
-            B(L"D",            L"d",     M_HOLD),
-            B(L"Вверх E",     L"e",     M_HOLD),
-            B(L"Вниз Q",      L"q",     M_HOLD),
-            B(L"Быстро Shift",L"shift", M_LATCH),
-            B(L"Фокус F",     L"f"),
-            B(L"Отмена",       L"ctrl+z"),
-            B(L"Сохр.",        L"ctrl+s"),
-            B(L"ПКМ",          nullptr,  M_TAP,   PB_RIGHT),
-        };
+        p.btns = UnrealBtns();
         g_cfg.profiles.push_back(p);
     }
     {   // ---- Photoshop ----
@@ -174,6 +196,7 @@ static const wchar_t* EDGE_NAMES[]  = {L"left", L"right", L"top", L"bottom"};
 static const wchar_t* ALIGN_NAMES[] = {L"start", L"center", L"end"};
 static const wchar_t* MODE_NAMES[]  = {L"tap", L"hold", L"latch"};
 static const wchar_t* MOUSE_NAMES[] = {L"", L"left", L"right", L"middle", L"wheelup", L"wheeldown"};
+static const wchar_t* KIND_NAMES[]  = {L"key", L"pad", L"joy", L"wheel"};
 
 static int NameIdx(const std::wstring& s, const wchar_t* const* names, int n, int def) {
     for (int i = 0; i < n; i++) if (s == names[i]) return i;
@@ -186,6 +209,9 @@ static JPtr BtnsToJson(const std::vector<Btn>& btns) {
         JPtr jb = JVal::mkObj();
         jb->set(L"label", b.label);
         if (!b.keys.empty())    jb->set(L"keys",  b.keys);
+        if (!b.keys2.empty())   jb->set(L"keys2", b.keys2);
+        if (b.kind != K_KEY)    jb->set(L"kind",  std::wstring(KIND_NAMES[b.kind % 4]));
+        if (b.span > 1)         jb->set(L"span",  (double)b.span);
         if (b.mouse != PB_NONE) jb->set(L"mouse", std::wstring(MOUSE_NAMES[b.mouse]));
         jb->set(L"mode", std::wstring(MODE_NAMES[b.mode % 3]));
         if (b.repeat)           jb->set(L"repeat", true);
@@ -202,6 +228,11 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
         Btn b;
         b.label  = jb->gets(L"label", L"?");
         b.keys   = jb->gets(L"keys", L"");
+        b.keys2  = jb->gets(L"keys2", L"");
+        b.kind   = NameIdx(jb->gets(L"kind", L"key"), KIND_NAMES, 4, K_KEY);
+        b.span   = (int)jb->getn(L"span", 1);
+        if (b.span < 1) b.span = 1;
+        if (b.span > 6) b.span = 6;
         b.page   = jb->gets(L"page", L"");
         b.mouse  = NameIdx(jb->gets(L"mouse", L""), MOUSE_NAMES, 6, PB_NONE);
         b.mode   = NameIdx(jb->gets(L"mode", L"tap"), MODE_NAMES, 3, M_TAP);
@@ -213,7 +244,7 @@ static void JsonToBtns(const JVal* arr, std::vector<Btn>& out) {
 
 bool ConfigSave() {
     JPtr root = JVal::mkObj();
-    root->set(L"version", 1.0);
+    root->set(L"version", 2.0);
     root->set(L"edge",        std::wstring(EDGE_NAMES[g_cfg.edge  & 3]));
     root->set(L"align",       std::wstring(ALIGN_NAMES[g_cfg.align % 3]));
     root->set(L"buttonMM",    g_cfg.buttonMM);
@@ -262,6 +293,29 @@ bool ConfigSave() {
         return false;
     }
     return true;
+}
+
+// Файл настроек у человека уже лежит, и defaults до него не доходят. Поэтому
+// недостающие зоны досылаем в уже существующий набор Unreal — добавляем,
+// а не переписываем: остальные кнопки человек мог поправить под себя.
+static void ConfigUpgrade(Config& c, double ver) {
+    if (ver >= 2.0) return;
+    for (auto& p : c.profiles) {
+        if (LowerW(p.match).find(L"unrealeditor.exe") == std::wstring::npos) continue;
+        bool hasZone = false;
+        for (auto& b : p.btns) if (b.kind != K_KEY) hasZone = true;
+        if (hasZone) continue;
+        std::vector<Btn> add = {
+            Z(L"Обзор", K_PAD, 2),
+            Z(L"Ходьба", K_JOY, 2, L"w,a,s,d"),
+            Z(L"Скорость", K_WHEEL, 2),
+        };
+        for (auto& b : add) BtnCompile(b);
+        p.btns.insert(p.btns.begin(), add.begin(), add.end());
+        for (auto& b : p.btns)
+            if (b.keys == L"ctrl+z" && b.keys2.empty()) { b.keys2 = L"ctrl+y"; BtnCompile(b); }
+        Log(L"в набор \"%s\" добавлены зоны обзора, ходьбы и скорости", p.name.c_str());
+    }
 }
 
 bool ConfigLoad() {
@@ -315,6 +369,7 @@ bool ConfigLoad() {
     }
     if (c.profiles.empty()) { Log(L"в настройках нет ни одного набора кнопок"); return false; }
 
+    ConfigUpgrade(c, root->getn(L"version", 1.0));
     g_cfg = c;
     Log(L"настройки прочитаны: %d набор(ов)", (int)g_cfg.profiles.size());
     return true;

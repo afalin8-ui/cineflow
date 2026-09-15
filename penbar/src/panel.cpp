@@ -1,10 +1,20 @@
 #include "app.h"
+#include <cmath>
 #include <windowsx.h>
 #include <gdiplus.h>
 #include <shellapi.h>
 #include <map>
 #include <vector>
 using namespace Gdiplus;
+
+// Из tpcshrd.h — его в mingw нет, а числа эти постоянные.
+#ifndef WM_TABLETQUERYSYSTEMGESTURESTATUS
+#define WM_TABLETQUERYSYSTEMGESTURESTATUS 0x02CC
+#endif
+#define TABLET_DISABLE_PRESSANDHOLD      0x00000001
+#define TABLET_DISABLE_PENTAPFEEDBACK    0x00000008
+#define TABLET_DISABLE_PENBARRELFEEDBACK 0x00000010
+#define TABLET_DISABLE_FLICKS            0x00010000
 
 HWND g_panel = nullptr, g_handle = nullptr, g_edge = nullptr;
 
@@ -23,6 +33,10 @@ static const Color C_MUTED   (255, 166, 163, 154);
 static const Color C_WARN    (255, 200,  90,  75);
 static const Color C_BTN_TOP (255,  56,  54,  51);   // верх кнопки чуть светлее
 static const Color C_BTN_EDGE(255,  62,  59,  55);   // кромка кнопки
+static const Color C_ZONE    (255,  35,  34,  32);   // поле зоны — темнее кнопки
+static const Color C_ZONE_TOP(255,  44,  43,  40);
+static const Color C_ZONE_LN (255,  86,  82,  76);   // разметка внутри зоны
+static const Color C_KNOB    (255, 217, 119,  87);   // ручка джойстика
 
 // На плотном экране волосяная линия в одну точку почти не видна: при 227
 // точках на дюйм это 0,11 мм. Толщину линий считаем от размера кнопки, чтобы
@@ -36,7 +50,16 @@ static REAL Hair() {
 // ---- размеры и раскладка -------------------------------------------------
 static int g_profileIdx = 0;
 static int g_pageIdx = -1;          // -1 — основная страница набора
-static std::map<UINT32, int> g_ptr;  // указатель -> номер кнопки
+// Зоны (обзор, джойстик, крутилка) живут ВЕДЕНИЕМ, поэтому про каждый палец
+// надо помнить не только номер клетки, но и откуда он поехал.
+struct Touch {
+    int   idx   = -100;
+    POINT start{}, last{};
+    DWORD at    = 0;
+    int   accum = 0;        // набранный путь для крутилки
+    bool  moved = false;
+};
+static std::map<UINT32, Touch> g_ptr;
 static int g_pad = 0, g_gap = 0, g_hdr = 0, g_ftr = 0;
 static RECT g_rcHeader{}, g_rcSettings{}, g_rcHide{};
 static SIZE g_size{};
@@ -122,9 +145,16 @@ static int g_along = 0, g_across = 0, g_cols = 1, g_used = 0;
 static int g_fitRows = 0;      // сколько кнопок влезает по высоте края
 static double g_realMM = 0;    // размер кнопки после подгонки
 
+// Зона занимает несколько клеток подряд, поэтому считать надо КЛЕТКИ,
+// а не кнопки: иначе полоска выйдет короче своего содержимого.
+static int CellsOf(const std::vector<Btn>& v) {
+    int n = 0;
+    for (auto& b : v) n += (b.span < 1 ? 1 : b.span);
+    return n;
+}
+
 static void PlaceContent(int winAlong) {
     std::vector<Btn>* list = CurBtns();
-    int n = list ? (int)list->size() : 0;
     int free_ = winAlong - g_along;
     if (free_ < 0) free_ = 0;
     int off = (g_cfg.align == A_START) ? 0 : (g_cfg.align == A_END) ? free_ : free_ / 2;
@@ -133,12 +163,20 @@ static void PlaceContent(int winAlong) {
     g_rcHeader = g_vertical ? RECT{g_pad, a0, g_across - g_pad, a0 + g_hdr}
                             : RECT{a0, g_pad, a0 + g_hdr, g_across - g_pad};
     int base = a0 + g_hdr + g_gap;
-    if (list) for (int i = 0; i < n; i++) {
-        int col = g_used > 0 ? i / g_used : 0, row = g_used > 0 ? i % g_used : 0;
-        int a = base + row * (g_btnPx + g_gap);
-        int c = g_pad + col * (g_btnPx + g_gap);
-        (*list)[i].rc = g_vertical ? RECT{c, a, c + g_btnPx, a + g_btnPx}
-                                   : RECT{a, c, a + g_btnPx, c + g_btnPx};
+    if (list) {
+        int col = 0, row = 0;
+        for (auto& b : *list) {
+            int sp = b.span < 1 ? 1 : b.span;
+            // зона не разрывается между столбцами: половина джойстика
+            // в одном ряду, половина в другом — это не джойстик
+            if (g_used > 0 && row + sp > g_used && row > 0) { col++; row = 0; }
+            int a   = base + row * (g_btnPx + g_gap);
+            int c   = g_pad + col * (g_btnPx + g_gap);
+            int len = sp * g_btnPx + (sp - 1) * g_gap;
+            b.rc = g_vertical ? RECT{c, a, c + g_btnPx, a + len}
+                              : RECT{a, c, a + len, c + g_btnPx};
+            row += sp;
+        }
     }
     int fa0 = off + g_along - g_pad - g_ftr, fa1 = off + g_along - g_pad;
     int half = (g_across - 2 * g_pad - g_gap) / 2;
@@ -160,8 +198,8 @@ void PanelLayout() {
     // переходе к осям кнопки уезжали бы под пальцем.
     int n = 0;
     if (p) {
-        n = (int)p->btns.size();
-        for (auto& pg : p->pages) if ((int)pg.btns.size() > n) n = (int)pg.btns.size();
+        n = CellsOf(p->btns);
+        for (auto& pg : p->pages) { int c = CellsOf(pg.btns); if (c > n) n = c; }
     }
     RECT wa = WorkArea();
     g_vertical = (g_cfg.edge == E_LEFT || g_cfg.edge == E_RIGHT);
@@ -378,6 +416,53 @@ static void DrawCross(Graphics& g, RECT r, const Color& col) {
     g.DrawLine(&p, cx + s, cy - s, cx - s, cy + s);
 }
 
+// Зона рисуется не как кнопка НАМЕРЕННО: по кнопке стучат, по зоне ВЕДУТ,
+// и это должно быть понятно, не читая подписи. Поле темнее, внутри разметка.
+static void DrawZone(Graphics& g, const Btn& b, REAL rad) {
+    RECT r = b.rc;
+    RectF rf((REAL)r.left, (REAL)r.top, (REAL)(r.right - r.left), (REAL)(r.bottom - r.top));
+    ButtonFace(g, rf, b.down ? C_BTN_DN : C_ZONE, b.down ? C_BTN_DN : C_ZONE_TOP, C_BTN_EDGE, rad);
+
+    REAL cx = rf.X + rf.Width / 2, cy = rf.Y + rf.Height / 2;
+    REAL side = rf.Width < rf.Height ? rf.Width : rf.Height;
+    Pen pen(C_ZONE_LN, Hair() * 2);
+
+    if (b.kind == K_JOY) {
+        REAL ring = side * 0.40f;
+        g.DrawEllipse(&pen, cx - ring, cy - ring, ring * 2, ring * 2);
+        REAL kr = ring * 0.44f;
+        REAL kx = cx + (REAL)(b.joyX * (ring - kr));
+        REAL ky = cy + (REAL)(b.joyY * (ring - kr));
+        SolidBrush knob(b.joyMask ? C_KNOB : Color(255, 92, 88, 82));
+        g.FillEllipse(&knob, kx - kr, ky - kr, kr * 2, kr * 2);
+        return;
+    }
+    if (b.kind == K_WHEEL) {
+        // насечки поперёк полосы: видно, что её ТЯНУТ, а не нажимают
+        REAL w = rf.Width * 0.44f, h = rf.Height * 0.44f;
+        for (int i = -2; i <= 2; i++) {
+            if (g_vertical) {
+                REAL y = cy + i * (rf.Height * 0.11f);
+                g.DrawLine(&pen, cx - w, y, cx + w, y);
+            } else {
+                REAL x = cx + i * (rf.Width * 0.11f);
+                g.DrawLine(&pen, x, cy - h, x, cy + h);
+            }
+        }
+        return;
+    }
+    // обзор: редкая сетка точек — поверхность, по которой водят
+    SolidBrush dot(C_ZONE_LN);
+    REAL step = side * 0.20f, d = Hair() * 2;
+    for (int iy = -2; iy <= 2; iy++)
+        for (int ix = -2; ix <= 2; ix++) {
+            REAL x = cx + ix * step, y = cy + iy * step;
+            if (x < rf.X + step / 2 || x > rf.GetRight() - step / 2) continue;
+            if (y < rf.Y + step / 2 || y > rf.GetBottom() - step / 2) continue;
+            g.FillEllipse(&dot, x - d, y - d, d * 2, d * 2);
+        }
+}
+
 void PanelRedraw() {
     if (!g_panel || !IsWindowVisible(g_panel)) return;
     RECT wr;
@@ -421,6 +506,7 @@ void PanelRedraw() {
         g.SetSmoothingMode(SmoothingModeAntiAlias);
         std::vector<Btn>* list = CurBtns();
         if (list) for (auto& b : *list) {
+            if (b.kind != K_KEY) { DrawZone(g, b, rad); continue; }
             RECT r = b.rc;
             RectF rf((REAL)r.left, (REAL)r.top, (REAL)(r.right - r.left), (REAL)(r.bottom - r.top));
             if (b.armed)        ButtonFace(g, rf, C_ARM,    Color(255, 230, 178,  84), Color(255, 236, 190, 110), rad);
@@ -451,11 +537,18 @@ void PanelRedraw() {
             DrawLabel(mem, title, g_rcHeader, RGBof(g_needAdmin ? C_WARN : C_MUTED),
                       (int)(g_btnPx * 0.22), false);
             for (auto& b : *list) {
+                if (b.kind == K_JOY) continue;      // ручка сама всё говорит
                 bool dark = b.armed || b.latched;
                 RECT tr = b.rc;
+                // у зоны подпись прижата к началу: середина занята разметкой
+                if (b.kind != K_KEY) {
+                    if (g_vertical) tr.bottom = tr.top  + (int)(g_btnPx * 0.46);
+                    else            tr.right  = tr.left + (int)(g_btnPx * 0.46);
+                }
                 InflateRect(&tr, -(int)(g_btnPx * 0.08), -(int)(g_btnPx * 0.06));
-                DrawLabel(mem, b.label, tr, RGBof(dark ? C_TEXT_DK : C_TEXT),
-                          (int)(g_btnPx * 0.30), dark || b.down);
+                DrawLabel(mem, b.label, tr,
+                          RGBof(dark ? C_TEXT_DK : (b.kind == K_KEY ? C_TEXT : C_MUTED)),
+                          (int)(g_btnPx * (b.kind == K_KEY ? 0.30 : 0.22)), dark || b.down);
             }
         }
     }
@@ -588,8 +681,14 @@ void PanelSetPage(const std::wstring& name) {
     // Пальцы, которые сейчас на кнопках, отпускаем сами: после смены списка
     // их номера указывали бы уже на другие кнопки.
     std::vector<Btn>* old = CurBtns();
-    if (old) for (auto& kv : g_ptr)
-        if (kv.second >= 0 && kv.second < (int)old->size()) BtnRelease((*old)[kv.second]);
+    if (old) for (auto& kv : g_ptr) {
+        int i = kv.second.idx;
+        if (i < 0 || i >= (int)old->size()) continue;
+        Btn& ob = (*old)[i];
+        if (ob.kind == K_JOY) JoyOff(ob);
+        ob.down = false;
+        BtnRelease(ob);
+    }
     g_ptr.clear();
 
     g_pageIdx = want;
@@ -646,27 +745,112 @@ static void ProfileMenu() {
     else if (cmd == 1) SettingsOpen();
 }
 
+// Мышиное сообщение, порождённое пером или касанием, несёт в «лишних
+// сведениях» подпись 0xFF515700 — так их отличает сама Windows.
+static bool FromPenOrTouch() {
+    return ((ULONG_PTR)GetMessageExtraInfo() & 0xFFFFFF00) == 0xFF515700;
+}
+
+static Btn* BtnAt(int idx) {
+    std::vector<Btn>* list = CurBtns();
+    if (!list || idx < 0 || idx >= (int)list->size()) return nullptr;
+    return &(*list)[idx];
+}
+
+// Шаг крутилки — треть кнопки пройденного пути на один щелчок колеса.
+// Считаем в ТОЧКАХ ЭКРАНА: на плотном экране палец проезжает столько же
+// точек, сколько на редком, а миллиметров — меньше.
+static int WheelStep() {
+    int s = (int)(g_btnPx * 0.30);
+    return s < 10 ? 10 : s;
+}
+
+static void JoyFromPoint(Btn& b, POINT p) {
+    double w = (double)(b.rc.right - b.rc.left), h = (double)(b.rc.bottom - b.rc.top);
+    double cx = b.rc.left + w / 2, cy = b.rc.top + h / 2;
+    double ring = (w < h ? w : h) * 0.40;
+    if (ring < 1) return;
+    double nx = (p.x - cx) / ring, ny = (p.y - cy) / ring;
+    double r = sqrt(nx * nx + ny * ny);
+    if (r > 1) { nx /= r; ny /= r; }        // ручка не уезжает за кольцо
+    JoyMove(b, nx, ny);
+}
+
 static void OnDown(UINT32 id, POINT client) {
     int idx = HitTest(client);
     if (idx == -100) return;
     // повтор и ожидание пера считаются по таймеру — заводим его сразу,
     // а не ждём до секунды общей проверки
     if (g_main) SetTimer(g_main, TIMER_TICK, 30, nullptr);
-    g_ptr[id] = idx;
-    if (idx >= 0) {
-        std::vector<Btn>* list = CurBtns();
-        if (list && idx < (int)list->size()) {
-            BtnPress((*list)[idx]);
-            PanelRedraw();
-        }
+    Touch t;
+    t.idx   = idx;
+    t.start = t.last = client;
+    t.at    = GetTickCount();
+    g_ptr[id] = t;
+
+    Btn* b = BtnAt(idx);
+    if (!b) return;
+    if (b->kind == K_KEY) { BtnPress(*b); PanelRedraw(); return; }
+    FlushArmed();               // взялись за зону — ждать ухода пера больше незачем
+    b->down = true;
+    if (b->kind == K_JOY) JoyFromPoint(*b, client);   // ткнул в край — сразу полетели
+    PanelRedraw();
+}
+
+// Ведение по зоне. Кнопки сюда не попадают: по ним стучат.
+static void OnMove(UINT32 id, POINT client) {
+    auto it = g_ptr.find(id);
+    if (it == g_ptr.end()) return;
+    Touch& t = it->second;
+    Btn* b = BtnAt(t.idx);
+    if (!b || b->kind == K_KEY) return;
+    int dx = client.x - t.last.x, dy = client.y - t.last.y;
+    if (dx || dy) t.moved = true;
+
+    if (b->kind == K_PAD) {
+        if (!dx && !dy) return;
+        // Медленное ведение идёт один к одному — так целятся. Быстрое
+        // ускоряется: площадки размером в ладонь иначе не хватит, чтобы
+        // развернуть камеру кругом.
+        double d = sqrt((double)dx * dx + (double)dy * dy);
+        double k = 1.0 + (d > 18 ? 1.5 : d / 12.0);
+        SendMouseMove((int)lround(dx * k), (int)lround(dy * k));
+        t.last = client;
+        return;
     }
+    if (b->kind == K_JOY) { JoyFromPoint(*b, client); PanelRedraw(); return; }
+
+    int step = WheelStep();
+    t.accum += g_vertical ? dy : dx;
+    t.last   = client;
+    while (t.accum <= -step) { SendWheel(PB_WUP); t.accum += step; }
+    while (t.accum >=  step) { SendWheel(PB_WDN); t.accum -= step; }
 }
 
 static void OnUp(UINT32 id, POINT client) {
     auto it = g_ptr.find(id);
     if (it == g_ptr.end()) return;
-    int idx = it->second;
+    Touch t = it->second;
+    int idx = t.idx;
     g_ptr.erase(it);
+
+    Btn* zone = BtnAt(idx);
+    if (zone && zone->kind != K_KEY) {
+        zone->down = false;
+        if (zone->kind == K_JOY) JoyOff(*zone);
+        // Короткий тык по крутилке — один щелчок. Тянуть ради одного шага
+        // скорости неудобно, а шаг её меняют как раз поштучно.
+        if (zone->kind == K_WHEEL && !t.moved) {
+            int a0 = g_vertical ? zone->rc.top    : zone->rc.left;
+            int a1 = g_vertical ? zone->rc.bottom : zone->rc.right;
+            int at = g_vertical ? client.y        : client.x;
+            int third = (a1 - a0) / 3;
+            if (at < a0 + third)      SendWheel(PB_WUP);
+            else if (at > a1 - third) SendWheel(PB_WDN);
+        }
+        PanelRedraw();
+        return;
+    }
     if (idx >= 0) {
         std::vector<Btn>* list = CurBtns();
         std::wstring go;
@@ -704,10 +888,36 @@ static LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             UINT32 id = GET_POINTERID_WPARAM(wp);
             if (msg == WM_POINTERDOWN) OnDown(id, pt);
             else if (msg == WM_POINTERUP) OnUp(id, pt);
+            else OnMove(id, pt);
             return 0;
         }
-        case WM_LBUTTONDOWN: OnDown(0xFFFF, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}); return 0;
-        case WM_LBUTTONUP:   OnUp  (0xFFFF, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}); return 0;
+        // Перо и касание Windows дублирует ещё и мышиными сообщениями. Для
+        // кнопки лишний «клик» незаметен, а для зоны это ДВОЙНАЯ чувствительность:
+        // один и тот же сдвиг пришёл бы дважды. Такие двойники узнаются по
+        // метке в GetMessageExtraInfo и пропускаются; настоящая мышь её не ставит.
+        case WM_LBUTTONDOWN:
+            if (FromPenOrTouch()) return 0;
+            SetCapture(hwnd);
+            OnDown(0xFFFF, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+            return 0;
+        case WM_MOUSEMOVE:
+            if (FromPenOrTouch()) return 0;
+            OnMove(0xFFFF, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+            return 0;
+        case WM_LBUTTONUP:
+            if (FromPenOrTouch()) return 0;
+            ReleaseCapture();
+            OnUp(0xFFFF, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+            return 0;
+
+        // Windows Ink считает долгое удержание пера вызовом правого щелчка и
+        // рисует кольцо поверх кнопки. На залипающих кнопках это ровно то,
+        // что человек делает обычно, — поэтому жесты для СВОИХ окон гасим.
+        // Возвращать надо МАСКУ ТОГО, ЧТО ВЫКЛЮЧАЕМ, а не ноль: ноль как раз
+        // оставляет все жесты включёнными.
+        case WM_TABLETQUERYSYSTEMGESTURESTATUS:
+            return TABLET_DISABLE_PRESSANDHOLD | TABLET_DISABLE_PENTAPFEEDBACK |
+                   TABLET_DISABLE_PENBARRELFEEDBACK | TABLET_DISABLE_FLICKS;
 
         case WM_APPBARMSG:
             if (wp == ABN_POSCHANGED || wp == ABN_FULLSCREENAPP) PanelLayout();
@@ -828,6 +1038,7 @@ bool PanelCreate() {
 
 // вызывается по таймеру из главного окна
 void PanelTick() {
+    bool redrawZones = false;
     POINT cur;
     GetCursorPos(&cur);
     bool onPanel = false;
@@ -836,15 +1047,33 @@ void PanelTick() {
         GetWindowRect(g_panel, &r);
         onPanel = PtInRect(&r, cur) != 0;
     }
+    if (!onPanel) TargetSeen(cur);      // якорь считаем один раз, а не на каждую кнопку
+
+    // Отпускание пальца изредка теряется (то же, что было со щипком на доске).
+    // У зоны это дорого: потерянный палец на джойстике оставляет зажатой W, и
+    // камера уезжает сама. Поэтому зону, за которую никто не держится,
+    // отпускаем сами.
+    if (std::vector<Btn>* zl = CurBtns()) {
+        for (int i = 0; i < (int)zl->size(); i++) {
+            Btn& zb = (*zl)[i];
+            if (zb.kind == K_KEY || (!zb.down && !zb.joyMask)) continue;
+            bool held = false;
+            for (auto& kv : g_ptr) if (kv.second.idx == i) { held = true; break; }
+            if (held) continue;
+            zb.down = false;
+            if (zb.kind == K_JOY) JoyOff(zb);
+            redrawZones = true;
+        }
+    }
     DWORD now = GetTickCount();
     bool redraw = false;
     std::vector<Btn>* list = CurBtns();
     if (list) for (auto& b : *list) {
-        bool wasArmed = b.armed;
+        bool wasArmed = b.armed, wasLong = b.longDone;
         BtnTick(b, now, cur, onPanel);
-        if (wasArmed != b.armed) redraw = true;
+        if (wasArmed != b.armed || wasLong != b.longDone) redraw = true;
     }
-    if (redraw) PanelRedraw();
+    if (redraw || redrawZones) PanelRedraw();
 }
 
 void PanelHelpersUpdate() { PlaceHelpers(); }

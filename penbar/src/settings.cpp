@@ -91,7 +91,11 @@ static void FillButtonList() {
         std::wstring s = b.label;
         for (auto& ch : s) if (ch == L'\n') ch = L' ';
         s += L"   —   ";
-        if (!b.keys.empty()) s += b.keys;
+        if (b.kind == K_PAD)   s += L"зона обзора";
+        if (b.kind == K_JOY)   s += L"джойстик ";
+        if (b.kind == K_WHEEL) s += L"крутилка";
+        if (!b.keys.empty() && b.kind != K_WHEEL && b.kind != K_PAD) s += b.keys;
+        if (!b.keys2.empty()) s += L" / долгое " + b.keys2;
         if (b.mouse == PB_LEFT)  s += L" ЛКМ";
         if (b.mouse == PB_RIGHT) s += L" ПКМ";
         if (b.mouse == PB_MID)   s += L" СКМ";
@@ -117,6 +121,16 @@ static void FillButtonFields() {
     SendMessageW(C(ID_MOUSE), CB_SETCURSEL, b ? b->mouse : 0, 0);
     SendMessageW(C(ID_MODE),  CB_SETCURSEL, b ? b->mode  : 0, 0);
     SendMessageW(C(ID_REPEAT), BM_SETCHECK, (b && b->repeat) ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    // У зоны нет ни кнопки мыши, ни способа нажатия: по ней ВЕДУТ. Гасим эти
+    // поля, а не прячем — иначе на их месте была бы дыра непонятно от чего.
+    bool zone = b && b->kind != K_KEY;
+    EnableWindow(C(ID_MOUSE),  !zone);
+    EnableWindow(C(ID_MODE),   !zone);
+    EnableWindow(C(ID_REPEAT), !zone);
+    EnableWindow(C(ID_PAGE),   !zone);
+    EnableWindow(C(ID_KEYS),   !b || b->kind != K_PAD);
+    EnableWindow(C(ID_CAPTURE), !zone);
 
     // «Открывает»: список страниц этого набора
     HWND cb = C(ID_PAGE);
@@ -381,8 +395,27 @@ static void OnCommand(int id, int code) {
         case ID_BTN_ADD: {
             std::vector<Btn>* list = BtnList();
             if (!list) return;
+            // Зону надо уметь ЗАВЕСТИ, а не только получить из набора по
+            // умолчанию: удалив обзор, человек иначе остался бы без него
+            // навсегда — сброс к умолчанию снёс бы заодно все его правки.
+            HMENU m = CreatePopupMenu();
+            AppendMenuW(m, MF_STRING, 1, L"Обычная кнопка");
+            AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(m, MF_STRING, 2, L"Зона «Обзор» — вести камерой");
+            AppendMenuW(m, MF_STRING, 3, L"Джойстик — ходьба W A S D");
+            AppendMenuW(m, MF_STRING, 4, L"Крутилка — колесо мыши");
+            RECT br{};
+            GetWindowRect(C(ID_BTN_ADD), &br);
+            int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY,
+                                     br.left, br.bottom, 0, g_wnd, nullptr);
+            DestroyMenu(m);
+            if (!cmd) return;
             Btn nb;
-            nb.label = L"Новая";
+            if (cmd == 2)      { nb.label = L"Обзор";    nb.kind = K_PAD;   nb.span = 2; }
+            else if (cmd == 3) { nb.label = L"Ходьба";   nb.kind = K_JOY;   nb.span = 2; nb.keys = L"w,a,s,d"; }
+            else if (cmd == 4) { nb.label = L"Скорость"; nb.kind = K_WHEEL; nb.span = 2; }
+            else                 nb.label = L"Новая";
+            BtnCompile(nb);
             list->insert(list->begin() + (list->empty() ? 0 : g_btn + 1), nb);
             if (list->size() > 1) g_btn++;
             FillButtonList();
