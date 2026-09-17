@@ -27,7 +27,10 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   await new Promise(r => setTimeout(r, 1200));
   const browser = await playwright.chromium.launch({ executablePath: process.env.CF_CHROME || '/opt/pw-browsers/chromium', args: ['--no-sandbox'] });
   const mk = async (w, h) => {
-    const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 768, hasTouch: true });
+    // Service worker БЛОКИРУЕМ: иначе на втором заходе он отдаёт запросы
+    // мимо подмены библиотек, лезет за ними в интернет — и страница
+    // остаётся без React, пустая и без единой ошибки.
+    const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 768, hasTouch: true, serviceWorkers: 'block' });
     await ctx.route('**/*', (route) => {
       const u = route.request().url();
       if (/firestore|firebase|googleapis|gstatic|nominatim/.test(u)) return route.abort();

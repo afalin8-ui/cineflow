@@ -345,6 +345,13 @@
         body.cf-readonly input,
         body.cf-readonly textarea,
         body.cf-readonly select { pointer-events: none !important; user-select: none; }
+        /* `data-ro-ok` — поле, которое в просмотре РАБОТАЕТ: поиск, галочки
+           скаута, поле чата в ссылке с чатом. Печатать в них уже разрешено
+           (см. ловушку beforeinput), а НАЖАТЬ было нельзя: правило выше
+           гасит указатель у всех полей разом, и поле поиска с полем чата
+           оставались мёртвыми — курсор в них ставился только программно.
+           Метка одна на оба запрета, иначе они расходятся. */
+        body.cf-readonly [data-ro-ok] { pointer-events: auto !important; user-select: text; }
         body.cf-readonly .cf-edit-only { display: none !important; }
         .cf-ro-badge { position: fixed; top: 8px; right: 8px; z-index: 300; font-size: var(--fs-1);
                        padding: 5px 11px;
@@ -746,6 +753,23 @@
         const CF_BOARD_SCOPE = CF_SNAPSHOT
           ? (CF_SNAPSHOT.board || '')
           : (CF_VIEW_SCOPE ? (new URLSearchParams(location.search).get('board') || '') : '');
+
+        // ССЫЛКА С ЧАТОМ: смотреть всё, писать — только в чат.
+        // Ссылка-просмотр запирала ВСЁ разом, чат в том числе: кнопки
+        // чата у гостя не было вовсе (`cf-edit-only`), поле не нажималось,
+        // а `syncDoc` выходил по READ_ONLY. Значит, показав режиссёру или
+        // продюсеру материалы, ответ от него приходилось ждать в другом
+        // месте — в мессенджере, отдельно от того, о чём он. Теперь рядом
+        // с `?view=` едет `?chat=1`, и тогда открыта РОВНО одна дверь:
+        // коллекция `messages` (плюс имя в `userPins` — им человек
+        // подписывается и защищает имя PIN-ом, как и все в проекте).
+        // Всё остальное заперто ровно как было: три слоя защиты режима
+        // просмотра не тронуты, а `deleteNetDoc` закрыт и для чата —
+        // стереть чужое сообщение гость не может.
+        // Файла-снимка это не касается: в нём облака нет вовсе, и писать
+        // некуда — там чат остаётся спрятанным.
+        const CF_CHAT = !CF_SNAPSHOT && !!CF_VIEW_SCOPE
+          && new URLSearchParams(location.search).get('chat') === '1';
         if (READ_ONLY) document.body.classList.add('cf-readonly');
 
         // --- Комната проекта ---
@@ -2965,7 +2989,14 @@
             return null;
         };
 
-        const WelcomeModal = ({ onComplete }) => {
+        // onCancel — выход из окна. В обычном первом запуске его НЕТ
+        // намеренно: имя нужно, чтобы работать. А гостю по ссылке с чатом
+        // окно предлагают, когда он собрался писать, и запирать его в нём
+        // нельзя — это ровно та ловушка «нечем закрыть», которую в этом
+        // приложении уже чинили во всплывающих окнах и в подкрутке скаута.
+        // Поля помечены `data-ro-ok`: в режиме просмотра все поля разом
+        // не нажимаются и не принимают ввод, а имя и PIN — это не проект.
+        const WelcomeModal = ({ onComplete, onCancel }) => {
             const [name, setName] = useState('');
             const [role, setRole] = useState('Оператор-постановщик');
             const [step, setStep] = useState('name');
@@ -3032,11 +3063,11 @@
                             <form onSubmit={handleNameSubmit} className="space-y-4">
                                 <div>
                                     <label className="text-xs text-zinc-400 mb-1 block ml-1">Имя и Фамилия</label>
-                                    <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Иван Иванов" className="w-full glass-input rounded-lg px-4 py-3 text-sm transition-colors" required />
+                                    <input autoFocus data-ro-ok type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Иван Иванов" className="w-full glass-input rounded-lg px-4 py-3 text-sm transition-colors" required />
                                 </div>
                                 <div>
                                     <label className="text-xs text-zinc-400 mb-1 block ml-1">Роль в съемочной группе</label>
-                                    <select value={role} onChange={e => setRole(e.target.value)} className="w-full glass-input rounded-lg px-4 py-3 text-sm transition-colors appearance-none bg-zinc-900">
+                                    <select data-ro-ok value={role} onChange={e => setRole(e.target.value)} className="w-full glass-input rounded-lg px-4 py-3 text-sm transition-colors appearance-none bg-zinc-900">
                                         <option value="Оператор-постановщик">Оператор-постановщик (DoP)</option>
                                         <option value="Гаффер">Гаффер (Gaffer)</option>
                                         <option value="Режиссер">Режиссер-постановщик</option>
@@ -3047,6 +3078,9 @@
                                     </select>
                                 </div>
                                 <button type="submit" disabled={busy} className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-[#1a1918] font-semibold py-3 rounded-lg mt-4 transition-all">{busy ? 'Проверка…' : 'Продолжить'}</button>
+                                {onCancel && (
+                                  <button type="button" onClick={onCancel} className="w-full text-zinc-500 hover:text-zinc-300 text-xs font-semibold py-2 transition-colors">Не сейчас — просто смотрю</button>
+                                )}
                             </form>
                           </>
                         )}
@@ -3061,7 +3095,7 @@
                                 <div>
                                     <label className="text-xs text-zinc-400 mb-1 block ml-1">PIN (мин. 4 символа)</label>
                                     <div className="relative">
-                                        <input autoFocus type={showPin ? "text" : "password"} value={pin} onChange={e => setPin(e.target.value)} autoComplete="off" data-lpignore="true" data-1p-ignore="true" name="cf-profile-pin" className="w-full glass-input rounded-lg px-4 py-3 pr-12 text-sm font-mono" required />
+                                        <input autoFocus data-ro-ok type={showPin ? "text" : "password"} value={pin} onChange={e => setPin(e.target.value)} autoComplete="off" data-lpignore="true" data-1p-ignore="true" name="cf-profile-pin" className="w-full glass-input rounded-lg px-4 py-3 pr-12 text-sm font-mono" required />
                                         <button type="button" onClick={() => setShowPin(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 text-xs font-semibold px-2 py-1 rounded-md hover:bg-white/5 transition-colors">{showPin ? "Скрыть" : "Показать"}</button>
                                     </div>
                                 </div>
@@ -6818,6 +6852,13 @@
           const [showImages, setShowImages] = useState(true);
           const [showProjectModal, setShowProjectModal] = useState(false);
           const [showShareModal, setShowShareModal] = useState(false);
+          // Давать ли гостю по ссылке-просмотру писать в чат. Выключено
+          // по умолчанию: ссылка «посмотреть» не должна незаметно пускать
+          // постороннего в переписку группы. Выбор действует на ВСЕ ссылки
+          // просмотра в окне разом — и на страницы, и на отдельную доску,
+          // иначе в одном окне были бы две породы ссылок, и какая из них
+          // с чатом, помнил бы только тот, кто их копировал.
+          const [shareChat, setShareChat] = useState(false);
           const [showChat, setShowChat] = useState(false); 
           const [chatInput, setChatInput] = useState('');
           // КПП: какой из двух видов открыт — «По сменам» или «Все сцены».
@@ -10651,7 +10692,11 @@
           useEffect(() => {
               const savedName = localStorage.getItem('cf_user_name');
               const savedRole = localStorage.getItem('cf_user_role');
-              if (!savedName) { setShowWelcome(true); } else { setUserName(savedName); setUserRole(savedRole || 'Оператор-постановщик'); }
+              // В режиме просмотра имя САМИ не спрашиваем — человек пришёл
+              // смотреть, и окно поперёк материалов было бы первым, что он
+              // увидит. По ссылке с чатом окно поднимает он сам, кнопкой
+              // «Представиться», когда собрался писать.
+              if (!savedName) { if (!READ_ONLY) setShowWelcome(true); } else { setUserName(savedName); setUserRole(savedRole || 'Оператор-постановщик'); }
           }, []);
 
           useEffect(() => { if (showChat) { const now = Date.now(); setLastReadChat(now); try { localStorage.setItem('cf_last_read', now); } catch (e) {} } }, [showChat, messages]);
@@ -11762,7 +11807,11 @@
           const syncDoc = (coll, id, data) => {
             // В режиме просмотра наружу не уходит ничего — это главная
             // защита ссылки-просмотра, а не спрятанные кнопки.
-            if (READ_ONLY || !db || !user) return;
+            // ЕДИНСТВЕННОЕ исключение — чат по ссылке `?chat=1`, и оно
+            // названо здесь ЯВНО одной коллекцией: писать можно только
+            // в `messages`. Никаких «а вдруг пригодится» — дверь, открытая
+            // шире одной коллекции, однажды пропустит и правку проекта.
+            if ((READ_ONLY && !(CF_CHAT && coll === 'messages')) || !db || !user) return;
             const key = coll + '/' + id;
             clearTimeout(syncTimers.current[key]);
             syncTimers.current[key] = setTimeout(() => {
@@ -14305,6 +14354,25 @@
             }
           };
 
+          // ОТПРАВКА СООБЩЕНИЯ ОДНА НА ОБА ПУТИ — Enter и кнопку «↑».
+          // Раньше это были две одинаковые строки в разметке, и проверку
+          // режима просмотра пришлось бы ставить в обе: вторая копия
+          // разъехалась бы с первой при первой же правке.
+          const sendChat = () => {
+            const text = chatInput.trim();
+            if (!text) return;
+            // В просмотре писать можно ТОЛЬКО по ссылке с чатом и только
+            // назвавшись: сообщение без имени в общей переписке — это
+            // сообщение, на которое некому ответить.
+            if (READ_ONLY && !CF_CHAT) return;
+            if (!userName) { setShowWelcome(true); return; }
+            const nm = { id: `msg-${Date.now()}`, text, senderId: clientId,
+                         senderName: userName, senderRole: userRole, timestamp: Date.now() };
+            if (db && user) syncDoc('messages', nm.id, nm);
+            else setMessages([...messages, nm]);
+            setChatInput('');
+          };
+
           // В режиме просмотра имя не спрашиваем — человек просто смотрит.
           // Выход стоит ПОСЛЕ всех хуков и обязан там стоять: React считает
           // хуки по порядку, и ранний выход посреди списка означал, что при
@@ -14318,6 +14386,16 @@
           return (
             <div className="cf-app-root flex w-screen overflow-hidden bg-transparent">
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
+              {/* Имя гостя по ссылке с чатом. Тут окно НЕ заменяет собой
+                  приложение (как при первом запуске), а ложится поверх:
+                  за ним видна переписка, ради которой его и открыли.
+                  Ветка входа одна и та же — вторая разошлась бы с первой
+                  на первой же правке, и защита имени PIN-ом досталась бы
+                  только половине входящих. */}
+              {READ_ONLY && CF_CHAT && showWelcome && (
+                <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }}
+                              onCancel={() => setShowWelcome(false)} />
+              )}
               {showSearch && (
                 <SearchPalette
                   scenes={scenes} references={references} locations={locations}
@@ -14528,7 +14606,7 @@
                         с ним и до запроса разрешения на уведомления) было
                         не добраться. Одна строка — один путь для всех. */}
                     <button onClick={toggleChat} title="Чат группы"
-                            className="cf-navtab relative transition-colors cf-edit-only"
+                            className={'cf-navtab relative transition-colors' + (CF_CHAT ? '' : ' cf-edit-only')}
                             style={showChat ? { color: 'var(--accent)' } : null}>
                       <Icons.Chat />
                       {unreadCount > 0 && (
@@ -14578,7 +14656,7 @@
                             title="Почему нельзя ничего менять"
                             className="cf-meta shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
                             style={{ color: 'var(--accent)', border: '1px solid var(--accent-line)', minHeight: 28 }}>
-                      Просмотр{CF_SNAPSHOT ? ' · снимок' : ''} <span style={{ opacity: .7 }}>?</span>
+                      Просмотр{CF_SNAPSHOT ? ' · снимок' : CF_CHAT ? ' · чат' : ''} <span style={{ opacity: .7 }}>?</span>
                     </button>
                   ) : (
                     <div className="relative shrink-0" ref={headMenuRef}>
@@ -18712,11 +18790,13 @@
                       <div className="glass-panel rounded-lg px-4 py-3 flex items-center border border-[var(--border)]">
                         <span className="text-zinc-300 mr-3"><Icons.User/></span>
                         <div className="flex flex-col">
-                            <span className="text-sm font-extrabold text-white">{userName}</span>
-                            <span className="text-xs text-indigo-400 font-bold">{userRole}</span>
+                            <span className="text-sm font-extrabold text-white">{userName || 'Имя не задано'}</span>
+                            <span className="text-xs text-indigo-400 font-bold">{userName ? userRole : 'гость по ссылке'}</span>
                         </div>
                       </div>
-                      <button onClick={() => setShowWelcome(true)} className="text-xs font-semibold text-zinc-500 hover:text-indigo-400 transition-colors text-left pl-1 underline decoration-zinc-700 hover:decoration-indigo-500 underline-offset-4">Изменить имя/роль</button>
+                      {(!READ_ONLY || CF_CHAT) && (
+                        <button onClick={() => setShowWelcome(true)} className="text-xs font-semibold text-zinc-500 hover:text-indigo-400 transition-colors text-left pl-1 underline decoration-zinc-700 hover:decoration-indigo-500 underline-offset-4">{userName ? 'Изменить имя/роль' : 'Представиться'}</button>
+                      )}
                     </div>
                   </div>
 
@@ -18744,10 +18824,28 @@
                   </div>
 
                   <div className="p-4 border-t border-[var(--border)] bg-[var(--scrim)]">
+                    {READ_ONLY && !CF_CHAT ? (
+                      // В обычной ссылке-просмотре поле писать не даёт, и
+                      // молчащее поле читается как поломка: говорим прямо.
+                      <p className="text-[length:var(--fs-1)] text-zinc-500 leading-relaxed px-1">
+                        Ссылка дана для просмотра — читать переписку можно, писать нет.
+                      </p>
+                    ) : !userName ? (
+                      // Читать чат гостю можно и без имени, а вот писать —
+                      // нет: сообщение без имени в общей переписке некому
+                      // адресовать. Поэтому вместо поля стоит кнопка, а не
+                      // молчаливый отказ на Enter.
+                      <button onClick={() => setShowWelcome(true)}
+                              className="w-full rounded-lg text-sm font-bold transition-all"
+                              style={{ minHeight: 'var(--tap)', background: 'var(--accent)', color: 'var(--bg)' }}>
+                        Представиться, чтобы писать
+                      </button>
+                    ) : (
                     <div className="flex glass-input rounded-lg p-1.5 transition-all">
-                        <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && chatInput.trim()){ const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); } }} className="flex-1 bg-transparent px-3 text-sm font-medium text-white focus:outline-none placeholder-zinc-500" placeholder="Сообщение..." />
-                        <button onClick={() => { if(!chatInput.trim()) return; const nm = { id: `msg-${Date.now()}`, text: chatInput.trim(), senderId: clientId, senderName: userName, senderRole: userRole, timestamp: Date.now() }; if(db && user){ syncDoc('messages', nm.id, nm); } else { setMessages([...messages, nm]); } setChatInput(''); }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] w-10 h-10 rounded-lg flex items-center justify-center transition-colors font-bold">↑</button>
+                        <input type="text" data-ro-ok={CF_CHAT ? '' : null} value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} className="flex-1 bg-transparent px-3 text-sm font-medium text-white focus:outline-none placeholder-zinc-500" placeholder="Сообщение..." />
+                        <button onClick={sendChat} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] w-10 h-10 rounded-lg flex items-center justify-center transition-colors font-bold">↑</button>
                     </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -18827,7 +18925,7 @@
                             он тут обязателен: другого пути к нему с телефона
                             в этой шторке нет. */}
                         <button onClick={() => { setPhoneSheet(null); toggleChat(); }}
-                                className="w-full flex items-center gap-3 px-3 rounded-lg cf-edit-only"
+                                className={'w-full flex items-center gap-3 px-3 rounded-lg' + (CF_CHAT ? '' : ' cf-edit-only')}
                                 style={{ minHeight: 48, fontSize: 'var(--fs-3)', color: showChat ? 'var(--accent)' : 'var(--text-2)' }}>
                           <Icons.Chat />Чат
                           {unreadCount > 0 && (
@@ -19203,6 +19301,9 @@
                     ) : (
                       <React.Fragment>
                         <p>Ссылку, по которой вы пришли, дали <b>для просмотра</b>: показать материалы, не давая их менять. Поэтому кнопок «Проект» и «Доступ» здесь нет, а поля не набираются — это не поломка.</p>
+                        {CF_CHAT && (
+                          <p>Одно исключение — <b>чат группы</b> (значок в шапке): в нём писать можно, и ваш ответ увидят все, у кого открыт проект. Чтобы вас узнали, представьтесь — имя и роль спросят один раз.</p>
+                        )}
                         <p>Если вы хотели вести <b>свой</b> проект, откройте приложение по обычному адресу. Вы начнёте с чистого листа: свои сцены, своё облако для фотографий, свой ключ ИИ.</p>
                       </React.Fragment>
                     )}
@@ -19279,12 +19380,35 @@
                       Ссылка показывает живые данные — вы правите, человек видит обновления.
                       Кнопки правки скрыты, и в облако с такой ссылки ничего не уходит.
                     </p>
+
+                    {/* ЧАТ В ССЫЛКЕ-ПРОСМОТРЕ. Показать материалы и получить
+                        ответ там же, где они лежат: раньше ссылка запирала
+                        и чат, и обсуждение уезжало в мессенджер, отдельно
+                        от того, о чём оно. Выключатель, а не вторая строка
+                        ссылок: две породы ссылок в одном окне человек
+                        различать не обязан. */}
+                    <label className="flex items-start gap-2.5 mb-3 cursor-pointer select-none">
+                      <input type="checkbox" checked={shareChat} onChange={(e) => setShareChat(e.target.checked)}
+                             style={{ marginTop: 3, width: 16, height: 16, accentColor: 'var(--accent)' }} />
+                      <span className="text-[length:var(--fs-2)] text-zinc-300 leading-relaxed">
+                        Разрешить писать в чат группы
+                        <span className="block text-[length:var(--fs-1)] text-zinc-500 mt-0.5">
+                          Человек ответит прямо здесь, рядом с тем, о чём речь: представится
+                          (имя защищается PIN-ом, как у всех) и будет писать в общий чат.
+                          Учтите: <b className="text-zinc-400">он увидит всю переписку группы</b> —
+                          чат в проекте один. Больше ничего не изменится: сцены, фотографии
+                          и доски остаются только для чтения, стереть чужое сообщение он
+                          тоже не может.
+                        </span>
+                      </span>
+                    </label>
+
                     {/* Ссылка на ОТДЕЛЬНУЮ страницу, а не «весь проект или ничего». */}
                     <div className="flex flex-col gap-2 mb-5">
                       {[['locations', 'Объекты'], ['gallery', 'Референсы'], ['board', 'Все доски'],
                         ['scenes', 'Сцены'], ['table', 'КПП'], ['docs', 'Экспликации'],
                         ['all', 'Весь проект']].map(([scope, label]) => {
-                        const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId);
+                        const link = location.origin + location.pathname + '?view=' + scope + '&room=' + encodeURIComponent(appId) + (shareChat ? '&chat=1' : '');
                         return (
                           <div key={scope} className="flex items-center gap-2">
                             <span className="text-xs text-zinc-300 w-32 shrink-0">{label}</span>
@@ -19314,7 +19438,8 @@
                     <div className="flex flex-col gap-2 mb-5">
                       {sortedBoards.map(b => {
                         const link = location.origin + location.pathname + '?view=board&board='
-                                   + encodeURIComponent(b.id) + '&room=' + encodeURIComponent(appId);
+                                   + encodeURIComponent(b.id) + '&room=' + encodeURIComponent(appId)
+                                   + (shareChat ? '&chat=1' : '');
                         return (
                           <div key={b.id} className="flex items-center gap-2">
                             <span className="text-xs text-zinc-300 truncate" style={{ minWidth: 0, flex: 1 }}>{b.title}</span>
