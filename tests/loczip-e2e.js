@@ -27,6 +27,7 @@ try { playwright = require('playwright'); }
 catch (e) { playwright = require(execSync('npm root -g').toString().trim() + '/playwright'); }
 const server = spawn('python3', ['-m', 'http.server', PORT, '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
 let bad = 0;
+let dbxCalls = [];
 const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ? ' — ' + d : '')); if (!c) bad++; };
 
 // Крошечный настоящий jpeg 1×1: превью в проекте.
@@ -37,6 +38,7 @@ const PREVIEW = 'data:image/jpeg;base64,' + TINY;
 const PREVIEW_BYTES = Buffer.from(TINY, 'base64').length;
 const BIG = 50000;                                   // «оригинал из облака»
 const CLOUD_OK = 'https://www.dropbox.com/scl/fi/aaa/snimok.jpg?raw=1';
+const DBX_API = 'https://content.dropboxapi.com/2/files/download';
 const CLOUD_DEAD = 'https://www.dropbox.com/scl/fi/bbb/net.jpg?raw=1';
 
 // Что УЖЕ лежит в комнате. Объект с косой чертой в названии — нарочно:
@@ -83,6 +85,9 @@ const readZip = (file) => JSON.parse(execSync(`python3 ${PY} ${file}`).toString(
       const u = route.request().url();
       // «Оригинал в облаке»: один адрес отдаёт большой файл, второй мёртв —
       // на нём и проверяется откат к превью.
+      // Метод Dropbox с ключом — то, чем оригинал берут у СВОЕГО проекта.
+      if (u === DBX_API) { dbxCalls.push(JSON.parse(route.request().headers()['dropbox-api-arg'] || '{}').path || ''); 
+                           return route.fulfill({ status: 200, contentType: 'image/jpeg', body: Buffer.alloc(BIG, 9) }); }
       if (u === CLOUD_OK) return route.fulfill({ status: 200, contentType: 'image/jpeg', body: Buffer.alloc(BIG, 7) });
       if (u === CLOUD_DEAD) return route.fulfill({ status: 404, body: 'нет такого файла' });
       if (/firestore|firebase|googleapis|gstatic|nominatim|dropbox|yandex/.test(u)) return route.abort();
@@ -213,6 +218,48 @@ const readZip = (file) => JSON.parse(execSync(`python3 ${PY} ${file}`).toString(
   await po.waitForTimeout(1000);
   const own = await po.evaluate(hits, 'Все фото архивом');
   ok('у хозяина проекта кнопка тоже есть', own.found && own.hit, JSON.stringify(own));
+
+  // ---------- 5. СВОЙ DROPBOX: оригинал берётся методом с ключом
+  // Публичную ссылку браузер чужой странице читать не даёт, и архив
+  // выходил целиком из превью — ровно эта беда тут и проверяется.
+  dbxCalls = [];
+  const ctxD = await mkCtx(1440, 900);
+  await ctxD.addInitScript(`
+    localStorage.setItem('cf_user_name', 'Хозяин');
+    localStorage.setItem('cf_cloud', JSON.stringify({ provider: 'dropbox', token: 'tok-1', expires: Date.now() + 3600000, folder: 'CineFlow' }));
+  `);
+  const pd = await ctxD.newPage();
+  await open(pd, `?room=${ROOM}`);
+  await pd.evaluate(() => { const b = document.querySelector('.cf-navtab[title="Объекты"]'); if (b) b.click(); });
+  await pd.waitForTimeout(1000);
+  const dlD = pd.waitForEvent('download', { timeout: 120000 });
+  await pd.evaluate(() => [...document.querySelectorAll('button')].find(x => /Все фото архивом/.test(x.textContent)).click());
+  const fileD = path.join(OUT, 'dbx.zip');
+  await (await dlD).saveAs(fileD);
+  const zD = readZip(fileD);
+  ok('с ключом Dropbox спрошен его метод, а не публичная ссылка',
+     dbxCalls.length === 2 && dbxCalls.indexOf('/CineFlow/ref-2.jpg') >= 0, JSON.stringify(dbxCalls));
+  const bigs = zD.items.filter(i => i.size === BIG).length;
+  ok('оба кадра с облаком легли оригиналами, а не превью', zD.bad === null && bigs === 2,
+     JSON.stringify(zD.items.map(i => i.name + ':' + i.size)));
+  const saidD = await pd.evaluate(() => (document.querySelector('[data-cf="toast"]') || {}).textContent || '');
+  ok('полоска говорит, что оригиналы пришли', /в полном размере|оригиналы из облака/.test(saidD), saidD);
+
+  // ---------- 6. ОРИГИНАЛОВ НЕТ ВОВСЕ — говорим это прямо, а не «превью»
+  const ctxN = await mkCtx(1440, 900);
+  await ctxN.addInitScript(() => {
+    // Те же объекты, но ни у одного кадра нет облачного оригинала.
+    const st = window.__cfStore;
+    Object.values(st.references).forEach(r => { delete r.full; delete r.cloud; });
+  });
+  const pn = await ctxN.newPage();
+  await open(pn, `?view=locations&room=${ROOM}`);
+  const dlN = pn.waitForEvent('download', { timeout: 120000 });
+  await pn.evaluate(() => [...document.querySelectorAll('button')].find(x => /Все фото архивом/.test(x.textContent)).click());
+  await (await dlN).saveAs(path.join(OUT, 'nofull.zip'));
+  const saidN = await pn.evaluate(() => (document.querySelector('[data-cf="toast"]') || {}).textContent || '');
+  ok('без облака полоска называет причину, а не просто «превью»',
+     /1440/.test(saidN) && !/облако не отдало/.test(saidN), saidN);
 
   await browser.close();
   server.kill();

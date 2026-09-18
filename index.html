@@ -13139,19 +13139,50 @@
             // Без связи в облако не ходим вовсе — берём превью из проекта.
             // Оно там и лежит ради площадки, где интернета нет.
             const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-            let done = 0, fromCloud = 0, fromThumb = 0, streak = 0, next = 0, cut = false;
+            // Сколько кадров вообще ИМЕЮТ оригинал в облаке. Без этого
+            // числа нельзя отличить «облако не отдало» от «оригиналов
+            // нет вовсе», а человек видит один и тот же мелкий файл
+            // и думает, что архив сломан.
+            const withFull = items.filter(x => x.r.full).length;
+            const cfg = loadCloudCfg();
+            // КЛЮЧ DROPBOX СПРАШИВАЕМ ОДИН РАЗ ДО ЦИКЛА — иначе четыре
+            // одновременных запроса подняли бы четыре обновления ключа.
+            // То же правило, что в печати.
+            let token = '';
+            if (!offline && withFull && cfg.provider === 'dropbox') {
+              try { token = await dropboxAccess(cfg); } catch (e) { token = ''; }
+            }
+            let done = 0, fromCloud = 0, fromThumb = 0, refused = 0, streak = 0, next = 0, cut = false;
             // Оригинал из облака, а не сойдёт ли превью: архив забирают,
             // чтобы работать с кадрами дальше, и 1280 точек для этого мало.
             const grab = async (r) => {
+              const cl = r.cloud || {};
               if (!offline && r.full && streak < ZIP_PARALLEL) {
                 try {
-                  const direct = await cloudDirectUrl(r);
-                  if (direct && direct !== r.url) {
-                    const res = await fetch(direct);
+                  // У СВОЕГО Dropbox оригинал берём его же методом с ключом,
+                  // а НЕ по публичной ссылке. Публичную ссылку браузер
+                  // чужой странице читать не даёт (тот же отказ, из-за
+                  // которого панорама откатывается к превью, — там про это
+                  // написано прямо), и архив выходил целиком из превью.
+                  // content.dropboxapi.com браузеру отвечать разрешает:
+                  // на нём же держится копия под лист в печати.
+                  if (token && cl.provider === 'dropbox' && cl.path) {
+                    const res = await cloudFetch('https://content.dropboxapi.com/2/files/download', {
+                      method: 'POST',
+                      headers: { Authorization: 'Bearer ' + token, 'Dropbox-API-Arg': asciiJSON({ path: cl.path }) }
+                    });
                     if (res.ok) { streak = 0; return { blob: await res.blob(), cloud: true }; }
+                  } else {
+                    // У Яндекса и Nextcloud публичный адрес читается
+                    // и без ключа — этим же путём идёт гость по ссылке.
+                    const direct = await cloudDirectUrl(r);
+                    if (direct && direct !== r.url) {
+                      const res = await fetch(direct);
+                      if (res.ok) { streak = 0; return { blob: await res.blob(), cloud: true }; }
+                    }
                   }
                 } catch (e) { console.warn('Архив: облако не отдало оригинал', e); }
-                streak++;
+                streak++; refused++;
               }
               // Не ответило облако — молча берём превью: архив должен
               // собраться всегда, пусть и мягче. Про исход говорит полоска.
@@ -13189,8 +13220,16 @@
               // и чего в архиве нет. «Готово» без подробностей оставляет
               // человека гадать, полный ли у него архив.
               const parts = [zip.count + ' ' + plur(zip.count, 'фотография', 'фотографии', 'фотографий')];
+              // РАЗНЫЕ ПРИЧИНЫ — РАЗНЫЕ СЛОВА. «Превью» без объяснения
+              // человек читает как поломку архива, а причин три, и делать
+              // с ними надо разное: оригиналов нет в проекте вовсе ·
+              // облако не отдало их браузеру · часть пришла, часть нет.
               if (fromCloud && fromThumb) parts.push(fromCloud + ' в полном размере, ' + fromThumb + ' превью');
-              else if (fromThumb && !fromCloud) parts.push('превью из проекта');
+              else if (fromCloud && !fromThumb) parts.push('оригиналы из облака');
+              else if (!withFull) parts.push(cfg.provider
+                ? 'оригиналов в облаке нет — это кадры, загруженные до него; в проекте лежат копии 1440 px'
+                : 'в полном размере их нет нигде: хранилище фото не подключено, проект держит копии 1440 px');
+              else if (refused) parts.push('облако не отдало оригиналы браузеру — архив из превью');
               if (clips) parts.push('ролики не вошли — их скачивают по одному');
               if (cut) parts.push('дальше архив не влез: остальное скачайте по объектам');
               if (zipStop.current) parts.push('остановлено');
