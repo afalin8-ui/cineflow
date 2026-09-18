@@ -28,81 +28,9 @@ const server = spawn('python3', ['-m', 'http.server', PORT, '--bind', '127.0.0.1
 let bad = 0;
 const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ? ' — ' + d : '')); if (!c) bad++; };
 
-// Поддельное облако. Сделано ровно под то, чем пользуется приложение:
-// коллекции комнаты, подписки и запись документа. Всё, что уезжает,
-// ложится в журнал `__cfWrites` — по нему и судим о двери.
-const FAKE_CLOUD = () => {
-  const store = {}, subs = {}, dsubs = {};
-  window.__cfStore = store;
-  window.__cfWrites = [];
-  const clone = (v) => JSON.parse(JSON.stringify(v));
-  const snapOf = (coll) => {
-    const obj = store[coll] || {}; const ids = Object.keys(obj);
-    return {
-      empty: ids.length === 0, size: ids.length,
-      forEach: (f) => ids.forEach(id => f({ id, data: () => obj[id] })),
-      docChanges: () => ids.map(id => ({ type: 'added', doc: { id, data: () => obj[id] } }))
-    };
-  };
-  const dsnap = (coll, id) => ({ id, exists: !!((store[coll] || {})[id]), data: () => (store[coll] || {})[id] });
-  const emit = (coll, id) => {
-    (subs[coll] || []).forEach(cb => { try { cb(snapOf(coll)); } catch (e) {} });
-    ((dsubs[coll] || {})[id] || []).forEach(cb => { try { cb(dsnap(coll, id)); } catch (e) {} });
-  };
-  const put = (coll, id, data) => {
-    window.__cfWrites.push({ coll, id });
-    (store[coll] = store[coll] || {})[id] = clone(data);
-    emit(coll, id);
-  };
-  const docRef = (coll, id) => ({
-    id,
-    get: () => Promise.resolve(dsnap(coll, id)),
-    set: (data) => { put(coll, id, data); return Promise.resolve(); },
-    update: (data) => { put(coll, id, data); return Promise.resolve(); },
-    delete: () => { window.__cfWrites.push({ coll, id, del: true }); if (store[coll]) delete store[coll][id]; emit(coll, id); return Promise.resolve(); },
-    onSnapshot: (cb) => {
-      const m = dsubs[coll] = dsubs[coll] || {}; (m[id] = m[id] || []).push(cb);
-      setTimeout(() => { try { cb(dsnap(coll, id)); } catch (e) {} }, 30);
-      return () => {};
-    },
-    collection: (name) => collRef(name)
-  });
-  const collRef = (name) => ({
-    doc: (id) => docRef(name, id),
-    get: () => Promise.resolve(snapOf(name)),
-    onSnapshot: (cb) => {
-      (subs[name] = subs[name] || []).push(cb);
-      setTimeout(() => { try { cb(snapOf(name)); } catch (e) {} }, 30);
-      return () => {};
-    }
-  });
-  const db = {
-    collection: collRef,
-    settings: () => {},
-    enablePersistence: () => Promise.resolve(),
-    disableNetwork: () => Promise.resolve(),
-    enableNetwork: () => Promise.resolve(),
-    terminate: () => Promise.resolve(),
-    clearPersistence: () => Promise.resolve(),
-    batch: () => {
-      const ops = [];
-      return { set: (r, d) => ops.push(() => r.set(d)), delete: (r) => ops.push(() => r.delete()),
-               commit: () => { ops.forEach(f => f()); return Promise.resolve(); } };
-    }
-  };
-  const user = { uid: 'guest-anon' };
-  const fb = {
-    apps: [],
-    initializeApp: () => { fb.apps.push({}); },
-    firestore: () => db,
-    auth: () => ({
-      currentUser: user,
-      signInAnonymously: () => Promise.resolve({ user }),
-      onAuthStateChanged: (cb) => { setTimeout(() => cb(user), 10); return () => {}; }
-    })
-  };
-  window.firebase = fb;
-};
+// Поддельное облако — общее для всех проверок (tests/fake-cloud.js):
+// вторая копия разъехалась бы с первой при первой же правке.
+const { FAKE_CLOUD } = require('./fake-cloud.js');
 
 // Настоящее нажатие: браузер бьёт в ту точку экрана, куда попал бы палец.
 const hits = (sel) => {
@@ -146,7 +74,7 @@ const typeInto = ([sel, text]) => {
         if (re.test(u)) return route.fulfill({ body: fs.readFileSync(path.join(LIBS, f)), contentType: 'application/javascript' });
       route.continue();
     });
-    await ctx.addInitScript(FAKE_CLOUD);
+    await ctx.addInitScript(FAKE_CLOUD, {});
     if (name) await ctx.addInitScript(`localStorage.setItem('cf_user_name', ${JSON.stringify(name)}); localStorage.setItem('cf_user_role', 'Режиссер');`);
     return ctx;
   };
@@ -300,7 +228,7 @@ const typeInto = ([sel, text]) => {
       if (re.test(u)) return route.fulfill({ body: fs.readFileSync(path.join(LIBS, f)), contentType: 'application/javascript' });
     route.continue();
   });
-  await ctxC.addInitScript(FAKE_CLOUD);
+  await ctxC.addInitScript(FAKE_CLOUD, {});
   await ctxC.addInitScript(`localStorage.setItem('cf_user_name', 'Хозяин'); localStorage.setItem('cf_user_role', 'Оператор-постановщик');`);
   const pc = await ctxC.newPage();
   await open(pc, `?room=${ROOM}`);

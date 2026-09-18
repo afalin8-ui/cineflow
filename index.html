@@ -2035,6 +2035,121 @@
           return new Blob([arr], { type: mime });
         };
 
+        // =====================================================================
+        // АРХИВ ZIP — СВОИМИ СИЛАМИ, БЕЗ БИБЛИОТЕКИ
+        // =====================================================================
+        // Чужую библиотеку тут подключать незачем, и это не экономия ради
+        // экономии. В архив идут ФОТОГРАФИИ, то есть jpeg — уже сжатое:
+        // deflate выигрывает на них проценты, а стоит сотню килобайт
+        // чужого кода, ещё одной строки в LIBS у service worker'а и работы
+        // процессора на планшете — на шести десятках кадров это минуты
+        // ожидания ради процента места. Поэтому складываем БЕЗ СЖАТИЯ
+        // (метод 0, «store»): полторы сотни строк, зато архив собирается
+        // офлайн, из превью, и открывается любым распаковщиком.
+        //
+        // Имена пишем в UTF-8 и поднимаем бит 11 в общих флагах. Без него
+        // Windows читает «Квартира на Горской» кракозябрами — а имя папки
+        // объекта это ровно то, ради чего архив и собирают.
+        const CRC32_TABLE = (() => {
+          const t = new Uint32Array(256);
+          for (let i = 0; i < 256; i++) {
+            let c = i;
+            for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+            t[i] = c >>> 0;
+          }
+          return t;
+        })();
+        const crc32of = (bytes) => {
+          let c = 0xFFFFFFFF;
+          for (let i = 0; i < bytes.length; i++) c = CRC32_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+          return (c ^ 0xFFFFFFFF) >>> 0;
+        };
+        // Обычный ZIP (без ZIP64) держит 4 ГБ и 65535 записей, и на подходе
+        // к этим числам архив перестаёт быть архивом. Свой предел ставим
+        // ниже: столько браузер всё равно не соберёт в памяти, а файл,
+        // собранный наполовину, хуже честного «дальше не влезло» —
+        // о нём говорит полоска, и остальное скачивают по объектам.
+        const ZIP_MAX = 2 * 1024 * 1024 * 1024;
+        const ZIP_MAX_FILES = 65000;
+        // Имя внутри архива. Кириллицу оставляем (её несёт флаг UTF-8),
+        // убираем только то, что не может стоять в имени файла, — иначе
+        // распаковщик либо ругнётся, либо молча создаст лишнюю папку.
+        const zipSafeName = (s, fallback) => String(s || '')
+          .replace(/[\\/:*?"<>|]/g, ' ')
+          .replace(/[\u0000-\u001f]/g, '')
+          .replace(/\s+/g, ' ').trim().replace(/^\.+/, '').slice(0, 60) || fallback;
+        const zipBuilder = () => {
+          const enc = new TextEncoder();
+          const parts = [];     // сам файл кусками: заголовок, данные, заголовок…
+          const dir = [];       // записи центрального каталога
+          const used = new Set();
+          let at = 0;           // смещение, на котором ляжет следующая запись
+          const now = new Date();
+          const time = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | ((now.getSeconds() >> 1) & 31);
+          const date = (((now.getFullYear() - 1980) & 127) << 9) | (((now.getMonth() + 1) & 15) << 5) | (now.getDate() & 31);
+          // Два файла под одним именем — это один файл у того, кто архив
+          // распакует: второй молча затрёт первый.
+          const freeName = (path) => {
+            if (!used.has(path)) { used.add(path); return path; }
+            const dot = path.lastIndexOf('.');
+            const base = dot > 0 ? path.slice(0, dot) : path;
+            const ext = dot > 0 ? path.slice(dot) : '';
+            for (let i = 2; ; i++) {
+              const p = base + '-' + i + ext;
+              if (!used.has(p)) { used.add(p); return p; }
+            }
+          };
+          return {
+            get size() { return at; },
+            get count() { return dir.length; },
+            fits: (n) => dir.length < ZIP_MAX_FILES && at + n + 4096 < ZIP_MAX,
+            add(path, bytes) {
+              const name = enc.encode(freeName(path));
+              const crc = crc32of(bytes);
+              const head = new DataView(new ArrayBuffer(30));
+              head.setUint32(0, 0x04034b50, true);
+              head.setUint16(4, 20, true);       // нужна версия 2.0
+              head.setUint16(6, 0x0800, true);   // бит 11 — имя в UTF-8
+              head.setUint16(8, 0, true);        // метод 0 — без сжатия
+              head.setUint16(10, time, true);
+              head.setUint16(12, date, true);
+              head.setUint32(14, crc, true);
+              head.setUint32(18, bytes.length, true);
+              head.setUint32(22, bytes.length, true);
+              head.setUint16(26, name.length, true);
+              dir.push({ name, crc, size: bytes.length, at });
+              // Данные кладём Blob-ом, а не типизированным массивом: так
+              // их держит браузер и при нужде уводит на диск, а у нас
+              // в памяти не копится весь архив целиком.
+              parts.push(head.buffer, name, new Blob([bytes]));
+              at += 30 + name.length + bytes.length;
+            },
+            finish() {
+              const start = at;
+              dir.forEach(e => {
+                const c = new DataView(new ArrayBuffer(46));
+                c.setUint32(0, 0x02014b50, true);
+                c.setUint16(4, 20, true); c.setUint16(6, 20, true);
+                c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+                c.setUint16(12, time, true); c.setUint16(14, date, true);
+                c.setUint32(16, e.crc, true);
+                c.setUint32(20, e.size, true); c.setUint32(24, e.size, true);
+                c.setUint16(28, e.name.length, true);
+                c.setUint32(42, e.at, true);
+                parts.push(c.buffer, e.name);
+                at += 46 + e.name.length;
+              });
+              const end = new DataView(new ArrayBuffer(22));
+              end.setUint32(0, 0x06054b50, true);
+              end.setUint16(8, dir.length, true); end.setUint16(10, dir.length, true);
+              end.setUint32(12, at - start, true);
+              end.setUint32(16, start, true);
+              parts.push(end.buffer);
+              return new Blob(parts, { type: 'application/zip' });
+            }
+          };
+        };
+
         // Единая дверь наружу. Возвращает {full, path} либо бросает ошибку.
         // onProgress(sent, total) — необязателен; сегодня его даёт только
         // кусочная загрузка Dropbox, остальные облака шлют файл одним PUT.
@@ -12963,6 +13078,127 @@
           };
           // Фотографии объекта — референсы с его меткой.
           const locationPhotos = (locId) => references.filter(r => r.locationId === locId);
+          // Сколько фотографий лежит по ВСЕМ объектам — число на кнопке
+          // архива. Считаем только те, что числятся за существующим
+          // объектом: иначе кнопка обещала бы кадры, которых в архив
+          // не попадёт (объект удалили, метка у референса осталась).
+          const allLocPhotos = useMemo(() => {
+            const live = new Set(locations.map(l => l.id));
+            return references.filter(r => r.locationId && live.has(r.locationId) && !r.video).length;
+          }, [references, locations]);
+
+          // =================================================================
+          // СКАЧАТЬ ФОТОГРАФИИ ОБЪЕКТОВ ОДНИМ АРХИВОМ
+          // =================================================================
+          // Ссылку «посмотрите объекты» шлют ровно затем, чтобы человек
+          // увидел место, — а забрать эти кадры себе он мог только по
+          // одному, открывая каждый во весь экран и сохраняя вручную.
+          // На шести десятках фотографий это не работа, а наказание.
+          //
+          // Это ЧТЕНИЕ, поэтому кнопка НЕ помечается `cf-edit-only` и живёт
+          // в режиме просмотра: наружу ничего не уходит, проект не меняется.
+          // Правило то же, что у мини-карты доски, выгрузки доски картинкой
+          // и кнопки «Скачать» у ролика.
+          const [zipJob, setZipJob] = useState(null); // {done, total, cut}
+          const zipStop = useRef(false);
+          const ZIP_PARALLEL = 4;
+          // Расширение берём у настоящего имени файла, а если его нет —
+          // у типа пришедшего файла. «photo» без расширения система
+          // не откроет двойным нажатием, и человек решит, что архив битый.
+          const zipExt = (name, mime) => {
+            const dot = String(name || '').lastIndexOf('.');
+            const ext = dot > 0 ? String(name).slice(dot + 1).toLowerCase() : '';
+            if (/^[a-z0-9]{1,5}$/.test(ext)) return ext;
+            return EXT_BY_MIME[String(mime || '').toLowerCase()] || 'jpg';
+          };
+          const downloadLocPhotos = async (list, label) => {
+            if (zipJob) return;
+            // РОЛИКИ В АРХИВ НЕ КЛАДЁМ. Минута 4K весит 400 МБ, и десяток
+            // таких — это гигабайты в память планшета ради «архива фото».
+            // Ролик скачивают по одному, кнопкой в полноэкранном просмотре,
+            // и полоска про это говорит. Тот же гард, что у печати
+            // и у переноса в облако.
+            const items = [];
+            let clips = 0;
+            list.forEach(l => {
+              const folder = zipSafeName(l.name, 'Объект');
+              locationPhotos(l.id).forEach(r => {
+                if (r.video) { clips++; return; }
+                if (!r.full && !String(r.url || '').startsWith('data:')) return;
+                items.push({ r, folder });
+              });
+            });
+            if (!items.length) {
+              showToast(clips ? 'Фотографий тут нет — только ролики, их скачивают по одной'
+                              : 'Фотографий у этих объектов пока нет');
+              return;
+            }
+            zipStop.current = false;
+            setZipJob({ done: 0, total: items.length, cut: false });
+            const zip = zipBuilder();
+            // Без связи в облако не ходим вовсе — берём превью из проекта.
+            // Оно там и лежит ради площадки, где интернета нет.
+            const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+            let done = 0, fromCloud = 0, fromThumb = 0, streak = 0, next = 0, cut = false;
+            // Оригинал из облака, а не сойдёт ли превью: архив забирают,
+            // чтобы работать с кадрами дальше, и 1280 точек для этого мало.
+            const grab = async (r) => {
+              if (!offline && r.full && streak < ZIP_PARALLEL) {
+                try {
+                  const direct = await cloudDirectUrl(r);
+                  if (direct && direct !== r.url) {
+                    const res = await fetch(direct);
+                    if (res.ok) { streak = 0; return { blob: await res.blob(), cloud: true }; }
+                  }
+                } catch (e) { console.warn('Архив: облако не отдало оригинал', e); }
+                streak++;
+              }
+              // Не ответило облако — молча берём превью: архив должен
+              // собраться всегда, пусть и мягче. Про исход говорит полоска.
+              if (String(r.url || '').startsWith('data:')) return { blob: dataUrlToBlob(r.url), cloud: false };
+              return null;
+            };
+            const worker = async () => {
+              while (next < items.length && !zipStop.current && !cut) {
+                const { r, folder } = items[next++];
+                try {
+                  const got = await grab(r);
+                  if (got && got.blob) {
+                    const bytes = new Uint8Array(await got.blob.arrayBuffer());
+                    if (!zip.fits(bytes.length)) { cut = true; break; }
+                    const base = zipSafeName((r.file || r.label || '').replace(/\.[^.]+$/, ''), 'photo');
+                    zip.add(folder + '/' + base + '.' + zipExt(r.file || r.label, got.blob.type), bytes);
+                    if (got.cloud) fromCloud++; else fromThumb++;
+                  }
+                } catch (e) { console.warn('Архив: кадр пропущен', e); }
+                setZipJob({ done: ++done, total: items.length, cut });
+              }
+            };
+            try {
+              await Promise.all(Array.from({ length: Math.min(ZIP_PARALLEL, items.length) }, worker));
+              if (!zip.count) { showToast('Собрать архив не вышло — ни одной фотографии не пришло'); return; }
+              const day = new Date().toISOString().slice(0, 10);
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(zip.finish());
+              // Имя несёт, ЧТО внутри: пять архивов «CineFlow_фото» в папке
+              // загрузок потом не различить.
+              a.download = 'CineFlow_' + zipSafeName(label, 'объекты') + '_фото_' + day + '.zip';
+              document.body.appendChild(a); a.click();
+              setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+              // Говорим ровно то, что случилось: сколько кадров, откуда они
+              // и чего в архиве нет. «Готово» без подробностей оставляет
+              // человека гадать, полный ли у него архив.
+              const parts = [zip.count + ' ' + plur(zip.count, 'фотография', 'фотографии', 'фотографий')];
+              if (fromCloud && fromThumb) parts.push(fromCloud + ' в полном размере, ' + fromThumb + ' превью');
+              else if (fromThumb && !fromCloud) parts.push('превью из проекта');
+              if (clips) parts.push('ролики не вошли — их скачивают по одному');
+              if (cut) parts.push('дальше архив не влез: остальное скачайте по объектам');
+              if (zipStop.current) parts.push('остановлено');
+              showToast('Архив: ' + parts.join(' · '));
+            } finally {
+              setZipJob(null);
+            }
+          };
           // Отвязать — не то же, что удалить: это правило всего приложения.
           // Крестик у фотографии в объекте снимает метку, а сама картинка
           // остаётся в галерее.
@@ -14467,6 +14703,23 @@
               {/* Возврат только что удалённого. Держится 15 секунд — этого
                   хватает, чтобы заметить промах, и не мешает дальше работать.
                   Стоит ВЫШЕ обычных сообщений, чтобы они не перекрывались. */}
+              {/* СБОРКА АРХИВА — полоской внизу, как «Вернуть» у удаления.
+                  Шесть десятков фотографий из облака идут минуту, и
+                  молчащая кнопка читается как «ничего не произошло».
+                  Остановить обязательно можно: на мобильной связи человек
+                  должен уметь передумать, не перезагружая страницу.
+                  Про вставку снизу помним — иначе на телефоне полоска
+                  ложится под таб-бар. */}
+              {zipJob && (
+                <div className="fixed left-1/2 -translate-x-1/2 glass-panel rounded-full z-[401] flex items-center gap-3 pl-5 pr-2 py-2 border-t border-white/10"
+                     style={{ bottom: `calc(${toast ? 76 : 24}px + var(--sab)${isPhone ? ' + var(--tabbar-h)' : ''})`, maxWidth: 'calc(100vw - 32px)' }}>
+                  <span className="text-sm text-zinc-300 truncate">
+                    Собираю архив: {zipJob.done} из {zipJob.total}…
+                  </span>
+                  <button onClick={() => { zipStop.current = true; }}
+                          className="shrink-0 text-xs text-zinc-400 hover:text-white px-3 py-1.5 rounded-full border border-[var(--border)]">Остановить</button>
+                </div>
+              )}
               {undoBin && (
                 <div className="fixed left-1/2 -translate-x-1/2 glass-panel rounded-full z-[401] flex items-center gap-3 pl-5 pr-2 py-2 border-t border-white/10"
                      style={{ bottom: toast ? 76 : 24, maxWidth: 'calc(100vw - 32px)' }}>
@@ -16265,6 +16518,22 @@
                                         className="w-full text-center rounded-lg"
                                         style={{ border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 'var(--fs-2)', minHeight: 'var(--tap)' }}>Отчёт по объектам (PDF)</button>
                               )}
+                              {/* АРХИВ СО ВСЕМИ ФОТОГРАФИЯМИ. Пометки
+                                  `cf-edit-only` на ней НЕТ намеренно: скачать —
+                                  это чтение, и тому, кому прислали ссылку
+                                  «посмотрите объекты», оно нужно больше, чем
+                                  хозяину проекта. Число на кнопке говорит,
+                                  сколько кадров поедет: «скачать всё» вслепую
+                                  на мобильной связи — плохой размен. */}
+                              {allLocPhotos > 0 && (
+                                <button onClick={() => downloadLocPhotos(sortedLocations, 'объекты')}
+                                        disabled={!!zipJob}
+                                        title="Все фотографии со всех объектов одним ZIP, по папкам с названиями объектов"
+                                        className="w-full text-center rounded-lg disabled:opacity-50"
+                                        style={{ border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 'var(--fs-2)', minHeight: 'var(--tap)' }}>
+                                  ⬇ Все фото архивом · {allLocPhotos}
+                                </button>
+                              )}
                             </div>
                           </div>
                         </aside>
@@ -16343,6 +16612,11 @@
                                         объекты в куче, и выгрузить один было
                                         нечем. Две кнопки — два разных ответа. */}
                                     <button onClick={() => { setLocMenu(false); setPrintLocation(l.id); requestPrint('location', () => preparePrintPhotos(locationPhotos(l.id))); }}><Icons.Print /> Экспорт объекта в PDF</button>
+                                    {photos.length > 0 && (
+                                      <button onClick={() => { setLocMenu(false); downloadLocPhotos([l], l.name); }} disabled={!!zipJob}>
+                                        ⬇ Скачать фото объекта ({photos.length})
+                                      </button>
+                                    )}
                                     <hr />
                                     <button className="cf-edit-only" onClick={() => { setLocMenu(false); deleteLocation(l.id); }} style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить объект</button>
                                   </div>
