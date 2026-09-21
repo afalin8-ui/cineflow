@@ -583,6 +583,40 @@
             #print-area { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 24px; background: white !important; color: black !important; }
             #print-area, #print-area * { visibility: visible !important; }
             #print-area img { max-width: 100%; }
+            /* ПЕЧАТНЫЙ ДОКУМЕНТ — ОДНА ШАПКА НА ВСЕ ЭКСПОРТЫ. Шесть
+               режимов печати описывали её каждый по-своему прямо в разметке,
+               и «22pt тут, 20pt там» расходились при первой же правке.
+               Надзаголовок · название · линейка · мета: бумаги одного
+               проекта должны читаться серией, а не шестью разными листами.
+               Размеры в ПУНКТАХ: лист меряется в них, а не в точках экрана. */
+            .print-head { border-bottom: 1px solid #222; padding-bottom: 7pt; margin: 0 0 15pt; }
+            .print-eyebrow { font-size: 8pt; letter-spacing: .14em; text-transform: uppercase;
+                             color: #777; margin: 0 0 4pt; }
+            .print-title { font-size: 21pt; font-weight: 800; letter-spacing: -.01em; line-height: 1.12; margin: 0; }
+            .print-meta { font-size: 9.5pt; color: #555; margin: 5pt 0 0; }
+            /* ГАЙД НА БУМАГЕ ЧИТАЮТ, и читают чаще всего на площадке.
+               Строка во всю ширину листа — это сто знаков, глаз на такой
+               теряет начало следующей; 165 мм дают привычные восемьдесят.
+               Заголовок раздела не остаётся внизу страницы без своего
+               текста (page-break-after), строка-подводка — без своего
+               списка (:has; где его не понимают, правило просто
+               не действует, как content-visibility в галерее). */
+            .print-doc { max-width: 165mm; }
+            .print-doc .print-h { font-size: 12.5pt; font-weight: 700; letter-spacing: .01em;
+                                  margin: 16pt 0 5pt; page-break-after: avoid; }
+            .print-doc .print-h:first-child { margin-top: 0; }
+            .print-doc .print-p { font-size: 11.5pt; line-height: 1.6; margin: 0 0 9pt;
+                                  white-space: pre-line; orphans: 2; widows: 2; }
+            /* Маркер и нумерацию задаём ЯВНО: preflight у Tailwind снимает
+               у ul/ol и список, и отступ, — а на отдельной странице печати
+               Tailwind нет вовсе, и там список рисовался нормально. Ровно
+               та разница между двумя местами, из-за которой правила тут
+               и обязаны совпадать. */
+            .print-doc .print-list { font-size: 11.5pt; line-height: 1.6; margin: 0 0 9pt; padding-left: 17pt; }
+            .print-doc ul.print-list { list-style: disc; }
+            .print-doc ol.print-list { list-style: decimal; }
+            .print-doc .print-list li { margin: 0 0 3pt; orphans: 2; widows: 2; }
+            .print-doc .print-p:has(+ .print-list) { margin-bottom: 5pt; page-break-after: avoid; }
             .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
             /* Объект НЕЛЬЗЯ держать на одной странице: у него бывает шесть
                десятков фотографий, и «не разрывать» на блоке выше страницы
@@ -2304,6 +2338,59 @@
           return many;
         };
         const hhmm = (d) => d ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+        // ГАЙД НА ПЕЧАТИ — ДОКУМЕНТ, А НЕ ПРОСТЫНЯ. Печатался он одним
+        // абзацем с сохранением переносов: заголовки разделов, списки
+        // и обычный текст шли подряд одним кеглем, и на листе не за что
+        // было зацепиться глазу — а гайд именно ЧИТАЮТ, чаще всего уже
+        // на площадке, стоя и второпях.
+        //
+        // Разбираем САМ ТЕКСТ, а не заводим ему разметку: пишут гайды
+        // в обычном поле, и ничего, кроме переносов строки, там нет —
+        // завести свой формат значило бы переучивать человека и хранить
+        // вторую правду о том же тексте. Правило узкое и предсказуемое,
+        // и НИ ОДНА строка не пропадает: что не распознано, остаётся
+        // абзацем ровно как было.
+        const DOC_BULLET = /^\s*[-–—•*+]\s+/;
+        const DOC_NUM = /^\s*\d{1,2}[.)]\s+/;
+        // Заголовок — короткая строка БЕЗ строчных букв («СВЕТ НА
+        // ИНТЕРЬЕРАХ») или помеченная решёткой. Знак препинания в конце —
+        // признак обычной фразы: «ЭТО ВАЖНО.» заголовком не считаем,
+        // иначе гайд, набранный прописными целиком, стал бы лестницей
+        // из заголовков без единого абзаца.
+        const docHead = (line) => {
+          const t = line.trim();
+          if (/^#{1,3}\s+\S/.test(t)) return t.replace(/^#{1,3}\s+/, '');
+          if (t.length < 2 || t.length > 64) return null;
+          if (DOC_BULLET.test(line) || DOC_NUM.test(line)) return null;
+          if (/[.,;:!?]$/.test(t)) return null;
+          if (/\p{Ll}/u.test(t)) return null;
+          if (!/\p{Lu}/u.test(t)) return null;
+          return t;
+        };
+        const docBlocks = (text) => {
+          const out = [];
+          let para = [];
+          const flush = () => { if (para.length) { out.push({ k: 'p', text: para.join('\n') }); para = []; } };
+          for (const line of String(text || '').split('\n')) {
+            if (!line.trim()) { flush(); continue; }
+            const head = docHead(line);
+            if (head) { flush(); out.push({ k: 'h', text: head }); continue; }
+            const bullet = DOC_BULLET.test(line), num = DOC_NUM.test(line);
+            if (bullet || num) {
+              flush();
+              const kind = bullet ? 'ul' : 'ol';
+              const item = line.replace(bullet ? DOC_BULLET : DOC_NUM, '').trim();
+              const last = out[out.length - 1];
+              if (last && last.k === kind) last.items.push(item);
+              else out.push({ k: kind, items: [item] });
+              continue;
+            }
+            para.push(line);
+          }
+          flush();
+          return out;
+        };
 
         // ГДЕ СОЛНЦЕ ПРЯМО СЕЙЧАС — высота над горизонтом и азимут
         // (0° = север, 90° = восток). Восход и закат из sunTimes отвечают
@@ -7239,6 +7326,40 @@
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
                    color: #111; background: #fff; margin: 0; padding: 18px; }
             img { max-width: 100%; }
+            /* ПЕЧАТНЫЙ ДОКУМЕНТ — ОДНА ШАПКА НА ВСЕ ЭКСПОРТЫ. Шесть
+               режимов печати описывали её каждый по-своему прямо в разметке,
+               и «22pt тут, 20pt там» расходились при первой же правке.
+               Надзаголовок · название · линейка · мета: бумаги одного
+               проекта должны читаться серией, а не шестью разными листами.
+               Размеры в ПУНКТАХ: лист меряется в них, а не в точках экрана. */
+            .print-head { border-bottom: 1px solid #222; padding-bottom: 7pt; margin: 0 0 15pt; }
+            .print-eyebrow { font-size: 8pt; letter-spacing: .14em; text-transform: uppercase;
+                             color: #777; margin: 0 0 4pt; }
+            .print-title { font-size: 21pt; font-weight: 800; letter-spacing: -.01em; line-height: 1.12; margin: 0; }
+            .print-meta { font-size: 9.5pt; color: #555; margin: 5pt 0 0; }
+            /* ГАЙД НА БУМАГЕ ЧИТАЮТ, и читают чаще всего на площадке.
+               Строка во всю ширину листа — это сто знаков, глаз на такой
+               теряет начало следующей; 165 мм дают привычные восемьдесят.
+               Заголовок раздела не остаётся внизу страницы без своего
+               текста (page-break-after), строка-подводка — без своего
+               списка (:has; где его не понимают, правило просто
+               не действует, как content-visibility в галерее). */
+            .print-doc { max-width: 165mm; }
+            .print-doc .print-h { font-size: 12.5pt; font-weight: 700; letter-spacing: .01em;
+                                  margin: 16pt 0 5pt; page-break-after: avoid; }
+            .print-doc .print-h:first-child { margin-top: 0; }
+            .print-doc .print-p { font-size: 11.5pt; line-height: 1.6; margin: 0 0 9pt;
+                                  white-space: pre-line; orphans: 2; widows: 2; }
+            /* Маркер и нумерацию задаём ЯВНО: preflight у Tailwind снимает
+               у ul/ol и список, и отступ, — а на отдельной странице печати
+               Tailwind нет вовсе, и там список рисовался нормально. Ровно
+               та разница между двумя местами, из-за которой правила тут
+               и обязаны совпадать. */
+            .print-doc .print-list { font-size: 11.5pt; line-height: 1.6; margin: 0 0 9pt; padding-left: 17pt; }
+            .print-doc ul.print-list { list-style: disc; }
+            .print-doc ol.print-list { list-style: decimal; }
+            .print-doc .print-list li { margin: 0 0 3pt; orphans: 2; widows: 2; }
+            .print-doc .print-p:has(+ .print-list) { margin-bottom: 5pt; page-break-after: avoid; }
             .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
             /* Объект НЕЛЬЗЯ держать на одной странице: у него бывает шесть
                десятков фотографий, и «не разрывать» на блоке выше страницы
@@ -7250,7 +7371,7 @@
             /* Числа здесь НЕ переводим в токены: PRINT_PAGE_CSS уезжает
                в отдельное окно печати, где нашего :root нет вовсе. */
             .cf-hint { background: #fff4e5; border: 1px solid #f0c992; color: #6b4a12;
-                       border-radius: var(--r-sm); padding: 10px 12px; margin: 0 0 16px;
+                       border-radius: 8px; padding: 10px 12px; margin: 0 0 16px;
                        font-size: 13px; line-height: 1.5; }
             @media print { .cf-hint { display: none !important; } body { padding: 0; } }`;
 
@@ -20221,11 +20342,24 @@
                 {printMode === 'doc' && (() => {
                   const d = docs.find(x => x.id === activeDocId);
                   if (!d) return null;
+                  // Текст гайда разбирается на заголовки, списки и абзацы
+                  // (docBlocks): сплошной простынёй его читать на площадке
+                  // нечем. Что не распознано — остаётся абзацем как было.
+                  const blocks = docBlocks(d.content);
                   return (
-                    <div>
-                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{d.title || 'Гайд'}</h1>
-                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>Операторский гайд · CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
-                      <p style={{fontSize: '12pt', lineHeight: 1.55, whiteSpace: 'pre-wrap', margin: 0}}>{d.content || 'Документ пуст.'}</p>
+                    <div className="print-doc">
+                      <div className="print-head">
+                        <p className="print-eyebrow">Операторский гайд</p>
+                        <h1 className="print-title">{d.title || 'Гайд'}</h1>
+                        <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      </div>
+                      {blocks.length === 0 && <p className="print-p">Документ пуст.</p>}
+                      {blocks.map((b, i) => (
+                        b.k === 'h' ? <h2 key={i} className="print-h">{b.text}</h2>
+                        : b.k === 'ul' ? <ul key={i} className="print-list">{b.items.map((t, j) => <li key={j}>{t}</li>)}</ul>
+                        : b.k === 'ol' ? <ol key={i} className="print-list">{b.items.map((t, j) => <li key={j}>{t}</li>)}</ol>
+                        : <p key={i} className="print-p">{b.text}</p>
+                      ))}
                     </div>
                   );
                 })()}
@@ -20236,8 +20370,11 @@
                   const linked = scenes.filter(s => s.lightSchemeId === sch.id);
                   return (
                     <div>
-                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{sch.title || 'Схема света'}</h1>
-                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Схема света · CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      <div className="print-head">
+                        <p className="print-eyebrow">Схема света</p>
+                        <h1 className="print-title">{sch.title || 'Схема света'}</h1>
+                        <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                      </div>
                       {sch.preview
                         ? <img src={sch.preview} style={{width: '100%', border: '1px solid #ccc'}} />
                         : <p style={{fontSize: '11pt', color: '#777'}}>Схема ещё не сохранена в редакторе — нечего печатать.</p>}
@@ -20267,8 +20404,11 @@
 
                 {printMode === 'gear' && (
                   <div>
-                    <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>Список техники</h1>
-                    <p style={{fontSize: '10pt', color: '#555', margin: '0 0 6pt'}}>CineFlow · {new Date().toLocaleDateString('ru-RU')} · сцен в проекте: {scenes.length}</p>
+                    <div className="print-head">
+                      <p className="print-eyebrow">Техника и свет</p>
+                      <h1 className="print-title">Список техники</h1>
+                      <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')} · сцен в проекте: {scenes.length}</p>
+                    </div>
                     <p style={{fontSize: '9pt', color: '#777', margin: '0 0 16pt'}}>
                       «Нужно» — максимум за одну сцену, то есть сколько единиц требуется одновременно.
                     </p>
@@ -20308,10 +20448,11 @@
                     Фотографии крупные — по ним и решают, годится ли объект. */}
                 {printMode === 'locations' && (
                   <div>
-                    <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>Объекты съёмки</h1>
-                    <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>
-                      Отчёт со скаутинга · CineFlow · {new Date().toLocaleDateString('ru-RU')} · объектов: {sortedLocations.length}
-                    </p>
+                    <div className="print-head">
+                      <p className="print-eyebrow">Отчёт со скаутинга</p>
+                      <h1 className="print-title">Объекты съёмки</h1>
+                      <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')} · объектов: {sortedLocations.length}</p>
+                    </div>
                     {!sortedLocations.length && <p style={{fontSize: '11pt', color: '#777'}}>Объектов в проекте нет.</p>}
                     {sortedLocations.map(l => (
                       <React.Fragment key={l.id}>{locationPrintBlock(l, false)}</React.Fragment>
@@ -20329,11 +20470,14 @@
                   const num = sortedLocations.findIndex(x => x.id === l.id) + 1;
                   return (
                     <div>
-                      <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>{l.name || 'Без названия'}</h1>
-                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 16pt'}}>
-                        ОБ {String(num).padStart(2, '0')} · отчёт со скаутинга · CineFlow · {new Date().toLocaleDateString('ru-RU')}
-                        {locationPhotos(l.id).length ? ` · фото: ${locationPhotos(l.id).length}` : ''}
-                      </p>
+                      <div className="print-head">
+                        <p className="print-eyebrow">ОБ {String(num).padStart(2, '0')} · отчёт со скаутинга</p>
+                        <h1 className="print-title">{l.name || 'Без названия'}</h1>
+                        <p className="print-meta">
+                          CineFlow · {new Date().toLocaleDateString('ru-RU')}
+                          {locationPhotos(l.id).length ? ` · фото: ${locationPhotos(l.id).length}` : ''}
+                        </p>
+                      </div>
                       {locationPrintBlock(l, true)}
                     </div>
                   );
@@ -20351,11 +20495,14 @@
                   const pLocs = locations.filter(l => (l.sceneIds || []).includes(s.id));
                   return (
                     <div>
-                      <h1 style={{fontSize: '20pt', fontWeight: 900, margin: '0 0 2pt'}}>Сцена #{s.number} — {s.title || 'Без названия'}</h1>
-                      <p style={{fontSize: '10pt', color: '#555', margin: '0 0 10pt'}}>
-                        Смена: {s.date ? formatDateDisplay(s.date) : 'не назначена'}
-                        {pLocs.length ? ' · Объект: ' + pLocs.map(l => l.name).join(', ') : ''}
-                      </p>
+                      <div className="print-head">
+                        <p className="print-eyebrow">Сцена #{s.number}</p>
+                        <h1 className="print-title">{s.title || 'Без названия'}</h1>
+                        <p className="print-meta">
+                          Смена: {s.date ? formatDateDisplay(s.date) : 'не назначена'}
+                          {pLocs.length ? ' · Объект: ' + pLocs.map(l => l.name).join(', ') : ''}
+                        </p>
+                      </div>
                       {s.content && <p style={{fontSize: '11pt', margin: '0 0 8pt', whiteSpace: 'pre-wrap'}}>{s.content}</p>}
                       {Object.keys(s.gear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 4pt'}}><b>Техника:</b> {gearLine(s.gear, gearTypes)}</p>}
                       {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>Свет:</b> {gearLine(s.lightGear, lightGearTypes)}</p>}
@@ -20384,8 +20531,11 @@
                   );
                 })()}
                 {printMode === 'full' && (<>
-                <h1 style={{fontSize: '22pt', fontWeight: 900, margin: '0 0 2pt'}}>CineFlow — План подготовки к съёмкам</h1>
-                <p style={{fontSize: '10pt', color: '#555', margin: '0 0 14pt'}}>Сформировано: {new Date().toLocaleDateString('ru-RU')} · Сцен: {scenes.length}</p>
+                <div className="print-head">
+                  <p className="print-eyebrow">CineFlow</p>
+                  <h1 className="print-title">План подготовки к съёмкам</h1>
+                  <p className="print-meta">Сформировано: {new Date().toLocaleDateString('ru-RU')} · сцен: {scenes.length}</p>
+                </div>
                 {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
                   const pFrames = storyboard.filter(f => f.sceneId === s.id);
                   const pLocs = locations.filter(l => (l.sceneIds || []).includes(s.id));
