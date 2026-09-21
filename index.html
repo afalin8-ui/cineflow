@@ -7126,12 +7126,48 @@
           const [bulkTagInput, setBulkTagInput] = useState('');
           // Предупреждение о повторной загрузке картинок с теми же именами
           const [dupPrompt, setDupPrompt] = useState(null);
+
+          // ГАЛЕРЕЯ — ДВА ГНЕЗДА, А НЕ ОДНА КУЧА. Фото со скаута попадают
+          // в те же `references` (своего хранилища у объекта нет намеренно —
+          // иначе пришлось бы второй раз писать теги, папки, облако
+          // и просмотр), и после трёх выездов общий лист превращался
+          // в мешанину: триста дворов вперемешку с подборкой по свету,
+          // и ни того, ни другого не найти. Разделяет их ровно одно
+          // поле — `locationId`: есть объект, значит кадр привезён
+          // со скаута. Записи те же, разделён только ВЗГЛЯД на них,
+          // и переключатель помнится между заходами.
+          const [galleryScope, setGalleryScope] = useState(() => {
+            try { return localStorage.getItem('cf_gal_scope') === 'scout' ? 'scout' : 'refs'; } catch (e) { return 'refs'; }
+          });
+          // Какой объект смотрим в гнезде скаута. Пустое — все.
+          const [scoutLoc, setScoutLoc] = useState('');
+          const switchGalleryScope = (v) => {
+            setGalleryScope(v);
+            // Выделение снимаем: выделено было то, чего в новом гнезде
+            // не видно, а массовые действия дальше сработали бы по нему.
+            setSelectedRefIds([]); setSelectMode(false);
+            // Любая запись в localStorage — только внутри try: место
+            // на устройстве кончается, и setItem бросает исключение.
+            try { localStorage.setItem('cf_gal_scope', v); } catch (e) {}
+          };
+          const scoutRefsCount = useMemo(() => references.filter(r => !!r.locationId).length, [references]);
+          // Список гнезда: всё, кроме скаута, — или только скаут.
+          const scopeRefs = useMemo(
+            () => references.filter(r => galleryScope === 'scout' ? !!r.locationId : !r.locationId),
+            [references, galleryScope]);
+          // Объекты со счётчиком фото — вместо папок в гнезде скаута.
+          // Папка у таких кадров и так зовётся именем объекта, но правда
+          // о принадлежности живёт в `locationId`: папку могли переименовать
+          // или унести кадр в другую, а объект от этого не меняется.
+          const scoutLocCounts = useMemo(() => sortedLocations
+            .map(l => [l.id, l.name || 'Без названия', references.filter(r => r.locationId === l.id).length])
+            .filter(x => x[2] > 0), [sortedLocations, references]);
           const folderCounts = useMemo(() => {
             const m = {};
-            references.forEach(r => { const f = (r.folder || '').trim(); if (f) m[f] = (m[f] || 0) + 1; });
+            scopeRefs.forEach(r => { const f = (r.folder || '').trim(); if (f) m[f] = (m[f] || 0) + 1; });
             return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
-          }, [references]);
-          const noFolderCount = useMemo(() => references.filter(r => !(r.folder || '').trim()).length, [references]);
+          }, [scopeRefs]);
+          const noFolderCount = useMemo(() => scopeRefs.filter(r => !(r.folder || '').trim()).length, [scopeRefs]);
           const moveToFolder = (ref, folder) => {
             const up = references.map(r => r.id === ref.id ? { ...r, folder } : r);
             setReferences(up);
@@ -7267,9 +7303,11 @@
           // Список тегов с количеством референсов у каждого.
           const tagCounts = useMemo(() => {
             const m = {};
-            references.forEach(r => (r.tags || []).forEach(t => { m[t] = (m[t] || 0) + 1; }));
+            // По ГНЕЗДУ, а не по всему проекту: в «Референсах» тег «скаут»
+            // с тремя сотнями кадров стоял первым в списке и вёл в пустоту.
+            scopeRefs.forEach(r => (r.tags || []).forEach(t => { m[t] = (m[t] || 0) + 1; }));
             return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], 'ru'));
-          }, [references]);
+          }, [scopeRefs]);
           // Теги по ЧАСТОТЕ — для подсказок нужен именно такой порядок:
           // сверху то, чем реально размечают проект.
           const popularTags = useMemo(
@@ -7285,7 +7323,7 @@
             const inside = list.filter(t => !t.startsWith(q) && t.includes(q));
             return [...starts, ...inside].slice(0, 8);
           };
-          const visibleRefs = useMemo(() => references.filter(r => {
+          const visibleRefs = useMemo(() => scopeRefs.filter(r => {
             // Ищем и по тегу, и по подписи: человек пишет «пыль» и ждёт,
             // что найдётся всё, где это слово есть, — не важно, в теге оно
             // или в названии кадра.
@@ -7294,10 +7332,12 @@
               || (r.tags && r.tags.some(t => t.toLowerCase().includes(q)))
               || String(r.label || '').toLowerCase().includes(q)
               || String(r.file || '').toLowerCase().includes(q);
+            // У скаута отбор идёт по ОБЪЕКТУ, у референсов — по папке.
+            if (galleryScope === 'scout') return byTag && (!scoutLoc || r.locationId === scoutLoc);
             const f = (r.folder || '').trim();
             const byFolder = activeFolder === '' ? true : (activeFolder === '__none__' ? !f : f === activeFolder);
             return byTag && byFolder;
-          }), [references, tagSearch, activeFolder]);
+          }), [scopeRefs, tagSearch, activeFolder, galleryScope, scoutLoc]);
           const allVisibleSelected = visibleRefs.length > 0 && visibleRefs.every(r => selectedRefIds.includes(r.id));
           
           const [activeSchemeId, setActiveSchemeId] = useState(null);
@@ -12909,15 +12949,19 @@
               const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
               if (inField && (e.clipboardData.getData('text/plain') || '').trim()) return;
               e.preventDefault();
-              handleMultiFileUpload(files, null, null, null, galleryDropFolder());
+              handleMultiFileUpload(files, null, null, galleryDropLoc(), galleryDropFolder());
             };
             document.addEventListener('paste', onPaste);
             return () => document.removeEventListener('paste', onPaste);
-          }, [currentView, activeFolder, references]);
+          }, [currentView, activeFolder, references, galleryScope, scoutLoc]);
 
           // Куда кладём брошенное и вставленное в галерее. «Все» и
           // «Без папки» — это не папки, а фильтры: класть в них нечего.
           const galleryDropFolder = () => (activeFolder && activeFolder !== '__none__') ? activeFolder : '';
+          // А в гнезде скаута адресат — ОБЪЕКТ: кадр, положенный там
+          // в общую кучу, тут же потерялся бы, ведь гнездо и собрано
+          // по объектам. Папку и тег «скаут» он получит сам (uploadFiles).
+          const galleryDropLoc = () => (galleryScope === 'scout' && scoutLoc) ? scoutLoc : null;
 
           // Ctrl+V на вкладке «Объекты» кладёт картинку в ОТКРЫТЫЙ объект.
           // Слушаем на документе: своего поля у вставки нет, и требовать
@@ -14971,9 +15015,9 @@
                                 <button onClick={() => setSelectMode(true)} className="cf-hbtn">Выбрать</button>
                               )}
                               {currentView === 'gallery' && !READ_ONLY && (
-                                <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
+                                <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, galleryDropLoc(), galleryDropFolder())}
                                        extra={[{ key: 'paste', label: 'Вставить из буфера', hint: 'скопированную картинку', icon: Icons.Paste,
-                                                 onPick: () => pasteFromClipboard({ folder: galleryDropFolder() }) }]}
+                                                 onPick: () => pasteFromClipboard({ folder: galleryDropFolder(), locationId: galleryDropLoc() }) }]}
                                        className="cf-circ" style={{ color: 'var(--accent)' }}
                                        title="Добавить фото или видео: камера · плёнка · файлы · буфер">
                                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -16222,7 +16266,7 @@
                     {galleryTagsOpen ? (
                       <div className="hidden md:flex flex-col shrink-0" style={{ width: 212, background: 'var(--panel-3)', borderRight: '1px solid var(--border)' }}>
                         <div className="flex items-center justify-between px-4 shrink-0" style={{ minHeight: 44, borderBottom: '1px solid var(--border)' }}>
-                          <span className="cf-eyebrow">Папки · теги</span>
+                          <span className="cf-eyebrow">{galleryScope === 'scout' ? 'Объекты · теги' : 'Папки · теги'}</span>
                           <div className="flex items-center gap-2">
                             {tagSearch && <button onClick={() => setTagSearch('')} style={{ color: 'var(--accent)', fontSize: 'var(--fs-2)' }}>Сбросить</button>}
                             <button onClick={() => setGalleryTagsOpen(false)} title="Свернуть"
@@ -16231,18 +16275,37 @@
                           </div>
                         </div>
                         <div className="flex-1 overflow-y-auto">
-                          {/* ПАПКИ */}
+                          {/* ПАПКИ — а в гнезде скаута на их месте ОБЪЕКТЫ:
+                              со скаута кадры привозят дворами, и спрашивают
+                              «покажи Горскую», а не «покажи папку». */}
                           <div style={{ borderBottom: '1px solid var(--border)' }}>
                             <div className="flex items-center justify-between px-4 pt-3 pb-1">
-                              <span className="cf-eyebrow">Папки</span>
+                              <span className="cf-eyebrow">{galleryScope === 'scout' ? 'Объекты' : 'Папки'}</span>
+                              {galleryScope !== 'scout' && (
                               <button onClick={() => {
                                         const name = prompt('Название папки');
                                         if (name && name.trim()) setActiveFolder(name.trim());
                                       }}
                                       title="Создать папку (появится, когда положите в неё референс)"
                                       style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-3)', lineHeight: 1 }}>+</button>
+                              )}
                             </div>
-                            {[['', 'Все', references.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
+                            {galleryScope === 'scout' ? (
+                              [['', 'Все объекты', scopeRefs.length], ...scoutLocCounts].map(([key, label, count]) => {
+                                const on = scoutLoc === key;
+                                return (
+                                  <button key={key || 'all'} onClick={() => setScoutLoc(key)}
+                                          className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
+                                          style={{ minHeight: 38, background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                    <span className="truncate flex items-center gap-1.5" style={{ fontSize: 'var(--fs-2)' }}>
+                                      <Icons.Place /> {label}
+                                    </span>
+                                    <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              [['', 'Все', scopeRefs.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
                               .map(([key, label, count]) => {
                                 const on = activeFolder === key;
                                 return (
@@ -16255,8 +16318,9 @@
                                     <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
                                   </button>
                                 );
-                              })}
-                            {activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && (
+                              })
+                            )}
+                            {galleryScope !== 'scout' && activeFolder && activeFolder !== '__none__' && !folderCounts.some(([f]) => f === activeFolder) && (
                               <p className="px-4 pb-3" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', lineHeight: 1.5 }}>
                                 Папка «{activeFolder}» пока пустая. Перетащите сюда референсы или выберите папку на карточке.
                               </p>
@@ -16292,16 +16356,30 @@
                           )}
                         </div>
                         <div className="p-3 shrink-0 cf-edit-only space-y-2" style={{ borderTop: '1px solid var(--border)' }}>
-                          <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, null, galleryDropFolder())}
+                          {/* В гнезде скаута кадр всегда едет В ОБЪЕКТ, и его
+                              имя написано на кнопке: «загрузил и не нашёл» —
+                              ровно то, из-за чего гнёзда и заводились.
+                              Объект не выбран — говорим это словами, а не
+                              гасим кнопку молча. */}
+                          {galleryScope === 'scout' && !scoutLoc ? (
+                            <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                              Выберите объект выше — и фото можно будет загрузить прямо сюда.
+                              Со скаута они и так попадают в объект сами.
+                            </p>
+                          ) : (
+                          <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, galleryDropLoc(), galleryDropFolder())}
                                  className="w-full flex items-center justify-center gap-2 rounded-lg transition-colors hover:bg-white/5"
                                  style={{ minHeight: 44, background: 'var(--panel)', border: '1px solid var(--border)', fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>
-                            <Icons.Gallery /> Загрузить референсы
+                            <Icons.Gallery /> {galleryScope === 'scout'
+                              ? `Загрузить в «${(sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'объект'}»`
+                              : 'Загрузить референсы'}
                           </PhotoSourcePicker>
+                          )}
                           {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
                               там нет вовсе, а картинку из браузера копируют
                               долгим нажатием. Спрашивать буфер можно только
                               из обработчика нажатия. */}
-                          <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder() })}
+                          <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder(), locationId: galleryDropLoc() })}
                                   title="Вставить картинку из буфера обмена"
                                   className="w-full flex items-center justify-center gap-2 rounded-lg transition-colors hover:bg-white/5"
                                   style={{ minHeight: 40, background: 'transparent', border: '1px solid var(--border)', fontSize: 'var(--fs-2)', color: 'var(--muted)' }}>
@@ -16311,7 +16389,9 @@
                               это возможность, которой нет. */}
                           <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', lineHeight: 1.5 }}>
                             Картинку можно просто бросить на галерею или вставить — Ctrl+V.
-                            {activeFolder && activeFolder !== '__none__' ? ` Ляжет в папку «${activeFolder}».` : ''}
+                            {galleryScope === 'scout'
+                              ? (scoutLoc ? ` Ляжет в объект «${(sortedLocations.find(l => l.id === scoutLoc) || {}).name || ''}».` : '')
+                              : (activeFolder && activeFolder !== '__none__' ? ` Ляжет в папку «${activeFolder}».` : '')}
                           </p>
                         </div>
                       </div>
@@ -16343,13 +16423,31 @@
                          onDrop={(e) => {
                            if (READ_ONLY || !dropHasImage(e.dataTransfer)) return;
                            e.preventDefault(); setDragOverGal(false);
-                           acceptDropped(e.dataTransfer, { folder: galleryDropFolder() });
+                           acceptDropped(e.dataTransfer, { folder: galleryDropFolder(), locationId: galleryDropLoc() });
                          }}>
                      <div className="p-4 md:p-6 pb-24 space-y-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="flex items-baseline gap-3 min-w-0">
-                              <span className="cf-eyebrow truncate">{[activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Все референсы'}</span>
-                              <span className="cf-meta shrink-0">{visibleRefs.length} из {references.length}</span>
+                            <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                              {/* ДВА ГНЕЗДА ОДНОЙ ГАЛЕРЕИ — один
+                                  переключатель, а не вторая вкладка:
+                                  материал тот же, разный только взгляд
+                                  (то же решение, что у двух видов КПП).
+                                  `cf-edit-only` тут НЕТ намеренно: это
+                                  чтение, и гостю по ссылке оно нужно
+                                  не меньше. */}
+                              <div className="cf-seg">
+                                <button onClick={() => switchGalleryScope('refs')}
+                                        className={galleryScope === 'refs' ? 'on' : ''}
+                                        title="Референсы: всё, что не привязано к объекту">Референсы · {references.length - scoutRefsCount}</button>
+                                <button onClick={() => switchGalleryScope('scout')}
+                                        className={galleryScope === 'scout' ? 'on' : ''}
+                                        title="Фото объектов — то, что привезли со скаутинга">Со скаута · {scoutRefsCount}</button>
+                              </div>
+                              <span className="cf-eyebrow truncate">{(galleryScope === 'scout'
+                                  ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch ? `тег: ${tagSearch}` : null]
+                                  : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null]
+                                ).filter(Boolean).join(' · ') || (galleryScope === 'scout' ? 'Все объекты' : 'Все референсы')}</span>
+                              <span className="cf-meta shrink-0">{visibleRefs.length} из {scopeRefs.length}</span>
                             </div>
                             {/* На телефоне эти же действия живут в шапке (см. шапку телефона). */}
                             {!isPhone && (
@@ -16363,7 +16461,7 @@
                                         className={`cf-chip shrink-0 ${selectMode ? 'cf-chip-accent' : ''}`}>{(selectMode || selectedRefIds.length) ? 'Готово' : 'Выбрать'}</button>
                               )}
                               {!galleryTagsOpen && (
-                              <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder() })}
+                              <button onClick={() => pasteFromClipboard({ folder: galleryDropFolder(), locationId: galleryDropLoc() })}
                                       title="Вставить картинку из буфера обмена"
                                       className="cf-chip shrink-0 flex items-center gap-1.5"><Icons.Paste /> Вставить</button>
                               )}
@@ -16377,20 +16475,35 @@
                             по нему ведут глазами. Главное на ней — три
                             адресата кадра: сцена, доска, объект. */}
 
-                        {/* папки на телефоне — горизонтальной лентой (боковая колонка скрыта на узких экранах) */}
+                        {/* папки на телефоне — горизонтальной лентой (боковая колонка скрыта на узких экранах),
+                            а в гнезде скаута той же лентой идут ОБЪЕКТЫ */}
                         <div className="md:hidden flex gap-2 overflow-x-auto hide-scrollbar pb-1">
-                          {[['', 'Все', references.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
-                            .map(([key, label, count]) => {
-                              const on = activeFolder === key;
+                          {galleryScope === 'scout' ? (
+                            [['', 'Все объекты', scopeRefs.length], ...scoutLocCounts].map(([key, label, count]) => {
+                              const on = scoutLoc === key;
                               return (
-                                <button key={key || 'all'} onClick={() => setActiveFolder(key)}
+                                <button key={key || 'all'} onClick={() => setScoutLoc(key)}
                                         className={`cf-chip shrink-0 flex items-center gap-1.5 ${on ? 'cf-chip-accent' : ''}`}>
-                                  <Icons.Folder /> {label} · {count}
+                                  <Icons.Place /> {label} · {count}
                                 </button>
                               );
-                            })}
-                          <button onClick={() => { const name = prompt('Название папки'); if (name && name.trim()) setActiveFolder(name.trim()); }}
-                                  className="cf-chip shrink-0 cf-edit-only" style={{ color: 'var(--muted-2)' }}>+ папка</button>
+                            })
+                          ) : (
+                            <React.Fragment>
+                            {[['', 'Все', scopeRefs.length], ...folderCounts.map(([f, n]) => [f, f, n]), ...(noFolderCount ? [['__none__', 'Без папки', noFolderCount]] : [])]
+                              .map(([key, label, count]) => {
+                                const on = activeFolder === key;
+                                return (
+                                  <button key={key || 'all'} onClick={() => setActiveFolder(key)}
+                                          className={`cf-chip shrink-0 flex items-center gap-1.5 ${on ? 'cf-chip-accent' : ''}`}>
+                                    <Icons.Folder /> {label} · {count}
+                                  </button>
+                                );
+                              })}
+                            <button onClick={() => { const name = prompt('Название папки'); if (name && name.trim()) setActiveFolder(name.trim()); }}
+                                    className="cf-chip shrink-0 cf-edit-only" style={{ color: 'var(--muted-2)' }}>+ папка</button>
+                            </React.Fragment>
+                          )}
                         </div>
 
                         {/* теги на телефоне — горизонтальной лентой */}
@@ -16418,18 +16531,32 @@
                         {currentView === 'gallery' && visibleRefs.length === 0 && (
                           <div className="rounded-lg text-center"
                                style={{ border: '1px dashed var(--border)', padding: '38px 24px', maxWidth: 520, margin: '10px auto 0' }}>
-                            <div style={{ color: 'var(--muted-2)', marginBottom: 10 }}><Icons.Gallery /></div>
+                            <div style={{ color: 'var(--muted-2)', marginBottom: 10 }}>{galleryScope === 'scout' ? <Icons.Place /> : <Icons.Gallery />}</div>
+                            {/* Пустых состояний тут ЧЕТЫРЕ, и они про разное:
+                                гнездо пустое вообще · под фильтр ничего
+                                не попало — и то же самое в каждом из двух
+                                гнёзд. «Пусто» без объяснения читается как
+                                поломка, а «покажите все» в чужом гнезде
+                                вернуло бы не то, что человек ищет. */}
                             <span className="block" style={{ fontSize: 'var(--fs-4)', fontWeight: 600, color: 'var(--text)' }}>
-                              {references.length === 0 ? 'В галерее пока пусто' : 'Под фильтр ничего не попало'}
+                              {scopeRefs.length === 0
+                                ? (galleryScope === 'scout' ? 'Со скаута пока ничего нет' : 'Референсов пока нет')
+                                : 'Под фильтр ничего не попало'}
                             </span>
                             <span className="block" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', lineHeight: 1.6, marginTop: 6 }}>
-                              {references.length === 0
-                                ? 'Сюда складывают референсы, фотографии со скаута и страницы PDF. Кадры из объектов попадают в галерею сами — с папкой по имени объекта и тегом «скаут».'
-                                : `В проекте ${references.length} ${plur(references.length, 'кадр', 'кадра', 'кадров')}, но ни один не подходит под выбранные папку, теги или поиск.`}
+                              {scopeRefs.length === 0
+                                ? (galleryScope === 'scout'
+                                    ? 'Сюда сами ложатся фотографии, загруженные в объект: с папкой по имени объекта и тегом «скаут». Привезите их со скаутинга — или отправьте сюда кадры из «Референсов» кнопкой «В объект».'
+                                    : 'Сюда складывают референсы, подборки по свету и страницы PDF. Фотографии объектов лежат в соседнем гнезде «Со скаута».')
+                                : `В гнезде ${scopeRefs.length} ${plur(scopeRefs.length, 'кадр', 'кадра', 'кадров')}, но ни один не подходит под выбранные ${galleryScope === 'scout' ? 'объект, теги' : 'папку, теги'} или поиск.`}
                             </span>
-                            {references.length > 0 && (
-                              <button onClick={() => { setActiveFolder(''); setTagSearch(''); }}
+                            {scopeRefs.length > 0 && (
+                              <button onClick={() => { setActiveFolder(''); setScoutLoc(''); setTagSearch(''); }}
                                       className="cf-chip" style={{ marginTop: 14 }}>Показать все</button>
+                            )}
+                            {scopeRefs.length === 0 && galleryScope === 'refs' && scoutRefsCount > 0 && (
+                              <button onClick={() => switchGalleryScope('scout')}
+                                      className="cf-chip" style={{ marginTop: 14 }}>Открыть «Со скаута» · {scoutRefsCount}</button>
                             )}
                           </div>
                         )}
@@ -16445,7 +16572,10 @@
                                         пустые поля, и лукбук читался как файловый
                                         менеджер. Высота теперь по картинке, сетка
                                         заполняется слева направо построчно. */}
-                                    <div className="relative cursor-pointer" onClick={() => { if (selectMode || selectedRefIds.length > 0) { toggleRefSelection(ref.id); } else { setLightboxData({ scope: visibleRefs.map(x => x.id), scopeLabel: [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null].filter(Boolean).join(' · ') || 'Вся галерея', currentId: ref.id }); } }}>
+                                    <div className="relative cursor-pointer" onClick={() => { if (selectMode || selectedRefIds.length > 0) { toggleRefSelection(ref.id); } else { setLightboxData({ scope: visibleRefs.map(x => x.id), scopeLabel: (galleryScope === 'scout'
+                                          ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch ? `тег: ${tagSearch}` : null]
+                                          : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null]
+                                        ).filter(Boolean).join(' · ') || (galleryScope === 'scout' ? 'Фото со скаута' : 'Референсы'), currentId: ref.id }); } }}>
                                         {/* Метка «сц 143» / «об 07»: видно, что кадр
                                             уже пристроен, не открывая его. */}
                                         {refUsedLabel(ref) && (
