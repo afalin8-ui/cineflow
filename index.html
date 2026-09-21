@@ -617,6 +617,35 @@
             .print-doc ol.print-list { list-style: decimal; }
             .print-doc .print-list li { margin: 0 0 3pt; orphans: 2; widows: 2; }
             .print-doc .print-p:has(+ .print-list) { margin-bottom: 5pt; page-break-after: avoid; }
+            /* ШРИФТ БУМАГИ. Интерфейс набран системным гротеском, и он
+               там прав: подписи и кнопки СКАНИРУЮТ. А лист ЧИТАЮТ, и для
+               длинного текста сериф с засечками ведёт строку лучше —
+               заодно отчёт перестаёт выглядеть распечаткой из браузера.
+               По сети по-прежнему не грузится НИЧЕГО: сериф берём
+               системный — Charter и Iowan Old Style есть на Apple,
+               Georgia на Windows, дальше обычный Times. Мелочь (надзаголовок,
+               мета, таблицы) остаётся гротеском: там читать нечего,
+               там смотрят. */
+            .print-title, .print-doc .print-h, .print-doc .print-p, .print-doc .print-list,
+            .print-quote { font-family: Charter, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif; }
+            .print-eyebrow, .print-meta { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+            /* ТЁМНЫЙ ЛИСТ — для экрана и для PDF, который отправляют
+               группе: белая простыня посреди тёмного приложения выглядит
+               чужой. На бумаге он съест тонер, и об этом сказано прямо
+               у переключателя. Свойство print-color-adjust: exact обязательно:
+               без него браузер печатает фон белым, а светлый текст
+               по белому — это пустой лист. Селектор с #print-area:
+               у идентификатора вес больше, чем у класса, и без него
+               «сделать белым» из правил печати перебило бы тёмное. */
+            .print-dark, #print-area.print-dark, body.print-dark {
+              background: #1a1918 !important; color: #f0eee6 !important;
+              -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .print-dark .print-head { border-bottom-color: #4a4741 !important; }
+            .print-dark .print-eyebrow { color: #d97757 !important; }
+            .print-dark .print-meta, .print-dark .cf-print-dim { color: #a6a39a !important; }
+            .print-dark td, .print-dark th { border-color: #4a4741 !important; }
+            .print-dark img { border-color: #4a4741 !important; }
+            .print-dark .print-scene, .print-dark .print-loc { border-bottom-color: #4a4741 !important; }
             .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
             /* Объект НЕЛЬЗЯ держать на одной странице: у него бывает шесть
                десятков фотографий, и «не разрывать» на блоке выше страницы
@@ -1045,7 +1074,13 @@
           const blob = src instanceof Blob ? src : await (await fetch(src)).blob();
           if (typeof createImageBitmap === 'function') {
             try {
-              return await createImageBitmap(blob, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
+              // imageOrientation ЯВНО: фотографию с телефона браузер хранит
+              // как снял сенсор, а «как держали камеру» лежит в EXIF. Раньше
+              // спецификация велела это поле игнорировать, и снимок лёг бы
+              // на бок — молча, без единой ошибки. Нынешние браузеры
+              // поворачивают сами, но полагаться на умолчание тут нельзя:
+              // кто не знает опции, тот её просто не заметит.
+              return await createImageBitmap(blob, { imageOrientation: 'from-image', resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
             } catch (e) { /* старый Safari не знает про resizeWidth — идём ниже */ }
           }
           const url = URL.createObjectURL(blob);
@@ -6931,6 +6966,27 @@
           const [docs, setDocs] = useState(() => safeLoad('cf_docs', initialDocs, true));
           const [crew, setCrew] = useState(() => safeLoad('cf_crew', [], true));
           const [projectFiles, setProjectFiles] = useState(() => safeLoad('cf_files', [], true));
+          // НАЗВАНИЕ ПРОЕКТА. Комната — это КОД, а не имя: «room-3f8a»
+          // не говорит ничего ни в шапке, ни в отчёте, который уходит
+          // группе, а комнат у оператора за сезон несколько. Живёт оно
+          // в комнате (`settings/project`), то есть одно на всех, плюс
+          // копия на устройстве — чтобы шапка не была пустой до первого
+          // ответа облака и работала без связи. Тот же приём, что
+          // у ключей: побеждает запись с большим `savedAt`, своё эхо
+          // не применяем — иначе название стирало бы себя на каждой
+          // набранной букве.
+          const projAt = useRef(0);
+          const [projectTitle, setProjectTitle] = useState(() => {
+            try { return localStorage.getItem('cf_project_title') || ''; } catch (e) { return ''; }
+          });
+          const saveProjectTitle = (v) => {
+            if (READ_ONLY) return;
+            setProjectTitle(v);
+            try { localStorage.setItem('cf_project_title', v); } catch (e) {}
+            projAt.current = Date.now();
+            syncDoc('settings', 'project', { title: v, savedAt: projAt.current });
+          };
+
 
           // --- Объекты (места съёмки со скаутинга) ---
           // Объект — это МЕСТО, а не сцена: одна и та же квартира снимается
@@ -7347,6 +7403,16 @@
           // 'full' — весь план, 'doc' — открытый гайд, 'scheme' — открытая
           // схема света, 'gear' — сводный список техники.
           const [printMode, setPrintMode] = useState('full');
+          // Лист светлый или тёмный. Тёмный — для экрана и PDF, который
+          // отправляют группе; на бумаге он съест тонер, и это сказано
+          // прямо у переключателя, а не оставлено на догадку.
+          const [printTheme, setPrintTheme] = useState(() => {
+            try { return localStorage.getItem('cf_print_theme') === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; }
+          });
+          const savePrintTheme = (v) => {
+            setPrintTheme(v);
+            try { localStorage.setItem('cf_print_theme', v); } catch (e) {}
+          };
           const [printRequested, setPrintRequested] = useState(false);
           // Приложение, установленное на домашний экран. Это НЕ мелочь для
           // печати: там window.print() не делает ВООБЩЕ ничего — печать живёт
@@ -7400,6 +7466,35 @@
             .print-doc ol.print-list { list-style: decimal; }
             .print-doc .print-list li { margin: 0 0 3pt; orphans: 2; widows: 2; }
             .print-doc .print-p:has(+ .print-list) { margin-bottom: 5pt; page-break-after: avoid; }
+            /* ШРИФТ БУМАГИ. Интерфейс набран системным гротеском, и он
+               там прав: подписи и кнопки СКАНИРУЮТ. А лист ЧИТАЮТ, и для
+               длинного текста сериф с засечками ведёт строку лучше —
+               заодно отчёт перестаёт выглядеть распечаткой из браузера.
+               По сети по-прежнему не грузится НИЧЕГО: сериф берём
+               системный — Charter и Iowan Old Style есть на Apple,
+               Georgia на Windows, дальше обычный Times. Мелочь (надзаголовок,
+               мета, таблицы) остаётся гротеском: там читать нечего,
+               там смотрят. */
+            .print-title, .print-doc .print-h, .print-doc .print-p, .print-doc .print-list,
+            .print-quote { font-family: Charter, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif; }
+            .print-eyebrow, .print-meta { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+            /* ТЁМНЫЙ ЛИСТ — для экрана и для PDF, который отправляют
+               группе: белая простыня посреди тёмного приложения выглядит
+               чужой. На бумаге он съест тонер, и об этом сказано прямо
+               у переключателя. Свойство print-color-adjust: exact обязательно:
+               без него браузер печатает фон белым, а светлый текст
+               по белому — это пустой лист. Селектор с #print-area:
+               у идентификатора вес больше, чем у класса, и без него
+               «сделать белым» из правил печати перебило бы тёмное. */
+            .print-dark, #print-area.print-dark, body.print-dark {
+              background: #1a1918 !important; color: #f0eee6 !important;
+              -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .print-dark .print-head { border-bottom-color: #4a4741 !important; }
+            .print-dark .print-eyebrow { color: #d97757 !important; }
+            .print-dark .print-meta, .print-dark .cf-print-dim { color: #a6a39a !important; }
+            .print-dark td, .print-dark th { border-color: #4a4741 !important; }
+            .print-dark img { border-color: #4a4741 !important; }
+            .print-dark .print-scene, .print-dark .print-loc { border-bottom-color: #4a4741 !important; }
             .print-scene { page-break-inside: avoid; border-bottom: 1px solid #ccc; padding: 12px 0; }
             /* Объект НЕЛЬЗЯ держать на одной странице: у него бывает шесть
                десятков фотографий, и «не разрывать» на блоке выше страницы
@@ -7424,7 +7519,8 @@
             if (!body.trim()) { showToast('Нечего печатать'); return; }
             const html = '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
               + '<meta name="viewport" content="width=device-width, initial-scale=1">'
-              + '<title>CineFlow — план</title><style>' + PRINT_PAGE_CSS + '</style></head><body>'
+              + '<title>' + (String(projectTitle || '').trim() || 'CineFlow') + ' — печать</title><style>'
+              + PRINT_PAGE_CSS + '</style></head><body class="' + (printTheme === 'dark' ? 'print-dark' : '') + '">'
               + '<div class="cf-hint">Готовая страница для печати. Кнопка «Поделиться» → «Напечатать»; '
               + 'чтобы получить PDF — «Поделиться» → «Сохранить в Файлы».</div>'
               + body + '</body></html>';
@@ -10980,7 +11076,14 @@
           const unreadCount = useMemo(() => messages.filter(m => m.timestamp > lastReadChat && (m.senderId ? m.senderId !== clientId : m.senderName !== userName)).length, [messages, lastReadChat, userName, clientId]);
 
           // Счётчик непрочитанных в заголовке вкладки
-          useEffect(() => { document.title = (unreadCount > 0 ? '(' + unreadCount + ') ' : '') + 'CineFlow Prep'; }, [unreadCount]);
+          // Заголовок вкладки: счётчик непрочитанных, название проекта
+          // и только потом имя приложения — вкладок у оператора открыто
+          // несколько, и «CineFlow Prep» на каждой не отличает одну
+          // комнату от другой.
+          useEffect(() => {
+            const t = String(projectTitle || '').trim();
+            document.title = (unreadCount > 0 ? '(' + unreadCount + ') ' : '') + (t ? t + ' · CineFlow' : 'CineFlow Prep');
+          }, [unreadCount, projectTitle]);
 
           // Браузерные уведомления о новых сообщениях (когда вкладка в фоне или чат закрыт).
           //
@@ -11130,6 +11233,27 @@
               }, err => console.warn('sync keys', err));
             return () => un();
           }, [user, shareKeys]);
+
+          // Подписываемся ВСЕГДА, и в режиме просмотра тоже: название
+          // проекта не секрет, а гостю по ссылке оно нужно как раз
+          // затем, чтобы понимать, чьи материалы он смотрит и что
+          // печатает. Ключи — другое дело, там подписки нет вовсе.
+          useEffect(() => {
+            if (!db || !user) return;
+            const un = db.collection('artifacts').doc(appId).collection('public').doc('data')
+              .collection('settings').doc('project')
+              .onSnapshot(doc => {
+                if (!doc.exists) return;
+                const d = doc.data() || {};
+                const at = Number(d.savedAt || 0);
+                if (at <= projAt.current) return;
+                projAt.current = at;
+                const t = String(d.title || '');
+                setProjectTitle(t);
+                try { localStorage.setItem('cf_project_title', t); } catch (e) {}
+              }, err => console.warn('sync project', err));
+            return () => un();
+          }, [user]);
           const [showCloudModal, setShowCloudModal] = useState(false);
           // Объяснение режима просмотра. Живёт даже когда READ_ONLY —
           // это единственное окно, которое там вообще открывается.
@@ -12845,7 +12969,15 @@
               // брошенный файл, как фотография. Видео — так же: его
               // разбирает та же дверь.
               if (!f || !(isPdfFile(f) || isImageFile(f) || isVideoFile(f))) return;
-              const key = `${f.name}|${f.size}|${f.lastModified || 0}`;
+              // КЛЮЧ БЕЗ ВРЕМЕНИ ФАЙЛА, и это не мелочь. Chrome кладёт
+              // вставленную картинку И в `files`, И в `items`, причём это
+              // РАЗНЫЕ объекты File: у файла из буфера нет своего времени,
+              // и `lastModified` каждому проставляется в момент создания —
+              // у второго он на миллисекунду-другую больше. С временем
+              // в ключе второй проходил как новый файл, и каждый Ctrl+V
+              // на компьютере клал в галерею ДВА одинаковых кадра.
+              // На iPad этого не видно: там `files` при вставке пуст.
+              const key = `${f.name || ''}|${f.size}|${f.type}`;
               if (seen.has(key)) return;
               seen.add(key);
               out.push(!f.name || /^(image|video)\.\w+$/i.test(f.name) ? renamedFile(f, pasteName(f.type)) : f);
@@ -15097,6 +15229,15 @@
                       сделана пальцем, сама точка осталась мелкой. Слова
                       «Сохранено 15:42» ушли в подсказку — на 924 точках
                       строка из них не помещалась. */}
+                  {/* Название проекта. Рисуется, только если оно задано:
+                      пустая подпись в покое — это интерфейс ради интерфейса.
+                      Нужно оно затем, что комнат у оператора за сезон
+                      несколько, а код комнаты не говорит ничего. */}
+                  {projectTitle && (
+                    <span className="cf-wide-only truncate ml-auto" title={'Проект: ' + projectTitle}
+                          style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)', maxWidth: 200 }}>{projectTitle}</span>
+                  )}
+
                   <button onClick={kickSyncNow} title={syncTitle + ' · нажмите, чтобы обновить связь'}
                           className="shrink-0 ml-auto flex items-center justify-center -m-2 p-2"
                           style={{ opacity: kicking ? 0.4 : 1, minWidth: 'var(--tap-sm)', minHeight: 'var(--tap-sm)' }}>
@@ -19294,6 +19435,27 @@
                                   <button onClick={() => requestPrint('gear')} className={`${btn} bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]`}>
                                     <Icons.Video/> <span>Список техники</span>
                                   </button>
+                                  {/* ЛИСТ СВЕТЛЫЙ ИЛИ ТЁМНЫЙ. Отчёт чаще
+                                      смотрят с экрана, чем несут в типографию,
+                                      и белая простыня посреди тёмного
+                                      приложения выглядит чужой. Но на бумаге
+                                      тёмный лист съедает тонер — про это
+                                      сказано прямо, а не оставлено
+                                      на догадку. Настройка одна на все
+                                      экспорты: печать — это печать,
+                                      а не свойство отдельной кнопки. */}
+                                  <div className="flex items-center justify-between gap-2 pt-1">
+                                    <span className="cf-eyebrow">Лист</span>
+                                    <div className="cf-seg">
+                                      <button onClick={() => savePrintTheme('light')} className={printTheme === 'light' ? 'on' : ''}>Светлый</button>
+                                      <button onClick={() => savePrintTheme('dark')} className={printTheme === 'dark' ? 'on' : ''}>Тёмный</button>
+                                    </div>
+                                  </div>
+                                  <p style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                                    {printTheme === 'dark'
+                                      ? 'Тёмный лист — для экрана и PDF, который смотрят с телефона. На бумаге он съест тонер.'
+                                      : 'Обычный белый лист — для бумаги и для тех, кто распечатает у себя.'}
+                                  </p>
                                 </div>
                               );
                             })()}
@@ -19484,6 +19646,16 @@
                     </div>
                     {phoneSheet === 'more' && (
                       <div className="px-3 pb-4">
+                        {/* Какой проект открыт. На телефоне шапка занята
+                            заголовком места, а здесь строка стоит там же,
+                            откуда открывают «Проект», — и менять название
+                            идти недалеко. */}
+                        {projectTitle && (
+                          <div className="px-3 pt-1 pb-2">
+                            <span className="cf-eyebrow block">Проект</span>
+                            <span className="block truncate" style={{ fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>{projectTitle}</span>
+                          </div>
+                        )}
                         {/* ЧАТ ПЕРВОЙ СТРОКОЙ. Из таб-бара он уступил место
                             скауту, и это единственная причина, по которой
                             он тут обязателен: другого пути к нему с телефона
@@ -20109,6 +20281,20 @@
                 <Modal onClose={() => setShowProjectModal(false)} z={200} box="p-8 max-w-md" label="Управление проектом">
                   <h3 className="text-xl font-extrabold text-white mb-6 flex items-center gap-2"><Icons.Folder/> Управление проектом</h3>
                   <div className="space-y-3">
+                    {/* НАЗВАНИЕ — ПЕРВЫМ. Комната это код, и «room-3f8a»
+                        не говорит ничего ни в шапке, ни в отчёте, который
+                        уходит группе. Отсюда же оно попадает в заголовок
+                        вкладки и в шапку каждого печатного документа. */}
+                    <div className="mb-2">
+                      <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Название проекта</label>
+                      <input type="text" value={projectTitle} onChange={e => saveProjectTitle(e.target.value)}
+                             placeholder="«Северный ветер»" maxLength={80}
+                             className="w-full glass-input rounded-lg px-4 py-3 text-sm" />
+                      <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">
+                        Видно в шапке, в заголовке вкладки и на каждом листе, который уходит группе.
+                        Запоминается в комнате — на планшете и телефоне вводить заново не нужно.
+                      </p>
+                    </div>
                     <div className="mb-2">
                       <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Ключ Gemini API (для ИИ-функций)</label>
                       <div className="relative">
@@ -20467,7 +20653,7 @@
                   всегда: все сцены, вся раскадровка с картинками — десятки
                   изображений в памяти круглосуточно ради кнопки, которую
                   нажимают раз в неделю. На планшете это ощутимо. */}
-              <div id="print-area">
+              <div id="print-area" className={printTheme === 'dark' ? 'print-dark' : ''}>
               {printRequested && (<React.Fragment>
                 {printMode === 'doc' && (() => {
                   const d = docs.find(x => x.id === activeDocId);
@@ -20481,7 +20667,7 @@
                       <div className="print-head">
                         <p className="print-eyebrow">Операторский гайд</p>
                         <h1 className="print-title">{d.title || 'Гайд'}</h1>
-                        <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                        <p className="print-meta">{projectTitle ? projectTitle + ' · ' : ''}CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
                       </div>
                       {blocks.length === 0 && <p className="print-p">Документ пуст.</p>}
                       {blocks.map((b, i) => (
@@ -20503,7 +20689,7 @@
                       <div className="print-head">
                         <p className="print-eyebrow">Схема света</p>
                         <h1 className="print-title">{sch.title || 'Схема света'}</h1>
-                        <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
+                        <p className="print-meta">{projectTitle ? projectTitle + ' · ' : ''}CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
                       </div>
                       {sch.preview
                         ? <img src={sch.preview} style={{width: '100%', border: '1px solid #ccc'}} />
@@ -20537,7 +20723,7 @@
                     <div className="print-head">
                       <p className="print-eyebrow">Техника и свет</p>
                       <h1 className="print-title">Список техники</h1>
-                      <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')} · сцен в проекте: {scenes.length}</p>
+                      <p className="print-meta">{projectTitle ? projectTitle + ' · ' : ''}CineFlow · {new Date().toLocaleDateString('ru-RU')} · сцен в проекте: {scenes.length}</p>
                     </div>
                     <p style={{fontSize: '9pt', color: '#777', margin: '0 0 16pt'}}>
                       «Нужно» — максимум за одну сцену, то есть сколько единиц требуется одновременно.
@@ -20581,7 +20767,7 @@
                     <div className="print-head">
                       <p className="print-eyebrow">Отчёт со скаутинга</p>
                       <h1 className="print-title">Объекты съёмки</h1>
-                      <p className="print-meta">CineFlow · {new Date().toLocaleDateString('ru-RU')} · объектов: {sortedLocations.length}</p>
+                      <p className="print-meta">{projectTitle ? projectTitle + ' · ' : ''}CineFlow · {new Date().toLocaleDateString('ru-RU')} · объектов: {sortedLocations.length}</p>
                     </div>
                     {!sortedLocations.length && <p style={{fontSize: '11pt', color: '#777'}}>Объектов в проекте нет.</p>}
                     {sortedLocations.map(l => (
@@ -20604,7 +20790,7 @@
                         <p className="print-eyebrow">ОБ {String(num).padStart(2, '0')} · отчёт со скаутинга</p>
                         <h1 className="print-title">{l.name || 'Без названия'}</h1>
                         <p className="print-meta">
-                          CineFlow · {new Date().toLocaleDateString('ru-RU')}
+                          {projectTitle ? projectTitle + ' · ' : ''}CineFlow · {new Date().toLocaleDateString('ru-RU')}
                           {locationPhotos(l.id).length ? ` · фото: ${locationPhotos(l.id).length}` : ''}
                         </p>
                       </div>
@@ -20629,7 +20815,7 @@
                         <p className="print-eyebrow">Сцена #{s.number}</p>
                         <h1 className="print-title">{s.title || 'Без названия'}</h1>
                         <p className="print-meta">
-                          Смена: {s.date ? formatDateDisplay(s.date) : 'не назначена'}
+                          {projectTitle ? projectTitle + ' · ' : ''}Смена: {s.date ? formatDateDisplay(s.date) : 'не назначена'}
                           {pLocs.length ? ' · Объект: ' + pLocs.map(l => l.name).join(', ') : ''}
                         </p>
                       </div>
@@ -20662,8 +20848,11 @@
                 })()}
                 {printMode === 'full' && (<>
                 <div className="print-head">
-                  <p className="print-eyebrow">CineFlow</p>
-                  <h1 className="print-title">План подготовки к съёмкам</h1>
+                  {/* У главного листа проекта его имя и есть заголовок:
+                      «План подготовки к съёмкам» одинаков у всех проектов,
+                      а на стол кладут конкретный. */}
+                  <p className="print-eyebrow">{projectTitle ? 'План подготовки к съёмкам' : 'CineFlow'}</p>
+                  <h1 className="print-title">{projectTitle || 'План подготовки к съёмкам'}</h1>
                   <p className="print-meta">Сформировано: {new Date().toLocaleDateString('ru-RU')} · сцен: {scenes.length}</p>
                 </div>
                 {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
