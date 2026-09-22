@@ -39,6 +39,9 @@
   #att.on { border-color: var(--accent); }
   #att.on b { color: var(--accent); }
   #mode b { color: var(--accent); }
+  #gyro b { color: var(--muted); }
+  #gyro.live b { color: var(--ok); }
+  #bGyro.on { border-color: var(--ok); color: var(--ok); }
 
   .btns { position: fixed; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 12px; }
   .btns button { pointer-events: auto; width: 76px; height: 60px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: 600 15px var(--font); }
@@ -81,6 +84,7 @@
   <div class="chip mono"><small>Скорость</small><span id="spdText">—</span></div>
   <div class="chip mono"><small>Объектив</small><span id="focText">—</span></div>
   <div class="chip mono"><small>Наклон</small><span id="tiltText">—</span></div>
+  <div class="chip" id="gyro"><small>Гироскоп</small><b id="gyroText">—</b></div>
   <div class="grow"></div>
   <div class="chip" id="att"><small id="attLabel">Цель ← →</small><b id="attText">—</b></div>
 </div>
@@ -89,6 +93,7 @@
   <button id="bRec">REC</button>
   <button id="bAttach">Аттач</button>
   <button id="bMode">Режим</button>
+  <button id="bGyro">Гиро</button>
   <button id="bHelp">?</button>
 </div>
 
@@ -116,6 +121,7 @@
     <tr><td>⧉ (View)</td><td>Кино ↔ FPV</td></tr>
     <tr><td>L3 (нажать и держать)</td><td>Точно: всё втрое медленнее</td></tr>
     <tr><td>R3</td><td>Вьюпорт на компьютере смотрит через камеру: вкл / выкл</td></tr>
+    <tr><td>Поворот Deck</td><td>Гироскоп: камера поворачивается и наклоняется вслед за Deck. Включается так, как настроено в Steam (обычно — палец на правом тачпаде). Кнопка «Гиро» справа выключает его на этой странице</td></tr>
   </table>
 </div>
 
@@ -245,6 +251,14 @@ function render() {
   $('attText').textContent = attached ? st.att : (st.tgt || 'нет целей');
   $('bAttach').textContent = attached ? 'Отцеп.' : 'Аттач';
   $('fpsText').textContent = st.video ? fpsShown + ' к/с' : 'выкл';
+  renderGyro();
+}
+
+function renderGyro() {
+  const live = gyroOn && performance.now() - gyroLast < 400;
+  $('gyro').classList.toggle('live', live);
+  $('gyroText').textContent = !gyroOn ? 'выкл' : live ? 'ведёт' : (document.pointerLockElement ? 'готов' : 'коснитесь экрана');
+  $('bGyro').classList.toggle('on', gyroOn);
 }
 
 let toastTimer = 0;
@@ -257,6 +271,31 @@ function toast(code, text) {
   el.classList.add('on');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('on'), WARN.has(code) ? 6000 : 2200);
+}
+
+// ---- Gyro ----
+// Steam Input turns the Deck gyro into mouse motion ("Gyro to Mouse"); the browser has no gyro API
+// for gamepads. Pointer lock keeps the invisible cursor from stopping at the screen edge.
+let gyroOn = true, gyroX = 0, gyroY = 0, gyroLast = 0;
+try { gyroOn = localStorage.getItem('deckcam_gyro') !== '0'; } catch (e) {}
+document.addEventListener('mousemove', e => {
+  if (!gyroOn || $('help').classList.contains('on')) return;
+  gyroX += e.movementX || 0;
+  gyroY += e.movementY || 0;
+  gyroLast = performance.now();
+});
+async function lockPointer() {
+  if (!gyroOn || document.pointerLockElement || !canvas.requestPointerLock) return;
+  try { await canvas.requestPointerLock({ unadjustedMovement: true }); }    // no OS mouse acceleration
+  catch (e) { try { await canvas.requestPointerLock(); } catch (e2) {} }    // Linux Chrome may not support raw
+}
+document.addEventListener('pointerlockchange', () => render());
+function setGyro(on) {
+  gyroOn = on; gyroX = gyroY = 0;
+  try { localStorage.setItem('deckcam_gyro', on ? '1' : '0'); } catch (e) {}
+  if (!on && document.pointerLockElement) document.exitPointerLock();
+  if (on) lockPointer();
+  render();
 }
 
 // ---- Gamepad ----
@@ -281,6 +320,10 @@ function poll() {
   pad = p;
   if (had !== !!pad) render();
 
+  const gx = gyroX, gy = gyroY;
+  gyroX = gyroY = 0;
+  if (!pad && (gx || gy)) send({ t: 'in', th: 0, yw: 0, pt: 0, rl: 0, tl: 0, zm: 0, fn: 0, gx, gy });
+
   if (pad) {
     const [lx, ly] = stick(pad.axes[0] || 0, pad.axes[1] || 0);
     const [rx, ry] = stick(pad.axes[2] || 0, pad.axes[3] || 0);
@@ -288,7 +331,7 @@ function poll() {
     const tilt = (pressed(b[BTN_UP]) ? 1 : 0) - (pressed(b[BTN_DOWN]) ? 1 : 0);
     let zoom = value(b[BTN_RT]) - value(b[BTN_LT]);
     if (Math.abs(zoom) < 0.05) zoom = 0;
-    send({ t: 'in', th: -ly, yw: lx, pt: -ry, rl: rx, tl: tilt, zm: zoom, fn: pressed(b[BTN_FINE]) ? 1 : 0 });
+    send({ t: 'in', th: -ly, yw: lx, pt: -ry, rl: rx, tl: tilt, zm: zoom, fn: pressed(b[BTN_FINE]) ? 1 : 0, gx, gy });
 
     for (const [i, cmd] of Object.entries(BUTTON_CMDS)) {
       const now = pressed(b[i]);
@@ -298,6 +341,7 @@ function poll() {
   }
 
   const t = performance.now();
+  if (t - (poll.g || 0) > 100) { poll.g = t; renderGyro(); }
   if (t - fpsT0 >= 1000) { fpsShown = Math.round(frames * 1000 / (t - fpsT0)); frames = 0; fpsT0 = t; render(); }
   requestAnimationFrame(poll);
 }
@@ -307,17 +351,24 @@ function tap(id, fn) { $(id).addEventListener('pointerdown', e => { e.preventDef
 tap('bRec', () => send({ t: 'cmd', c: 'rec' }));
 tap('bAttach', () => send({ t: 'cmd', c: 'attach' }));
 tap('bMode', () => send({ t: 'cmd', c: 'mode' }));
+tap('bGyro', () => setGyro(!gyroOn));
 tap('bHelp', () => $('help').classList.add('on'));
 tap('bHelpClose', () => $('help').classList.remove('on'));
 
 let wakeLock = null;
 async function keepAwake() {
+  lockPointer();
   try {
     if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
   } catch (e) {}
   try { if (!wakeLock && navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
 }
-document.addEventListener('pointerdown', keepAwake);
+document.addEventListener('pointerdown', e => {
+  // While the gyro holds the pointer, a mouse click cannot reach a button (it goes to the canvas).
+  // If Steam delivers screen taps as mouse, the first tap releases the gyro, the next one hits.
+  if (document.pointerLockElement && e.pointerType === 'mouse') { document.exitPointerLock(); return; }
+  keepAwake();
+});
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wakeLock = null; });
 
 draw();

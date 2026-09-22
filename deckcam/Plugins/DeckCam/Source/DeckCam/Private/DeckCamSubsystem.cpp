@@ -234,6 +234,7 @@ FDeckCamTuning UDeckCamSubsystem::MakeTuning() const
 	T.FpvRate = S->FpvRate;
 	T.FpvCameraTilt = S->FpvCameraTilt;
 	T.Expo = S->Expo;
+	T.GyroSmoothing = S->GyroSmoothing;
 	return T;
 }
 
@@ -291,6 +292,14 @@ void UDeckCamSubsystem::Tick(float DeltaTime)
 		: FTransform(Cam->GetActorRotation(), Cam->GetActorLocation());
 
 	const FDeckCamTuning T = MakeTuning();
+
+	// Gyro turn since the last frame: hand it to the drone once, then forget it.
+	if (Input.GyroYaw != 0.f || Input.GyroPitch != 0.f)
+	{
+		Drone.AddLook(Input.GyroYaw, Input.GyroPitch);
+		Input.GyroYaw = 0.f;
+		Input.GyroPitch = 0.f;
+	}
 
 	// Someone moved the camera by hand (gizmo, piloted viewport, undo): take their pose, keep flying.
 	const bool bMovedByHand = !Local.GetLocation().Equals(LastWritten.GetLocation(), 0.5f)
@@ -400,6 +409,20 @@ void UDeckCamSubsystem::ApplyInput(const TSharedPtr<FJsonObject>& J)
 	Input.Tilt = Num(J, TEXT("tl"));
 	Input.Zoom = Num(J, TEXT("zm"));
 	Input.bFine = Num(J, TEXT("fn")) > 0.5f;
+
+	// Gyro arrives as mouse pixels since the previous message. Summed, because several
+	// messages can land between two editor frames and every one of them is a real turn.
+	double GX = 0.0, GY = 0.0;
+	J->TryGetNumberField(TEXT("gx"), GX);
+	J->TryGetNumberField(TEXT("gy"), GY);
+	const UDeckCamSettings* S = GetDefault<UDeckCamSettings>();
+	if (S->bGyro)
+	{
+		const float K = S->GyroDegreesPerPixel;
+		Input.GyroYaw += float(FMath::Clamp(GX, -2000.0, 2000.0)) * K * (S->bGyroInvertX ? -1.f : 1.f);
+		// Mouse down (+Y) = Deck tilted forward = look down.
+		Input.GyroPitch += -float(FMath::Clamp(GY, -2000.0, 2000.0)) * K * (S->bGyroInvertY ? -1.f : 1.f);
+	}
 	LastInputTime = FPlatformTime::Seconds();
 }
 

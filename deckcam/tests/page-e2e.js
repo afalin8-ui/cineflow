@@ -36,7 +36,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   mock.stderr.on('data', d => { log += d; });
   await sleep(800);
 
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   await ctx.addInitScript(() => {
     const btn = () => ({ pressed: false, value: 0 });
     window.__pad = { connected: true, id: 'Steam Deck', index: 0, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
@@ -91,10 +91,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(tilt >= 20, 'D-pad up tilts the camera: ' + tilt + '°');
   ok(foc > 45, 'RT zooms in: ' + foc + ' mm');
 
+  // Gyro: Steam turns Deck rotation into mouse motion; the page forwards it as look deltas.
+  await page.evaluate(() => window.__press(1)); await sleep(100); await page.evaluate(() => window.__press(1, 0)); // B: level
+  await page.mouse.move(640, 400);
+  await sleep(300);
+  const tilt0 = parseInt(await page.textContent('#tiltText'), 10);
+  for (let i = 1; i <= 10; i++) { await page.mouse.move(640 + i * 20, 400 - i * 20); await sleep(16); }
+  await sleep(250);
+  const tilt1 = parseInt(await page.textContent('#tiltText'), 10);
+  ok(tilt1 - tilt0 >= 9, 'gyro tilt back 200 px -> camera looks up ~10°: ' + tilt0 + '° -> ' + tilt1 + '°');
+  await page.evaluate(() => document.getElementById('bGyro').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  const gpx0 = await page.evaluate(() => lastStatus.gpx);
+  for (let i = 1; i <= 10; i++) { await page.mouse.move(840 - i * 20, 200 + i * 20); await sleep(16); }
+  await sleep(250);
+  ok((await page.evaluate(() => lastStatus.gpx)) === gpx0, '"Гиро" off -> motion not sent');
+  ok((await page.textContent('#gyroText')) === 'выкл', 'gyro chip says выкл');
+  await page.evaluate(() => document.getElementById('bGyro').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+
   // Touch button is on top (not covered).
   const box = await page.$eval('#bRec', e => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
   ok(await page.evaluate(b => document.elementFromPoint(b.x, b.y).id === 'bRec', box), 'REC touch button receives the tap');
-  await page.mouse.click(box.x, box.y);
+  console.log('     (pointer locked by gyro: ' + await page.evaluate(() => !!document.pointerLockElement) + ')');
+  await page.touchscreen.tap(box.x, box.y);   // the Deck screen is touch, not mouse
   await sleep(300);
   ok(count('rec') === 2 && !(await page.$eval('#rec', e => e.classList.contains('on'))), 'tapping REC stops recording');
 

@@ -38,6 +38,41 @@ void FDeckCamDrone::Step(const FDeckCamInput& In, const FDeckCamTuning& T, float
 	{
 		StepFpv(In, T, Dt);
 	}
+	StepLook(T, Dt);
+}
+
+void FDeckCamDrone::AddLook(float YawDeg, float PitchDeg)
+{
+	LookYaw += YawDeg;
+	LookPitch += PitchDeg;
+}
+
+void FDeckCamDrone::StepLook(const FDeckCamTuning& T, float Dt)
+{
+	if (LookYaw == 0.f && LookPitch == 0.f)
+	{
+		return;
+	}
+	// Apply a share of what is queued: the whole turn arrives, just spread over a few substeps.
+	const float A = Lag(Dt, T.GyroSmoothing);
+	float DY = LookYaw * A;
+	float DP = LookPitch * A;
+	if (FMath::Abs(LookYaw) < 1e-3f) { DY = LookYaw; }
+	if (FMath::Abs(LookPitch) < 1e-3f) { DP = LookPitch; }
+	LookYaw -= DY;
+	LookPitch -= DP;
+
+	if (Mode == EDeckCamMode::Cine)
+	{
+		// Yaw turns the drone, pitch tilts the gimbal: the horizon stays level, as on a real gimbal.
+		Yaw = FRotator::NormalizeAxis(Yaw + DY);
+		GimbalPitch = FMath::Clamp(GimbalPitch + DP, -90.f, 30.f);
+	}
+	else
+	{
+		// Yaw around world up (turning the Deck left/right never rolls the shot), pitch in body space.
+		Body = (FQuat(FVector::UpVector, FMath::DegreesToRadians(DY)) * Body * FQuat(FRotator(DP, 0.f, 0.f))).GetNormalized();
+	}
 }
 
 void FDeckCamDrone::StepCine(const FDeckCamInput& In, const FDeckCamTuning& T, float Dt)
@@ -127,6 +162,8 @@ void FDeckCamDrone::SwitchMode(EDeckCamMode NewMode, const FDeckCamTuning& T)
 void FDeckCamDrone::Level()
 {
 	Velocity = FVector::ZeroVector;
+	LookYaw = 0.f;
+	LookPitch = 0.f;
 	YawRateNow = 0.f;
 	TiltRateNow = 0.f;
 	BodyRates = FVector::ZeroVector;

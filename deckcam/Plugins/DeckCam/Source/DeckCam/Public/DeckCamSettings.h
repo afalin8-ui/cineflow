@@ -69,6 +69,27 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Flight", meta = (ClampMin = 0.05))
 	float ZoomRate = 0.7f;
 
+	/** Turn the camera by turning the Deck. Steam Input must map the gyro to mouse (see README). */
+	UPROPERTY(Config, EditAnywhere, Category = "Gyro")
+	bool bGyro = true;
+
+	/**
+	 * Camera degrees per mouse pixel from Steam's "gyro as mouse". Aim for 1:1: turn the Deck 90 degrees,
+	 * the camera should turn 90. Lower = calmer pans, higher = less wrist.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Gyro", meta = (ClampMin = 0.001, ClampMax = 2))
+	float GyroDegreesPerPixel = 0.05f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Gyro")
+	bool bGyroInvertX = false;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Gyro")
+	bool bGyroInvertY = false;
+
+	/** Smoothing of gyro turns, seconds. 0.04 hides packet steps; more = floatier, like a heavier rig. */
+	UPROPERTY(Config, EditAnywhere, Category = "Gyro", meta = (ClampMin = 0.0, ClampMax = 0.5, Units = "s"))
+	float GyroSmoothing = 0.04f;
+
 	/** Actors with this tag are the attach targets. If none are tagged, the editor selection is used. */
 	UPROPERTY(Config, EditAnywhere, Category = "Attach")
 	FName TargetTag = TEXT("DeckCamTarget");

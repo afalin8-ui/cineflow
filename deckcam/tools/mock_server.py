@@ -40,6 +40,8 @@ class State:
         self.last_in = 0.0
         self.commands = []   # log for tests
         self.inputs = 0
+        self.yaw = 0.0
+        self.gyro_px = 0
 
     def status(self, vfps):
         return {
@@ -47,7 +49,7 @@ class State:
             'foc': self.foc, 'tilt': self.tilt, 'vel': 0, 'rec': self.rec,
             'rt': time.time() - self.rec_t0 if self.rec else 0, 'tgt': self.targets[self.ti],
             'tn': len(self.targets), 'ti': self.ti, 'att': self.att, 'seq': True, 'play': self.play,
-            'pilot': self.pilot, 'video': True, 'vfps': vfps,
+            'pilot': self.pilot, 'video': True, 'vfps': vfps, 'yaw': self.yaw, 'gpx': self.gyro_px,
         }
 
     def command(self, c):
@@ -176,6 +178,10 @@ class Server:
                     self.state.inp = m
                     self.state.last_in = time.time()
                     self.state.inputs += 1
+                    # gyro: mouse pixels -> degrees, same default as the plugin (0.05 deg/px)
+                    self.state.yaw = (self.state.yaw + m.get('gx', 0) * 0.05) % 360
+                    self.state.tilt = max(-90.0, min(30.0, self.state.tilt - m.get('gy', 0) * 0.05))
+                    self.state.gyro_px += abs(m.get('gx', 0)) + abs(m.get('gy', 0))
                 elif t == 'cmd':
                     print('command:', m.get('c'))
                     msg = self.state.command(m.get('c'))
