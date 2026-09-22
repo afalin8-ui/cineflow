@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1",
+	"FriendlyName": "DeckCam",
+	"Description": "Steam Deck as a drone-style virtual camera controller: fly, zoom, attach, Take Recorder, live preview on the Deck.",
+	"Category": "Virtual Production",
+	"CreatedBy": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "DeckCam",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	],
+	"Plugins": [
+		{ "Name": "TakeRecorder", "Enabled": true },
+		{ "Name": "LevelSequenceEditor", "Enabled": true }
+	]
+}

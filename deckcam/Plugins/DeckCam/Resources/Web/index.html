@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>DeckCam</title>
+<style>
+  :root {
+    --bg: #111;
+    --panel: rgba(20, 19, 18, .78);
+    --line: rgba(255, 255, 255, .14);
+    --text: #f0eee6;
+    --muted: #a6a39a;
+    --accent: #d97757;
+    --rec: #e5484d;
+    --ok: #7a9d6b;
+    --warn: #facc15;
+    --font: -apple-system, 'SF Pro Text', 'Helvetica Neue', 'Noto Sans', 'Segoe UI', Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'DejaVu Sans Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .bar { position: fixed; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px; pointer-events: none; }
+  .top { top: 0; }
+  .bottom { bottom: 0; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 20px; line-height: 1; white-space: nowrap; }
+  .chip small { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; letter-spacing: .02em; }
+  .mono { font-family: var(--mono); font-weight: 600; }
+  .grow { flex: 1; }
+
+  #rec { display: none; color: #fff; background: var(--rec); border-color: var(--rec); font-weight: 700; }
+  #rec.on { display: block; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .55; } }
+
+  #conn .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--rec); margin-right: 8px; vertical-align: 1px; }
+  #conn.ok .dot { background: var(--ok); }
+  #att.on { border-color: var(--accent); }
+  #att.on b { color: var(--accent); }
+  #mode b { color: var(--accent); }
+
+  .btns { position: fixed; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 12px; }
+  .btns button { pointer-events: auto; width: 76px; height: 60px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: 600 15px var(--font); }
+  .btns button:active { background: #2b2a28; }
+  #bRec { color: #fff; }
+  #bRec.on { background: var(--rec); border-color: var(--rec); }
+
+  #toast { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); max-width: 80%; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 18px; font-size: 18px; line-height: 1.35; opacity: 0; transition: opacity .2s; pointer-events: none; text-align: center; }
+  #toast.on { opacity: 1; }
+  #toast.warn { border-color: var(--warn); }
+
+  #help { position: fixed; inset: 0; background: rgba(12, 12, 11, .94); display: none; padding: 28px 40px; overflow: auto; }
+  #help.on { display: block; }
+  #help h1 { margin: 0 0 6px; font-size: 26px; }
+  #help p { color: var(--muted); margin: 0 0 18px; font-size: 16px; }
+  #help table { border-collapse: collapse; width: 100%; font-size: 18px; }
+  #help td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  #help td:first-child { font-family: var(--mono); color: var(--accent); white-space: nowrap; width: 1%; font-weight: 600; }
+  #help .close { position: absolute; top: 18px; right: 22px; width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 26px; }
+
+  #center { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  #center div { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 26px; font-size: 22px; text-align: center; line-height: 1.4; }
+  #center small { display: block; color: var(--muted); font-size: 16px; }
+  #center.off { display: none; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div class="bar top">
+  <div class="chip" id="conn"><span class="dot"></span><span id="connText">нет связи</span></div>
+  <div class="chip mono" id="rec">● REC <span id="recTime">0:00</span></div>
+  <div class="grow"></div>
+  <div class="chip" id="seq"><small>Секвенция</small><span id="seqText">—</span></div>
+  <div class="chip mono" id="fps"><small>видео</small><span id="fpsText">—</span></div>
+</div>
+
+<div class="bar bottom">
+  <div class="chip" id="mode"><small>Режим</small><b id="modeText">—</b></div>
+  <div class="chip mono"><small>Скорость</small><span id="spdText">—</span></div>
+  <div class="chip mono"><small>Объектив</small><span id="focText">—</span></div>
+  <div class="chip mono"><small>Наклон</small><span id="tiltText">—</span></div>
+  <div class="grow"></div>
+  <div class="chip" id="att"><small id="attLabel">Цель ← →</small><b id="attText">—</b></div>
+</div>
+
+<div class="btns">
+  <button id="bRec">REC</button>
+  <button id="bAttach">Аттач</button>
+  <button id="bMode">Режим</button>
+  <button id="bHelp">?</button>
+</div>
+
+<div id="center"><div id="centerText">Подключаюсь…<small>ищу Unreal</small></div></div>
+<div id="toast"></div>
+
+<div id="help">
+  <button class="close" id="bHelpClose">✕</button>
+  <h1>Управление</h1>
+  <p>Кино — горизонт ровный, камера плывёт с инерцией. FPV — полёт с креном, центр левого стика = зависание.</p>
+  <table>
+    <tr><td>Левый стик ↕</td><td>Высота (кино) · газ (FPV)</td></tr>
+    <tr><td>Левый стик ↔</td><td>Поворот</td></tr>
+    <tr><td>Правый стик ↕</td><td>Вперёд / назад (кино) · наклон носа (FPV)</td></tr>
+    <tr><td>Правый стик ↔</td><td>Вбок (кино) · крен (FPV)</td></tr>
+    <tr><td>RT / LT</td><td>Зум: длиннее / короче фокусное</td></tr>
+    <tr><td>RB / LB</td><td>Скорость больше / меньше</td></tr>
+    <tr><td>Крестовина ↑ ↓</td><td>Наклон камеры</td></tr>
+    <tr><td>Крестовина ← →</td><td>Выбор объекта для аттача</td></tr>
+    <tr><td>A</td><td>Прицепиться к выбранному / отцепиться</td></tr>
+    <tr><td>B</td><td>Стоп и выровнять горизонт</td></tr>
+    <tr><td>X</td><td>Секвенсер: играть / пауза</td></tr>
+    <tr><td>Y</td><td>Секвенсер: в начало</td></tr>
+    <tr><td>☰ (Menu)</td><td>Запись Take Recorder: старт / стоп</td></tr>
+    <tr><td>⧉ (View)</td><td>Кино ↔ FPV</td></tr>
+    <tr><td>L3 (нажать и держать)</td><td>Точно: всё втрое медленнее</td></tr>
+    <tr><td>R3</td><td>Вьюпорт на компьютере смотрит через камеру: вкл / выкл</td></tr>
+  </table>
+</div>
+
+<script>
+'use strict';
+
+// ---- Mapping: edit here, no recompiling needed (standard gamepad layout, Steam Input "Gamepad") ----
+const DEADZONE = 0.10;
+const BUTTON_CMDS = {
+  0: 'attach',   // A
+  1: 'level',    // B
+  2: 'play',     // X
+  3: 'rewind',   // Y
+  4: 'spd-',     // LB
+  5: 'spd+',     // RB
+  8: 'mode',     // View
+  9: 'rec',      // Menu
+  11: 'pilot',   // R3
+  14: 'tgt-',    // D-pad left
+  15: 'tgt+',    // D-pad right
+};
+const BTN_FINE = 10, BTN_UP = 12, BTN_DOWN = 13, BTN_LT = 6, BTN_RT = 7;
+
+const MESSAGES = {
+  rec_start: 'Запись пошла',
+  rec_stop: 'Запись остановлена — дубль сохранён',
+  rec_no_seq: 'В Take Recorder нет источника Level Sequence — самолёты во время записи не поедут. В окне Take Recorder: + Source → Level Sequence → ваша секвенция.',
+  rec_no_panel: 'Не открылось окно Take Recorder. Откройте его в Unreal: Window → Cinematics → Take Recorder.',
+  rec_err: 'Take Recorder не начал запись: ',
+  no_target: 'Не к чему цепляться: поставьте акторам тег DeckCamTarget или выделите их в Unreal',
+  attached: 'Прицепились к: ',
+  detached: 'Отцепились от: ',
+  no_seq_open: 'Откройте секвенцию с самолётами в Sequencer',
+  pilot_on: 'Вьюпорт смотрит через камеру',
+  pilot_off: 'Вьюпорт отпущен',
+  mode_cine: 'Режим: кино',
+  mode_fpv: 'Режим: FPV',
+};
+const WARN = new Set(['rec_no_seq', 'rec_no_panel', 'rec_err', 'no_target', 'no_seq_open']);
+
+// ---- Connection ----
+const $ = id => document.getElementById(id);
+const canvas = $('view');
+const ctx = canvas.getContext('2d');
+let ws = null, connected = false, lastStatus = null;
+
+function wsUrl() {
+  const u = new URL(location.href);
+  const host = u.searchParams.get('host') || location.host;
+  return 'ws://' + host + '/';
+}
+
+function connect() {
+  try { ws = new WebSocket(wsUrl()); } catch (e) { setTimeout(connect, 1000); return; }
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { connected = true; send({ t: 'hello' }); render(); };
+  ws.onclose = () => { connected = false; ws = null; render(); setTimeout(connect, 1000); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  ws.onmessage = ev => {
+    if (typeof ev.data === 'string') {
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.t === 'st') { lastStatus = m; render(); }
+      else if (m.t === 'msg') toast(m.code, m.text);
+    } else {
+      onFrame(ev.data);
+    }
+  };
+}
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+// ---- Video: one frame in flight, ack after drawing ----
+let frames = 0, fpsShown = 0, fpsT0 = performance.now(), gotVideo = false, lastBitmap = null;
+async function onFrame(buf) {
+  try {
+    const bmp = await createImageBitmap(new Blob([buf], { type: 'image/jpeg' }));
+    if (lastBitmap) lastBitmap.close();
+    lastBitmap = bmp;
+    gotVideo = true;
+    draw();
+    frames++;
+  } catch (e) { /* broken frame: skip */ }
+  send({ t: 'ack' });
+}
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+  if (!lastBitmap) return;
+  const s = Math.min(w / lastBitmap.width, h / lastBitmap.height);
+  const dw = lastBitmap.width * s, dh = lastBitmap.height * s;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(lastBitmap, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+addEventListener('resize', draw);
+
+// ---- HUD ----
+function fmtTime(s) { s = Math.floor(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function fmtSpeed(v) { return v >= 10 ? Math.round(v) + ' м/с' : (Math.round(v * 10) / 10) + ' м/с'; }
+
+function render() {
+  $('conn').classList.toggle('ok', connected);
+  $('connText').textContent = connected ? (pad ? 'на связи' : 'на связи · нет пульта') : 'нет связи';
+  const st = lastStatus;
+  let center = '';
+  if (!connected) center = 'Подключаюсь…<small>Unreal: Tools → DeckCam. Компьютер и Deck в одной сети Wi-Fi</small>';
+  else if (!pad) center = 'Нажмите любую кнопку<small>браузер видит пульт только после нажатия</small>';
+  else if (st && st.video && !gotVideo) center = 'Жду картинку из Unreal…';
+  $('center').classList.toggle('off', !center);
+  if (center) $('centerText').innerHTML = center;
+  if (!st) return;
+
+  $('rec').classList.toggle('on', !!st.rec);
+  $('bRec').classList.toggle('on', !!st.rec);
+  $('bRec').textContent = st.rec ? 'СТОП' : 'REC';
+  $('recTime').textContent = fmtTime(st.rt || 0);
+  $('modeText').textContent = st.mode === 'fpv' ? 'FPV' : 'Кино';
+  $('spdText').textContent = fmtSpeed(st.spd) + ' · ' + (st.si + 1) + '/' + st.sn;
+  $('focText').textContent = Math.round(st.foc) + ' мм';
+  $('tiltText').textContent = Math.round(st.tilt) + '°';
+  $('seqText').textContent = !st.seq ? 'не открыта' : (st.play ? '▶ играет' : '❚❚ пауза');
+
+  const attached = !!st.att;
+  $('att').classList.toggle('on', attached);
+  $('attLabel').textContent = attached ? 'Прицеплена к' : (st.tn ? 'Цель ← → ' + (st.ti + 1) + '/' + st.tn : 'Цель');
+  $('attText').textContent = attached ? st.att : (st.tgt || 'нет целей');
+  $('bAttach').textContent = attached ? 'Отцеп.' : 'Аттач';
+  $('fpsText').textContent = st.video ? fpsShown + ' к/с' : 'выкл';
+}
+
+let toastTimer = 0;
+function toast(code, text) {
+  const base = MESSAGES[code];
+  const msg = base === undefined ? (text || code) : (base.endsWith(': ') ? base + (text || '') : base);
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.toggle('warn', WARN.has(code));
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('on'), WARN.has(code) ? 6000 : 2200);
+}
+
+// ---- Gamepad ----
+let pad = null, prevButtons = [];
+addEventListener('gamepadconnected', () => { render(); });
+addEventListener('gamepaddisconnected', () => { pad = null; render(); });
+
+function stick(x, y) {
+  const m = Math.hypot(x, y);
+  if (m < DEADZONE) return [0, 0];
+  const k = Math.min(1, (m - DEADZONE) / (1 - DEADZONE)) / m;
+  return [x * k, y * k];
+}
+function pressed(b) { return !!(b && (b.pressed || b.value > 0.5)); }
+function value(b) { return b ? (typeof b.value === 'number' ? b.value : (b.pressed ? 1 : 0)) : 0; }
+
+function poll() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let p = null;
+  for (const g of pads) if (g && g.connected) { p = g; break; }
+  const had = !!pad;
+  pad = p;
+  if (had !== !!pad) render();
+
+  if (pad) {
+    const [lx, ly] = stick(pad.axes[0] || 0, pad.axes[1] || 0);
+    const [rx, ry] = stick(pad.axes[2] || 0, pad.axes[3] || 0);
+    const b = pad.buttons;
+    const tilt = (pressed(b[BTN_UP]) ? 1 : 0) - (pressed(b[BTN_DOWN]) ? 1 : 0);
+    let zoom = value(b[BTN_RT]) - value(b[BTN_LT]);
+    if (Math.abs(zoom) < 0.05) zoom = 0;
+    send({ t: 'in', th: -ly, yw: lx, pt: -ry, rl: rx, tl: tilt, zm: zoom, fn: pressed(b[BTN_FINE]) ? 1 : 0 });
+
+    for (const [i, cmd] of Object.entries(BUTTON_CMDS)) {
+      const now = pressed(b[i]);
+      if (now && !prevButtons[i]) send({ t: 'cmd', c: cmd });
+      prevButtons[i] = now;
+    }
+  }
+
+  const t = performance.now();
+  if (t - fpsT0 >= 1000) { fpsShown = Math.round(frames * 1000 / (t - fpsT0)); frames = 0; fpsT0 = t; render(); }
+  requestAnimationFrame(poll);
+}
+
+// ---- Touch ----
+function tap(id, fn) { $(id).addEventListener('pointerdown', e => { e.preventDefault(); keepAwake(); fn(); }); }
+tap('bRec', () => send({ t: 'cmd', c: 'rec' }));
+tap('bAttach', () => send({ t: 'cmd', c: 'attach' }));
+tap('bMode', () => send({ t: 'cmd', c: 'mode' }));
+tap('bHelp', () => $('help').classList.add('on'));
+tap('bHelpClose', () => $('help').classList.remove('on'));
+
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+  } catch (e) {}
+  try { if (!wakeLock && navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+document.addEventListener('pointerdown', keepAwake);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wakeLock = null; });
+
+draw();
+render();
+connect();
+requestAnimationFrame(poll);
+</script>
+</body>
+</html>
