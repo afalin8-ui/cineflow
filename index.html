@@ -260,7 +260,7 @@
         /* Теги выбранной карточки правятся чипами, а в покое просто
            перечислены строкой — читать их надо всегда, править нет. */
         /* Теги — ЕДИНСТВЕННОЕ, что осталось под кадром, и они же отвечают на «зачем этот кадр». */
-        .cf-ref-tags { font-size: var(--fs-2); color: var(--text-2); line-height: 1.5; }
+        .cf-ref-tags { font-size: var(--fs-2); color: var(--muted); line-height: 1.5; }
 
         .cf-act1 { opacity: .38; transition: opacity .12s; }
         .cf-act1.on { opacity: 1; }
@@ -419,6 +419,19 @@
         .cf-seg { display: flex; padding: 2px; border: 1px solid var(--border); border-radius: var(--r-sm); gap: 2px; flex-shrink: 0; }
         .cf-seg > * { font-size: var(--fs-1); padding: 4px 9px; border-radius: var(--r-sm); color: var(--muted); font-weight: 600; white-space: nowrap; }
         .cf-seg > .on { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
+        /* Выбранное в любом переключателе — та же приподнятая плашка, что у
+           .cf-seg > .on. Оранжевой заливкой выделяли инструменты рисования,
+           папки и теги галереи, фильтры телефона и виды КПП — и выбранный
+           пункт кричал громче главного действия экрана. Заливка акцентом
+           остаётся только у главного действия. */
+        /* Номер кадра ПОВЕРХ картинки — как у раскадровщиков: строка под
+           кадром отнимала высоту у каждой карточки. Тёмная подложка
+           обязательна, светлый кадр иначе съедает цифры. */
+        .cf-frame-num { font-family: var(--font-mono); font-size: var(--fs-1); font-weight: 600; color: var(--text);
+                        background: rgba(20,19,18,.72); border-radius: 6px; padding: 2px 7px; line-height: 1.5;
+                        backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+        html.cf-touch .cf-frame-num { padding: 4px 9px; }
+        .cf-sel { background: var(--raised) !important; color: var(--text) !important; box-shadow: 0 0 0 1px var(--border); }
         html.cf-touch .cf-seg > * { padding: 7px 10px; font-size: var(--fs-1); }
         /* ---------- инструменты доски ----------
            Один размер на все кнопки: 32 точки внутри полосы в 44 — цель,
@@ -446,6 +459,13 @@
         .cf-doc-edit:hover { border-color: var(--border); }
         .cf-doc-edit:focus { outline: none; border-color: var(--accent); background: var(--bg); }
         .cf-quote { border-left: 2px solid var(--border); padding-left: 14px; }
+        /* Текст сцены на экране сцены — та же выдержка, что в КПП: линейка
+           слева вместо рамки вокруг. Что его можно править, говорит линейка
+           под курсором и в фокусе. Отступ один во всех состояниях — иначе
+           буквы уезжали бы из-под пальца (то же правило, что у гайда). */
+        .cf-scene-text { border-left: 2px solid var(--border) !important; padding: 0 0 0 16px; overflow-y: auto; transition: border-color .15s; }
+        .cf-scene-text:hover { border-left-color: var(--muted-2) !important; }
+        .cf-scene-text:focus { border-left-color: var(--accent) !important; }
         .cf-img-bad {
           /* !important здесь обязателен и не от лени: почти у каждой картинки в файле свой инлайновый background (чаще var(--bg), чтобы не просвечивала подложка), а инлайн бьёт любой класс. */
           background: repeating-linear-gradient(45deg, var(--card), var(--card) 7px, var(--raised) 7px, var(--raised) 14px) !important;
@@ -491,7 +511,7 @@
         /* Фильтр-пилюля: 30 точек в высоту плюс поля — палец попадает. */
         .cf-pill { flex-shrink: 0; white-space: nowrap; font-size: var(--fs-2); padding: 8px 14px; min-height: 36px;
                    border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); }
-        .cf-pill.on { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+        .cf-pill.on { background: var(--raised); border-color: var(--raised); color: var(--text); font-weight: 600; }
         /* Лента до самых краёв экрана: обрезанная по полям она читается
            как «здесь всё», и вбок никто не листает. */
         .cf-bleed { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
@@ -3416,7 +3436,7 @@
                         <div className="flex items-center gap-4">
                             <span className="text-white font-bold text-sm flex items-center gap-2"><Icons.Pen /> Модуль быстрого скетча</span>
                             <div className="flex gap-1 bg-black/50 p-1 rounded-lg">
-                                <button onClick={() => setTool('brush')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'brush' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-400'}`}><Icons.Pen /> Кисть</button>
+                                <button onClick={() => setTool('brush')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'brush' ? 'cf-sel' : 'text-zinc-400'}`}><Icons.Pen /> Кисть</button>
                                 <button onClick={() => setTool('eraser')} className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${tool === 'eraser' ? 'bg-zinc-700 text-white' : 'text-zinc-400'}`}><Icons.Eraser /> Ластик</button>
                             </div>
                             <input type="range" min="1" max="20" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} className="w-24 accent-indigo-500" />
@@ -4143,7 +4163,7 @@
                           <div className="cf-edit-only flex flex-col items-start gap-2">
                             <button onClick={(e) => { e.stopPropagation(); setStillMenu(v => !v); }} disabled={stillBusy || !videoSrc}
                                     className="rounded-full px-3 py-1.5 flex items-center gap-1.5"
-                                    style={{ background: stillMenu ? 'var(--accent)' : 'rgba(255,255,255,.08)', color: stillMenu ? 'var(--bg)' : 'var(--text)',
+                                    style={{ background: stillMenu ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.08)', color: 'var(--text)',
                                              border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 700, minHeight: 34, opacity: stillBusy ? .6 : 1 }}>
                                 <Icons.Still/> {stillBusy ? 'снимаю…' : 'Стоп-кадр'}
                             </button>
@@ -4391,17 +4411,17 @@
                         <div className="flex flex-wrap items-center gap-y-2 gap-x-4">
                             <span className="text-amber-400 font-bold text-sm flex items-center gap-2 shrink-0"><Icons.Lightbulb /> Схема света</span>
                             <div className="cf-edit-only flex flex-wrap gap-1 bg-black/50 p-1 rounded-lg">
-                                <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pointer/></button>
-                                <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Pen/></button>
+                                <button onClick={() => setMode('select')} className={`px-2 py-1 text-xs rounded ${mode==='select'? 'cf-sel' :'text-zinc-400'}`}><Icons.Pointer/></button>
+                                <button onClick={() => setMode('draw')} className={`px-2 py-1 text-xs rounded ${mode==='draw'? 'cf-sel' :'text-zinc-400'}`}><Icons.Pen/></button>
                                 <button onClick={() => setMode('erase')} className={`px-2 py-1 text-xs rounded ${mode==='erase'?'bg-zinc-700 text-white':'text-zinc-400'}`}><Icons.Eraser/></button>
                                 <div className="w-[1px] h-4 bg-white/20 my-auto mx-1"></div>
-                                <button onClick={() => setMode('rect')} title="Прямоугольник" className={`px-2 py-1 text-xs rounded ${mode==='rect'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Square/></button>
-                                <button onClick={() => setMode('circle')} title="Круг" className={`px-2 py-1 text-xs rounded ${mode==='circle'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Circle/></button>
-                                <button onClick={() => setMode('triangle')} title="Треугольник" className={`px-2 py-1 text-xs rounded ${mode==='triangle'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Triangle/></button>
-                                <button onClick={() => setMode('diamond')} title="Ромб" className={`px-2 py-1 text-xs rounded ${mode==='diamond'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Diamond/></button>
-                                <button onClick={() => setMode('star')} title="Звезда" className={`px-2 py-1 text-xs rounded ${mode==='star'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.Star/></button>
-                                <button onClick={() => setMode('arrow')} title="Стрелка (направление луча)" className={`px-2 py-1 text-xs rounded ${mode==='arrow'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.BeamArrow/></button>
-                                <button onClick={() => setMode('text')} title="Текст" className={`px-2 py-1 text-xs rounded ${mode==='text'?'bg-indigo-500 text-[#1a1918]':'text-zinc-400'}`}><Icons.TextIcon/></button>
+                                <button onClick={() => setMode('rect')} title="Прямоугольник" className={`px-2 py-1 text-xs rounded ${mode==='rect'? 'cf-sel' :'text-zinc-400'}`}><Icons.Square/></button>
+                                <button onClick={() => setMode('circle')} title="Круг" className={`px-2 py-1 text-xs rounded ${mode==='circle'? 'cf-sel' :'text-zinc-400'}`}><Icons.Circle/></button>
+                                <button onClick={() => setMode('triangle')} title="Треугольник" className={`px-2 py-1 text-xs rounded ${mode==='triangle'? 'cf-sel' :'text-zinc-400'}`}><Icons.Triangle/></button>
+                                <button onClick={() => setMode('diamond')} title="Ромб" className={`px-2 py-1 text-xs rounded ${mode==='diamond'? 'cf-sel' :'text-zinc-400'}`}><Icons.Diamond/></button>
+                                <button onClick={() => setMode('star')} title="Звезда" className={`px-2 py-1 text-xs rounded ${mode==='star'? 'cf-sel' :'text-zinc-400'}`}><Icons.Star/></button>
+                                <button onClick={() => setMode('arrow')} title="Стрелка (направление луча)" className={`px-2 py-1 text-xs rounded ${mode==='arrow'? 'cf-sel' :'text-zinc-400'}`}><Icons.BeamArrow/></button>
+                                <button onClick={() => setMode('text')} title="Текст" className={`px-2 py-1 text-xs rounded ${mode==='text'? 'cf-sel' :'text-zinc-400'}`}><Icons.TextIcon/></button>
                             </div>
                             <div className="cf-edit-only flex gap-1">
                                 {['#facc15', '#60a5fa', '#f87171', '#34d399', '#ffffff'].map(c => (
@@ -6607,8 +6627,8 @@
                     <button onClick={() => setBarOpen(o => !o)} data-cf="scout-clock"
                             title="Шкала дня: когда где будет солнце"
                             style={{ minHeight: 'var(--tap)', padding: '0 9px', borderRadius: 'var(--r-sm)',
-                                     background: barOpen ? 'var(--accent)' : 'transparent',
-                                     color: barOpen ? 'var(--bg)' : 'var(--text)',
+                                     background: barOpen ? 'var(--raised)' : 'transparent',
+                                     color: 'var(--text)',
                                      fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)' }}>
                       {hhmm(when)}{sunNow ? ` · ${sunNow.alt.toFixed(0)}°` : ''}
                     </button>
@@ -6664,9 +6684,9 @@
                         title={hintsOn ? 'Убрать пояснения' : 'Показать пояснения — что за чем стоит'}
                         className="ml-auto flex items-center justify-center"
                         style={{ width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: '50%',
-                                 background: hintsOn ? 'var(--accent)' : 'var(--card)',
-                                 border: '1px solid ' + (hintsOn ? 'var(--accent)' : 'var(--border)'),
-                                 color: hintsOn ? '#fff' : 'var(--muted)', fontSize: 'var(--fs-3)', fontWeight: 700 }}>?</button>
+                                 background: hintsOn ? 'var(--raised)' : 'var(--card)',
+                                 border: '1px solid var(--border)',
+                                 color: hintsOn ? 'var(--text)' : 'var(--muted)', fontSize: 'var(--fs-3)', fontWeight: 700 }}>?</button>
               </div>
               {group('Камера', 'Активная область сенсора в миллиметрах. Список короткий намеренно — угол обзора у объективов одного фокусного одинаков, чьи бы они ни были.',
                 <React.Fragment>
@@ -14944,6 +14964,20 @@
             const when = /НОЧ|ВЕЧЕР|ЗАКАТ|СУМЕРК/.test(t) ? 'Н' : (/ДЕНЬ|УТР|РАССВЕТ/.test(t) ? 'Д' : '');
             return [where, when].filter(Boolean).join('·');
           };
+          // Название сцены для СПИСКА: без «ИНТ.»/«НАТ.» в начале — их уже
+          // говорит значок справа. В колонке 212 точек номер, миниатюра
+          // и значок оставляли названию сотню, и все сцены читались
+          // одинаково: «ИНТ. …», «НАТ. …». Само название не трогаем —
+          // режем только показ, и только если значок это место называет.
+          const listTitle = (s) => {
+            const t = String(s.title || '').trim();
+            if (!t) return 'Без названия';
+            const cut = t.replace(/^(ИНТ|НАТ)(\s*[./]\s*(ИНТ|НАТ))?\.?(?=[\s.,:;—–-]|$)[\s.,:;—–-]*/i, '');
+            return cut && /^(ИНТ|НАТ)/.test(sceneBadge(s)) ? cut : t;
+          };
+          // Две строки названия, а не одна с многоточием: иначе длинные
+          // названия обрезаются на одном и том же месте.
+          const clamp2 = { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.3, wordBreak: 'break-word' };
 
           // Содержимое шторок телефона. Собирается здесь, а не в экране
           // сцены: сама шторка висит поверх всего приложения, и тащить
@@ -15536,6 +15570,7 @@
                       // Пропорция выбирается один раз на проект (шаблон
                       // «Раскадровка» на пустой доске).
                       const SHOT_RATIO = projectRatio;
+                      const FRAME_W = 280;
 
                       const frameThumb = (f, w) => (
                         f.image
@@ -15635,10 +15670,10 @@
                                           <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', width: 36, fontWeight: on ? 600 : 400, color: on ? 'var(--accent)' : 'var(--muted)' }}>#{sc.number}</span>
                                           {cover && <img src={cover.url || cover.image} draggable="false" className="shrink-0" style={{ width: 52, height: 34, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} />}
                                           <span className="flex-1 min-w-0">
-                                            <span className="block truncate" style={{ fontSize: 'var(--fs-3)', fontWeight: on ? 600 : 400, color: 'var(--text)' }}>{sc.title || 'Без названия'}</span>
+                                            <span className="block" title={sc.title} style={{ ...clamp2, fontSize: 'var(--fs-3)', fontWeight: on ? 600 : 400, color: 'var(--text)' }}>{listTitle(sc)}</span>
                                             {on && (cnt || l) && (
                                               <span className="block truncate cf-meta" style={{ marginTop: 2 }}>
-                                                {cnt ? `${cnt} кадр.` : ''}{cnt && l ? ' · ' : ''}{l ? l.name : ''}
+                                                {cnt ? `${cnt} ${plur(cnt, 'кадр', 'кадра', 'кадров')}` : ''}{cnt && l ? ' · ' : ''}{l ? l.name : ''}
                                               </span>
                                             )}
                                           </span>
@@ -15834,11 +15869,14 @@
                               <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600, letterSpacing: '.01em', color: 'var(--muted)' }}>Раскадровка · {frames.length}</span>
                               <button onClick={addFrame} className="cf-edit-only ml-auto" style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap)' }}>+ кадр</button>
                             </div>
-                            <div className="flex gap-2 mt-2 overflow-x-auto cf-bleed" style={{ paddingBottom: 4 }}>
+                            {/* Та же раскладка, что на планшете: кадр без
+                                коробки вокруг, номер и оптика поверх кадра. */}
+                            <div className="flex gap-3 mt-2 overflow-x-auto cf-bleed" style={{ paddingBottom: 4 }}>
                               {frames.map(f => (
-                                <div key={f.id} className="shrink-0" style={{ width: 210, ...cardBox, padding: 7 }}>
+                                <div key={f.id} className="shrink-0" style={{ width: 250 }}>
+                                  <div className="relative">
                                   {f.image ? (
-                                    <img src={f.image} draggable="false" style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', borderRadius: 'var(--r-sm)', display: 'block' }} />
+                                    <img src={f.image} draggable="false" style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', borderRadius: 'var(--r-md)', display: 'block' }} />
                                   ) : (
                                     /* Пустой кадр на телефоне предлагал ОДИН путь — «скетч»,
                                        и положить в раскадровку снимок с телефона было нечем
@@ -15856,13 +15894,13 @@
                                       </button>
                                     </div>
                                   )}
-                                  <div className="flex justify-between gap-2" style={{ marginTop: 6 }}>
-                                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--text)' }}>{f.frameNum}</span>
-                                    <span className="truncate" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>{f.lens || ''}</span>
+                                    <span data-cf="frame-num" className="cf-frame-num absolute pointer-events-none" style={{ left: 6, bottom: 6 }}>
+                                      {f.frameNum || '—'}{f.lens ? <span style={{ color: 'var(--muted)', marginLeft: 6 }}>{f.lens}</span> : null}
+                                    </span>
                                   </div>
                                   <input type="text" value={f.description || ''} onChange={(e) => patchFrame(f.id, { description: e.target.value })}
                                          placeholder="что в кадре" className="w-full bg-transparent focus:outline-none"
-                                         style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', marginTop: 3 }} />
+                                         style={{ fontSize: 'var(--fs-3)', color: 'var(--text-2)', marginTop: 6 }} />
                                 </div>
                               ))}
                               <button onClick={addFrame} className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1"
@@ -15906,27 +15944,28 @@
                       // на экран влезало вдвое меньше сцен, а разобрать,
                       // где кончается одна и начинается другая, было трудно.
                       const sceneList = sceneListOpen ? (
-                        <aside className="flex flex-col shrink-0" style={{ width: 212, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
-                          <div className="flex items-center gap-1.5 px-2.5 pt-2.5 pb-2">
+                        <aside className="flex flex-col shrink-0" style={{ width: 236, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
+                          <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
                             <span className="cf-meta flex-1 truncate">Сцены · {scenes.length}</span>
                             <button onClick={() => setSceneListOpen(false)} title="Свернуть список сцен"
                                     className="flex items-center justify-center shrink-0"
                                     style={{ width: 22, height: 22, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>‹</button>
                           </div>
                           <div className="flex-1 overflow-y-auto">
+                            {/* Строка списка — НАЗВАНИЕ. Миниатюра отсюда ушла:
+                                в колонке она отнимала у названия половину места,
+                                а картинки сцены и так в одном нажатии. */}
                             {sortedScenes.map(sc => {
-                              const cover = references.find(r => r.sceneId === sc.id && r.url)
-                                         || storyboard.find(f => f.sceneId === sc.id && f.image);
                               const badge = sceneBadge(sc);
+                              const on = activeSceneId === sc.id;
                               return (
                                 <div key={sc.id} onClick={() => setActiveSceneId(sc.id)}
-                                     className={`cf-row flex items-center gap-2 px-2.5 ${activeSceneId === sc.id ? 'cf-row-on' : ''}`}
-                                     style={{ minHeight: 34, paddingTop: 6, paddingBottom: 6 }}>
-                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', width: 34, flexShrink: 0, color: activeSceneId === sc.id ? 'var(--accent)' : 'var(--muted)' }}>#{sc.number}</span>
-                                  {cover && <img src={cover.url || cover.image} className="shrink-0 rounded" style={{ width: 40, height: 26, objectFit: 'cover' }} draggable="false" />}
-                                  <span className="flex-1 min-w-0 truncate" title={sc.title}
-                                        style={{ fontSize: 'var(--fs-2)', color: activeSceneId === sc.id ? 'var(--text)' : 'var(--text-2)' }}>{sc.title || 'Без названия'}</span>
-                                  {badge && <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', padding: '1px 4px' }}>{badge}</span>}
+                                     className={`cf-row cf-scene-row flex items-start gap-2 px-3 ${on ? 'cf-row-on' : ''}`}
+                                     style={{ minHeight: 'var(--tap)', paddingTop: 9, paddingBottom: 9, borderBottomColor: 'transparent' }}>
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', lineHeight: 1.3, width: 30, flexShrink: 0, color: on ? 'var(--accent)' : 'var(--muted-2)' }}>{sc.number}</span>
+                                  <span className="flex-1 min-w-0" title={sc.title}
+                                        style={{ ...clamp2, fontSize: 'var(--fs-2)', fontWeight: on ? 600 : 400, color: on ? 'var(--text)' : 'var(--text-2)' }}>{listTitle(sc)}</span>
+                                  {badge && <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', lineHeight: 1.6, color: 'var(--muted-2)' }}>{badge}</span>}
                                 </div>
                               );
                             })}
@@ -15984,7 +16023,7 @@
                                  placeholder="Название сцены" />
                           {/* СТРОКА МЕТЫ — ОДНА, короткая, без рамок: «ИНТ·Н · 3 кадра · 35mm · Квартира на Гороховой». */}
                           <div className="flex items-baseline gap-2 flex-wrap cf-meta"
-                               style={{ marginTop: 8, marginBottom: 22, fontFamily: 'var(--font-ui)', fontSize: 'var(--fs-2)' }}>
+                               style={{ marginTop: 8, marginBottom: 34, fontFamily: 'var(--font-ui)', fontSize: 'var(--fs-2)' }}>
                             {sceneBadge(s) && <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{sceneBadge(s).replace('·', ' · ')}</span>}
                             {sceneBadge(s) && <span style={{ opacity: .4 }}>·</span>}
                             <span>{frames.length} {plur(frames.length, 'кадр', 'кадра', 'кадров')}</span>
@@ -16193,7 +16232,7 @@
                       // Текст и техника никуда не делись — они там, где их
                       // и читают: во вторую очередь.
                       const creativeMain = (
-                        <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '18px 22px 44px' }}>
+                        <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '30px clamp(20px, 3.4vw, 48px) 80px' }}>
                           {sceneHead}
                           {/* РАСКАДРОВКА */}
                           <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 10 }}>
@@ -16213,12 +16252,20 @@
                           </div>
 
                           {showImages ? (
-                            <div className={shotsExpanded ? 'grid gap-3.5 mt-2' : 'flex gap-2.5 mt-2 overflow-x-auto pb-1.5'}
+                            <div className={shotsExpanded ? 'grid gap-x-4 gap-y-5 mt-2' : 'flex gap-4 mt-2 overflow-x-auto pb-1.5'}
                                  style={shotsExpanded ? { gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' } : null}>
+                              {/* КАДР — КАРТИНКА НА СТРАНИЦЕ, А НЕ КАРТОЧКА. Рамка,
+                                  подложка и поля вокруг каждого кадра отнимали у
+                                  картинки место и давали «коробку в коробке»;
+                                  номер стоял отдельной строкой под ней. Теперь
+                                  номер и оптика лежат ПОВЕРХ нижнего края кадра,
+                                  как у раскадровщиков, а под кадром только
+                                  описание. Кадр от этого стал крупнее: 280 точек
+                                  против 202. */}
                               {frames.map(f => (
                                 <div key={f.id} className="relative group shrink-0"
-                                     style={{ ...cardBox, padding: shotsExpanded ? 10 : 8, width: shotsExpanded ? 'auto' : 218 }}>
-                                  <div className="relative" style={{ borderRadius: 'var(--r-sm)', overflow: 'hidden' }}>
+                                     style={{ width: shotsExpanded ? 'auto' : FRAME_W }}>
+                                  <div className="relative" style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--card)' }}>
                                     {f.image ? (
                                       <img src={f.image} style={{ width: '100%', aspectRatio: SHOT_RATIO, objectFit: 'cover', display: 'block' }} draggable="false" />
                                     ) : (
@@ -16239,6 +16286,12 @@
                                     <button onClick={() => dropFrame(f.id)} title="Удалить кадр"
                                             className={`cf-edit-only absolute cf-acts ${(frameEdit && frameEdit.id === f.id) ? 'on' : ''} transition-all flex items-center justify-center`}
                                             style={{ top: 5, right: 5, width: 24, height: 24, borderRadius: 'var(--r-sm)', background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
+                                    <button type="button" data-cf="frame-num"
+                                            onClick={() => { if (!READ_ONLY) setFrameEdit({ id: f.id, field: 'frameNum' }); }}
+                                            title={READ_ONLY ? undefined : 'Номер и оптика кадра'}
+                                            className="cf-frame-num absolute" style={{ left: 6, bottom: 6 }}>
+                                      {f.frameNum || '—'}{f.lens ? <span style={{ color: 'var(--muted)', marginLeft: 6 }}>{f.lens}</span> : null}
+                                    </button>
                                   </div>
                                   {/* Три поля на каждый кадр — номер, оптика, описание — всегда открытые: лента из восьми кадров это 24 поля. */}
                                   {(!READ_ONLY && frameEdit && frameEdit.id === f.id) ? (
@@ -16258,13 +16311,8 @@
                                     </div>
                                   ) : (
                                     <div style={{ cursor: READ_ONLY ? 'auto' : 'text' }}>
-                                      <div onClick={() => { if (!READ_ONLY) setFrameEdit({ id: f.id, field: 'frameNum' }); }}
-                                           className="flex justify-between gap-2" style={{ marginTop: 7, fontFamily: 'var(--font-mono)' }}>
-                                        <span style={{ fontSize: 'var(--fs-2)', color: 'var(--text)' }}>{f.frameNum || '—'}</span>
-                                        <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>{f.lens || ''}</span>
-                                      </div>
                                       <div onClick={() => { if (!READ_ONLY) setFrameEdit({ id: f.id, field: 'description' }); }}
-                                           style={{ fontSize: 'var(--fs-3)', lineHeight: 1.45, color: f.description ? 'var(--text-2)' : 'var(--muted-2)', marginTop: 4, minHeight: 20 }}>
+                                           style={{ fontSize: 'var(--fs-3)', lineHeight: 1.45, color: f.description ? 'var(--text-2)' : 'var(--muted-2)', marginTop: 8, minHeight: 20, padding: '0 2px' }}>
                                         {f.description || (READ_ONLY ? '' : 'Крупность, движение, что в кадре…')}
                                       </div>
                                     </div>
@@ -16272,7 +16320,7 @@
                                 </div>
                               ))}
                               <button onClick={addFrame} className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
-                                      style={{ border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', minHeight: 150, width: shotsExpanded ? 'auto' : 218, boxSizing: 'border-box' }}>
+                                      style={{ border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', aspectRatio: SHOT_RATIO, alignSelf: 'flex-start', width: shotsExpanded ? 'auto' : FRAME_W, boxSizing: 'border-box' }}>
                                 <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>+</span><span style={{ fontSize: 'var(--fs-2)' }}>кадр или скетч</span>
                               </button>
                             </div>
@@ -16304,20 +16352,24 @@
                             </div>
                           )}
 
-                          <div style={{ display: refsExpanded ? 'block' : 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 16, alignItems: 'start', overflow: 'hidden' }}>
+                          <div style={{ display: refsExpanded ? 'block' : 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 36, alignItems: 'start', overflow: 'hidden', marginTop: 40 }}>
                             <div style={{ float: refsExpanded ? 'left' : 'none', width: refsExpanded ? 'min(46%, 560px)' : 'auto',
-                                          margin: refsExpanded ? '0 16px 4px 0' : 0, boxSizing: 'border-box', ...cardBox, padding: '14px 16px' }}>
+                                          margin: refsExpanded ? '0 24px 4px 0' : 0, boxSizing: 'border-box', padding: '2px 0' }}>
                               <div className="flex items-baseline gap-2">
                                 <span style={eyebrow}>Текст сцены</span>
                                 <span className="ml-auto cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>
                               </div>
-                              {/* Тянется за нижний правый угол и крупнее, чем
-                                  было: сценарий читают глазами, а не проверяют
-                                  по диагонали. Моноширинный шрифт здесь убран
+                              {/* ТЕКСТ НА СТРАНИЦЕ, ОТБИТЫЙ ЛИНЕЙКОЙ СЛЕВА, а не
+                                  колодец с рамкой и уголком «потянуть»: так он
+                                  читался полем анкеты. Высота — по тексту, без
+                                  своей прокрутки. Моноширинный шрифт здесь убран
                                   намеренно — он делает длинный текст тяжелее. */}
                               <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
-                                        className="w-full bg-transparent focus:outline-none"
-                                        style={{ fontSize: 'var(--fs-4)', lineHeight: 1.7, color: '#e3e0d7', marginTop: 10, resize: 'vertical', minHeight: 170, maxHeight: '70vh', border: 'none', padding: 0 }}
+                                        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, window.innerHeight * 0.7) + 'px'; } }}
+                                        onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, window.innerHeight * 0.7) + 'px'; }}
+                                        data-cf="scene-script"
+                                        className="cf-scene-text w-full bg-transparent focus:outline-none"
+                                        style={{ fontSize: 'var(--fs-4)', lineHeight: 1.7, color: '#e3e0d7', marginTop: 10, resize: 'none', minHeight: 96, border: 'none' }}
                                         placeholder="Текст сцены из сценария. Можно вставить вручную или загрузить весь сценарий разом — «···» → «Агент КПП»." />
                             </div>
                             <div>
@@ -16401,7 +16453,7 @@
                               </div>
                             </div>
                           )}
-                          <div style={{ marginTop: 20 }}>
+                          <div style={{ marginTop: 44 }}>
                             <div className="flex items-center gap-2.5">
                               <span style={eyebrow}>Заметки сцены</span>
                               <button onClick={addSceneNote} className="cf-edit-only" style={linkish}>+ заметка</button>
@@ -16646,11 +16698,11 @@
                                 return (
                                   <button key={key || 'all'} onClick={() => setScoutLoc(key)}
                                           className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
-                                          style={{ minHeight: 38, background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                          style={{ minHeight: 38, background: on ? 'var(--raised)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-2)' }}>
                                     <span className="truncate flex items-center gap-1.5" style={{ fontSize: 'var(--fs-2)' }}>
                                       <Icons.Place /> {label}
                                     </span>
-                                    <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                                    <span className="cf-meta shrink-0">{count}</span>
                                   </button>
                                 );
                               })
@@ -16661,11 +16713,11 @@
                                 return (
                                   <button key={key || 'all'} onClick={() => setActiveFolder(key)}
                                           className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
-                                          style={{ minHeight: 38, background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                          style={{ minHeight: 38, background: on ? 'var(--raised)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-2)' }}>
                                     <span className="truncate flex items-center gap-1.5" style={{ fontSize: 'var(--fs-2)' }}>
                                       <Icons.Folder /> {label}
                                     </span>
-                                    <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                                    <span className="cf-meta shrink-0">{count}</span>
                                   </button>
                                 );
                               })
@@ -16693,9 +16745,9 @@
                             return (
                               <button key={tag} onClick={() => setTagSearch(on ? '' : tag)}
                                       className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
-                                      style={{ minHeight: 44, borderBottom: '1px solid var(--border-soft)', background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--bg)' : 'var(--text-2)' }}>
+                                      style={{ minHeight: 44, borderBottom: '1px solid var(--border-soft)', background: on ? 'var(--raised)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-2)' }}>
                                 <span className="truncate" style={{ fontSize: 'var(--fs-3)' }}>{tag}</span>
-                                <span className="cf-meta shrink-0" style={on ? { color: 'var(--bg)' } : undefined}>{count}</span>
+                                <span className="cf-meta shrink-0">{count}</span>
                               </button>
                             );
                           })}
@@ -16911,12 +16963,17 @@
                           </div>
                         )}
 
-                        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(212px, 100%), 1fr))', alignItems: 'start' }}>
+                        {/* Карточка галереи — КАДР НА СТРАНИЦЕ: без рамки и
+                            подложки, как в «Фото». Рамка вокруг каждого кадра
+                            давала сетку из коробок, и лист читался таблицей,
+                            а не подборкой. Рамка появляется только у
+                            выделенного — это и есть знак выделения. */}
+                        <div className="grid gap-x-4 gap-y-6" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(212px, 100%), 1fr))', alignItems: 'start' }}>
                             {currentView === 'gallery' && visibleRefs.map(ref => {
                               const isSel = selectedRefIds.includes(ref.id);
                               return (
                                 <div key={ref.id} className={`cf-ref-card rounded-lg overflow-hidden flex flex-col group transition-all`}
-                                     style={{ background: 'var(--card)', border: '2px solid ' + (isSel ? 'var(--accent)' : 'var(--border)') }}>
+                                     style={{ background: isSel ? 'var(--card)' : 'transparent', border: '2px solid ' + (isSel ? 'var(--accent)' : 'transparent') }}>
                                     {/* Картинка в РОДНЫХ пропорциях: квадратная ячейка
                                         либо резала кадр, либо оставляла вокруг него
                                         пустые поля, и лукбук читался как файловый
@@ -16994,7 +17051,7 @@
                                           );
                                         })()}
                                         <img src={ref.url} draggable="false"
-                                             style={{ width: '100%', height: 'auto', display: 'block', background: 'var(--bg)' }} />
+                                             style={{ width: '100%', height: 'auto', display: 'block', background: 'var(--bg)', borderRadius: isSel ? 0 : 'var(--r-md)' }} />
                                         {/* Панораму надо отличать от обычного кадра на общем
                                             листе: плоская развёртка сама по себе выглядит
                                             просто странно снятой фотографией. */}
@@ -17007,7 +17064,7 @@
                                     </div>
                                     {/* НАЗВАНИЯ НА КАРТОЧКЕ НЕТ, И ЭТО НАМЕРЕННО. */}
                                     {(isSel || (ref.tags || []).length > 0) && (
-                                    <div className="p-3 space-y-2 bg-black/30">
+                                    <div className={isSel ? 'p-3 space-y-2 bg-black/30' : 'px-1 pt-2'}>
                                         {/* ПАПКА И ТЕГИ — ПО ВЫБОРУ, А НЕ ВСЕГДА. Под каждой фотографией постоянно стояли подпись, выпадающий список папок и лента тегов с крестиками: три органа управления на кадр, а на листе из двух десятков — шестьдесят. */}
                                         {!isSel && (ref.tags || []).length > 0 && (
                                           <div className="cf-ref-tags">{(ref.tags || []).join(' · ')}</div>
@@ -18828,8 +18885,8 @@
                                     <button key={label} onClick={(e) => { e.stopPropagation(); setProjectRatio(val); }}
                                             title={`Пропорция кадра ${label} для всего проекта`}
                                             style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', padding: '3px 7px', borderRadius: 'var(--r-sm)', fontWeight: 600,
-                                                     background: projectRatio === val ? 'var(--accent)' : 'transparent',
-                                                     color: projectRatio === val ? 'var(--bg)' : 'var(--muted)',
+                                                     background: projectRatio === val ? 'var(--raised)' : 'transparent',
+                                                     color: projectRatio === val ? 'var(--text)' : 'var(--muted)',
                                                      border: projectRatio === val ? 'none' : '1px solid var(--border)' }}>{label}</button>
                                   ))}
                                 </div>
@@ -18975,7 +19032,7 @@
                         const anyArrow = kinds.some(k => k === 'arrow');
                         const anyRect = kinds.some(k => k === 'rect');
                         const row = "flex bg-[var(--scrim)] p-1 rounded-lg border border-[var(--line)] gap-1";
-                        const cell = (on) => `flex-1 py-1 rounded-md text-[length:var(--fs-1)] font-bold transition-all ${on ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`;
+                        const cell = (on) => `flex-1 py-1 rounded-md text-[length:var(--fs-1)] font-bold transition-all ${on ? 'cf-sel' : 'text-zinc-500 hover:text-white'}`;
                         const cap = "text-[length:var(--fs-1)] text-zinc-500 font-bold  block";
                         return (
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-3 rounded-lg flex flex-col space-y-2 z-30 w-52 border-t border-[var(--border)] max-h-[calc(100%-3rem)] overflow-y-auto hide-scrollbar">
@@ -18984,7 +19041,7 @@
                             <div className={row}>
                               {[['rect', Icons.ShRect, 'Прямоугольник'], ['ellipse', Icons.ShEllipse, 'Овал'], ['diamond', Icons.ShDiamond, 'Ромб'], ['arrow', Icons.ShArrow, 'Стрелка'], ['line', Icons.ShLine, 'Линия'], ['text', Icons.ShText, 'Текст']].map(([k, Ic, t]) => (
                                 <button key={k} title={t} onClick={() => setShapeKind(k)}
-                                        className={`flex-1 py-1.5 rounded-md flex items-center justify-center transition-all ${shapeKind === k ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}><Ic/></button>
+                                        className={`flex-1 py-1.5 rounded-md flex items-center justify-center transition-all ${shapeKind === k ? 'cf-sel' : 'text-zinc-500 hover:text-white'}`}><Ic/></button>
                               ))}
                             </div>
                           )}
@@ -19169,9 +19226,9 @@
                         <div className="absolute top-16 md:top-6 left-2 md:left-24 glass-panel p-4 rounded-lg flex flex-col space-y-4 z-30 w-52 border-t border-[var(--border)]">
                           {panelFold('Кисть')}
                           <div className="flex bg-[var(--scrim)] p-1.5 rounded-lg border border-[var(--line)]">
-                              <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
-                              <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
-                              <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'bg-indigo-500 text-[#1a1918]' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
+                              <button onClick={() => setBrushType('pen')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'pen' ? 'cf-sel' : 'text-zinc-500 hover:text-white'}`}>Перо</button>
+                              <button onClick={() => setBrushType('soft')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'soft' ? 'cf-sel' : 'text-zinc-500 hover:text-white'}`}>Мягкая</button>
+                              <button onClick={() => setBrushType('marker')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${brushType === 'marker' ? 'cf-sel' : 'text-zinc-500 hover:text-white'}`}>Маркер</button>
                           </div>
                           <div className="space-y-2">
                             <div className="flex justify-between text-[length:var(--fs-1)] text-zinc-400 font-bold "><span>Размер</span><span>{brushSize}px</span></div>
@@ -19300,9 +19357,9 @@
                         </div>
                         <div className="flex w-full sm:w-auto glass-panel p-1.5 rounded-lg border border-[var(--line)]">
                           <button onClick={() => setTableSubView('grouped')} title="Что снимаем в этот день и чем"
-                                  className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>По сменам</button>
+                                  className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'grouped' ? 'cf-sel' : 'text-zinc-400 hover:text-white'}`}>По сменам</button>
                           <button onClick={() => setTableSubView('scenes')} title="Полный документ: экспликация, раскадровка, текст сцены"
-                                  className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'scenes' ? 'bg-indigo-600/60 text-white' : 'text-zinc-400 hover:text-white'}`}>Все сцены</button>
+                                  className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-xs font-bold transition-all ${tableSubView === 'scenes' ? 'cf-sel' : 'text-zinc-400 hover:text-white'}`}>Все сцены</button>
                         </div>
                       </div>
 
@@ -19383,16 +19440,20 @@
                                   </span>);
                         });
                         return (
-                          <div className="space-y-8">
+                          <div className="space-y-12">
+                            {/* Смена — РАЗДЕЛ СТРАНИЦЫ, а не коробка: рамка и
+                                подложка вокруг каждой смены давали «коробку
+                                в коробке», а воздух между сменами разделяет
+                                их лучше любой рамки. */}
                             {sortedDates.map(dateKey => {
                               const dayScenes = grouped[dateKey];
                               const camSum = sumOf(dayScenes, 'gear'), lightSum = sumOf(dayScenes, 'lightGear');
                               return (
-                                <div key={dateKey || 'unassigned'} className="glass-panel rounded-lg overflow-hidden border-t border-[var(--border)]">
-                                  <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ borderBottom: '1px solid var(--line)' }}>
+                                <div key={dateKey || 'unassigned'} className="cf-shift">
+                                  <div className="px-2 pb-3 flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ borderBottom: '1px solid var(--border)' }}>
                                     <div className="flex items-center space-x-4">
-                                      <span className="text-sm font-black text-indigo-300 font-mono tracking-wide">{dateKey ? `Смена · ${formatDateDisplay(dateKey)}` : 'Сцены вне смен'}</span>
-                                      <span className="text-xs font-bold text-zinc-400">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
+                                      <span style={{ fontSize: 'var(--fs-4)', fontWeight: 700, color: 'var(--text)', letterSpacing: '-.01em' }}>{dateKey ? `Смена · ${formatDateDisplay(dateKey)}` : 'Сцены вне смен'}</span>
+                                      <span className="cf-meta">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
                                     </div>
                                     <div className="flex flex-col gap-2 md:items-end">
                                       {Object.keys(camSum).length > 0 && (
@@ -19409,12 +19470,12 @@
                                       )}
                                     </div>
                                   </div>
-                                  <div className="divide-y divide-white/5">
+                                  <div className="divide-y divide-[var(--line)]">
                                     {dayScenes.map(s => {
                                       const cam = gearLine(s.gear, gearTypes || DEFAULT_GEAR);
                                       const lig = gearLine(s.lightGear, lightGearTypes || DEFAULT_LIGHT_GEAR);
                                       return (
-                                        <div key={s.id} className="p-5 flex flex-col md:flex-row md:items-start justify-between gap-4 hover:bg-[var(--raised)] transition-colors">
+                                        <div key={s.id} className="px-2 py-5 flex flex-col md:flex-row md:items-start justify-between gap-4 rounded-lg hover:bg-[var(--card)] transition-colors">
                                           <div className="flex items-start space-x-4 flex-1 min-w-0">
                                             {/* Номер правится прямо здесь: перенумеровать
                                                 смену подряд удобнее, чем ходить по карточкам.
@@ -19471,13 +19532,13 @@
                                 <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские гайды</span>
                                 {docs.map(doc => (
                                   <div key={doc.id} className="group relative mb-2">
-                                    <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
+                                    <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
                                     {/* Документ можно вынести на доску и связать со сценой */}
                                     <button onClick={(e) => { e.stopPropagation(); if (doc.boardId === activeBoardId) removeDocFromBoard(doc.id); else putDocOnBoard(doc.id); }}
                                             title={doc.boardId === activeBoardId ? 'Убрать с доски — документ останется здесь' : 'Положить на текущую доску'}
                                             className="cf-edit-only absolute right-11 top-3 w-7 h-7 flex items-center justify-center rounded-lg transition-all"
                                             style={doc.boardId === activeBoardId
-                                              ? { background: 'var(--accent)', color: 'var(--bg)' }
+                                              ? { background: 'var(--raised)', color: 'var(--accent)' }
                                               : { color: 'var(--muted-2)' }}>
                                       <Icons.Board />
                                     </button>
@@ -19490,7 +19551,7 @@
                                 <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы света</span>
                                 {lightSchemes.map(sch => (
                                   <div key={sch.id} className="group relative mb-2">
-                                    <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'bg-amber-600/30 text-amber-200 border-amber-500/40' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
+                                    <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
                                     <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
                                   </div>
                                 ))}
@@ -20082,7 +20143,7 @@
                   <div className="grid grid-cols-2 gap-2 mb-5">
                     {[['', 'В проекте'], ['dropbox', 'Dropbox'], ['yandex', 'Яндекс.Диск'], ['nextcloud', 'Nextcloud']].map(([id, label]) => (
                       <button key={id} onClick={() => { patchCloud({ provider: id }); setCloudError(''); }}
-                              className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-colors border ${p === id ? 'bg-indigo-600/30 text-white border-indigo-500/40' : 'bg-transparent text-zinc-400 border-[var(--border)] hover:bg-[var(--raised)]'}`}>
+                              className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-colors border ${p === id ? 'cf-sel border-transparent' : 'bg-transparent text-zinc-400 border-[var(--border)] hover:bg-[var(--raised)]'}`}>
                         {label}
                       </button>
                     ))}
