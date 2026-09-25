@@ -57,6 +57,10 @@
   #help.on { display: block; }
   #help h1 { margin: 0 0 6px; font-size: 26px; }
   #help p { color: var(--muted); margin: 0 0 18px; font-size: 16px; }
+  #diag { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 22px; }
+  #diag div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: 600 18px var(--mono); }
+  #diag small { display: block; font: 12px var(--font); color: var(--muted); margin-bottom: 6px; }
+  #diag .hot { border-color: var(--warn); color: var(--warn); }
   #help table { border-collapse: collapse; width: 100%; font-size: 18px; }
   #help td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   #help td:first-child { font-family: var(--mono); color: var(--accent); white-space: nowrap; width: 1%; font-weight: 600; }
@@ -102,6 +106,14 @@
 
 <div id="help">
   <button class="close" id="bHelpClose">✕</button>
+  <h1>Что приходит с пульта</h1>
+  <p>Пошевелите стиками и Deck — здесь видно, что именно отдаёт Steam. Правый стик должен менять «Правый стик», а не «Мышь / гироскоп». «Мышь» должна оживать, только когда вы включили гироскоп (палец на правом тачпаде), и стоять на нуле, когда Deck лежит.</p>
+  <div id="diag">
+    <div><small>Левый стик</small><span id="dL">—</span></div>
+    <div><small>Правый стик</small><span id="dR">—</span></div>
+    <div><small>Курки LT / RT</small><span id="dT">—</span></div>
+    <div id="dMbox"><small>Мышь / гироскоп, точек/с</small><span id="dM">—</span></div>
+  </div>
   <h1>Управление</h1>
   <p>Кино — горизонт ровный, камера плывёт с инерцией. FPV — полёт с креном, центр левого стика = зависание.</p>
   <table>
@@ -278,7 +290,9 @@ function toast(code, text) {
 // for gamepads. Pointer lock keeps the invisible cursor from stopping at the screen edge.
 let gyroOn = true, gyroX = 0, gyroY = 0, gyroLast = 0;
 try { gyroOn = localStorage.getItem('deckcam_gyro') !== '0'; } catch (e) {}
+let diagPx = 0;
 document.addEventListener('mousemove', e => {
+  diagPx += Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0);
   if (!gyroOn || $('help').classList.contains('on')) return;
   gyroX += e.movementX || 0;
   gyroY += e.movementY || 0;
@@ -341,7 +355,23 @@ function poll() {
   }
 
   const t = performance.now();
-  if (t - (poll.g || 0) > 100) { poll.g = t; renderGyro(); }
+  if (t - (poll.g || 0) > 100) {
+    const dt = (t - (poll.g || t)) / 1000 || 0.1;
+    poll.g = t;
+    renderGyro();
+    if ($('help').classList.contains('on')) {
+      const f = v => (v >= 0 ? ' ' : '') + v.toFixed(2);
+      const a = pad ? pad.axes : [0, 0, 0, 0];
+      const b = pad ? pad.buttons : [];
+      $('dL').textContent = pad ? f(a[0] || 0) + ' ' + f(a[1] || 0) : 'нет пульта';
+      $('dR').textContent = pad ? f(a[2] || 0) + ' ' + f(a[3] || 0) : 'нет пульта';
+      $('dT').textContent = pad ? value(b[BTN_LT]).toFixed(2) + ' / ' + value(b[BTN_RT]).toFixed(2) : '—';
+      const pps = Math.round(diagPx / dt);
+      $('dM').textContent = String(pps);
+      $('dMbox').classList.toggle('hot', pps > 0);
+    }
+    diagPx = 0;
+  }
   if (t - fpsT0 >= 1000) { fpsShown = Math.round(frames * 1000 / (t - fpsT0)); frames = 0; fpsT0 = t; render(); }
   requestAnimationFrame(poll);
 }
