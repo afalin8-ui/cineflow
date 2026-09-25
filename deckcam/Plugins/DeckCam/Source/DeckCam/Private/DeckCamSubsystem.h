@@ -4,11 +4,11 @@
 #include "EditorSubsystem.h"
 #include "TickableEditorObject.h"
 #include "DeckCamDrone.h"
+#include "DeckCamServer.h" // complete types: UHT generates the constructor, which needs the TUniquePtr destructors
+#include "DeckCamVideo.h"
 #include "DeckCamSubsystem.generated.h"
 
 class ACineCameraActor;
-class FDeckCamServer;
-class FDeckCamVideo;
 class FLevelEditorViewportClient;
 class UWorld;
 

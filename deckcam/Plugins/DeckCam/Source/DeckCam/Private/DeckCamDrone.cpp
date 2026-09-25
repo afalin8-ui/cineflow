@@ -19,8 +19,8 @@ void FDeckCamDrone::SetPose(const FTransform& Camera, const FDeckCamTuning& T)
 {
 	Position = Camera.GetLocation();
 	const FRotator R = Camera.Rotator();
-	Yaw = R.Yaw;
-	GimbalPitch = FMath::Clamp(R.Pitch, -90.f, 30.f);
+	Yaw = float(R.Yaw);
+	GimbalPitch = FMath::Clamp(float(R.Pitch), -90.f, 30.f);
 	Body = (Camera.GetRotation() * UptiltQuat(T.FpvCameraTilt).Inverse()).GetNormalized();
 }
 
@@ -65,7 +65,7 @@ void FDeckCamDrone::StepLook(const FDeckCamTuning& T, float Dt)
 	if (Mode == EDeckCamMode::Cine)
 	{
 		// Yaw turns the drone, pitch tilts the gimbal: the horizon stays level, as on a real gimbal.
-		Yaw = FRotator::NormalizeAxis(Yaw + DY);
+		Yaw = float(FRotator::NormalizeAxis(double(Yaw + DY)));
 		GimbalPitch = FMath::Clamp(GimbalPitch + DP, -90.f, 30.f);
 	}
 	else
@@ -89,7 +89,7 @@ void FDeckCamDrone::StepCine(const FDeckCamInput& In, const FDeckCamTuning& T, f
 
 	const float YawTarget = Shape(In.Yaw, T.Expo) * K * T.YawRate;
 	YawRateNow += (YawTarget - YawRateNow) * Lag(Dt, 0.15f);
-	Yaw = FRotator::NormalizeAxis(Yaw + YawRateNow * Dt);
+	Yaw = float(FRotator::NormalizeAxis(double(Yaw + YawRateNow * Dt)));
 
 	const float TiltTarget = In.Tilt * K * T.TiltRate;
 	TiltRateNow += (TiltTarget - TiltRateNow) * Lag(Dt, 0.12f);
@@ -152,8 +152,8 @@ void FDeckCamDrone::SwitchMode(EDeckCamMode NewMode, const FDeckCamTuning& T)
 	else
 	{
 		const FRotator R = Cam.Rotator();
-		Yaw = R.Yaw;
-		GimbalPitch = FMath::Clamp(R.Pitch, -90.f, 30.f);
+		Yaw = float(R.Yaw);
+		GimbalPitch = FMath::Clamp(float(R.Pitch), -90.f, 30.f);
 		YawRateNow = 0.f;
 		TiltRateNow = 0.f;
 	}

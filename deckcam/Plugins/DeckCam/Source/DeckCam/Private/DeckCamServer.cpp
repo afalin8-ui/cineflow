@@ -19,7 +19,7 @@ namespace
 	constexpr int32 FrameBacklogBytes = 256 * 1024;   // do not queue video on top of this
 	constexpr double FrameAckTimeout = 1.0;           // lost ack => resend
 
-	FString BytesToString(const uint8* Data, int32 Len)
+	FString Utf8ToFString(const uint8* Data, int32 Len)
 	{
 		FUTF8ToTCHAR Conv(reinterpret_cast<const ANSICHAR*>(Data), Len);
 		return FString(Conv.Length(), Conv.Get());
@@ -238,7 +238,7 @@ void FDeckCamServer::HandleHttp(FClient& C)
 		return;
 	}
 
-	const FString Req = BytesToString(C.In.GetData(), End);
+	const FString Req = Utf8ToFString(C.In.GetData(), End);
 	C.In.RemoveAt(0, End, EAllowShrinking::No);
 
 	TArray<FString> Lines;
@@ -374,7 +374,7 @@ void FDeckCamServer::HandleWebSocket(FClient& C)
 		switch (Opcode)
 		{
 		case 0x1: // text
-			OnText(C, BytesToString(Payload.GetData(), Payload.Num()));
+			OnText(C, Utf8ToFString(Payload.GetData(), Payload.Num()));
 			break;
 		case 0x8: // close
 			AppendFrame(C.Out, 0x8, Payload.GetData(), FMath::Min(Payload.Num(), 2));

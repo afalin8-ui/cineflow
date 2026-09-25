@@ -32,6 +32,7 @@ public class DeckCam : ModuleRules
 			"MovieScene",
 			"LevelSequence",
 			"LevelSequenceEditor",
+			"Sequencer",
 			"TakesCore",
 			"TakeRecorder",
 			"TakeRecorderSources",

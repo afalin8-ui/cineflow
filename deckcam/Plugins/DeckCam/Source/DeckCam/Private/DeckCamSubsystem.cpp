@@ -16,6 +16,9 @@
 #include "LevelEditorViewport.h"
 #include "LevelSequence.h"
 #include "LevelSequenceEditorBlueprintLibrary.h"
+#include "ILevelSequenceEditorToolkit.h"
+#include "ISequencer.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "MovieScene.h"
 #include "MovieSceneTimeHelpers.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
@@ -217,7 +220,7 @@ FTransform UDeckCamSubsystem::GetFrame(ACineCameraActor* Cam, float& OutScale) c
 	FTransform F = Parent->GetSocketTransform(Root->GetAttachSocketName());
 	// Aircraft are often imported scaled. Fly in world units regardless: remove the parent scale
 	// here and divide it out when writing the relative location.
-	OutScale = FMath::Max(KINDA_SMALL_NUMBER, FMath::Abs(F.GetScale3D().X));
+	OutScale = FMath::Max(1e-4f, float(FMath::Abs(F.GetScale3D().X)));
 	F.SetScale3D(FVector::OneVector);
 	return F;
 }
@@ -652,10 +655,19 @@ void UDeckCamSubsystem::Rewind()
 		Notify(TEXT("no_seq_open"));
 		return;
 	}
+	UAssetEditorSubsystem* Editors = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+	IAssetEditorInstance* Editor = Editors ? Editors->FindEditorForAsset(Seq, false) : nullptr;
+	ILevelSequenceEditorToolkit* Toolkit = static_cast<ILevelSequenceEditorToolkit*>(Editor);
+	TSharedPtr<ISequencer> Sequencer = Toolkit ? Toolkit->GetSequencer() : nullptr;
+	if (!Sequencer.IsValid())
+	{
+		Notify(TEXT("no_seq_open"));
+		return;
+	}
+	// Global time is in the root sequence's tick resolution, same units as its playback range.
 	const FFrameNumber StartTick = UE::MovieScene::DiscreteInclusiveLower(MS->GetPlaybackRange());
-	const FFrameTime StartDisplay = FFrameRate::TransformTime(StartTick, MS->GetTickResolution(), MS->GetDisplayRate());
-	ULevelSequenceEditorBlueprintLibrary::Pause();
-	ULevelSequenceEditorBlueprintLibrary::SetCurrentTime(StartDisplay.FloorToFrame().Value);
+	Sequencer->Pause();
+	Sequencer->SetGlobalTime(FFrameTime(StartTick));
 }
 
 FLevelEditorViewportClient* UDeckCamSubsystem::GetViewport() const
@@ -687,7 +699,6 @@ void UDeckCamSubsystem::SetPilot(bool bOn)
 	if (bOn && Camera.IsValid())
 	{
 		VC->SetActorLock(Camera.Get());
-		VC->bLockedCameraView = true;
 		VC->SetRealtime(true);
 		bPilot = true;
 	}
