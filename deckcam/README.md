@@ -30,8 +30,12 @@
 3. Откройте проект. На вопрос «пересобрать модуль DeckCam?» ответьте **Yes**.
 4. **Edit → Plugins** — убедитесь, что включены DeckCam, Take Recorder, Level Sequence Editor.
 
-Если сборка упала — пришлите текст ошибки целиком. Плагин написан под API 5.4–5.6,
-а в 5.8 Epic могли переименовать пару функций; это правится за минуты.
+Если Unreal пишет «could not be compiled» и не говорит почему, соберите вручную —
+так видны сами ошибки. В папке проекта: адресная строка Проводника → `cmd` → Enter, и
+```
+"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" ИмяПроектаEditor Win64 Development -Project="%cd%\ИмяПроекта.uproject" -WaitMutex > build.txt 2>&1
+```
+В конце `build.txt` будет `Result: Succeeded` или список ошибок.
 
 ## 2. Запуск
 
@@ -188,11 +192,11 @@
 кнопок, аттач, гироскоп (движение доходит до камеры, «Гиро» выкл — не доходит),
 касание REC при захваченном гироскопом курсоре, обрыв связи, размер текста.
 
-**Не проверено:** C++-часть не собиралась — здесь нет Unreal Engine. Самые вероятные
-места для правки под 5.8:
-- `UTakeRecorderPanel::StartRecording / CanStartRecording`, `UTakeRecorderActorSource::AddSourceForActor`
-- `ULevelSequenceEditorBlueprintLibrary::SetCurrentTime`
-- `FRHIGPUTextureReadback::Lock`
+**Собирается в Unreal 5.8** (Visual Studio 2026, MSVC 14.50). Что пришлось поправить
+под 5.8: плагин Take Recorder в зависимостях называется `Takes`, у подсистемы редактора
+свой модуль `EditorSubsystem`, а своя `BytesToString` совпала по имени с функцией движка.
+
+**Ещё не проверено в работе:** сам полёт, запись, картинка и гироскоп на настоящем Deck.
 
 **Посмотреть на месте:**
 - Цвет картинки на Deck. Если она слишком тёмная или блёклая — это гамма рендер-таргета,
