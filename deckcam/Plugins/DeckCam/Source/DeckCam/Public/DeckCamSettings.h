@@ -30,12 +30,23 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Connection", meta = (ClampMin = 0.05, Units = "s"))
 	float InputTimeout = 0.3f;
 
-	/** Full-stick speed presets, cm/s. Bumpers step through them. */
-	UPROPERTY(Config, EditAnywhere, Category = "Flight")
-	TArray<float> SpeedPresets;
+	/** Full-stick speed at start, m/s. */
+	UPROPERTY(Config, EditAnywhere, Category = "Flight|Speed", meta = (ClampMin = 0.1))
+	float DefaultSpeed = 10.f;
 
-	UPROPERTY(Config, EditAnywhere, Category = "Flight")
-	int32 DefaultSpeedIndex = 3;
+	/** One press of RB/LB changes the speed by this much, m/s. */
+	UPROPERTY(Config, EditAnywhere, Category = "Flight|Speed", meta = (ClampMin = 0.1))
+	float SpeedStep = 1.f;
+
+	/** A quick double press changes it by this much in total, m/s (aircraft fly at 50-250 m/s). */
+	UPROPERTY(Config, EditAnywhere, Category = "Flight|Speed", meta = (ClampMin = 0.1))
+	float SpeedBigStep = 10.f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Flight|Speed", meta = (ClampMin = 0.1))
+	float MinSpeed = 1.f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Flight|Speed", meta = (ClampMin = 1))
+	float MaxSpeed = 300.f;
 
 	/** Cine mode: how long the drone takes to reach stick speed (inertia), seconds. */
 	UPROPERTY(Config, EditAnywhere, Category = "Flight|Cine", meta = (ClampMin = 0.01, Units = "s"))

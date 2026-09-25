@@ -67,7 +67,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(fps >= 15, 'frames keep coming through the ack loop: ' + fps + ' fps');
 
   // Button edge -> exactly one command.
-  const count = c => (log.match(new RegExp('command: ' + c.replace(/[+]/g, '\\+') + '\\n', 'g')) || []).length;
+  const count = c => (log.match(new RegExp('command: ' + c.replace(/[+]/g, '\\+') + ' ?[-0-9]*\\n', 'g')) || []).length;
   await page.evaluate(() => window.__press(9));
   await sleep(300);
   await page.evaluate(() => window.__press(9, 0));
@@ -76,8 +76,38 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(await page.evaluate(() => pad && pad.index === 1), 'listens to the pad that moved, not the first in the list');
   ok(await page.$eval('#rec', e => e.classList.contains('on')), 'REC indicator on');
 
-  await page.evaluate(() => window.__press(5)); await sleep(100); await page.evaluate(() => window.__press(5, 0)); await sleep(200);
-  ok(count('spd+') === 1 && (await page.textContent('#spdText')).startsWith('30'), 'RB -> speed up to 30 m/s');
+  // Holding ☰ (Steam's own mouse/gamepad switch in Desktop Mode) must not start a take.
+  await page.evaluate(() => window.__press(9)); await sleep(900); await page.evaluate(() => window.__press(9, 0)); await sleep(300);
+  ok(count('rec') === 1, 'holding ☰ for ~1 s does not toggle recording');
+
+  // Speed: +1 per press, a quick double press = +10 in total.
+  const spd = async () => parseInt(await page.textContent('#spdText'), 10);
+  await page.evaluate(() => window.__press(5)); await sleep(80); await page.evaluate(() => window.__press(5, 0)); await sleep(500);
+  ok(await spd() === 11, 'RB once -> 11 m/s (' + await spd() + ')');
+  await page.evaluate(() => window.__press(5)); await sleep(60); await page.evaluate(() => window.__press(5, 0)); await sleep(60);
+  await page.evaluate(() => window.__press(5)); await sleep(60); await page.evaluate(() => window.__press(5, 0)); await sleep(400);
+  ok(await spd() === 21, 'RB double -> +10 -> 21 m/s (' + await spd() + ')');
+  await page.evaluate(() => window.__press(4)); await sleep(80); await page.evaluate(() => window.__press(4, 0)); await sleep(500);
+  ok(await spd() === 20, 'LB once -> 20 m/s (' + await spd() + ')');
+
+  // Sticks, default layout: left = move (forward/sideways), right = turn and up/down.
+  const dbg = () => page.evaluate(() => lastStatus.dbg);
+  await page.evaluate(() => { window.__pad.axes = [0, -1, 0, 0]; }); await sleep(300);
+  let d = await dbg();
+  ok(d.pt > 0.9 && Math.abs(d.th) < 0.01, 'left stick up = forward ' + JSON.stringify(d));
+  await page.evaluate(() => { window.__pad.axes = [0, 0, 0, -1]; }); await sleep(300);
+  d = await dbg();
+  ok(d.th > 0.9 && Math.abs(d.pt) < 0.01, 'right stick up = climb ' + JSON.stringify(d));
+  await page.evaluate(() => { window.__pad.axes = [0, 0, 1, 0]; }); await sleep(300);
+  d = await dbg();
+  ok(d.yw > 0.9 && Math.abs(d.rl) < 0.01, 'right stick right = turn ' + JSON.stringify(d));
+  // DJI layout from the "?" screen
+  await page.evaluate(() => document.querySelector('#sticksSeg [data-layout=dji]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await page.evaluate(() => { window.__pad.axes = [0, -1, 0, 0]; }); await sleep(300);
+  d = await dbg();
+  ok(d.th > 0.9 && Math.abs(d.pt) < 0.01, 'DJI layout: left stick up = climb ' + JSON.stringify(d));
+  await page.evaluate(() => document.querySelector('#sticksSeg [data-layout=game]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await page.evaluate(() => { window.__pad.axes = [0, 0, 0, 0]; }); await sleep(200);
 
   await page.evaluate(() => window.__press(15)); await sleep(100); await page.evaluate(() => window.__press(15, 0)); await sleep(200);
   ok((await page.textContent('#attText')) === 'Su-27_02', 'D-pad right -> next target');
@@ -103,8 +133,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok((await page.evaluate(() => lastStatus.gpx)) === gpxOff && (await page.textContent('#gyroText')) === 'выкл', 'gyro off by default: mouse ignored');
   await page.evaluate(() => document.getElementById('bGyro').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
   await sleep(100);
-  await page.evaluate(() => document.exitPointerLock()); // headless Chromium sends no movement while locked
   await page.evaluate(() => window.__press(1)); await sleep(100); await page.evaluate(() => window.__press(1, 0)); // B: level
+  ok(await page.evaluate(() => !!document.pointerLockElement), 'a gamepad press re-captures the pointer for the gyro');
+  await sleep(100);
+  await page.evaluate(() => document.exitPointerLock()); // headless Chromium sends no movement while locked
   await page.mouse.move(640, 400);
   await sleep(300);
   const tilt0 = parseInt(await page.textContent('#tiltText'), 10);

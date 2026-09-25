@@ -20,13 +20,12 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, '..', 'Plugins', 'DeckCam', 'Resources', 'Web', 'index.html')
 GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-SPEEDS = [0.5, 1, 3, 10, 30, 100, 300]
 
 
 class State:
     def __init__(self):
         self.mode = 'cine'
-        self.si = 3
+        self.spd = 10.0
         self.foc = 35.0
         self.tilt = 0.0
         self.rec = False
@@ -45,14 +44,14 @@ class State:
 
     def status(self, vfps):
         return {
-            't': 'st', 'mode': self.mode, 'spd': SPEEDS[self.si], 'si': self.si, 'sn': len(SPEEDS),
+            't': 'st', 'mode': self.mode, 'spd': self.spd, 'dbg': {k: self.inp.get(k, 0) for k in ('th', 'yw', 'pt', 'rl')},
             'foc': self.foc, 'tilt': self.tilt, 'vel': 0, 'rec': self.rec,
             'rt': time.time() - self.rec_t0 if self.rec else 0, 'tgt': self.targets[self.ti],
             'tn': len(self.targets), 'ti': self.ti, 'att': self.att, 'seq': True, 'play': self.play,
             'pilot': self.pilot, 'video': True, 'vfps': vfps, 'yaw': self.yaw, 'gpx': self.gyro_px,
         }
 
-    def command(self, c):
+    def command(self, c, d=0):
         self.commands.append(c)
         msg = None
         if c == 'rec':
@@ -60,10 +59,10 @@ class State:
             self.rec_t0 = time.time()
             msg = ('rec_start' if self.rec else 'rec_stop', '')
             self.play = self.rec
-        elif c == 'spd+':
-            self.si = min(self.si + 1, len(SPEEDS) - 1)
-        elif c == 'spd-':
-            self.si = max(self.si - 1, 0)
+        elif c == 'spd':
+            # same rule as the plugin: d=+-1 one step (1 m/s), d=+-2 the rest of the big step (10 m/s total)
+            delta = d * 1.0 if abs(d) == 1 else (9.0 if d > 0 else -9.0) if abs(d) == 2 else 0
+            self.spd = max(1.0, min(300.0, round(self.spd + delta)))
         elif c == 'mode':
             self.mode = 'fpv' if self.mode == 'cine' else 'cine'
             msg = ('mode_' + self.mode, '')
@@ -183,8 +182,8 @@ class Server:
                     self.state.tilt = max(-90.0, min(30.0, self.state.tilt - m.get('gy', 0) * 0.05))
                     self.state.gyro_px += abs(m.get('gx', 0)) + abs(m.get('gy', 0))
                 elif t == 'cmd':
-                    print('command:', m.get('c'))
-                    msg = self.state.command(m.get('c'))
+                    print('command:', m.get('c'), m.get('d', ''))
+                    msg = self.state.command(m.get('c'), m.get('d', 0))
                     if msg:
                         self.broadcast({'t': 'msg', 'code': msg[0], 'text': msg[1]})
                     self.broadcast(self.state.status(self.fps))

@@ -65,6 +65,9 @@
   #help table { border-collapse: collapse; width: 100%; font-size: 18px; }
   #help td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   #help td:first-child { font-family: var(--mono); color: var(--accent); white-space: nowrap; width: 1%; font-weight: 600; }
+  .seg { display: inline-flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 0 0 16px; }
+  .seg button { background: var(--panel); color: var(--muted); border: 0; padding: 12px 18px; font: 600 16px var(--font); min-height: 48px; }
+  .seg button.on { background: #2b2a28; color: var(--text); }
   #help .close { position: absolute; top: 18px; right: 22px; width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 26px; }
 
   #center { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
@@ -118,13 +121,17 @@
   </div>
   <h1>Управление</h1>
   <p>Кино — горизонт ровный, камера плывёт с инерцией. FPV — полёт с креном, центр левого стика = зависание.</p>
+  <div class="seg" id="sticksSeg">
+    <button data-layout="game">Левый — движение, правый — поворот и высота</button>
+    <button data-layout="dji">Как у DJI: левый — высота и поворот</button>
+  </div>
   <table>
-    <tr><td>Левый стик ↕</td><td>Высота (кино) · газ (FPV)</td></tr>
-    <tr><td>Левый стик ↔</td><td>Поворот</td></tr>
-    <tr><td>Правый стик ↕</td><td>Вперёд / назад (кино) · наклон носа (FPV)</td></tr>
-    <tr><td>Правый стик ↔</td><td>Вбок (кино) · крен (FPV)</td></tr>
+    <tr><td>Левый стик ↕</td><td id="hLv">—</td></tr>
+    <tr><td>Левый стик ↔</td><td id="hLh">—</td></tr>
+    <tr><td>Правый стик ↕</td><td id="hRv">—</td></tr>
+    <tr><td>Правый стик ↔</td><td id="hRh">—</td></tr>
     <tr><td>RT / LT</td><td>Зум: длиннее / короче фокусное</td></tr>
-    <tr><td>RB / LB</td><td>Скорость больше / меньше</td></tr>
+    <tr><td>RB / LB</td><td>Скорость ±1 м/с · быстро дважды — ±10 м/с</td></tr>
     <tr><td>Крестовина ↑ ↓</td><td>Наклон камеры</td></tr>
     <tr><td>Крестовина ← →</td><td>Выбор объекта для аттача</td></tr>
     <tr><td>A</td><td>Прицепиться к выбранному / отцепиться</td></tr>
@@ -149,8 +156,6 @@ const BUTTON_CMDS = {
   1: 'level',    // B
   2: 'play',     // X
   3: 'rewind',   // Y
-  4: 'spd-',     // LB
-  5: 'spd+',     // RB
   8: 'mode',     // View
   9: 'rec',      // Menu
   11: 'pilot',   // R3
@@ -158,6 +163,41 @@ const BUTTON_CMDS = {
   15: 'tgt+',    // D-pad right
 };
 const BTN_FINE = 10, BTN_UP = 12, BTN_DOWN = 13, BTN_LT = 6, BTN_RT = 7;
+
+// Speed: one press = one step (1 m/s), a quick second press = the big step (10 m/s in total).
+// The first press is applied at once, the second adds the rest: no waiting to find out if it was a double.
+const SPEED_BUTTONS = { 4: -1, 5: +1 }; // LB, RB
+const DOUBLE_TAP_MS = 350;
+
+// ☰ (REC) and ⧉ (mode) fire on a SHORT press, on release. In Desktop Mode, holding ☰ for 2-3 s is
+// Steam's own switch between mouse and gamepad — it must not start or stop a take on the way.
+const ON_RELEASE = new Set(['8', '9']);
+const HOLD_MAX_MS = 400;
+const pressStart = {};
+
+// Stick layouts. th = altitude (cine) / thrust (FPV), yw = turn, pt = forward (cine) / nose (FPV),
+// rl = sideways (cine) / roll (FPV). Axis up is negative in the Gamepad API.
+const STICK_LAYOUTS = {
+  game: {
+    map: (lx, ly, rx, ry) => ({ pt: -ly, rl: lx, yw: rx, th: -ry }),
+    help: { hLv: 'Вперёд / назад (кино) · наклон носа (FPV)', hLh: 'Вбок (кино) · крен (FPV)',
+            hRv: 'Вверх / вниз (кино) · газ (FPV)', hRh: 'Поворот' },
+  },
+  dji: {
+    map: (lx, ly, rx, ry) => ({ th: -ly, yw: lx, pt: -ry, rl: rx }),
+    help: { hLv: 'Вверх / вниз (кино) · газ (FPV)', hLh: 'Поворот',
+            hRv: 'Вперёд / назад (кино) · наклон носа (FPV)', hRh: 'Вбок (кино) · крен (FPV)' },
+  },
+};
+let stickLayout = 'game';
+try { if (STICK_LAYOUTS[localStorage.getItem('deckcam_sticks')]) stickLayout = localStorage.getItem('deckcam_sticks'); } catch (e) {}
+function setStickLayout(name) {
+  stickLayout = name;
+  try { localStorage.setItem('deckcam_sticks', name); } catch (e) {}
+  const h = STICK_LAYOUTS[name].help;
+  for (const id in h) $(id).textContent = h[id];
+  for (const b of document.querySelectorAll('#sticksSeg button')) b.classList.toggle('on', b.dataset.layout === name);
+}
 
 const MESSAGES = {
   rec_start: 'Запись пошла',
@@ -259,7 +299,7 @@ function render() {
   $('bRec').textContent = st.rec ? 'СТОП' : 'REC';
   $('recTime').textContent = fmtTime(st.rt || 0);
   $('modeText').textContent = st.mode === 'fpv' ? 'FPV' : 'Кино';
-  $('spdText').textContent = fmtSpeed(st.spd) + ' · ' + (st.si + 1) + '/' + st.sn;
+  $('spdText').textContent = fmtSpeed(st.spd);
   $('focText').textContent = Math.round(st.foc) + ' мм';
   $('tiltText').textContent = Math.round(st.tilt) + '°';
   $('seqText').textContent = !st.seq ? 'не открыта' : (st.play ? '▶ играет' : '❚❚ пауза');
@@ -309,8 +349,12 @@ document.addEventListener('mousemove', e => {
 });
 async function lockPointer() {
   if (!gyroOn || document.pointerLockElement || !canvas.requestPointerLock) return;
-  try { await canvas.requestPointerLock({ unadjustedMovement: true }); }    // no OS mouse acceleration
-  catch (e) { try { await canvas.requestPointerLock(); } catch (e2) {} }    // Linux Chrome may not support raw
+  const linux = /Linux/.test(navigator.userAgent) && !/Android|CrOS/.test(navigator.userAgent);
+  if (!linux) {
+    try { await canvas.requestPointerLock({ unadjustedMovement: true }); return; }  // no OS mouse acceleration
+    catch (e) { /* fall through */ }
+  }
+  try { await canvas.requestPointerLock(); } catch (e2) {}                     // Chrome on Linux has no raw mode
 }
 document.addEventListener('pointerlockchange', () => render());
 function setGyro(on) {
@@ -322,7 +366,7 @@ function setGyro(on) {
 }
 
 // ---- Gamepad ----
-let pad = null, prevButtons = [];
+let pad = null, prevButtons = [], speedTap = { btn: -1, t: 0 };
 addEventListener('gamepadconnected', () => { render(); });
 addEventListener('gamepaddisconnected', () => { pad = null; render(); });
 
@@ -392,11 +436,29 @@ function poll() {
     const tilt = (pressed(b[BTN_UP]) ? 1 : 0) - (pressed(b[BTN_DOWN]) ? 1 : 0);
     let zoom = value(b[BTN_RT]) - value(b[BTN_LT]);
     if (Math.abs(zoom) < 0.05) zoom = 0;
-    send({ t: 'in', th: -ly, yw: lx, pt: -ry, rl: rx, tl: tilt, zm: zoom, fn: pressed(b[BTN_FINE]) ? 1 : 0, gx, gy });
+    const m = STICK_LAYOUTS[stickLayout].map(lx, ly, rx, ry);
+    send({ t: 'in', th: m.th, yw: m.yw, pt: m.pt, rl: m.rl, tl: tilt, zm: zoom, fn: pressed(b[BTN_FINE]) ? 1 : 0, gx, gy });
 
+    const tNow = performance.now();
     for (const [i, cmd] of Object.entries(BUTTON_CMDS)) {
       const now = pressed(b[i]);
-      if (now && !prevButtons[i]) send({ t: 'cmd', c: cmd });
+      const down = now && !prevButtons[i];
+      if (ON_RELEASE.has(i)) {
+        if (down) pressStart[i] = tNow;
+        if (!now && prevButtons[i] && tNow - (pressStart[i] || 0) < HOLD_MAX_MS) send({ t: 'cmd', c: cmd });
+      } else if (down) {
+        send({ t: 'cmd', c: cmd });
+      }
+      if (down && gyroOn) lockPointer(); // a gamepad press counts as a user gesture in Chrome
+      prevButtons[i] = now;
+    }
+    for (const [i, dir] of Object.entries(SPEED_BUTTONS)) {
+      const now = pressed(b[i]);
+      if (now && !prevButtons[i]) {
+        const second = speedTap.btn === i && tNow - speedTap.t < DOUBLE_TAP_MS;
+        send({ t: 'cmd', c: 'spd', d: second ? 2 * dir : dir });
+        speedTap = second ? { btn: -1, t: 0 } : { btn: i, t: tNow };
+      }
       prevButtons[i] = now;
     }
   }
@@ -431,6 +493,8 @@ tap('bAttach', () => send({ t: 'cmd', c: 'attach' }));
 tap('bMode', () => send({ t: 'cmd', c: 'mode' }));
 tap('bGyro', () => setGyro(!gyroOn));
 tap('bHelp', () => $('help').classList.add('on'));
+for (const b of document.querySelectorAll('#sticksSeg button')) b.addEventListener('pointerdown', e => { e.preventDefault(); setStickLayout(b.dataset.layout); });
+setStickLayout(stickLayout);
 tap('bHelpClose', () => $('help').classList.remove('on'));
 
 let wakeLock = null;

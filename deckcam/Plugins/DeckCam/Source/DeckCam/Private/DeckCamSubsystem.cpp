@@ -102,7 +102,7 @@ void UDeckCamSubsystem::Start()
 	}
 	Video = MakeUnique<FDeckCamVideo>();
 
-	SpeedIndex = FMath::Clamp(S->DefaultSpeedIndex, 0, FMath::Max(0, S->SpeedPresets.Num() - 1));
+	SpeedMps = FMath::Clamp(S->DefaultSpeed, S->MinSpeed, FMath::Max(S->MinSpeed, S->MaxSpeed));
 	Input = FDeckCamInput();
 	bSynced = false;
 	bWantPilot = S->bPilotViewport;
@@ -229,7 +229,7 @@ FDeckCamTuning UDeckCamSubsystem::MakeTuning() const
 {
 	const UDeckCamSettings* S = GetDefault<UDeckCamSettings>();
 	FDeckCamTuning T;
-	T.Speed = S->SpeedPresets.IsValidIndex(SpeedIndex) ? S->SpeedPresets[SpeedIndex] : 1000.f;
+	T.Speed = SpeedMps * 100.f; // cm/s
 	T.CineSmoothing = S->CineSmoothing;
 	T.YawRate = S->YawRate;
 	T.TiltRate = S->TiltRate;
@@ -389,8 +389,10 @@ void UDeckCamSubsystem::PumpMessages()
 		else if (Type == TEXT("cmd"))
 		{
 			FString Cmd;
+			double Arg = 0.0;
 			J->TryGetStringField(TEXT("c"), Cmd);
-			HandleCommand(Cmd);
+			J->TryGetNumberField(TEXT("d"), Arg);
+			HandleCommand(Cmd, Arg);
 		}
 		else if (Type == TEXT("hello"))
 		{
@@ -429,22 +431,45 @@ void UDeckCamSubsystem::ApplyInput(const TSharedPtr<FJsonObject>& J)
 	LastInputTime = FPlatformTime::Seconds();
 }
 
-void UDeckCamSubsystem::HandleCommand(const FString& Cmd)
+void UDeckCamSubsystem::HandleCommand(const FString& Cmd, double Arg)
 {
 	const UDeckCamSettings* S = GetDefault<UDeckCamSettings>();
-	const int32 NumSpeeds = S->SpeedPresets.Num();
+
+	// Speed: "spd" with d = number of steps (+1 / -1 for a press; the page sends the rest of the
+	// big step on a quick second press, so a double press adds SpeedBigStep in total).
+	auto ChangeSpeed = [this, S](float DeltaMps)
+	{
+		const float TopMps = FMath::Max(S->MinSpeed, S->MaxSpeed);
+		// Land on whole steps: 10 -> 11 -> 12, not 10.3 -> 11.3 after a clamp at the edge.
+		const float Step = FMath::Max(0.1f, S->SpeedStep);
+		const float Next = FMath::RoundToFloat((SpeedMps + DeltaMps) / Step) * Step;
+		SpeedMps = FMath::Clamp(Next, S->MinSpeed, TopMps);
+	};
 
 	if (Cmd == TEXT("rec"))
 	{
 		ToggleRecord();
 	}
-	else if (Cmd == TEXT("spd+") && NumSpeeds > 0)
+	else if (Cmd == TEXT("spd"))
 	{
-		SpeedIndex = FMath::Min(SpeedIndex + 1, NumSpeeds - 1);
+		// d: +1/-1 = one step; +2/-2 = "big step" (the rest of it, after the first press already moved one step)
+		const int32 D = FMath::RoundToInt(float(Arg));
+		if (FMath::Abs(D) == 1)
+		{
+			ChangeSpeed(D * S->SpeedStep);
+		}
+		else if (FMath::Abs(D) == 2)
+		{
+			ChangeSpeed(FMath::Sign(float(D)) * FMath::Max(0.f, S->SpeedBigStep - S->SpeedStep));
+		}
 	}
-	else if (Cmd == TEXT("spd-") && NumSpeeds > 0)
+	else if (Cmd == TEXT("spd+"))
 	{
-		SpeedIndex = FMath::Max(SpeedIndex - 1, 0);
+		ChangeSpeed(S->SpeedStep);
+	}
+	else if (Cmd == TEXT("spd-"))
+	{
+		ChangeSpeed(-S->SpeedStep);
 	}
 	else if (Cmd == TEXT("mode"))
 	{
@@ -729,9 +754,7 @@ void UDeckCamSubsystem::SendStatus()
 	TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
 	J->SetStringField(TEXT("t"), TEXT("st"));
 	J->SetStringField(TEXT("mode"), Drone.Mode == EDeckCamMode::Cine ? TEXT("cine") : TEXT("fpv"));
-	J->SetNumberField(TEXT("spd"), MakeTuning().Speed / 100.0);
-	J->SetNumberField(TEXT("si"), SpeedIndex);
-	J->SetNumberField(TEXT("sn"), S->SpeedPresets.Num());
+	J->SetNumberField(TEXT("spd"), SpeedMps);
 	J->SetNumberField(TEXT("foc"), CC ? CC->CurrentFocalLength : 0.0);
 	J->SetNumberField(TEXT("tilt"), Drone.Mode == EDeckCamMode::Cine ? Drone.GimbalPitch : S->FpvCameraTilt);
 	J->SetNumberField(TEXT("vel"), Drone.Velocity.Size() / 100.0);

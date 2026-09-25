@@ -40,7 +40,7 @@ private:
 	FLevelEditorViewportClient* GetViewport() const;
 
 	void PumpMessages();
-	void HandleCommand(const FString& Cmd);
+	void HandleCommand(const FString& Cmd, double Arg);
 	void ApplyInput(const TSharedPtr<class FJsonObject>& Json);
 
 	void ToggleRecord();
@@ -69,7 +69,7 @@ private:
 	FDeckCamDrone Drone;
 	FDeckCamInput Input;
 	double LastInputTime = 0.0;
-	int32 SpeedIndex = 0;
+	float SpeedMps = 10.f; // full-stick speed, m/s
 
 	bool bRunning = false;
 	bool bSynced = false;
