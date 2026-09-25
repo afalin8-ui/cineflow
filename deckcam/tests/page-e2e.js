@@ -92,6 +92,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok(foc > 45, 'RT zooms in: ' + foc + ' mm');
 
   // Gyro: Steam turns Deck rotation into mouse motion; the page forwards it as look deltas.
+  // Off by default: a stray mouse must not turn the camera.
+  const gpxOff = await page.evaluate(() => lastStatus.gpx);
+  for (let i = 1; i <= 5; i++) { await page.mouse.move(100 + i * 30, 100); await sleep(16); }
+  await sleep(250);
+  ok((await page.evaluate(() => lastStatus.gpx)) === gpxOff && (await page.textContent('#gyroText')) === 'выкл', 'gyro off by default: mouse ignored');
+  await page.evaluate(() => document.getElementById('bGyro').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await sleep(100);
+  await page.evaluate(() => document.exitPointerLock()); // headless Chromium sends no movement while locked
   await page.evaluate(() => window.__press(1)); await sleep(100); await page.evaluate(() => window.__press(1, 0)); // B: level
   await page.mouse.move(640, 400);
   await sleep(300);

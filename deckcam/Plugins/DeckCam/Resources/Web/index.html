@@ -288,8 +288,10 @@ function toast(code, text) {
 // ---- Gyro ----
 // Steam Input turns the Deck gyro into mouse motion ("Gyro to Mouse"); the browser has no gyro API
 // for gamepads. Pointer lock keeps the invisible cursor from stopping at the screen edge.
-let gyroOn = true, gyroX = 0, gyroY = 0, gyroLast = 0;
-try { gyroOn = localStorage.getItem('deckcam_gyro') !== '0'; } catch (e) {}
+// Off until switched on with the "Гиро" button: any mouse (Steam's desktop layout turns sticks and
+// trackpads into a mouse) would otherwise spin the camera, and that reads as "the camera drives itself".
+let gyroOn = false, gyroX = 0, gyroY = 0, gyroLast = 0;
+try { gyroOn = localStorage.getItem('deckcam_gyro') === '1'; } catch (e) {}
 let diagPx = 0;
 document.addEventListener('mousemove', e => {
   diagPx += Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0);
