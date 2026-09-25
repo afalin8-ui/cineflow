@@ -17,6 +17,7 @@ public class DeckCam : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"UnrealEd",
+			"EditorSubsystem",
 			"Slate",
 			"SlateCore",
 			"ToolMenus",
