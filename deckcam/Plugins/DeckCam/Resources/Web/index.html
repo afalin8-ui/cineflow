@@ -243,7 +243,12 @@ function render() {
   const st = lastStatus;
   let center = '';
   if (!connected) center = 'Подключаюсь…<small>Unreal: Tools → DeckCam. Компьютер и Deck в одной сети Wi-Fi</small>';
-  else if (!pad) center = 'Нажмите любую кнопку<small>браузер видит пульт только после нажатия</small>';
+  else if (!pad) center = 'Браузер не видит пульт — нажмите любую кнопку'
+    + '<small>Не помогает? Chrome из Flatpak без доступа к устройствам пульта не видит.<br>'
+    + 'Один раз, в режиме рабочего стола, в Konsole:<br>'
+    + '<b style="color:var(--text);font-family:var(--mono)">flatpak --user override --filesystem=/run/udev:ro com.google.Chrome</b><br>'
+    + 'и перезапустите Chrome. В режиме рабочего стола ещё удерживайте ☰ 2–3 секунды —<br>'
+    + 'Steam переключит пульт с мыши на геймпад.</small>';
   else if (st && st.video && !gotVideo) center = 'Жду картинку из Unreal…';
   $('center').classList.toggle('off', !center);
   if (center) $('centerText').innerHTML = center;
