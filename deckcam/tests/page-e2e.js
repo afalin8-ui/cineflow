@@ -39,8 +39,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   await ctx.addInitScript(() => {
     const btn = () => ({ pressed: false, value: 0 });
-    window.__pad = { connected: true, id: 'Steam Deck', index: 0, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
-    navigator.getGamepads = () => [window.__pad];
+    // As on the Deck: the browser lists the raw controller FIRST (held by Steam, never changes),
+    // and Steam's virtual pad second. The page must listen to the one that moves.
+    window.__dead = { connected: true, id: 'Valve Steam Deck (raw)', index: 0, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
+    window.__pad = { connected: true, id: 'Steam Virtual Gamepad', index: 1, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
+    navigator.getGamepads = () => [window.__dead, window.__pad];
     window.__press = (i, v = 1) => { window.__pad.buttons[i] = { pressed: v > 0.5, value: v }; };
   });
   const page = await ctx.newPage();
@@ -70,6 +73,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.evaluate(() => window.__press(9, 0));
   await sleep(300);
   ok(count('rec') === 1, 'Menu held for 300 ms sends one "rec"');
+  ok(await page.evaluate(() => pad && pad.index === 1), 'listens to the pad that moved, not the first in the list');
   ok(await page.$eval('#rec', e => e.classList.contains('on')), 'REC indicator on');
 
   await page.evaluate(() => window.__press(5)); await sleep(100); await page.evaluate(() => window.__press(5, 0)); await sleep(200);

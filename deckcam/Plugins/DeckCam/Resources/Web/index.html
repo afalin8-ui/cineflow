@@ -58,6 +58,7 @@
   #help h1 { margin: 0 0 6px; font-size: 26px; }
   #help p { color: var(--muted); margin: 0 0 18px; font-size: 16px; }
   #diag { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 22px; }
+  #diag .wide { grid-column: 1 / -1; font-size: 15px; white-space: pre-wrap; line-height: 1.5; }
   #diag div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: 600 18px var(--mono); }
   #diag small { display: block; font: 12px var(--font); color: var(--muted); margin-bottom: 6px; }
   #diag .hot { border-color: var(--warn); color: var(--warn); }
@@ -113,6 +114,7 @@
     <div><small>Правый стик</small><span id="dR">—</span></div>
     <div><small>Курки LT / RT</small><span id="dT">—</span></div>
     <div id="dMbox"><small>Мышь / гироскоп, точек/с</small><span id="dM">—</span></div>
+    <div class="wide"><small>Геймпады, которые видит браузер (▶ — тот, который слушает страница)</small><span id="dP">—</span></div>
   </div>
   <h1>Управление</h1>
   <p>Кино — горизонт ровный, камера плывёт с инерцией. FPV — полёт с креном, центр левого стика = зависание.</p>
@@ -325,14 +327,52 @@ function stick(x, y) {
   const k = Math.min(1, (m - DEADZONE) / (1 - DEADZONE)) / m;
   return [x * k, y * k];
 }
+// The browser may list several gamepads: on the Deck the raw controller (held by Steam, always idle
+// or with a non-standard layout) often comes FIRST, and Steam's virtual pad second. Taking the first
+// one meant "the gyro works but no button or stick does". So: the pad that last actually changed
+// wins; until anything moves, prefer the standard layout.
+const padState = {}; // index -> {sig, active}
+function padSig(g) {
+  let s = '';
+  for (const a of g.axes) s += Math.round((a || 0) * 20) + ',';
+  for (const b of g.buttons) s += (b && (b.pressed || b.value > 0.2)) ? '1' : '0';
+  return s;
+}
+function pickPad(pads) {
+  const now = performance.now();
+  let best = null, bestScore = -Infinity;
+  for (const g of pads) {
+    if (!g || !g.connected) continue;
+    const st = padState[g.index] || (padState[g.index] = { sig: padSig(g), active: 0, id: g.id });
+    const sig = padSig(g);
+    if (sig !== st.sig) { st.sig = sig; st.active = now; }
+    st.id = g.id;
+    const score = st.active * 10 + (g.mapping === 'standard' ? 5 : 0) - g.index * 0.001;
+    if (score > bestScore) { best = g; bestScore = score; }
+  }
+  return best;
+}
+function padList(pads) {
+  const rows = [];
+  for (const g of pads) {
+    if (!g || !g.connected) continue;
+    const st = padState[g.index];
+    const ago = st && st.active ? Math.round((performance.now() - st.active) / 1000) : null;
+    rows.push((pad && g.index === pad.index ? '▶ ' : '   ') + '#' + g.index + ' ' + g.id +
+      ' · ' + (g.mapping === 'standard' ? 'стандартный' : 'НЕСТАНДАРТНЫЙ') +
+      ' · ' + (ago === null ? 'не двигался' : 'двигался ' + ago + ' с назад'));
+  }
+  return rows.length ? rows.join('\n') : 'браузер не видит ни одного геймпада — нажмите любую кнопку на Deck';
+}
+
 function pressed(b) { return !!(b && (b.pressed || b.value > 0.5)); }
 function value(b) { return b ? (typeof b.value === 'number' ? b.value : (b.pressed ? 1 : 0)) : 0; }
 
 function poll() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-  let p = null;
-  for (const g of pads) if (g && g.connected) { p = g; break; }
+  const p = pickPad(pads);
   const had = !!pad;
+  if (p !== pad && pad && p && p.index !== pad.index) prevButtons = []; // switched device: no phantom presses
   pad = p;
   if (had !== !!pad) render();
 
@@ -368,6 +408,7 @@ function poll() {
       $('dL').textContent = pad ? f(a[0] || 0) + ' ' + f(a[1] || 0) : 'нет пульта';
       $('dR').textContent = pad ? f(a[2] || 0) + ' ' + f(a[3] || 0) : 'нет пульта';
       $('dT').textContent = pad ? value(b[BTN_LT]).toFixed(2) + ' / ' + value(b[BTN_RT]).toFixed(2) : '—';
+      $('dP').textContent = padList(navigator.getGamepads ? navigator.getGamepads() : []);
       const pps = Math.round(diagPx / dt);
       $('dM').textContent = String(pps);
       $('dMbox').classList.toggle('hot', pps > 0);
