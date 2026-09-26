@@ -2386,7 +2386,10 @@
           };
           // -0,833° — видимый край солнца с поправкой на преломление воздуха,
           // это и есть общепринятый «восход». 6° — верхняя граница золотого часа.
-          return { sun: at(-0.833), golden: at(6), transit: toDate(Jtransit) };
+          // -6/-12/-18° — нижние границы гражданских, навигационных
+          // и астрономических сумерек: из них собирается раскладка дня.
+          return { sun: at(-0.833), golden: at(6), transit: toDate(Jtransit),
+                   civil: at(-6), naut: at(-12), astro: at(-18) };
         };
         // Склонение после числа. Живёт на модульном уровне, потому что
         // нужно и тем компонентам, что объявлены ВЫШЕ AppCore (скаут):
@@ -2400,6 +2403,121 @@
           return many;
         };
         const hhmm = (d) => d ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
+        // Сегодняшняя дата ПО МЕСТНЫМ ЧАСАМ. toISOString отдаёт дату по UTC,
+        // и до трёх ночи по Москве это ещё вчера — раскладка дня уехала бы
+        // на чужие сутки, а отметка «сейчас» пропала бы с полосы.
+        const localDay = (d = new Date()) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+        // РАСКЛАДКА ДНЯ ПО СВЕТУ: ночь → астрономические → навигационные →
+        // гражданские сумерки → восход → золотой час → день и обратно.
+        // Одних восхода с закатом мало: на площадке спрашивают, до скольки
+        // ещё можно снимать «режим» и когда станет совсем темно.
+        // Полосы идут по высоте солнца, и цвет у них — ступени одной
+        // шкалы от тёмного к светлому (золотой час тёплый): соседние
+        // различимы и при обычном зрении, и при цветовой слепоте (проверено
+        // расчётом, ΔE ≥ 15). Цвет только подсказка — каждая полоса
+        // названа словами в списке под ней.
+        const SUN_BANDS = [
+          { key: 'night', name: 'Ночь', color: '#2e3242' },
+          { key: 'astro', name: 'Астрономические сумерки', color: '#4a5f8b' },
+          { key: 'naut', name: 'Навигационные сумерки', color: '#6a8cc4' },
+          { key: 'civil', name: 'Гражданские сумерки', hint: 'режим', color: '#9fbde9' },
+          { key: 'gold', name: 'Золотой час', color: '#d9a441' },
+          { key: 'day', name: 'День', color: '#e6dfcc' }
+        ];
+        // Строки раскладки по порядку за сутки. Границы полос — рубежи
+        // высоты солнца (-18, -12, -6, -0,833, 6). Рубеж, который солнце
+        // в этот день не пересекает, — не ошибка: летом в Петербурге оно
+        // не опускается ниже -12°, и настоящей ночи нет вовсе (белые ночи),
+        // а за полярным кругом не садится совсем. Тогда нижняя полоса —
+        // та, что над самым глубоким НЕпересечённым рубежом, и она стоит
+        // и в начале, и в конце суток. Время восхода по рубежам растёт
+        // вместе с высотой, поэтому порядок строк — просто порядок рубежей.
+        const sunDayRows = (t) => {
+          if (!t || !t.astro) return null;
+          const lv = [t.astro, t.naut, t.civil, t.sun, t.golden];
+          let lo = 0, hi = 5;
+          lv.forEach((x, i) => { if (x.polar === 'day') lo = Math.max(lo, i + 1); });
+          lv.forEach((x, i) => { if (x.polar === 'night') hi = Math.min(hi, i); });
+          if (lo >= hi) return [{ band: Math.min(lo, 5), from: null, to: null }];
+          const rows = [{ band: lo, from: null, to: lv[lo].rise }];
+          for (let i = lo; i < hi; i++) {
+            if (i === 3) rows.push({ event: 'Восход', at: t.sun.rise });
+            rows.push({ band: i + 1, from: lv[i].rise, to: i + 1 < hi ? lv[i + 1].rise : lv[i].set,
+                        noon: i + 1 === hi ? t.transit : null });
+          }
+          for (let i = hi - 1; i >= lo; i--) {
+            if (i === 3) rows.push({ event: 'Закат', at: t.sun.set });
+            rows.push({ band: i, from: lv[i].set, to: i - 1 >= lo ? lv[i - 1].set : null });
+          }
+          return rows;
+        };
+        const sunRowTime = (r) => r.event ? hhmm(r.at)
+          : (!r.from && !r.to) ? 'круглые сутки'
+          : !r.from ? `до ${hhmm(r.to)}` : !r.to ? `с ${hhmm(r.from)}` : `${hhmm(r.from)}–${hhmm(r.to)}`;
+        // Раскладка одна на «Сцены» и «Объекты»: вторая копия разъехалась
+        // бы с первой при первой же правке. Сверху полоса суток (по ней
+        // видно, сколько чего), под ней — те же полосы словами и временем.
+        // `now` — отметка «сейчас», если показан сегодняшний день.
+        const SunDay = ({ t, date, now }) => {
+          const rows = sunDayRows(t);
+          if (!rows) return null;
+          const d0 = new Date(date + 'T00:00:00');
+          const pos = (d, edge) => d ? Math.max(0, Math.min(100, (d - d0) / 864000)) : edge;
+          const nowPos = now && now - d0 >= 0 && now - d0 < 86400000 ? pos(now) : null;
+          const lowest = rows[0].band;
+          const highest = Math.max(...rows.filter(r => !r.event).map(r => r.band));
+          return (
+            <div data-cf="sun-day" style={{ marginTop: 10 }}>
+              <div className="relative" aria-hidden="true" style={{ height: 12, borderRadius: 4, overflow: 'hidden' }}>
+                {rows.filter(r => !r.event).map((r, i) => {
+                  const a = pos(r.from, 0), b = pos(r.to, 100);
+                  return <div key={i} title={`${SUN_BANDS[r.band].name} ${sunRowTime(r)}`}
+                              style={{ position: 'absolute', top: 0, bottom: 0, left: a + '%', width: Math.max(0, b - a) + '%',
+                                       background: SUN_BANDS[r.band].color, backgroundClip: 'padding-box',
+                                       borderRight: b < 100 ? '2px solid transparent' : 'none', boxSizing: 'border-box' }} />;
+                })}
+                {nowPos != null && <div style={{ position: 'absolute', top: 0, bottom: 0, left: `calc(${nowPos}% - 1px)`, width: 2, background: 'var(--accent)' }} />}
+              </div>
+              <div className="flex justify-between" aria-hidden="true" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--muted-2)', marginTop: 3 }}>
+                <span>0</span><span>6</span><span>12</span><span>18</span><span>24</span>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                {rows.map((r, i) => (
+                  <div key={i} data-cf="sun-row" className="flex items-baseline gap-2"
+                       style={{ fontSize: 'var(--fs-2)', lineHeight: 1.45, padding: '2px 0', color: r.event ? 'var(--text)' : 'var(--text-2)' }}>
+                    <span className="shrink-0 self-center" style={r.event
+                      ? { width: 8, height: 8, margin: '0 2px', borderRadius: 999, background: 'var(--accent)' }
+                      : { width: 12, height: 8, borderRadius: 2, background: SUN_BANDS[r.band].color }} />
+                    <span className="min-w-0">
+                      {r.event || SUN_BANDS[r.band].name}
+                      {!r.event && SUN_BANDS[r.band].hint && <span style={{ color: 'var(--muted-2)' }}> · {SUN_BANDS[r.band].hint}</span>}
+                      {r.noon && <span style={{ color: 'var(--muted-2)' }}> · полдень {hhmm(r.noon)}</span>}
+                    </span>
+                    <span className="ml-auto shrink-0" style={{ fontFamily: 'var(--font-mono)', color: r.event ? 'var(--text)' : 'var(--text-2)' }}>{sunRowTime(r)}</span>
+                  </div>
+                ))}
+              </div>
+              {highest <= 3 && (
+                <p className="cf-meta" style={{ marginTop: 6 }}>Солнце в этот день не встаёт.</p>
+              )}
+              {lowest > 0 && lowest < 5 && rows.length > 1 && (
+                <p className="cf-meta" style={{ marginTop: 6 }}>
+                  {lowest === 4 ? 'Солнце в этот день не садится.'
+                    : `Ночи в этот день нет: солнце не опускается ниже ${[18, 12, 6][lowest - 1]}° под горизонт.`}
+                </p>
+              )}
+            </div>
+          );
+        };
+        // Та же раскладка строкой — для отчёта по объекту.
+        const sunDayLine = (t) => {
+          const rows = sunDayRows(t);
+          if (!rows) return '';
+          return rows.map(r => r.event ? `${r.event.toLowerCase()} ${hhmm(r.at)}`
+            : `${SUN_BANDS[r.band].name.toLowerCase()} ${sunRowTime(r)}`).join(', ');
+        };
 
         // ГАЙД НА ПЕЧАТИ — ДОКУМЕНТ, А НЕ ПРОСТЫНЯ. Печатался он одним
         // абзацем с сохранением переносов: заголовки разделов, списки
@@ -7895,16 +8013,17 @@
             const days = c ? (dates.length ? dates : [new Date().toISOString().slice(0, 10)]) : [];
             const row = (label, value) => value
               ? <p style={{fontSize: '10.5pt', margin: '0 0 3pt'}}><b>{label}:</b> {value}</p> : null;
-            const sunLine = days.map(dt => {
+            // Раскладка дня по свету — та же, что на экране объекта
+            // (sunDayLine): сумерки, восход, золотой час, день, закат.
+            // Каждый день смены отдельной строкой, иначе три дня подряд
+            // сливаются в одну простыню из запятых.
+            const sunRows = days.map(dt => {
               const t = sunTimes(c.lat, c.lon, dt);
-              if (!t) return null;
-              const when = t.sun.polar === 'day' ? 'не садится'
-                : t.sun.polar === 'night' ? 'не встаёт'
-                : `${hhmm(t.sun.rise)} — ${hhmm(t.sun.set)}`;
-              const gold = (!t.sun.polar && !t.golden.polar)
-                ? ` · золотой час до ${hhmm(t.golden.rise)} и с ${hhmm(t.golden.set)}` : '';
-              return `${formatDateDisplay(dt)}: ${when}${gold}`;
-            }).filter(Boolean).join(' · ');
+              const line = sunDayLine(t);
+              return line ? `${formatDateDisplay(dt)}: ${line}` : null;
+            }).filter(Boolean);
+            const sunLine = sunRows.length
+              ? sunRows.map((x, i) => <React.Fragment key={i}>{i ? <br /> : null}{x}</React.Fragment>) : '';
             return (
               <div className={solo ? '' : 'print-loc'} style={{marginBottom: solo ? 0 : '18pt'}}>
                 {!solo && <h2 style={{fontSize: '15pt', fontWeight: 800, margin: '0 0 4pt'}}>{l.name || 'Без названия'}</h2>}
@@ -15052,10 +15171,11 @@
                     ) : (() => {
                       const now = new Date();
                       const p = sunPosition(c.lat, c.lon, now);
-                      const t = sunTimes(c.lat, c.lon, s.date || now.toISOString().slice(0, 10));
+                      const t = sunTimes(c.lat, c.lon, s.date || localDay(now));
                       const rad = p.az * Math.PI / 180, R = 40;
                       const sx = 60 + R * Math.sin(rad), sy = 60 - R * Math.cos(rad);
                       return (
+                        <React.Fragment>
                         <div className="flex gap-3.5 items-center">
                           <svg width="110" height="110" viewBox="0 0 120 120" className="shrink-0">
                             <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
@@ -15069,12 +15189,11 @@
                           </svg>
                           <div style={{ fontSize: 'var(--fs-3)', lineHeight: 1.55, color: 'var(--text-2)' }}>
                             {sunWords(p)}
-                            {t && !t.sun.polar && t.sun.set && (
-                              <React.Fragment><br />Закат <b style={{ fontFamily: 'var(--font-mono)' }}>{hhmm(t.sun.set)}</b>
-                              {t.golden.set && <React.Fragment>, золотой час с <b style={{ fontFamily: 'var(--font-mono)' }}>{hhmm(t.golden.set)}</b></React.Fragment>}.</React.Fragment>
-                            )}
                           </div>
                         </div>
+                        <div className="cf-meta" style={{ marginTop: 12 }}>{s.date ? formatDateDisplay(s.date) : 'Смены у сцены нет — на сегодня'}</div>
+                        <SunDay t={t} date={s.date || localDay(now)} now={now} />
+                        </React.Fragment>
                       );
                     })()}
                   </React.Fragment>
@@ -16145,7 +16264,7 @@
                               ) : (() => {
                                 const now = new Date();
                                 const p = sunPosition(locCoords.lat, locCoords.lon, now);
-                                const t = sunTimes(locCoords.lat, locCoords.lon, now.toISOString().slice(0, 10));
+                                const t = sunTimes(locCoords.lat, locCoords.lon, localDay(now));
                                 // Азимут отсчитан от севера по часовой; на компасе
                                 // север сверху, поэтому угол в экранные координаты
                                 // переводим как sin/-cos.
@@ -16153,6 +16272,7 @@
                                 const R = 40;
                                 const sx = 60 + R * Math.sin(rad), sy = 60 - R * Math.cos(rad);
                                 return (
+                                  <React.Fragment>
                                   <div className="flex gap-3.5 items-center mt-2.5">
                                     <svg width="110" height="110" viewBox="0 0 120 120" className="shrink-0">
                                       <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
@@ -16166,9 +16286,10 @@
                                     </svg>
                                     <div style={{ fontSize: 'var(--fs-2)', lineHeight: 1.55, color: 'var(--text-2)' }}>
                                       {sunWords(p)}
-                                      {t && t.sun.rise && <React.Fragment><br />Закат <b style={{ fontFamily: 'var(--font-mono)' }}>{hhmm(t.sun.set)}</b>, золотой час с <b style={{ fontFamily: 'var(--font-mono)' }}>{hhmm(t.golden.set)}</b>.</React.Fragment>}
                                     </div>
                                   </div>
+                                  <SunDay t={t} date={localDay(now)} now={now} />
+                                  </React.Fragment>
                                 );
                               })()}
                             </div>
@@ -16673,37 +16794,18 @@
                                       </div>
                                       {!locCoords ? (
                                         <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 8, lineHeight: 1.6 }}>
-                                          У объекта нет координат — впишите их там, и здесь появится дуга солнца на день смены.
+                                          У объекта нет координат — впишите их там, и здесь появится раскладка солнца на день смены.
                                         </p>
                                       ) : !s.date ? (
                                         <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 8, lineHeight: 1.6 }}>
-                                          Поставьте смену сцене — и дуга солнца посчитается на этот день.
+                                          Поставьте смену сцене — и раскладка солнца посчитается на этот день.
                                         </p>
-                                      ) : (() => {
-                                        const t = sunTimes(locCoords.lat, locCoords.lon, s.date);
-                                        if (!t) return null;
-                                        if (t.sun.polar) return <p style={{ fontSize: 'var(--fs-2)', color: 'var(--warn)', marginTop: 8 }}>{t.sun.polar === 'day' ? 'Солнце не садится — полярный день.' : 'Солнце не встаёт — полярная ночь.'}</p>;
-                                        return (
-                                          <React.Fragment>
-                                            <svg width="100%" height="86" viewBox="0 0 262 86" preserveAspectRatio="xMidYMid meet" style={{ marginTop: 6, display: 'block' }}>
-                                              <line x1="0" y1="70" x2="262" y2="70" stroke="var(--border)" strokeWidth="1" />
-                                              <path d="M20 70 Q131 -18 242 70" fill="none" stroke="var(--muted-2)" strokeWidth="1" strokeDasharray="3 4" />
-                                              <circle cx="20" cy="70" r="2.5" fill="var(--accent)" /><circle cx="242" cy="70" r="2.5" fill="var(--accent)" />
-                                              <text x="8" y="82" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">{hhmm(t.sun.rise)}</text>
-                                              <text x="212" y="82" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">{hhmm(t.sun.set)}</text>
-                                              <text x="112" y="26" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)">{hhmm(t.transit)}</text>
-                                            </svg>
-                                            {t.golden.set && (
-                                              <div className="cf-meta" style={{ color: 'var(--warn)', opacity: .85 }}>
-                                                золотой час {hhmm(t.sun.rise)}–{hhmm(t.golden.rise)} и {hhmm(t.golden.set)}–{hhmm(t.sun.set)}
-                                              </div>
-                                            )}
-                                            <p className="cf-meta mt-2" style={{ lineHeight: 1.6 }}>
-                                              Время по часам этого устройства. Считается на месте, интернет не нужен.
-                                            </p>
-                                          </React.Fragment>
-                                        );
-                                      })()}
+                                      ) : (
+                                        <React.Fragment>
+                                          <div className="cf-meta" style={{ marginTop: 8 }}>{formatDateDisplay(s.date)}</div>
+                                          <SunDay t={sunTimes(locCoords.lat, locCoords.lon, s.date)} date={s.date} now={new Date()} />
+                                        </React.Fragment>
+                                      )}
                                     </React.Fragment>
                                   )}
                                 </div>
@@ -17447,57 +17549,41 @@
                                   строчка внизу переводит это на язык площадки. */}
                               <div style={{ ...cardBox, padding: '14px 16px' }}>
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span style={eyebrow}>Солнце{shiftDate ? ' · ' + formatDateDisplay(shiftDate) : ''}</span>
-                                  {c && shiftDate && (() => {
-                                    const t = sunTimes(c.lat, c.lon, shiftDate);
-                                    if (!t || t.sun.polar || !t.golden.set) return null;
-                                    return <span className="ml-auto cf-meta" style={{ color: 'var(--warn)', opacity: .85 }}>золотой час {hhmm(t.golden.set)}–{hhmm(t.sun.set)}</span>;
-                                  })()}
+                                  <span style={eyebrow}>Солнце · {shiftDate ? formatDateDisplay(shiftDate) : 'сегодня'}</span>
+                                  {!shiftDate && c && <span className="ml-auto cf-meta">у сцен нет смены</span>}
                                 </div>
                                 {!c ? (
                                   <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 10, lineHeight: 1.6 }}>
-                                    Впишите координаты в карточке справа — и здесь появится компас, дуга солнца и во сколько уходит свет.
+                                    Впишите координаты в карточке справа — и здесь появится компас и раскладка дня по свету: сумерки, восход, золотой час, закат.
                                   </p>
                                 ) : (() => {
                                   const now = new Date();
                                   const p = sunPosition(c.lat, c.lon, now);
-                                  const t = sunTimes(c.lat, c.lon, shiftDate || now.toISOString().slice(0, 10));
+                                  const day = shiftDate || localDay(now);
+                                  const t = sunTimes(c.lat, c.lon, day);
                                   const rad = p.az * Math.PI / 180;
                                   const R = 40;
                                   const sx = 60 + R * Math.sin(rad), sy = 60 - R * Math.cos(rad);
                                   return (
-                                    <div className="flex gap-3.5 items-center mt-2.5 flex-wrap">
-                                      <svg width="120" height="120" viewBox="0 0 120 120" className="shrink-0">
-                                        <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
-                                        <text x="60" y="16" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)">С</text>
-                                        <text x="60" y="112" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">Ю</text>
-                                        <text x="10" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">З</text>
-                                        <text x="110" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">В</text>
-                                        {p.alt > 0 && <path d={`M60 60 L${sx.toFixed(1)} ${sy.toFixed(1)}`} stroke="var(--warn)" strokeWidth="2" />}
-                                        {p.alt > 0 && <circle cx={sx.toFixed(1)} cy={sy.toFixed(1)} r="5" fill="var(--warn)" />}
-                                        <circle cx="60" cy="60" r="3" fill="var(--accent)" />
-                                      </svg>
-                                      <div className="flex-1" style={{ minWidth: 160 }}>
-                                        {t && !t.sun.polar && t.sun.rise && (
-                                          <svg width="100%" height="64" viewBox="0 0 220 64" preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
-                                            <line x1="0" y1="52" x2="220" y2="52" stroke="var(--border)" strokeWidth="1" />
-                                            <path d="M16 52 Q110 -12 204 52" fill="none" stroke="var(--muted-2)" strokeWidth="1" strokeDasharray="3 4" />
-                                            <circle cx="16" cy="52" r="2.5" fill="var(--accent)" /><circle cx="204" cy="52" r="2.5" fill="var(--accent)" />
-                                            <text x="6" y="62" fontFamily="var(--font-mono)" fontSize="8.5" fill="var(--muted-2)">{hhmm(t.sun.rise)}</text>
-                                            <text x="172" y="62" fontFamily="var(--font-mono)" fontSize="8.5" fill="var(--muted-2)">{hhmm(t.sun.set)}</text>
-                                          </svg>
-                                        )}
-                                        <div style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', marginTop: 6, lineHeight: 1.55 }}>
-                                          {sunWords(p)}
-                                          {t && t.sun.polar === 'day' && ' Солнце не садится — полярный день.'}
-                                          {t && t.sun.polar === 'night' && ' Солнце не встаёт — полярная ночь.'}
+                                    <React.Fragment>
+                                      <div className="flex gap-3.5 items-center mt-2.5">
+                                        <svg width="96" height="96" viewBox="0 0 120 120" className="shrink-0">
+                                          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
+                                          <text x="60" y="16" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)">С</text>
+                                          <text x="60" y="112" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">Ю</text>
+                                          <text x="10" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">З</text>
+                                          <text x="110" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">В</text>
+                                          {p.alt > 0 && <path d={`M60 60 L${sx.toFixed(1)} ${sy.toFixed(1)}`} stroke="var(--warn)" strokeWidth="2" />}
+                                          {p.alt > 0 && <circle cx={sx.toFixed(1)} cy={sy.toFixed(1)} r="5" fill="var(--warn)" />}
+                                          <circle cx="60" cy="60" r="3" fill="var(--accent)" />
+                                        </svg>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="cf-meta">сейчас · {hhmm(now)}</div>
+                                          <div style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', marginTop: 2, lineHeight: 1.55 }}>{sunWords(p)}</div>
                                         </div>
-                                        <p className="cf-meta" style={{ marginTop: 4 }}>
-                                          {shiftDate ? 'Дуга — на день смены. ' : 'Смены у сцен нет — дуга на сегодня. '}
-                                          Считается на месте, интернет не нужен.
-                                        </p>
                                       </div>
-                                    </div>
+                                      <SunDay t={t} date={day} now={now} />
+                                    </React.Fragment>
                                   );
                                 })()}
                               </div>
