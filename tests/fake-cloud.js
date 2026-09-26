@@ -19,17 +19,25 @@ const FAKE_CLOUD = (seed) => {
   window.__cfStore = store;
   window.__cfWrites = [];
   const clone = (v) => JSON.parse(JSON.stringify(v));
-  const snapOf = (coll) => {
-    const obj = store[coll] || {}; const ids = Object.keys(obj);
+  // Запрос `where(поле, '==', значение)` — им доска Excalidraw читает
+  // свои элементы. `__cfCacheOnly[коллекция]` изображает оборванную связь:
+  // ответ приходит «из кэша устройства» и пустой, как у только что
+  // открытого без сети приложения.
+  window.__cfCacheOnly = {};
+  const snapOf = (coll, filter) => {
+    const cacheOnly = !!window.__cfCacheOnly[coll];
+    const obj = cacheOnly ? {} : (store[coll] || {});
+    const ids = Object.keys(obj).filter(id => !filter || (obj[id] && obj[id][filter.f] === filter.v));
     return {
       empty: ids.length === 0, size: ids.length,
+      metadata: { fromCache: cacheOnly, hasPendingWrites: false },
       forEach: (f) => ids.forEach(id => f({ id, data: () => obj[id] })),
       docChanges: () => ids.map(id => ({ type: 'added', doc: { id, data: () => obj[id] } }))
     };
   };
   const dsnap = (coll, id) => ({ id, exists: !!((store[coll] || {})[id]), data: () => (store[coll] || {})[id] });
   const emit = (coll, id) => {
-    (subs[coll] || []).forEach(cb => { try { cb(snapOf(coll)); } catch (e) {} });
+    (subs[coll] || []).forEach(fn => { try { fn(); } catch (e) {} });
     ((dsubs[coll] || {})[id] || []).forEach(cb => { try { cb(dsnap(coll, id)); } catch (e) {} });
   };
   const put = (coll, id, data) => {
@@ -50,15 +58,21 @@ const FAKE_CLOUD = (seed) => {
     },
     collection: (name) => collRef(name)
   });
-  const collRef = (name) => ({
-    doc: (id) => docRef(name, id),
-    get: () => Promise.resolve(snapOf(name)),
+  const query = (name, filter) => ({
+    get: () => Promise.resolve(snapOf(name, filter)),
     onSnapshot: (cb) => {
-      (subs[name] = subs[name] || []).push(cb);
-      setTimeout(() => { try { cb(snapOf(name)); } catch (e) {} }, 30);
-      return () => {};
+      const fn = () => cb(snapOf(name, filter));
+      (subs[name] = subs[name] || []).push(fn);
+      setTimeout(() => { try { fn(); } catch (e) {} }, 30);
+      return () => { subs[name] = (subs[name] || []).filter(x => x !== fn); };
     }
   });
+  const collRef = (name) => ({
+    doc: (id) => docRef(name, id),
+    ...query(name, null),
+    where: (f, op, v) => query(name, { f, v })
+  });
+  window.__cfEmit = (coll) => emit(coll, '');
   const db = {
     collection: collRef,
     settings: () => {},

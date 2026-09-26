@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v11';
+const VERSION = 'cineflow-v12';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -32,6 +32,16 @@ const LIBS = [
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js'
+];
+
+// Доска на Excalidraw (пробная) — свой готовый файл рядом с приложением,
+// а не CDN: собран один раз скриптом vendor/excalidraw/build.mjs.
+// Имя несёт версию, поэтому отдаём из кэша не спрашивая сеть, как LIBS.
+// Шрифты доски докачиваются по требованию и ложатся в кэш сами (ниже,
+// «всё остальное»): их девять семейств, а нужны обычно два.
+const VENDOR = [
+  './vendor/excalidraw/excalidraw-0.18.1.min.js',
+  './vendor/excalidraw/excalidraw-0.18.1.css'
 ];
 
 // Хосты, которые нельзя перехватывать (живой трафик Firebase)
@@ -66,6 +76,7 @@ self.addEventListener('install', event => {
   event.waitUntil((async () => {
     await cacheAllSettled(APP_CACHE, APP_SHELL);
     await cacheAllSettled(LIB_CACHE, LIBS);
+    await cacheAllSettled(LIB_CACHE, VENDOR);
     await self.skipWaiting();
   })());
 });

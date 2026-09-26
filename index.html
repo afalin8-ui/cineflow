@@ -681,6 +681,27 @@
             .print-loc { border-bottom: 1px solid #ccc; padding: 12px 0; }
             .print-keep { page-break-inside: avoid; }
         }
+        /* ДОСКА НА EXCALIDRAW (пробная). Интерфейс Excalidraw — под нашу
+           палитру: терракотовый акцент вместо его фиолетового и наши шесть
+           поверхностей в тёмной теме. Холст НЕ трогаем: в тёмной теме
+           Excalidraw выворачивает его фильтром, и любая подмена цветов
+           там разошлась бы с тем, что он выгружает картинкой. */
+        .cf-exc { background: var(--bg); }
+        .cf-exc .excalidraw { --ui-font: var(--font-ui);
+          --color-primary: #d97757; --color-primary-darker: #c2410c; --color-primary-darkest: #9a3412;
+          --color-primary-light: #f6dfd6; --color-primary-light-darker: #efcdbf; --color-primary-hover: #c9663f;
+          --color-surface-primary-container: #f6dfd6; --color-on-primary-container: #5b2413;
+          --color-brand-hover: #c9663f; --color-brand-active: #b85a36; --color-selection: #d97757; }
+        .cf-exc .excalidraw.theme--dark {
+          --island-bg-color: #242322; --default-bg-color: #1a1918; --input-bg-color: #1a1918;
+          --input-border-color: #33312d; --input-hover-bg-color: #1e1d1c; --popup-secondary-bg-color: #1e1d1c;
+          --button-gray-1: #33312d; --button-gray-2: #2b2a28; --button-gray-3: #242322;
+          --dialog-border-color: #33312d; --scrollbar-thumb: #33312d;
+          --color-primary: #e39a80; --color-primary-darker: #eaab93; --color-primary-darkest: #f0bba7;
+          --color-primary-light: #4a3a33; --color-primary-light-darker: #5a463d; --color-primary-hover: #eaa68d;
+          --color-surface-high: #2b2a28; --color-surface-mid: #1e1d1c; --color-surface-low: #242322; --color-surface-lowest: #1a1918;
+          --color-on-surface: #f0eee6; --color-surface-primary-container: #4a3a33; --color-on-primary-container: #f6dfd6;
+          --color-brand-hover: #eaa68d; --color-brand-active: #f0bba7; --color-border-outline-variant: #33312d; --color-logo-text: #f6dfd6; }
     </style>
 </head>
 <body class="no-select">
@@ -7203,6 +7224,838 @@
           );
         };
 
+        // ===== ДОСКА НА EXCALIDRAW (ПРОБНАЯ) =====
+        // Своя доска CineFlow остаётся как была; рядом живёт вторая, на
+        // самом Excalidraw 0.18 — тот, что отдельно «работает лучше и
+        // точнее». Заводится отдельной вкладкой («+ Excalidraw»), у доски
+        // поле `engine: 'excalidraw'`. Старые доски не трогаются вовсе:
+        // пробу сравнивают с ними на том же проекте.
+        //
+        // ГЛАВНОЕ РЕШЕНИЕ: Excalidraw — ОДИН движок на холсте. В прошлый
+        // раз (0.17) наши карточки жили отдельным слоем ПОВЕРХ его холста,
+        // догоняли его прокрутку и делили с ним касания — отсюда отставание
+        // и «переключи режим, чтобы подвинуть». Теперь сцена, референс,
+        // стикер, документ и кадр раскадровки — РОДНЫЕ элементы Excalidraw
+        // с меткой `customData: {cf, id}`: перо, жесты, выделение и зум
+        // ведёт он один.
+        //
+        // Карточки ВЫВОДЯТСЯ из записей проекта, а не хранятся на доске:
+        // место и размер лежат в самой записи (x, y, w, h — те же поля, что
+        // у старой доски), подпись берётся из сцены, картинка — из
+        // референса. Поэтому связи проекта целы по определению: удалил
+        // референс в галерее — он пропал с доски; подвинул на доске —
+        // запись знает новое место. id элемента = id записи, и стрелка,
+        // привязанная к карточке, держится за неё на любом устройстве.
+        //
+        // Нарисованное (фигуры, стрелки, линии пера, надписи) — своё у
+        // доски и лежит в облаке ПО ЭЛЕМЕНТУ: коллекция `boardEls`,
+        // документ `{доска}~{элемент}`, поле `e` — элемент строкой JSON.
+        // Одной строкой на всю доску, как в прошлый раз, упирались бы
+        // в предел документа Firestore (1 МБ); по элементу предела нет,
+        // а несколько человек рисуют на одной доске одновременно.
+        const EXC_VER = '0.18.1';
+        const EXC_ENGINE = 'excalidraw';
+        // Файл-снимок открыт с диска, и папки vendor рядом с ним нет —
+        // поэтому доску он берёт оттуда, откуда снимок сделан.
+        const excBase = () => new URL('vendor/excalidraw/', (CF_SNAPSHOT && CF_SNAPSHOT.app) || document.baseURI).href;
+        let excLoading = null;
+        const loadExcalidraw = () => {
+          if (window.ExcalidrawLib) return Promise.resolve(window.ExcalidrawLib);
+          if (excLoading) return excLoading;
+          const base = excBase();
+          // Шрифты Excalidraw по умолчанию тянет с чужого CDN, из России
+          // это бывает медленно. Кладём их рядом и называем адрес сами.
+          window.EXCALIDRAW_ASSET_PATH = base;
+          excLoading = new Promise((resolve, reject) => {
+            if (!document.getElementById('cf-exc-css')) {
+              const l = document.createElement('link');
+              l.id = 'cf-exc-css'; l.rel = 'stylesheet'; l.href = base + `excalidraw-${EXC_VER}.css`;
+              document.head.appendChild(l);
+            }
+            const s = document.createElement('script');
+            s.src = base + `excalidraw-${EXC_VER}.min.js`;
+            s.onload = () => {
+              if (window.ExcalidrawLib) resolve(window.ExcalidrawLib);
+              else { excLoading = null; reject(new Error('файл доски пришёл, но библиотека не завелась')); }
+            };
+            s.onerror = () => { excLoading = null; s.remove(); reject(new Error('файл доски не загрузился — нет связи?')); };
+            document.head.appendChild(s);
+          });
+          return excLoading;
+        };
+
+        // --- Карточки проекта как элементы Excalidraw ---
+        // Порядок слоёв: сцены и документы внизу, над ними кадры
+        // и фотографии, стикеры сверху, потом связи, потом нарисованное.
+        const EXC_TYPES = ['scene', 'doc', 'frame', 'ref', 'sticky'];
+        const EXC_COLL = { scene: 'scenes', ref: 'references', sticky: 'stickies', doc: 'docs', frame: 'storyboard' };
+        const EXC_LIST = { scene: 'scenes', ref: 'refs', sticky: 'stickies', doc: 'docs', frame: 'frames' };
+        // Цвета — в «светлом» пространстве Excalidraw: в тёмной теме он
+        // выворачивает холст фильтром, и светлая подложка становится тёмной.
+        // Так карточка читается одинаково и в тёмной теме, и в светлой.
+        const EXC_INK = '#1e1e1e';
+        const EXC_CARD_BG = '#f4f2ee';
+        const EXC_LINK = '#c2410c';
+        const excClip = (s, n) => { s = String(s || '').replace(/\s+\n/g, '\n').trim(); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; };
+        // Ключ картинки: по нему Excalidraw кэширует файл. Считать хэш от
+        // строки в двести килобайт на каждой сборке дорого, а длины и хвоста
+        // хватает, чтобы заметить замену фотографии.
+        const excUrlKey = (u) => u ? u.length.toString(36) + '-' + u.slice(-24).replace(/[^a-zA-Z0-9]/g, '') : '';
+        const excMime = (u) => { const m = /^data:([^;,]+)/.exec(u || ''); return m ? m[1] : 'image/jpeg'; };
+        const excSeed = (id) => { let h = 7; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0; return Math.abs(h) || 1; };
+        // Габарит карточки из записи. Те же размеры по умолчанию, что
+        // у старой доски: карточка на обеих досках одного размера.
+        const excGeo = (type, r, ratio) => {
+          const x = +r.x || 0, y = +r.y || 0;
+          if (type === 'scene') return { x, y, w: +r.w || 288, h: +r.h || 150 };
+          if (type === 'sticky') return { x, y, w: +r.w || 224, h: +r.h || 128 };
+          if (type === 'doc') return { x, y, w: +r.w || 280, h: +r.h || 220 };
+          if (type === 'frame') { const w = +r.w || 240; return { x, y, w, h: Math.round(w / (ratio || 16 / 9)) }; }
+          const w = +r.w || 192; const ar = (r.ar && r.ar > 0.05 && r.ar < 20) ? r.ar : 16 / 9;
+          return { x, y, w, h: Math.round(w / ar) };
+        };
+        const excLabel = (type, r) => {
+          if (type === 'scene') return `#${r.number || '—'}  ${r.title || 'Без названия'}` + (r.content ? '\n\n' + excClip(r.content, 160) : '');
+          if (type === 'doc') return (r.title || 'Без названия') + (r.content ? '\n\n' + excClip(r.content, 320) : '');
+          if (type === 'sticky') return String(r.text || '');
+          if (type === 'frame') return excClip(`${r.frameNum || ''}${r.description ? ' · ' + r.description : ''}`, 90);
+          return '';
+        };
+        // Картинка карточки: у референса — превью из записи, у кадра —
+        // скетч или снимок. Нет картинки — рисуем рамку с подписью.
+        const excImage = (type, r) => type === 'ref' ? (r.url || '') : type === 'frame' ? (r.image || '') : '';
+        const excSig = (type, r, ratio) => {
+          const g = excGeo(type, r, ratio);
+          return [g.x, g.y, g.w, g.h, type === 'sticky' ? r.color : '', excLabel(type, r), excUrlKey(excImage(type, r))].join('|');
+        };
+        // Строим элементы одной карточки. `prev` — то, что сейчас лежит
+        // в сцене под этими id: версия новой обязана быть выше, иначе
+        // Excalidraw посчитает замену старой.
+        const excBuildCard = (lib, type, r, ratio, prev) => {
+          const g = excGeo(type, r, ratio);
+          const cd = (part) => ({ cf: type, id: r.id, part });
+          const img = excImage(type, r);
+          const ver = (id) => ((prev.get(id) || {}).version || 0) + 1;
+          const out = [];
+          if (img) {
+            const [el] = lib.convertToExcalidrawElements([{
+              type: 'image', id: r.id, x: g.x, y: g.y, width: g.w, height: g.h,
+              fileId: 'cf-' + excUrlKey(img), status: 'saved', strokeColor: 'transparent',
+              customData: cd('box')
+            }], { regenerateIds: false });
+            out.push(el);
+          } else {
+            const text = type === 'ref' ? 'нет фото' : type === 'frame' ? `кадр ${r.frameNum || ''}`.trim() : excLabel(type, r);
+            const top = type === 'scene' || type === 'doc';
+            const els = lib.convertToExcalidrawElements([{
+              type: 'rectangle', id: r.id, x: g.x, y: g.y, width: g.w, height: g.h,
+              strokeColor: type === 'sticky' ? 'transparent' : EXC_INK, strokeWidth: 1,
+              strokeStyle: (type === 'ref' || type === 'frame') ? 'dashed' : 'solid',
+              backgroundColor: type === 'sticky' ? (r.color || '#fef08a') : (top ? EXC_CARD_BG : 'transparent'),
+              // Сцена и документ — с прямыми углами: подпись у Excalidraw
+              // встаёт в угол карточки, и скругление её резало бы.
+              fillStyle: 'solid', roughness: 0, roundness: top ? null : { type: 3 },
+              customData: cd('box'),
+              label: text ? { text, fontSize: type === 'sticky' ? 20 : 16, fontFamily: 6,
+                              textAlign: top ? 'left' : 'center', verticalAlign: top ? 'top' : 'middle', strokeColor: EXC_INK } : undefined
+            }], { regenerateIds: false });
+            // Подпись внутри карточки получает постоянный id: по нему её
+            // узнают и на другом устройстве, и после перезагрузки.
+            const box = els.find(e => e.id === r.id), txt = els.find(e => e.id !== r.id);
+            if (txt) {
+              const tid = r.id + '~t';
+              box.boundElements = [{ type: 'text', id: tid }];
+              out.push(box, { ...txt, id: tid, containerId: r.id, customData: cd('text'), seed: excSeed(tid) });
+            } else out.push(box);
+          }
+          // У кадра подпись под картинкой: номер кадра — то, ради чего
+          // кадр на доске и лежит. Держится с картинкой одной группой.
+          if (type === 'frame') {
+            const cap = excLabel('frame', r);
+            if (cap) {
+              const [t] = lib.convertToExcalidrawElements([{
+                type: 'text', id: r.id + '~c', x: g.x, y: g.y + g.h + 6, text: cap,
+                fontSize: 14, fontFamily: 6, strokeColor: EXC_INK, customData: cd('cap')
+              }], { regenerateIds: false });
+              out.push(t);
+              const gid = 'g~' + r.id;
+              out.forEach(e => { e.groupIds = [gid]; });
+            }
+          }
+          out.forEach(e => { e.version = ver(e.id); e.seed = excSeed(e.id); e.index = null; e.locked = false; });
+          return out;
+        };
+        // Точка на краю прямоугольника по линии между центрами — туда
+        // упирается связь. Тот же смысл, что у привязки Excalidraw с
+        // focus 0: линия смотрит в центр карточки.
+        const excEdge = (b, to, gap) => {
+          const cx = b.x + b.w / 2, cy = b.y + b.h / 2, dx = to.x - cx, dy = to.y - cy;
+          if (!dx && !dy) return { x: cx, y: cy };
+          const t = Math.min(dx ? (b.w / 2) / Math.abs(dx) : Infinity, dy ? (b.h / 2) / Math.abs(dy) : Infinity);
+          const k = t + gap / Math.hypot(dx, dy);
+          return { x: cx + dx * k, y: cy + dy * k };
+        };
+        // Связь «карточка → сцена» (`sceneId`). Это не нарисованная
+        // стрелка, а вид связи проекта: удалил линию — карточка
+        // отвязалась от сцены; протянул стрелку от карточки к сцене —
+        // привязалась.
+        const excBuildLink = (lib, from, fromType, box, scene, sbox, prev) => {
+          const ca = { x: box.x + box.w / 2, y: box.y + box.h / 2 }, cb = { x: sbox.x + sbox.w / 2, y: sbox.y + sbox.h / 2 };
+          const a = excEdge(box, cb, 8), b = excEdge(sbox, ca, 8);
+          const id = 'lnk~' + from.id;
+          const [el] = lib.convertToExcalidrawElements([{
+            type: 'arrow', id, x: a.x, y: a.y, points: [[0, 0], [b.x - a.x, b.y - a.y]],
+            strokeColor: EXC_LINK, strokeWidth: 1, strokeStyle: 'dashed', roughness: 0,
+            startArrowhead: null, endArrowhead: null,
+            customData: { cf: 'link', id: from.id, t: fromType, scene: scene.id }
+          }], { regenerateIds: false });
+          return { ...el, version: ((prev.get(id) || {}).version || 0) + 1, seed: excSeed(id), index: null,
+                   startBinding: { elementId: from.id, focus: 0, gap: 8 }, endBinding: { elementId: scene.id, focus: 0, gap: 8 } };
+        };
+
+        // Ключ порядка (fractional index) проверяем сами: элемент с кривым
+        // ключом роняет загрузку сцены Excalidraw целиком («invalid order
+        // key»), и доска не открывается вовсе. Сам он таких не делает, но
+        // облако пишут несколько устройств и несколько версий — кривой
+        // ключ сбрасываем, Excalidraw выдаст новый.
+        const excKeyOk = (k) => {
+          if (typeof k !== 'string' || !/^[0-9A-Za-z]+$/.test(k)) return false;
+          const h = k.charCodeAt(0);
+          const n = h >= 97 && h <= 122 ? h - 95 : h >= 65 && h <= 90 ? 92 - h : 0;
+          if (!n || k.length < n || k === 'A' + '0'.repeat(26)) return false;
+          const f = k.slice(n);
+          return !f || f[f.length - 1] !== '0';
+        };
+        const excFixKey = (e) => (e && e.index != null && !excKeyOk(e.index)) ? { ...e, index: null } : e;
+        // Местная копия нарисованного: открыть доску без связи и без облака.
+        // Рядом — какие версии облако уже подтвердило: без этого элемент,
+        // стёртый на другом устройстве, воскрес бы отсюда при следующем
+        // открытии.
+        const excLocalKey = (b) => 'cf_xb_' + b;
+        const excReadLocal = (b) => {
+          try {
+            const raw = CF_SNAPSHOT ? (CF_SNAPSHOT.data || {})[excLocalKey(b)] : localStorage.getItem(excLocalKey(b));
+            const v = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+            return v && Array.isArray(v.els) ? { els: v.els.map(excFixKey), known: v.known || {} } : { els: [], known: {} };
+          } catch (e) { return { els: [], known: {} }; }
+        };
+        const excViewKey = (b) => 'cf_xb_view_' + b;
+
+        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, children }) => {
+          const [lib, setLib] = useState(() => window.ExcalidrawLib || null);
+          const [err, setErr] = useState('');
+          const [api, setApi] = useState(null);
+          const hostRef = useRef(null);
+          // Всё живое — в ref: Excalidraw зовёт обработчики из своих
+          // замыканий, и свежие записи проекта обязаны быть видны оттуда.
+          const P = useRef({});
+          P.current = { cards, projectRatio, store, act, readOnly, lib };
+          const S = useRef(null);
+          if (!S.current) {
+            const loc = excReadLocal(boardId);
+            S.current = {
+              local: loc,
+              synced: new Map(Object.entries(loc.known).map(([k, v]) => [k, +v || 0])),  // что облако уже знает: id → версия
+              known: new Set(Object.keys(loc.known)),
+              dirty: new Set(),
+              cache: new Map(),     // id записи → {sig, type, geo, text, bg}
+              drawn: new Map(),     // id записи → тип; карточки, которые сейчас на доске
+              pend: new Map(),      // id записи → правка, ещё не вернувшаяся из записи
+              ops: [],              // что отдать приложению на отпускании
+              seen: new Set(),      // обработанные одноразовые события (дубли, картинки)
+              links: new Set(),     // связи со сценой, выведенные сейчас
+              sent: new Map(),      // id записи → последняя отданная правка (дважды не шлём)
+              remote: null,         // последний ответ облака, ещё не сведённый
+              // Excalidraw поднимает начальную сцену ПОЗЖЕ, чем отдаёт api:
+              // тронь сцену раньше — и она затрёт нашу (так пропадало
+              // нарисованное из местной копии). Ждём первого onChange
+              // с isLoading = false.
+              loaded: false,
+              applying: false, timer: 0, saveT: 0, viewT: 0, warned: {}
+            };
+          }
+
+          useEffect(() => {
+            if (lib) return;
+            let alive = true;
+            loadExcalidraw().then(l => { if (alive) setLib(l); })
+              .catch(e => { if (alive) setErr(String(e && e.message || e)); });
+            return () => { alive = false; };
+          }, [lib]);
+
+          // --- сборка сцены ---
+          const sceneEls = () => (apiRef.current && apiRef.current.api ? apiRef.current.api.getSceneElementsIncludingDeleted() : []);
+          const isCardPart = (e) => !!(e && e.customData && e.customData.cf);
+          const byOrder = (a, b) => (a.index && b.index) ? (a.index < b.index ? -1 : a.index > b.index ? 1 : (a.id < b.id ? -1 : 1)) : (a.index ? -1 : b.index ? 1 : 0);
+
+          // Карточки и связи — из записей; нарисованное — как есть.
+          // Возвращает полный список элементов для updateScene.
+          const compose = (L, free, cur) => {
+            const st = S.current, { cards, projectRatio } = P.current;
+            const prev = new Map(cur.map(e => [e.id, e]));
+            const app = apiRef.current && apiRef.current.api ? apiRef.current.api.getAppState() : null;
+            const editing = app && app.editingTextElement ? app.editingTextElement.id : '';
+            const out = [], boxes = new Map(), drawn = new Map();
+            EXC_TYPES.forEach(type => (cards[EXC_LIST[type]] || []).forEach(r => {
+              const ids = [r.id, r.id + '~t', r.id + '~c'];
+              const pend = st.pend.get(r.id);
+              const g = excGeo(type, r, projectRatio);
+              const reflected = pend && Object.keys(pend).every(k => k === 'text' ? String(r.text || '') === pend.text : (k === 'color' ? r.color === pend.color : Math.abs((+r[k] || 0) - pend[k]) < 0.5));
+              if (reflected) st.pend.delete(r.id);
+              const sig = excSig(type, r, projectRatio);
+              const c = st.cache.get(r.id);
+              const have = ids.map(id => prev.get(id)).filter(Boolean);
+              const main = prev.get(r.id);
+              let els;
+              // Правка ещё едет в запись, или в подпись сейчас пишут — берём
+              // то, что на экране: иначе карточка прыгнула бы назад.
+              if (main && !main.isDeleted && ((pend && !reflected) || ids.includes(editing))) els = have;
+              else if (main && !main.isDeleted && c && c.sig === sig && c.ver === main.version) els = have;
+              else {
+                els = excBuildCard(L, type, r, projectRatio, prev);
+                const tEl = els.find(e => e.id === r.id + '~t'), cEl = els.find(e => e.id === r.id + '~c');
+                st.cache.set(r.id, { sig, type, geo: g, text: type === 'sticky' ? String(r.text || '') : null,
+                                     shown: tEl ? tEl.originalText : null, cap: cEl ? cEl.originalText : null,
+                                     bg: type === 'sticky' ? (r.color || '#fef08a') : null, ver: 0 });
+              }
+              const m = els.find(e => e.id === r.id) || els[0];
+              boxes.set(r.id, { x: m.x, y: m.y, w: m.width, h: m.height });
+              drawn.set(r.id, type);
+              out.push(...els);
+            }));
+            // Связи со сценой — только когда оба конца на этой доске.
+            const links = [];
+            const sceneIds = new Set((cards.scenes || []).map(s => s.id));
+            ['ref', 'sticky', 'doc', 'frame'].forEach(type => (cards[EXC_LIST[type]] || []).forEach(r => {
+              if (!r.sceneId || !sceneIds.has(r.sceneId) || !boxes.has(r.id)) return;
+              const scene = cards.scenes.find(s => s.id === r.sceneId);
+              const id = 'lnk~' + r.id, old = prev.get(id);
+              const box = boxes.get(r.id), sbox = boxes.get(scene.id);
+              const key = [box.x, box.y, box.w, box.h, sbox.x, sbox.y, sbox.w, sbox.h, scene.id].map(v => typeof v === 'number' ? Math.round(v) : v).join('|');
+              const c = st.cache.get(id);
+              if (old && !old.isDeleted && c && c.sig === key && c.ver === old.version) links.push(old);
+              else { links.push(excBuildLink(L, r, type, box, scene, sbox, prev)); st.cache.set(id, { sig: key, ver: 0 }); }
+            }));
+            // Стрелки, привязанные к карточкам, карточка обязана знать —
+            // иначе Excalidraw не повёл бы их за ней.
+            const arrows = [...links, ...free.filter(e => e.type === 'arrow' && !e.isDeleted)];
+            const bound = new Map();
+            arrows.forEach(a => [a.startBinding, a.endBinding].forEach(b => {
+              if (b && boxes.has(b.elementId)) { const l = bound.get(b.elementId) || []; l.push({ type: 'arrow', id: a.id }); bound.set(b.elementId, l); }
+            }));
+            for (let i = 0; i < out.length; i++) {
+              const e = out[i];
+              if (!boxes.has(e.id) || e.id !== (e.customData || {}).id) continue;
+              const want = [...(e.boundElements || []).filter(b => b.type === 'text'), ...(bound.get(e.id) || [])];
+              const same = (e.boundElements || []).length === want.length && want.every(w => (e.boundElements || []).some(b => b.id === w.id));
+              if (!same) out[i] = { ...e, boundElements: want };
+            }
+            // Карточка ушла с доски — оставляем её в сцене стёртой до конца
+            // сеанса: тогда «отменить» в Excalidraw вернёт её на место.
+            const gone = [];
+            cur.forEach(e => {
+              if (!isCardPart(e) || e.customData.cf === 'link' && links.some(l => l.id === e.id)) return;
+              if (e.customData.cf !== 'link' && drawn.has(e.customData.id)) return;
+              if (e.customData.cf !== 'link' && ![e.customData.id, e.customData.id + '~t', e.customData.id + '~c'].includes(e.id)) return;
+              gone.push(e.isDeleted ? e : { ...e, isDeleted: true, version: e.version + 1 });
+            });
+            st.drawn = drawn;
+            st.links = new Set(links.map(l => l.id));
+            // Карточки обязаны лежать НИЖЕ нарисованного. Тем, у кого ключ
+            // порядка выше первого нарисованного элемента (новая карточка,
+            // «на передний план»), ключ сбрасываем — Excalidraw раздаст
+            // новый. Сами нарисованные элементы (они уезжают в облако) он
+            // при этом не тронет: их порядок уже верный, и лишней записи
+            // в облако не будет.
+            const sorted = free.slice().sort(byOrder);
+            const floor = (sorted.find(e => e.index) || {}).index || null;
+            const keep = new Set([editing]);
+            const lowered = [...gone, ...out, ...links].map(e =>
+              (floor && e.index && e.index >= floor && !keep.has(e.id)) ? { ...e, index: null } : e);
+            return [...lowered, ...sorted];
+          };
+
+          // Применить сцену и запомнить версии карточек ПОСЛЕ того, как
+          // Excalidraw раздал им индексы (раздача поднимает версию).
+          const apply = (list) => {
+            const a = apiRef.current && apiRef.current.api; if (!a) return;
+            const st = S.current;
+            st.applying = true;
+            try { a.updateScene({ elements: list, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER }); }
+            finally { st.applying = false; }
+            a.getSceneElementsIncludingDeleted().forEach(e => {
+              if (!isCardPart(e)) return;
+              const key = e.customData.cf === 'link' ? e.id : e.id === e.customData.id ? e.id : '';
+              const c = key && st.cache.get(key);
+              if (c) c.ver = e.version;
+            });
+          };
+
+          // Картинки карточек отдаём Excalidraw файлами; повторно не шлём.
+          const feedFiles = (a) => {
+            const { cards } = P.current;
+            const have = a.getFiles();
+            const add = [];
+            ['refs', 'frames'].forEach(k => (cards[k] || []).forEach(r => {
+              const u = k === 'refs' ? r.url : r.image;
+              if (!u) return;
+              const id = 'cf-' + excUrlKey(u);
+              if (have[id] || add.some(f => f.id === id)) return;
+              add.push({ id, dataURL: u, mimeType: excMime(u), created: Date.now() });
+            }));
+            if (add.length) a.addFiles(add);
+          };
+
+          // Пересобрать: из свежих записей и последнего ответа облака.
+          const rebuild = () => {
+            const a = apiRef.current && apiRef.current.api; if (!a || !P.current.lib) return;
+            const st = S.current;
+            if (!st.loaded) return;
+            const cur = a.getSceneElementsIncludingDeleted();
+            let free = cur.filter(e => !isCardPart(e));
+            if (st.remote) { free = mergeRemote(free, st.remote.els, st.remote.server); st.remote = null; }
+            feedFiles(a);
+            apply(compose(P.current.lib, free, cur));
+          };
+
+          // --- облако: чужие правки ---
+          // Правило сведения то же, что у самого Excalidraw: побеждает
+          // старшая версия, при равной — меньший versionNonce. Отсутствие
+          // элемента в ответе значит «стёрли» ТОЛЬКО если ответ пришёл
+          // с сервера (а не из кэша устройства) и облако этот элемент уже
+          // видело: иначе это просто ещё не уехавшая наша правка.
+          const mergeRemote = (free, remoteEls, server) => {
+            const st = S.current;
+            const a = apiRef.current.api, app = a.getAppState();
+            const busy = new Set();
+            if (app.editingTextElement) busy.add(app.editingTextElement.id);
+            if (app.newElement) busy.add(app.newElement.id);
+            if (app.cursorButton === 'down') Object.keys(app.selectedElementIds || {}).forEach(id => busy.add(id));
+            const byId = new Map(free.map(e => [e.id, e]));
+            const inRemote = new Set();
+            remoteEls.forEach(r => {
+              if (!r || !r.id || isCardPart(r)) return;
+              inRemote.add(r.id); st.known.add(r.id);
+              const l = byId.get(r.id);
+              if (busy.has(r.id)) return;
+              if (!l || r.version > l.version || (r.version === l.version && r.versionNonce < l.versionNonce)) {
+                byId.set(r.id, r); st.synced.set(r.id, r.version); st.dirty.delete(r.id);
+              }
+            });
+            if (server) byId.forEach((e, id) => {
+              if (inRemote.has(id) || e.isDeleted || busy.has(id)) return;
+              if (st.known.has(id) && (st.synced.get(id) || 0) >= e.version) {
+                byId.delete(id); st.known.delete(id); st.synced.delete(id);
+              }
+            });
+            saveLocalSoon();
+            return [...byId.values()];
+          };
+
+          useEffect(() => {
+            if (!api || !store || CF_SNAPSHOT) return;
+            return store.subscribe(boardId, (els, meta) => {
+              S.current.remote = { els, server: !!(meta && meta.server) };
+              // Пока палец на холсте, сцену не трогаем: сведём на отпускании.
+              if (!S.current.loaded || api.getAppState().cursorButton === 'down') { flushSoon(); return; }
+              rebuild();
+            });
+          }, [api, boardId]);
+
+          // Записи проекта поменялись (свои или из облака) — пересобираем.
+          useEffect(() => { if (api) rebuild(); }, [api, cards, projectRatio]);
+
+          // --- наши правки: наружу ---
+          const saveLocalSoon = () => {
+            if (P.current.readOnly || CF_SNAPSHOT) return;
+            const st = S.current;
+            clearTimeout(st.saveT);
+            st.saveT = setTimeout(() => {
+              const a = apiRef.current && apiRef.current.api; if (!a) return;
+              const els = a.getSceneElementsIncludingDeleted().filter(e => !isCardPart(e) && !e.isDeleted);
+              const known = {}; st.known.forEach(id => { known[id] = st.synced.get(id) || 0; });
+              try { localStorage.setItem(excLocalKey(boardId), JSON.stringify({ els, known })); } catch (e) {}
+            }, 1200);
+          };
+
+          const push = (op) => S.current.ops.push(op);
+
+          // Разбор одного изменения Excalidraw: что из него — правка записи
+          // проекта, что — нарисованное, что — связь.
+          const onChange = (els, app, files) => {
+            const st = S.current;
+            if (st.applying || !P.current.lib) return;
+            const busy = app.cursorButton === 'down' || !!app.newElement || !!app.multiElement || !!app.editingTextElement;
+            for (const e of els) {
+              const cd = e.customData;
+              if (cd && cd.cf) { watchCard(e, cd); continue; }
+              if ((st.synced.get(e.id) || 0) !== e.version) st.dirty.add(e.id);
+            }
+            if (st.dirty.size || st.ops.length || st.pend.size) flushSoon(busy);
+            saveViewSoon(app);
+          };
+
+          const watchCard = (e, cd) => {
+            const st = S.current;
+            if (cd.cf === 'link') {
+              if (e.id !== 'lnk~' + cd.id) { if (!e.isDeleted && !st.seen.has(e.id)) { st.seen.add(e.id); push({ k: 'kill', ids: [e.id] }); } return; }
+              const on = st.links.has(e.id);
+              if (e.isDeleted && on && !st.seen.has('un' + e.id + e.version)) { st.seen.add('un' + e.id + e.version); push({ k: 'unlink', type: cd.t, id: cd.id }); }
+              // Стёртая связь вернулась — это «отменить»: привязываем снова.
+              if (!e.isDeleted && !on && !st.seen.has('re' + e.id + e.version)) { st.seen.add('re' + e.id + e.version); push({ k: 'relink', type: cd.t, id: cd.id, scene: cd.scene }); }
+              return;
+            }
+            const main = e.id === cd.id, text = e.id === cd.id + '~t', cap = e.id === cd.id + '~c';
+            // Дубль карточки (Ctrl+D, копирование с Alt, вставка). Сцена,
+            // референс, документ и кадр — записи проекта, их копия завела
+            // бы вторую сцену в списке и вторую фотографию в галерее.
+            // Стикер — наоборот, быстрая записка: копия становится новой.
+            if (!main && !text && !cap) {
+              if (!e.isDeleted && !st.seen.has(e.id)) { st.seen.add(e.id); push({ k: 'dup', type: cd.cf, id: cd.id, el: e, part: cd.part }); }
+              return;
+            }
+            const c = st.cache.get(cd.id);
+            if (main) {
+              if (!st.drawn.has(cd.id)) {
+                // Стёртая карточка вернулась — это «отменить» в Excalidraw.
+                if (!e.isDeleted && !st.seen.has('back' + e.id + e.version)) { st.seen.add('back' + e.id + e.version); push({ k: 'back', type: cd.cf, id: cd.id, x: e.x, y: e.y }); }
+                return;
+              }
+              if (e.isDeleted) { if (!st.seen.has('rm' + e.id + e.version)) { st.seen.add('rm' + e.id + e.version); push({ k: 'remove', type: cd.cf, id: cd.id }); } return; }
+              if (!c) return;
+              const g = c.geo, patch = {};
+              if (Math.abs(e.x - g.x) > 0.5) patch.x = Math.round(e.x);
+              if (Math.abs(e.y - g.y) > 0.5) patch.y = Math.round(e.y);
+              if (Math.abs(e.width - g.w) > 0.5) patch.w = Math.round(e.width);
+              if (cd.cf !== 'ref' && cd.cf !== 'frame' && Math.abs(e.height - g.h) > 0.5) patch.h = Math.round(e.height);
+              if (cd.cf === 'sticky' && e.backgroundColor && e.backgroundColor !== c.bg && e.backgroundColor !== 'transparent') patch.color = e.backgroundColor;
+              if (Object.keys(patch).length) st.pend.set(cd.id, { ...(st.pend.get(cd.id) || {}), ...patch });
+              return;
+            }
+            if (cap && c && !e.isDeleted && c.cap != null) {
+              const t = e.originalText != null ? e.originalText : e.text;
+              if (t !== c.cap && !st.seen.has('rv' + e.id + e.version)) { st.seen.add('rv' + e.id + e.version); c.sig = ''; push({ k: 'revert', type: cd.cf }); }
+              return;
+            }
+            if (text && c && !e.isDeleted) {
+              const t = e.originalText != null ? e.originalText : e.text;
+              if (cd.cf === 'sticky') {
+                if (c.text !== null && t !== c.text) st.pend.set(cd.id, { ...(st.pend.get(cd.id) || {}), text: t });
+              } else if (c.shown != null && t !== c.shown && !st.seen.has('rv' + e.id + e.version)) {
+                st.seen.add('rv' + e.id + e.version);
+                // Подпись сцены и документа — из самой записи. Правка тут
+                // потерялась бы при первой пересборке, поэтому возвращаем
+                // как было и говорим, где это правят.
+                c.sig = '';
+                push({ k: 'revert', type: cd.cf });
+              }
+            }
+          };
+
+          const flushSoon = (busy) => {
+            const st = S.current;
+            clearTimeout(st.timer);
+            st.timer = setTimeout(flush, busy ? 400 : 120);
+          };
+
+          // На отпускании: правки записей — приложению, нарисованное — в облако.
+          const flush = (force) => {
+            const st = S.current, a = apiRef.current && apiRef.current.api;
+            if (!a || !P.current.lib || !st.loaded) return;
+            const app = a.getAppState();
+            if (force !== true && (app.cursorButton === 'down' || app.newElement || app.multiElement || app.editingTextElement)) { flushSoon(true); return; }
+            // Ответ облака, отложенный на время жеста, сводим сейчас.
+            if (st.remote) rebuild();
+            const { act, store, readOnly } = P.current;
+            const cur = a.getSceneElementsIncludingDeleted();
+            const byId = new Map(cur.map(e => [e.id, e]));
+            const kill = new Set();
+            // Стрелка от карточки к сцене = привязать карточку к сцене.
+            cur.forEach(e => {
+              if (e.type !== 'arrow' || e.isDeleted || isCardPart(e) || !e.startBinding || !e.endBinding) return;
+              const A = byId.get(e.startBinding.elementId), B = byId.get(e.endBinding.elementId);
+              const ca = A && A.customData, cb = B && B.customData;
+              if (!ca || !cb || !ca.cf || !cb.cf || A.id !== ca.id || B.id !== cb.id) return;
+              const sc = ca.cf === 'scene' ? ca : cb.cf === 'scene' ? cb : null, it = sc === ca ? cb : ca;
+              if (!sc || it.cf === 'scene' || it.cf === 'link') return;
+              kill.add(e.id);
+              act.link(it.cf, it.id, sc.id);
+            });
+            const ops = st.ops; st.ops = [];
+            let reverted = false;
+            ops.forEach(op => {
+              if (op.k === 'remove') act.remove(op.type, op.id);
+              else if (op.k === 'back') act.back(op.type, op.id, { x: Math.round(op.x), y: Math.round(op.y) });
+              else if (op.k === 'unlink') act.link(op.type, op.id, '');
+              else if (op.k === 'relink') act.link(op.type, op.id, op.scene);
+              else if (op.k === 'kill') op.ids.forEach(id => kill.add(id));
+              else if (op.k === 'revert') reverted = op.type;
+              else if (op.k === 'dup') {
+                kill.add(op.el.id);
+                if (op.type === 'sticky' && op.part === 'box') act.copySticky(op.id, { x: Math.round(op.el.x), y: Math.round(op.el.y), w: Math.round(op.el.width), h: Math.round(op.el.height) });
+                else if (op.part === 'box') st.warned.dup = true;
+              }
+            });
+            if (st.warned.dup) { st.warned.dup = false; act.toast('Сцены, референсы, документы и кадры не копируются — это записи проекта. Копируются стикеры и нарисованное'); }
+            if (reverted) act.toast({ scene: 'Название и текст сцены правятся в «Сценах»', doc: 'Документ правится в «Экспликациях»',
+                                      frame: 'Номер и описание кадра правятся в раскадровке сцены', ref: 'Фотографию кладут бросив файл или вставкой' }[reverted] || 'Эта подпись берётся из проекта');
+            st.pend.forEach((patch, id) => {
+              const type = st.drawn.get(id); if (!type) return;
+              const key = JSON.stringify(patch);
+              if (st.sent.get(id) === key) return;
+              st.sent.set(id, key);
+              act.patch(EXC_COLL[type], id, patch);
+            });
+            // Нарисованное — в облако, по элементу.
+            st.dirty.forEach(id => {
+              const e = byId.get(id);
+              if (!e || isCardPart(e)) return;
+              if (e.type === 'image' && !e.isDeleted) { adopt(e); kill.add(e.id); return; }
+              if (kill.has(id)) return;
+              if (!readOnly && store) {
+                if (e.isDeleted) { if (st.known.has(id)) store.del(boardId, id); }
+                else store.put(boardId, e);
+              }
+              st.synced.set(id, e.version);
+            });
+            st.dirty.clear();
+            if (kill.size) {
+              const next = a.getSceneElementsIncludingDeleted().map(e => kill.has(e.id) && !e.isDeleted ? { ...e, isDeleted: true, version: e.version + 1 } : e);
+              st.applying = true;
+              try { a.updateScene({ elements: next, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER }); } finally { st.applying = false; }
+              kill.forEach(id => { const e = a.getSceneElementsIncludingDeleted().find(x => x.id === id); if (e) st.synced.set(id, e.version); });
+            }
+            if (reverted) rebuild();
+            saveLocalSoon();
+          };
+
+          // Картинка, попавшая на холст мимо нас (вставка из другой доски
+          // Excalidraw, библиотека), становится обычным референсом проекта:
+          // файлы Excalidraw мы не храним, а у референса есть облако, превью
+          // и галерея. Сам элемент уходит — на его месте ляжет карточка.
+          const adopt = (e) => {
+            const st = S.current, a = apiRef.current.api;
+            if (st.seen.has('img' + e.id)) return;
+            st.seen.add('img' + e.id);
+            const f = a.getFiles()[e.fileId];
+            if (!f || !f.dataURL) { P.current.act.toast('Картинку не удалось забрать — положите её файлом или вставкой'); return; }
+            fetch(f.dataURL).then(r => r.blob()).then(b => {
+              const ext = (f.mimeType || 'image/png').split('/')[1] || 'png';
+              const file = new File([b], `доска-${Date.now()}.${ext}`, { type: f.mimeType || 'image/png' });
+              P.current.act.files([file], { x: Math.round(e.x), y: Math.round(e.y) });
+            }).catch(() => P.current.act.toast('Картинку не удалось забрать'));
+          };
+
+          // Где мы на доске — помним для каждой доски: вернулся и оказался
+          // там же. Им же пользуется «положить на доску» с других экранов.
+          const saveViewSoon = (app) => {
+            const st = S.current;
+            const v = { x: app.scrollX, y: app.scrollY, z: app.zoom && app.zoom.value || 1, w: app.width, h: app.height, theme: app.theme };
+            if (apiRef.current) apiRef.current.view = v;
+            clearTimeout(st.viewT);
+            st.viewT = setTimeout(() => { try { localStorage.setItem(excViewKey(boardId), JSON.stringify(v)); } catch (e) {} }, 600);
+          };
+
+          // Уход с доски и сворачивание приложения дописывают отложенное.
+          useEffect(() => {
+            const out = () => { clearTimeout(S.current.timer); if (apiRef.current && apiRef.current.api) flush(true); }
+            const vis = () => { if (document.visibilityState === 'hidden') out(); };
+            window.addEventListener('pagehide', out);
+            document.addEventListener('visibilitychange', vis);
+            return () => { window.removeEventListener('pagehide', out); document.removeEventListener('visibilitychange', vis); out(); };
+          }, [api]);
+
+          // Файл, брошенный на холст, — через общий приём файлов проекта
+          // (сжатие, облако, PDF страницами). Excalidraw положил бы его
+          // своим элементом, а его файлы мы не храним: после перезагрузки
+          // осталась бы пустая рамка. Ловим в фазе перехвата, до него.
+          useEffect(() => {
+            const host = hostRef.current; if (!host) return;
+            const over = (ev) => { if (ev.dataTransfer && P.current.act.accepts(ev.dataTransfer)) ev.preventDefault(); };
+            const drop = (ev) => {
+              const dt = ev.dataTransfer;
+              if (!dt || !P.current.act.accepts(dt)) return;
+              ev.preventDefault(); ev.stopPropagation();
+              if (P.current.readOnly) return;
+              const at = apiRef.current.at(ev.clientX - host.getBoundingClientRect().left, ev.clientY - host.getBoundingClientRect().top);
+              P.current.act.drop(dt, at);
+            };
+            host.addEventListener('dragover', over, true);
+            host.addEventListener('drop', drop, true);
+            return () => { host.removeEventListener('dragover', over, true); host.removeEventListener('drop', drop, true); };
+          }, [lib]);
+
+          // Ручки для приложения: где середина экрана, навести на область,
+          // выгрузить картинкой, стереть нарисованное.
+          if (!apiRef.current) apiRef.current = {};
+          Object.assign(apiRef.current, {
+            api, boardId,
+            at: (sx, sy) => {
+              const v = apiRef.current.view || { x: 0, y: 0, z: 1 };
+              return { x: sx / v.z - v.x, y: sy / v.z - v.y };
+            },
+            center: () => {
+              const v = apiRef.current.view, host = hostRef.current;
+              const w = host ? host.clientWidth : (v && v.w) || 800, h = host ? host.clientHeight : (v && v.h) || 600;
+              return apiRef.current.at(w / 2, h / 2);
+            },
+            show: (x0, y0, x1, y1) => {
+              const a = apiRef.current.api, host = hostRef.current;
+              if (!a || !host || !P.current.lib || !S.current.loaded) { apiRef.current.pendingShow = [x0, y0, x1, y1]; return false; }
+              const vw = host.clientWidth, vh = host.clientHeight;
+              const z = Math.min(1, Math.max(0.2, Math.min(vw / Math.max(1, x1 - x0 + 120), vh / Math.max(1, y1 - y0 + 120))));
+              a.updateScene({ appState: { zoom: { value: z }, scrollX: vw / (2 * z) - (x0 + x1) / 2, scrollY: vh / (2 * z) - (y0 + y1) / 2 },
+                              captureUpdate: P.current.lib.CaptureUpdateAction.NEVER });
+              return true;
+            },
+            select: (id) => {
+              const a = apiRef.current.api; if (!a) return;
+              a.updateScene({ appState: { selectedElementIds: { [id]: true } }, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER });
+            },
+            exportImage: async (kind) => {
+              const a = apiRef.current.api, L = P.current.lib; if (!a || !L) return null;
+              const elements = a.getSceneElements(), appState = { ...a.getAppState(), exportBackground: true }, files = a.getFiles();
+              if (!elements.length) return null;
+              if (kind === 'svg') {
+                const svg = await L.exportToSvg({ elements, appState, files, exportPadding: 24 });
+                return new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' });
+              }
+              return L.exportToBlob({ elements, appState, files, mimeType: 'image/png', exportPadding: 24 });
+            },
+            clearDrawing: () => {
+              const a = apiRef.current.api; if (!a) return;
+              // Через историю Excalidraw: «отменить» вернёт всё стёртое.
+              a.updateScene({ elements: a.getSceneElementsIncludingDeleted().map(e => isCardPart(e) || e.isDeleted ? e : { ...e, isDeleted: true, version: e.version + 1, versionNonce: (e.versionNonce + 1) | 0 }),
+                              captureUpdate: P.current.lib.CaptureUpdateAction.IMMEDIATELY });
+            },
+            packFree: () => {
+              const a = apiRef.current.api; if (!a) return null;
+              const st = S.current;
+              const known = {}; st.known.forEach(id => { known[id] = st.synced.get(id) || 0; });
+              return { els: a.getSceneElementsIncludingDeleted().filter(e => !isCardPart(e) && !e.isDeleted), known };
+            }
+          });
+          useEffect(() => () => { if (apiRef.current) apiRef.current.api = null; }, []);
+
+
+          // Первая сцена: нарисованное из местной копии плюс карточки.
+          const initial = useMemo(() => {
+            if (!lib) return null;
+            P.current.lib = lib;
+            let view = null;
+            try { view = JSON.parse(localStorage.getItem(excViewKey(boardId)) || 'null'); } catch (e) {}
+            // Своя доска — свой вид: без этого «положить на доску» взяло бы
+            // прокрутку предыдущей доски Excalidraw.
+            apiRef.current.view = view || { x: 0, y: 0, z: 1 };
+            S.current.fit = !view;
+            let theme = 'dark';
+            try { theme = localStorage.getItem('cf_xb_theme') || 'dark'; } catch (e) {}
+            const free = S.current.local.els.filter(e => e && e.id && !isCardPart(e));
+            free.forEach(e => { if ((S.current.synced.get(e.id) || 0) < e.version) S.current.dirty.add(e.id); });
+            const elements = compose(lib, free, []);
+            const files = {};
+            ['refs', 'frames'].forEach(k => (cards[k] || []).forEach(r => {
+              const u = k === 'refs' ? r.url : r.image; if (!u) return;
+              files['cf-' + excUrlKey(u)] = { id: 'cf-' + excUrlKey(u), dataURL: u, mimeType: excMime(u), created: Date.now() };
+            }));
+            return {
+              elements, files,
+              appState: {
+                // Фон подобран так, чтобы тёмная тема Excalidraw (он
+                // выворачивает холст фильтром) дала наш --bg, а светлая —
+                // тёплый белый, а не голубоватый.
+                theme, viewBackgroundColor: '#f8f7f6', currentItemFontFamily: 5,
+                ...(view ? { scrollX: view.x, scrollY: view.y, zoom: { value: view.z } } : {})
+              }
+            };
+          }, [lib]);
+
+          // Инструмент «картинка» у Excalidraw выключен: картинки приходят
+          // общим путём проекта (кнопка над доской, вставка, бросок файла)
+          // и становятся референсами — с облаком, превью и галереей.
+          // Вставку картинки приложение перехватывает раньше Excalidraw
+          // (эффект вставки на доске), иначе он сказал бы «картинки
+          // отключены».
+          const uiOptions = useMemo(() => ({
+            canvasActions: { loadScene: false, clearCanvas: false, saveToActiveFile: false, toggleTheme: true, export: { saveFileToDisk: true } },
+            tools: { image: false }
+          }), []);
+          // Тема помнится: в светлой фотографии показываются точно, в тёмной
+          // Excalidraw пропускает их через свой фильтр и они бледнеют.
+          const themeSeen = useRef('');
+          const onChangeTop = (els, app, files) => {
+            const st = S.current;
+            if (!st.loaded) {
+              if (app.isLoading) return;
+              st.loaded = true;
+              rebuild();
+              // «Положить на доску» с другого экрана просило навести доску
+              // на положенное, пока она грузилась, — наводим сейчас.
+              // Иначе в первый раз вписываем в экран всё, что на доске:
+              // карточки легли где угодно на бесконечном холсте, и пустой
+              // экран читался бы как «на доске ничего нет».
+              const p = apiRef.current.pendingShow, a = apiRef.current.api;
+              if (p) { apiRef.current.pendingShow = null; apiRef.current.show(...p); }
+              else if (st.fit && a.getSceneElements().length) {
+                a.scrollToContent(a.getSceneElements(), { fitToContent: true, animate: false });
+                const z = a.getAppState().zoom.value;
+                // Две-три карточки не раздуваем крупнее натурального размера.
+                if (z > 1) {
+                  a.updateScene({ appState: { zoom: { value: 1 } }, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER });
+                  a.scrollToContent(a.getSceneElements(), { animate: false });
+                }
+              }
+              return;
+            }
+            if (app.theme !== themeSeen.current) {
+              themeSeen.current = app.theme;
+              try { localStorage.setItem('cf_xb_theme', app.theme); } catch (e) {}
+              if (hostRef.current) hostRef.current.dataset.theme = app.theme;
+            }
+            onChange(els, app, files);
+          };
+
+          if (err) return (
+            <div className="w-full flex-1 min-h-0 flex items-center justify-center p-6 text-center" style={{ color: 'var(--muted)' }}>
+              <div>
+                <p style={{ fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>Доска Excalidraw не открылась: {err}.</p>
+                <button onClick={() => { setErr(''); setLib(null); }} className="mt-3 cf-hbtn">Попробовать ещё раз</button>
+              </div>
+            </div>
+          );
+          const X = lib && lib.Excalidraw, M = lib && lib.MainMenu;
+          return (
+            <div ref={hostRef} className="cf-exc w-full flex-1 min-h-0 relative" data-cf="exc-board" data-theme={themeSeen.current || 'dark'}>
+              {!lib || !initial ? (
+                <div className="absolute inset-0 flex items-center justify-center" style={{ color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>
+                  Открываю доску Excalidraw…
+                </div>
+              ) : (
+                <X initialData={initial}
+                   excalidrawAPI={(a) => { apiRef.current.api = a; window.__cfExc = apiRef.current; setApi(a); }}
+                   onChange={onChangeTop}
+                   langCode="ru-RU"
+                   viewModeEnabled={!!readOnly}
+                   UIOptions={uiOptions}>
+                  {/* Меню Excalidraw без «Открыть» и «Сбросить холст»:
+                      открыть чужой файл значило бы заменить доску целиком
+                      вместе с карточками сцен, сброс — снять их все разом. */}
+                  <M>
+                    <M.DefaultItems.SaveAsImage />
+                    <M.DefaultItems.Export />
+                    <M.DefaultItems.SearchMenu />
+                    <M.DefaultItems.Help />
+                    <M.Separator />
+                    <M.DefaultItems.ToggleTheme />
+                    <M.DefaultItems.ChangeCanvasBackground />
+                  </M>
+                </X>
+              )}
+              {children}
+            </div>
+          );
+        };
+
         function AppCore() {
           const [user, setUser] = useState(null);
           const [userName, setUserName] = useState('');
@@ -7374,6 +8227,27 @@
           // принадлежащими первой доске, чтобы ничего не пропало.
           const belongsToBoard = (item, boardId) => (item.boardId || DEFAULT_BOARD.id) === boardId;
 
+          // Открыта ли сейчас доска на Excalidraw (ExcBoard выше AppCore).
+          // Старые доски без поля `engine` остаются на своём движке.
+          const excActive = ((sortedBoards.find(b => b.id === activeBoardId) || {}).engine) === EXC_ENGINE;
+          const excActiveRef = useRef(false);
+          excActiveRef.current = excActive;
+          const excApiRef = useRef({});
+          // Точка доски под точкой ОБЛАСТИ доски (sx, sy — от её левого
+          // верхнего угла). У доски на Excalidraw своя прокрутка и масштаб,
+          // и «положить на доску» с других экранов обязано класть туда,
+          // где человек её оставил, — иначе карточка ляжет за краем экрана.
+          const boardAt = (sx, sy) => {
+            if (excActive) {
+              const a = excApiRef.current;
+              if (a && a.at && a.boardId === activeBoardId) return a.at(sx, sy);
+              let v = null;
+              try { v = JSON.parse(localStorage.getItem('cf_xb_view_' + activeBoardId) || 'null'); } catch (e) {}
+              return v && v.z ? { x: sx / v.z - v.x, y: sy / v.z - v.y } : { x: sx, y: sy };
+            }
+            return { x: (sx - canvasOffset.x) / zoom, y: (sy - canvasOffset.y) / zoom };
+          };
+
           // --- Сцены на доске ---
           // Доска — это текущая работа, поэтому карточку сцены с неё можно
           // снять, не трогая саму сцену. У сцены три состояния boardId:
@@ -7402,8 +8276,8 @@
           // Положить на текущую доску, в видимую часть холста.
           const putSceneOnBoard = (id) => {
             const up = scenes.map(s => s.id === id ? { ...s, boardId: activeBoardId,
-              x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
-              y: (240 - canvasOffset.y) / zoom + Math.random() * 60 } : s);
+              x: boardAt(260, 240).x + Math.random() * 60,
+              y: boardAt(260, 240).y + Math.random() * 60 } : s);
             setScenes(up);
             syncDoc('scenes', id, up.find(s => s.id === id));
             showToast('Сцена на доске');
@@ -7565,8 +8439,8 @@
           const bulkPutOnBoard = () => {
             let i = 0;
             bulkPatchRefs(r => ({ ...r, boardId: activeBoardId,
-                                  x: (260 - canvasOffset.x) / zoom + (i % 5) * 210,
-                                  y: (240 - canvasOffset.y) / zoom + Math.floor(i++ / 5) * 190 }),
+                                  x: boardAt(260, 240).x + (i % 5) * 210,
+                                  y: boardAt(260, 240).y + Math.floor(i++ / 5) * 190 }),
                           `На доску добавлено ${selectedRefIds.length} шт.`);
           };
           // Кадр уходит из галереи НА СЦЕНУ и В ОБЪЕКТ, не уводя человека
@@ -9789,6 +10663,22 @@
           };
 
           const exportBoard = async (fmt) => {
+            // Доску Excalidraw выгружает сам Excalidraw: карточки сцен
+            // и фотографии там — его элементы, и картинка совпадает с экраном.
+            if (excActive) {
+              setExportBusy(true);
+              try {
+                const blob = excApiRef.current.exportImage ? await excApiRef.current.exportImage(fmt) : null;
+                if (!blob) { showToast('На доске пока нечего выгружать'); return; }
+                const b = sortedBoards.find(x => x.id === activeBoardId);
+                const url = URL.createObjectURL(blob), a = document.createElement('a');
+                a.href = url; a.download = `CineFlow_доска_${((b && b.title) || 'доска').replace(/[\\/:*?"<>|]+/g, '_')}_${localDay()}.${fmt}`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 4000);
+              } catch (e) { console.warn(e); showToast('Не удалось выгрузить доску'); }
+              finally { setExportBusy(false); }
+              return;
+            }
             const box = boardBounds();
             if (!box) { showToast('На доске пока нечего выгружать'); return; }
             setExportBusy(true);
@@ -10127,6 +11017,7 @@
           // Считаем от `viewRef`, а не от состояния: во время жеста
           // состояние показывает вчерашнее.
           const boardVisibleCenter = () => {
+            if (excActiveRef.current && excApiRef.current.center) return excApiRef.current.center();
             const host = liveCanvasRef.current, v = viewRef.current;
             const vw = host ? host.clientWidth : 0, vh = host ? host.clientHeight : 0;
             if (!vw || !vh) return { x: 0, y: 0 };
@@ -10944,7 +11835,9 @@
           // Delete — удалить выбранные фигуры, Ctrl+] / Ctrl+[ — порядок слоёв
           useEffect(() => {
             const onKey = (e) => {
-              if (currentView !== 'whiteboard') return;
+              // На доске Excalidraw клавиши его: наши Ctrl+Z, Delete и Ctrl+V
+              // трогали бы невидимую здесь старую доску.
+              if (currentView !== 'whiteboard' || excActive) return;
               // Клавиатура — отдельная дверь на доску, и она была открыта:
               // в просмотре Ctrl+Z откатывал чужую доску на шаг назад,
               // Delete стирал фигуры, Ctrl+G их группировал. Кнопок для
@@ -10970,7 +11863,7 @@
             };
             window.addEventListener('keydown', onKey);
             return () => window.removeEventListener('keydown', onKey);
-          }, [currentView, activeBoardId, user, selShapes]);
+          }, [currentView, activeBoardId, user, selShapes, excActive]);
 
           // Кого сейчас тянем к сцене: {id, type: 'ref' | 'sticky'}.
           // К сценам цепляются и референсы, и заметки — механика одна.
@@ -10997,8 +11890,8 @@
           const putRefOnBoard = (ref) => {
             if (READ_ONLY) return;
             const placed = { ...ref, boardId: activeBoardId,
-              x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
-              y: (240 - canvasOffset.y) / zoom + Math.random() * 60 };
+              x: boardAt(260, 240).x + Math.random() * 60,
+              y: boardAt(260, 240).y + Math.random() * 60 };
             setReferences(references.map(r => r.id === ref.id ? placed : r));
             syncDoc('references', ref.id, placed);
             showToast('Референс на доске');
@@ -11012,8 +11905,8 @@
           // полоски подряд затирают друг друга, и человек читает вторую.
           const putRefsOnBoard = (list, boardId = activeBoardId, at = null, quiet = false) => {
             if (!list.length) return;
-            const x0 = at ? at.x : (260 - canvasOffset.x) / zoom;
-            const y0 = at ? at.y : (240 - canvasOffset.y) / zoom;
+            const x0 = at ? at.x : boardAt(260, 240).x;
+            const y0 = at ? at.y : boardAt(260, 240).y;
             // Шаг сетки — по ширине карточки референса плюс поля.
             const COLS = 4, STEP_X = 192 + 24, STEP_Y = 192 + 90;
             const ids = new Set(list.map(r => r.id));
@@ -11034,7 +11927,7 @@
           const putSceneFramesOnBoard = (sceneId) => {
             if (READ_ONLY) return;
             const scene = scenes.find(s => s.id === sceneId);
-            const at = { x: (260 - canvasOffset.x) / zoom, y: (240 - canvasOffset.y) / zoom };
+            const at = boardAt(260, 240);
             const r = putFramesOnBoard(sceneId, activeBoardId, at, { onlyOff: true });
             showToast(r.made
               ? `${r.made} пустых окошек под кадры сцены #${scene ? scene.number : ''} — на доске`
@@ -11063,6 +11956,13 @@
           // ту же пустоту, что и до нажатия, и решал, что кнопка сломана.
           // Масштаб держим читаемым, а не «лишь бы влезло».
           const showBoardArea = (x0, y0, x1, y1) => {
+            // Доска Excalidraw наводится сама; ещё грузится — наведётся,
+            // как только будет готова (pendingShow).
+            if (excActiveRef.current) {
+              if (excApiRef.current.show) excApiRef.current.show(x0, y0, x1, y1);
+              else excApiRef.current.pendingShow = [x0, y0, x1, y1];
+              return;
+            }
             const host = liveCanvasRef.current; if (!host) return;
             const vw = host.clientWidth, vh = host.clientHeight;
             if (!vw || !vh) return;
@@ -11257,7 +12157,9 @@
             };
             host.addEventListener('wheel', onWheel, { passive: false });
             return () => host.removeEventListener('wheel', onWheel);
-          }, [currentView]);
+            // excActive: вернулись с доски Excalidraw на свою — узел холста
+            // родился заново, и слушатель обязан встать на него.
+          }, [currentView, excActive]);
 
           // Выделение живёт в пределах одной доски: переключились — сбросили.
           // Иначе на новой доске можно было потащить невидимые чужие элементы.
@@ -12401,7 +13303,7 @@
             // менял, сам зовёт requestStatic (или дописывает штрих в слой
             // без полной перерисовки). Свяжешь с состоянием — и каждая
             // проведённая линия будет перерисовывать всю доску заново.
-          }, [canvasOffset, zoom, currentView]);
+          }, [canvasOffset, zoom, currentView, excActive]);
 
           // Выделение и смена инструмента живут в состоянии React, а рисует
           // их верхний слой — значит, его надо трогать руками.
@@ -13472,15 +14374,20 @@
               const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
               if (inField && (e.clipboardData.getData('text/plain') || '').trim()) return;
               e.preventDefault();
+              // На доске Excalidraw перехватываем РАНЬШЕ него (фаза
+              // перехвата на документе): он положил бы картинку своим
+              // элементом, а его файлы мы не храним — после перезагрузки
+              // там осталась бы пустая рамка. У нас она станет референсом.
+              if (excActive) e.stopPropagation();
               const c = boardVisibleCenter();
               handleMultiFileUpload(files, null, {
                 boardId: activeBoardId,
                 x: Math.round(c.x - REF_W / 2), y: Math.round(c.y - 70)
               });
             };
-            document.addEventListener('paste', onPaste);
-            return () => document.removeEventListener('paste', onPaste);
-          }, [currentView, activeBoardId, references]);
+            document.addEventListener('paste', onPaste, excActive);
+            return () => document.removeEventListener('paste', onPaste, excActive);
+          }, [currentView, activeBoardId, references, excActive]);
 
           // --- Файлы проекта: КПП, сценарий в PDF, доки ---
           // Файл лежит в документе базы строкой base64, а предел документа
@@ -13968,6 +14875,13 @@
                   if (kk && kk !== '[]') data['cf_ink_' + b.id] = kk;
                   const ff = b.id === activeBoardId ? packShapes(shapesRef.current) : localStorage.getItem('cf_shapes_' + b.id);
                   if (ff && ff !== '[]') data['cf_shapes_' + b.id] = ff;
+                  // Доска на Excalidraw: нарисованное — из самой доски, если
+                  // она открыта (там свежее), иначе из местной копии.
+                  if (b.engine === EXC_ENGINE) {
+                    let xb = b.id === activeBoardId && excApiRef.current.packFree ? excApiRef.current.packFree() : null;
+                    if (!xb) { try { xb = JSON.parse(localStorage.getItem('cf_xb_' + b.id) || 'null'); } catch (e) {} }
+                    if (xb && xb.els && xb.els.length) data['cf_xb_' + b.id] = xb;
+                  }
                 });
               }
               if (scope === 'all') {
@@ -13990,7 +14904,10 @@
               }
               if (scope === 'gallery') { data.cf_scenes = []; data.cf_stickies = []; }
 
-              const payload = { scope, board: boardId || '', room: appId, madeAt: new Date().toISOString(), data };
+              // `app` — откуда снимок сделан: файл откроют с диска, и доска
+              // Excalidraw возьмёт свою библиотеку оттуда (рядом её нет).
+              const payload = { scope, board: boardId || '', room: appId, madeAt: new Date().toISOString(),
+                                app: new URL('./', location.href).href, data };
               // Закрывающий тег скрипта внутри данных разорвал бы разметку — экранируем.
               const json = JSON.stringify(payload).replace(/<\//g, '<\\/');
               const inject = '<script>window.__CF_SNAPSHOT__ = ' + json + ';<\/script>\n</head>';
@@ -14541,8 +15458,8 @@
           const putDocOnBoard = (id) => {
             if (READ_ONLY) return;
             patchDoc(id, { boardId: activeBoardId,
-              x: (300 - canvasOffset.x) / zoom + Math.random() * 60,
-              y: (200 - canvasOffset.y) / zoom + Math.random() * 60 });
+              x: boardAt(300, 200).x + Math.random() * 60,
+              y: boardAt(300, 200).y + Math.random() * 60 });
             showToast('Документ на доске');
           };
           const removeRefFromBoard = (id) => {
@@ -14635,15 +15552,19 @@
           const addStickyHere = () => {
             if (READ_ONLY) return;
             const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, text: '',
-                         x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
+                         x: boardAt(300, 300).x, y: boardAt(300, 300).y,
                          w: STICKY_W, h: STICKY_H, color: '#fef08a' };
             setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+            if (excActive) { setTimeout(() => excApiRef.current.select && excApiRef.current.select(ns.id), 120); return; }
             setWbMode('select'); setSelectedWbItems([ns.id]); setEditCard({ id: ns.id, key: 'text' });
           };
           const addRefCardHere = () => {
             if (READ_ONLY) return;
+            // На доске Excalidraw пустая карточка «Загрузить» не нужна:
+            // сразу выбор файла, и фотография ложится посреди видимого.
+            if (excActive) { const el = excFileRef.current; if (el) { el.value = ''; el.click(); } return; }
             const nr = { id: `ref-${Date.now()}`, boardId: activeBoardId, sceneId: '', url: '',
-                         x: (250 - canvasOffset.x) / zoom, y: (250 - canvasOffset.y) / zoom,
+                         x: boardAt(250, 250).x, y: boardAt(250, 250).y,
                          label: 'Референс', tags: [] };
             setReferences([...references, nr]); syncDoc('references', nr.id, nr);
             setWbMode('select'); setSelectedWbItems([nr.id]);
@@ -14690,6 +15611,126 @@
               const up = references.map(r => r.id === id ? { ...r, sceneId } : r);
               setReferences(up); syncDoc('references', id, up.find(r => r.id === id));
             }
+          };
+
+          // ===== ДОСКА НА EXCALIDRAW: записи проекта ↔ элементы =====
+          // Карточки выводятся из записей (см. ExcBoard), а правки с доски
+          // возвращаются в те же записи — теми же путями, что у старой доски.
+          const excCards = useMemo(() => !excActive ? null : ({
+            scenes: boardScenes,
+            refs: references.filter(r => r.boardId === activeBoardId),
+            stickies: stickies.filter(s => belongsToBoard(s, activeBoardId)),
+            docs: boardDocs,
+            frames: boardFrames
+          }), [excActive, activeBoardId, boardScenes, references, stickies, boardDocs, boardFrames]);
+          // Правка записи с доски. Через cardsRef, а не через список из
+          // замыкания: доска отдаёт правки пачкой на отпускании, и вторая
+          // в том же такте иначе затёрла бы первую (беда `scenesRef`).
+          const excPatch = (coll, id, patch) => {
+            if (READ_ONLY) return null;
+            const list = coll === 'scenes' ? scenesRef.current : coll === 'storyboard' ? storyboardRef.current : cardListOf(coll);
+            let hit = null;
+            const up = list.map(x => x.id === id ? (hit = { ...x, ...patch }) : x);
+            if (!hit) return null;
+            cardsRef.current = { ...cardsRef.current, [coll]: up };
+            if (coll === 'scenes') scenesRef.current = up;
+            if (coll === 'storyboard') storyboardRef.current = up;
+            cardSetterOf(coll)(up);
+            syncDoc(coll, id, hit);
+            return hit;
+          };
+          // Стёртые на доске стикеры — до конца сеанса: «отменить»
+          // в Excalidraw возвращает элемент, а мы по нему — запись.
+          const excGone = useRef(new Map());
+          const excFileRef = useRef(null);
+          const excAct = {
+            patch: excPatch,
+            link: (type, id, sceneId) => {
+              if (!excPatch(EXC_COLL[type], id, { sceneId: sceneId || '' })) return;
+              const sc = sceneId && scenesRef.current.find(x => x.id === sceneId);
+              showToast(sc ? `Привязано к сцене #${sc.number}` : 'Отвязано от сцены');
+            },
+            // Стёрли карточку на доске = сняли с доски, а не удалили из
+            // проекта: то же правило, что у крестика на старой доске.
+            // Стикер — записка самой доски, он удаляется (кроме заметок
+            // объекта: они принадлежат месту и остаются у него).
+            remove: (type, id) => {
+              if (type === 'sticky') {
+                const st = cardListOf('stickies').find(x => x.id === id); if (!st) return;
+                if (st.locationId) { excPatch('stickies', id, { boardId: '' }); showToast('Заметка снята с доски — у объекта она осталась'); return; }
+                if (READ_ONLY) return;
+                excGone.current.set(id, st);
+                const up = cardListOf('stickies').filter(x => x.id !== id);
+                cardsRef.current = { ...cardsRef.current, stickies: up };
+                setStickies(up); deleteNetDoc('stickies', id);
+                showToast('Стикер удалён · «отменить» на доске вернёт его');
+                return;
+              }
+              if (!excPatch(EXC_COLL[type], id, { boardId: '' })) return;
+              showToast({ scene: 'Убрано с доски · сцена осталась в проекте',
+                          ref: 'Убрано с доски · референс остался в галерее',
+                          doc: 'Убрано с доски · документ остался в «Экспликациях»',
+                          frame: 'Убрано с доски · кадр остался в раскадровке сцены' }[type] || 'Убрано с доски');
+            },
+            back: (type, id, pos) => {
+              if (READ_ONLY) return;
+              if (type === 'sticky' && excGone.current.has(id)) {
+                const st = { ...excGone.current.get(id), ...pos, boardId: activeBoardId };
+                excGone.current.delete(id);
+                const up = [...cardListOf('stickies').filter(x => x.id !== id), st];
+                cardsRef.current = { ...cardsRef.current, stickies: up };
+                setStickies(up); syncDoc('stickies', id, st);
+                return;
+              }
+              excPatch(EXC_COLL[type], id, { boardId: activeBoardId, ...pos });
+            },
+            // Копия стикера — новый стикер. Без сцены и без объекта: копия
+            // заметки объекта — это уже записка на доске, а не у места.
+            copySticky: (fromId, geo) => {
+              if (READ_ONLY) return;
+              const src = cardListOf('stickies').find(x => x.id === fromId) || excGone.current.get(fromId);
+              if (!src) return;
+              const ns = { id: newId('st'), boardId: activeBoardId, text: src.text || '', color: src.color || '#fef08a',
+                           sceneId: '', ...geo };
+              const up = [...cardListOf('stickies'), ns];
+              cardsRef.current = { ...cardsRef.current, stickies: up };
+              setStickies(up); syncDoc('stickies', ns.id, ns);
+            },
+            files: (files, at) => handleMultiFileUpload(files, null, { boardId: activeBoardId, x: at.x, y: at.y }),
+            drop: (dt, at) => acceptDropped(dt, { place: { boardId: activeBoardId, x: at.x, y: at.y } }),
+            accepts: dropHasImage,
+            toast: showToast
+          };
+          // Нарисованное на доске Excalidraw — по элементу в `boardEls`.
+          // Подписка — запросом по доске: ответ на запрос приходит ЦЕЛИКОМ,
+          // и «половина элементов доехала» тут не бывает (урок частей
+          // рисунка старой доски, см. CLAUDE.md).
+          const excStore = useMemo(() => ({
+            subscribe: (boardId, cb) => {
+              if (!db || !user || CF_SNAPSHOT) return () => {};
+              try {
+                return dataRef().collection('boardEls').where('b', '==', boardId).onSnapshot(snap => {
+                  const els = [];
+                  snap.forEach(d => { const x = d.data(); try { if (x && x.e) els.push(excFixKey(JSON.parse(x.e))); } catch (e) {} });
+                  cb(els, { server: !(snap.metadata && snap.metadata.fromCache) });
+                }, err => console.warn('sync boardEls', err));
+              } catch (e) { console.warn('sync boardEls', e); return () => {}; }
+            },
+            put: (boardId, el) => syncDoc('boardEls', boardId + '~' + el.id, { b: boardId, id: el.id, v: el.version, e: JSON.stringify(el) }),
+            del: (boardId, id) => deleteNetDoc('boardEls', boardId + '~' + id)
+          }), [user]);
+          // Удалили доску Excalidraw — стираем и её нарисованное в облаке.
+          const purgeExcBoard = (boardId) => {
+            try { localStorage.removeItem('cf_xb_' + boardId); localStorage.removeItem('cf_xb_view_' + boardId); } catch (e) {}
+            if (READ_ONLY || !db || !user) return;
+            dataRef().collection('boardEls').where('b', '==', boardId).get().then(snap => {
+              const ids = []; snap.forEach(d => ids.push(d.id));
+              for (let i = 0; i < ids.length; i += 400) {
+                const batch = db.batch();
+                ids.slice(i, i + 400).forEach(id => batch.delete(dataRef().collection('boardEls').doc(id)));
+                trackWrite(batch.commit().catch(err => console.warn('purge boardEls', err)));
+              }
+            }).catch(err => console.warn('purge boardEls', err));
           };
 
           const [resizingDoc, setResizingDoc] = useState(null);
@@ -14769,7 +15810,7 @@
             if (READ_ONLY) return;
             if (!activeSceneId) return;
             const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, sceneId: activeSceneId, text: '',
-                         x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
+                         x: boardAt(300, 300).x, y: boardAt(300, 300).y,
                          w: STICKY_W, h: STICKY_H, color: '#fef08a' };
             setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
             showToast('Заметка добавлена · она же лежит на доске');
@@ -14860,7 +15901,7 @@
           // и текст ушёл бы в пустоту. Та же беда, что когда-то у агента КПП.
           const addLocationNote = (locId, text = '') => {
             const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, sceneId: '', locationId: locId, text: String(text || ''),
-                         x: (300 - canvasOffset.x) / zoom, y: (300 - canvasOffset.y) / zoom,
+                         x: boardAt(300, 300).x, y: boardAt(300, 300).y,
                          w: STICKY_W, h: STICKY_H, color: '#fef08a' };
             setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
             // Отдаём id наружу: в скауте новая заметка сразу берёт курсор,
@@ -15338,6 +16379,127 @@
           // у нового человека валился в аварийный экран и перезапускал
           // приложение с нуля. Любую новую проверку «вместо всего» ставь
           // сюда же, ниже последнего useState/useEffect.
+          // «Положить на доску»: какие сцены, документы, кадры и референсы
+          // можно положить на открытую доску. Одна панель на обе доски —
+          // свою и Excalidraw: вторая копия разъехалась бы с первой.
+          // На доске Excalidraw панель прижата вправо: слева у него
+          // свои меню и настройки стиля.
+          const renderScenePicker = (exc) => scenePickerOpen && (
+                        <div className={`absolute glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-[var(--border)] flex flex-col ${exc ? '' : 'top-16 md:top-6 left-2 md:left-24'}`}
+                             data-cf="board-picker" style={exc ? { maxHeight: '60vh', top: 64, right: 12 } : { maxHeight: '60vh' }}>
+                          <div className="flex items-center justify-between px-3 shrink-0" style={{ minHeight: 40, borderBottom: '1px solid var(--border)' }}>
+                            <span className="cf-eyebrow">Положить на доску</span>
+                            <button onClick={() => setScenePickerOpen(false)} className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-[var(--raised)] text-[length:var(--fs-1)]">✕</button>
+                          </div>
+                          <div className="overflow-y-auto p-1.5">
+                            {/* Три раздела, у каждого свой заголовок и своё поведение.
+                                Референсы тут есть всегда: это единственный путь
+                                к уже загруженным картинкам с самой доски. */}
+                            {(() => {
+                              // ВАЖНО: этот узкий список — только «последние
+                              // несколько», а не вся галерея. Раньше он молча
+                              // показывал первые ШЕСТЬДЕСЯТ, и на проекте
+                              // в триста референсов выглядело так, будто
+                              // часть картинок пропала: их просто нечем было
+                              // ни найти, ни долистать. Полный список с поиском
+                              // и папками — за кнопкой «Выбрать из галереи».
+                              const pool = references.filter(r => r.url && r.boardId !== activeBoardId);
+                              const SHOW = 8;
+                              const head = pool.slice(-SHOW).reverse();   // последние загруженные — сверху
+                              const rest = pool.length - head.length;
+                              return (
+                                <React.Fragment>
+                                  <div className="px-2 pt-1 pb-1.5 flex items-center justify-between gap-2">
+                                    <span className="cf-eyebrow">Референсы</span>
+                                    {pool.length > 0 && <span className="cf-meta">{pool.length} свободных</span>}
+                                  </div>
+                                  {pool.length === 0 ? (
+                                    <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
+                                      {references.length ? 'Все референсы уже на этой доске.' : 'Референсов пока нет — загрузите их в «Галерее».'}
+                                    </p>
+                                  ) : (
+                                    <React.Fragment>
+                                      <button onClick={() => { setRefPicker({ mode: 'board' }); setScenePickerOpen(false); }}
+                                              className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
+                                              style={{ minHeight: 40, border: '1px dashed var(--border)', color: 'var(--accent)', marginBottom: 4 }}>
+                                        <span className="shrink-0"><Icons.Gallery /></span>
+                                        <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)' }}>Выбрать из галереи…</span>
+                                      </button>
+                                      {head.map(r => (
+                                        <button key={r.id} onClick={() => { putRefOnBoard(r); setScenePickerOpen(false); }}
+                                                className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
+                                                style={{ minHeight: 40 }}>
+                                          <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
+                                          <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
+                                          {r.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                                        </button>
+                                      ))}
+                                      {/* Никаких молчаливых обрезаний: сколько
+                                          не показано — сказано прямо. */}
+                                      {rest > 0 && (
+                                        <button onClick={() => { setRefPicker({ mode: 'board' }); setScenePickerOpen(false); }}
+                                                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--raised)] transition-colors"
+                                                style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
+                                          …и ещё {rest} — открыть галерею с поиском
+                                        </button>
+                                      )}
+                                    </React.Fragment>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })()}
+
+                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Документы</span></div>
+                            {offBoardDocs.length === 0 ? (
+                              <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
+                                {docs.length ? 'Все документы уже на этой доске.' : 'Документов пока нет.'}
+                              </p>
+                            ) : offBoardDocs.map(d => (
+                              <button key={d.id} onClick={() => { putDocOnBoard(d.id); setScenePickerOpen(false); }}
+                                      className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
+                                      style={{ minHeight: 40 }}>
+                                <span className="shrink-0" style={{ color: 'var(--muted-2)' }}><Icons.Docs /></span>
+                                <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{d.title || 'Без названия'}</span>
+                                {d.boardId && <span className="cf-meta shrink-0">на другой</span>}
+                              </button>
+                            ))}
+
+                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Раскадровка</span></div>
+                            {offBoardFrameScenes.length === 0 ? (
+                              <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
+                                {storyboard.length ? 'Все кадры уже на этой доске.' : 'Кадров пока нет — заведите их на экране сцены или шаблоном «Раскадровка» на пустой доске.'}
+                              </p>
+                            ) : offBoardFrameScenes.map(({ scene, n }) => (
+                              <button key={scene.id} onClick={() => { putSceneFramesOnBoard(scene.id); setScenePickerOpen(false); }}
+                                      className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
+                                      style={{ minHeight: 40 }}>
+                                <span className="font-mono text-[length:var(--fs-1)] font-bold shrink-0" style={{ color: 'var(--accent)' }}>#{scene.number || '—'}</span>
+                                <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{scene.title || 'Без названия'}</span>
+                                <span className="cf-meta shrink-0">{n} {plur(n, 'кадр', 'кадра', 'кадров')}</span>
+                              </button>
+                            ))}
+
+                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Сцены</span></div>
+                            {offBoardScenes.length === 0 ? (
+                              <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
+                                {sortedScenes.length ? 'Все сцены уже на этой доске.' : 'В проекте пока нет сцен.'}
+                              </p>
+                            ) : offBoardScenes.map(s => {
+                              const where = s.boardId ? (sortedBoards.find(b => b.id === s.boardId) || {}).title : null;
+                              return (
+                                <button key={s.id} onClick={() => { putSceneOnBoard(s.id); setScenePickerOpen(false); }}
+                                        className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
+                                        style={{ minHeight: 40 }}>
+                                  <span className="font-mono text-[length:var(--fs-1)] font-bold shrink-0" style={{ color: 'var(--accent)' }}>#{s.number || '—'}</span>
+                                  <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{s.title || 'Без названия'}</span>
+                                  {where && <span className="cf-meta shrink-0">на «{where}»</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+          );
+
           if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
           // ВЫСОТА ПО ВИДИМОЙ ЧАСТИ, а не по h-screen.
@@ -17191,8 +18353,8 @@
                                                       e.stopPropagation();
                                                       const nextBoard = onBoard ? '' : activeBoardId;
                                                       const placed = { ...ref, boardId: nextBoard,
-                                                        x: (260 - canvasOffset.x) / zoom + Math.random() * 60,
-                                                        y: (240 - canvasOffset.y) / zoom + Math.random() * 60 };
+                                                        x: boardAt(260, 240).x + Math.random() * 60,
+                                                        y: boardAt(260, 240).y + Math.random() * 60 };
                                                       setReferences(references.map(r => r.id === ref.id ? placed : r));
                                                       syncDoc('references', ref.id, placed);
                                                       showToast(onBoard ? 'Убрано с доски · осталось в галерее' : 'Добавлено на доску');
@@ -17783,6 +18945,10 @@
                                            borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
                                            color: on ? 'var(--text)' : 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
                             {b.title}
+                            {/* Пробная доска на Excalidraw помечена: две доски
+                                с разным управлением без метки не различить. */}
+                            {b.engine === EXC_ENGINE && <span className="cf-meta" title="Доска на Excalidraw (проба)"
+                                  style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: on ? 'var(--accent)' : 'var(--muted-2)' }}>Ex</span>}
                             {/* Крестик виден только тому, кто может править:
                                 у гостя по ссылке доска исчезала с экрана —
                                 в облаке она оставалась цела, но выглядело
@@ -17821,6 +18987,7 @@
                                         deleteNetDoc('canvas', canvasDocId(b.id));
                                         deleteNetDoc('canvas', strokesDocId(b.id));
                                         deleteNetDoc('canvas', shapesDocId(b.id));
+                                        if (b.engine === EXC_ENGINE) purgeExcBoard(b.id);
                                         setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
                                         showToast('Доска удалена · референсы остались в галерее');
                                       }});
@@ -17838,6 +19005,20 @@
                               title="Новая доска · двойной клик по вкладке — переименовать"
                               className="cf-edit-only shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 'var(--r-md)', border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 'var(--fs-4)' }}>+</button>
+                      {/* ПРОБНАЯ ДОСКА НА EXCALIDRAW — отдельной кнопкой, а не
+                          заменой «+»: старые доски остаются на своём движке,
+                          и сравнивать их можно на одном проекте. */}
+                      <button onClick={() => {
+                                const n = sortedBoards.filter(x => x.engine === EXC_ENGINE).length + 1;
+                                const nb = { id: `board-${Date.now()}`, title: n > 1 ? `Excalidraw ${n}` : 'Excalidraw', order: sortedBoards.length, engine: EXC_ENGINE };
+                                setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
+                              }}
+                              title="Новая доска на Excalidraw (проба): карточки сцен и связи те же"
+                              data-cf="exc-new"
+                              className="cf-edit-only shrink-0 flex items-center gap-1 justify-center transition-colors hover:bg-white/5"
+                              style={{ minHeight: 40, marginBottom: 2, marginLeft: 4, padding: '0 10px', borderRadius: 'var(--r-md)', border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
+                        <span style={{ fontSize: 'var(--fs-3)', lineHeight: 1 }}>+</span> Excalidraw
+                      </button>
 
                       {/* СХЕМЫ СВЕТА — здесь же, вкладками рядом с досками.
                           Схема — такой же холст, как доска, и держать один
@@ -17969,7 +19150,7 @@
                               </button>
                               <hr className="cf-edit-only" />
                               <button className="cf-edit-only" style={{ color: 'var(--danger)' }} title="Линии и фигуры; карточки останутся"
-                                      onClick={() => { setBoardMenu(false); setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }}); }}>
+                                      onClick={() => { setBoardMenu(false); if (excActive) { if (excApiRef.current.clearDrawing) excApiRef.current.clearDrawing(); showToast('Нарисованное стёрто · карточки остались, «отменить» вернёт'); return; } setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }}); }}>
                                 <Icons.Trash/> Очистить рисунок
                               </button>
                             </div>
@@ -17978,6 +19159,22 @@
                       </div>
                     </div>
 
+                    {/* Доска на Excalidraw — вместо своего холста, целиком.
+                        key по доске: у каждой доски своя сцена, своя история
+                        отмены и своя подписка на облако. */}
+                    {excActive ? (
+                      <ExcBoard key={activeBoardId} boardId={activeBoardId} readOnly={READ_ONLY} cards={excCards || {}}
+                                projectRatio={projectRatio} store={excStore} act={excAct} apiRef={excApiRef}>
+                        {renderScenePicker(true)}
+                        <input ref={excFileRef} type="file" multiple accept="image/*,video/*,.pdf" className="hidden"
+                               onChange={(e) => {
+                                 const files = Array.from(e.target.files || []);
+                                 if (!files.length) return;
+                                 const c = boardVisibleCenter();
+                                 handleMultiFileUpload(files, null, { boardId: activeBoardId, x: Math.round(c.x - REF_W / 2), y: Math.round(c.y - 70) });
+                               }} />
+                      </ExcBoard>
+                    ) : (
                     <div id="whiteboard-canvas" className="w-full flex-1 min-h-0 cf-canvas relative overflow-hidden"
                     /* Долгое удержание пера браузер отдаёт как contextmenu —
                        и меню выскакивает на отпускании, посреди штриха.
@@ -19038,120 +20235,7 @@
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
                           работа, поэтому список, а не «все сразу». */}
-                      {scenePickerOpen && (
-                        <div className="absolute glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-[var(--border)] flex flex-col top-16 md:top-6 left-2 md:left-24" style={{ maxHeight: '60vh' }}>
-                          <div className="flex items-center justify-between px-3 shrink-0" style={{ minHeight: 40, borderBottom: '1px solid var(--border)' }}>
-                            <span className="cf-eyebrow">Положить на доску</span>
-                            <button onClick={() => setScenePickerOpen(false)} className="w-6 h-6 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-[var(--raised)] text-[length:var(--fs-1)]">✕</button>
-                          </div>
-                          <div className="overflow-y-auto p-1.5">
-                            {/* Три раздела, у каждого свой заголовок и своё поведение.
-                                Референсы тут есть всегда: это единственный путь
-                                к уже загруженным картинкам с самой доски. */}
-                            {(() => {
-                              // ВАЖНО: этот узкий список — только «последние
-                              // несколько», а не вся галерея. Раньше он молча
-                              // показывал первые ШЕСТЬДЕСЯТ, и на проекте
-                              // в триста референсов выглядело так, будто
-                              // часть картинок пропала: их просто нечем было
-                              // ни найти, ни долистать. Полный список с поиском
-                              // и папками — за кнопкой «Выбрать из галереи».
-                              const pool = references.filter(r => r.url && r.boardId !== activeBoardId);
-                              const SHOW = 8;
-                              const head = pool.slice(-SHOW).reverse();   // последние загруженные — сверху
-                              const rest = pool.length - head.length;
-                              return (
-                                <React.Fragment>
-                                  <div className="px-2 pt-1 pb-1.5 flex items-center justify-between gap-2">
-                                    <span className="cf-eyebrow">Референсы</span>
-                                    {pool.length > 0 && <span className="cf-meta">{pool.length} свободных</span>}
-                                  </div>
-                                  {pool.length === 0 ? (
-                                    <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
-                                      {references.length ? 'Все референсы уже на этой доске.' : 'Референсов пока нет — загрузите их в «Галерее».'}
-                                    </p>
-                                  ) : (
-                                    <React.Fragment>
-                                      <button onClick={() => { setRefPicker({ mode: 'board' }); setScenePickerOpen(false); }}
-                                              className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
-                                              style={{ minHeight: 40, border: '1px dashed var(--border)', color: 'var(--accent)', marginBottom: 4 }}>
-                                        <span className="shrink-0"><Icons.Gallery /></span>
-                                        <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)' }}>Выбрать из галереи…</span>
-                                      </button>
-                                      {head.map(r => (
-                                        <button key={r.id} onClick={() => { putRefOnBoard(r); setScenePickerOpen(false); }}
-                                                className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
-                                                style={{ minHeight: 40 }}>
-                                          <img src={r.url} alt="" className="shrink-0 rounded" style={{ width: 28, height: 28, objectFit: 'cover' }} />
-                                          <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{r.label || 'Без названия'}</span>
-                                          {r.boardId && <span className="cf-meta shrink-0">на другой</span>}
-                                        </button>
-                                      ))}
-                                      {/* Никаких молчаливых обрезаний: сколько
-                                          не показано — сказано прямо. */}
-                                      {rest > 0 && (
-                                        <button onClick={() => { setRefPicker({ mode: 'board' }); setScenePickerOpen(false); }}
-                                                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--raised)] transition-colors"
-                                                style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
-                                          …и ещё {rest} — открыть галерею с поиском
-                                        </button>
-                                      )}
-                                    </React.Fragment>
-                                  )}
-                                </React.Fragment>
-                              );
-                            })()}
-
-                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Документы</span></div>
-                            {offBoardDocs.length === 0 ? (
-                              <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
-                                {docs.length ? 'Все документы уже на этой доске.' : 'Документов пока нет.'}
-                              </p>
-                            ) : offBoardDocs.map(d => (
-                              <button key={d.id} onClick={() => { putDocOnBoard(d.id); setScenePickerOpen(false); }}
-                                      className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
-                                      style={{ minHeight: 40 }}>
-                                <span className="shrink-0" style={{ color: 'var(--muted-2)' }}><Icons.Docs /></span>
-                                <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{d.title || 'Без названия'}</span>
-                                {d.boardId && <span className="cf-meta shrink-0">на другой</span>}
-                              </button>
-                            ))}
-
-                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Раскадровка</span></div>
-                            {offBoardFrameScenes.length === 0 ? (
-                              <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
-                                {storyboard.length ? 'Все кадры уже на этой доске.' : 'Кадров пока нет — заведите их на экране сцены или шаблоном «Раскадровка» на пустой доске.'}
-                              </p>
-                            ) : offBoardFrameScenes.map(({ scene, n }) => (
-                              <button key={scene.id} onClick={() => { putSceneFramesOnBoard(scene.id); setScenePickerOpen(false); }}
-                                      className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
-                                      style={{ minHeight: 40 }}>
-                                <span className="font-mono text-[length:var(--fs-1)] font-bold shrink-0" style={{ color: 'var(--accent)' }}>#{scene.number || '—'}</span>
-                                <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{scene.title || 'Без названия'}</span>
-                                <span className="cf-meta shrink-0">{n} {plur(n, 'кадр', 'кадра', 'кадров')}</span>
-                              </button>
-                            ))}
-
-                            <div className="px-2 pt-3 pb-1.5" style={{ borderTop: '1px solid var(--border-soft)' }}><span className="cf-eyebrow">Сцены</span></div>
-                            {offBoardScenes.length === 0 ? (
-                              <p className="px-2 pb-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)' }}>
-                                {sortedScenes.length ? 'Все сцены уже на этой доске.' : 'В проекте пока нет сцен.'}
-                              </p>
-                            ) : offBoardScenes.map(s => {
-                              const where = s.boardId ? (sortedBoards.find(b => b.id === s.boardId) || {}).title : null;
-                              return (
-                                <button key={s.id} onClick={() => { putSceneOnBoard(s.id); setScenePickerOpen(false); }}
-                                        className="w-full text-left px-2 rounded-md hover:bg-[var(--raised)] flex items-center gap-2 transition-colors"
-                                        style={{ minHeight: 40 }}>
-                                  <span className="font-mono text-[length:var(--fs-1)] font-bold shrink-0" style={{ color: 'var(--accent)' }}>#{s.number || '—'}</span>
-                                  <span className="truncate flex-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{s.title || 'Без названия'}</span>
-                                  {where && <span className="cf-meta shrink-0">на «{where}»</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
+                      {renderScenePicker(false)}
 
                       {/* ПАНЕЛЬ СВОЙСТВ. Контекстная: в режиме фигур задаёт,
                           чем рисовать дальше, а если что-то выделено — правит
@@ -19446,6 +20530,7 @@
                         <button onClick={() => setZoom(prev => Math.min(2.0, prev + 0.1))} className="cf-tool" title="Крупнее">+</button>
                       </div>
                     </div>
+                    )}
                   </div>
 
                   {/* ЭКРАН «СКАУТ» — выезд на место: где солнце, что влезет
