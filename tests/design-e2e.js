@@ -1,5 +1,6 @@
 // Разгрузка интерфейса: читаемый список сцен, номер кадра поверх картинки,
-// текст сцены без коробки и выбранное без оранжевой заливки.
+// текст сцены без коробки и сворачивается, заметки линейкой вместо цветной
+// плашки и выбранное без оранжевой заливки.
 // Проверяется замером в браузере, а не чтением кода: «обрезано ли название»
 // и «попадает ли нажатие в номер» видно только в готовой вёрстке.
 const fs = require('fs'), os = require('os'), path = require('path');
@@ -21,10 +22,13 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
 const img = (a, b) => 'data:image/svg+xml;base64,' + Buffer.from(
   `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="${a}"/><rect y="200" width="640" height="160" fill="${b}"/></svg>`).toString('base64');
 const TITLES = ['ИНТ. КВАРТИРА НА ГОРСКОЙ — УТРО', 'НАТ. ДВОР ШКОЛЫ У ГАРАЖЕЙ — ДЕНЬ', 'ИНТ. МАШИНА — НОЧЬ', 'СЦЕНА У ОКНА'];
-const seed = { cf_scenes: [], cf_storyboard: [], cf_references: [] };
+const seed = { cf_scenes: [], cf_storyboard: [], cf_references: [], cf_stickies: [
+  { id: 'n1', text: 'Свет из окна — держать контровой', color: '#ffc9c9', sceneId: 'sc1', boardId: '', x: 0, y: 0 },
+  { id: 'n2', text: 'Проверить розетки', sceneId: 'sc1', boardId: '', x: 0, y: 0 }] };
+const LONG = Array.from({ length: 14 }, (_, i) => `Строка ${i + 1}. Она стоит у окна и смотрит во двор.`).join('\n');
 TITLES.forEach((t, i) => {
   const id = 'sc' + (i + 1);
-  seed.cf_scenes.push({ id, number: String(i + 1), title: t, content: 'экспликация', script: 'Она стоит у окна.', date: '2026-10-01', boardId: '' });
+  seed.cf_scenes.push({ id, number: String(i + 1), title: t, content: 'экспликация', script: i ? 'Она стоит у окна.' : LONG, date: '2026-10-01', boardId: '' });
   for (let k = 0; k < 2; k++) seed.cf_storyboard.push({ id: `f${i}-${k}`, sceneId: id, frameNum: `${i + 1}.${k + 1}`, lens: k ? '50' : '', description: 'Общий план', image: img('#c0703a', '#223') });
   seed.cf_references.push({ id: 'r' + i, url: img('#7ea56b', '#111'), label: '', file: `r${i}.jpg`, tags: ['свет'], folder: '', sceneId: id, locationId: '' });
 });
@@ -100,6 +104,50 @@ TITLES.forEach((t, i) => {
   ok('текст сцены отбит линейкой слева, без коробки', tx.left === '2px' && tx.top === '0px' && tx.resize === 'none' && /rgba\(0, 0, 0, 0\)|transparent/.test(tx.bg), JSON.stringify(tx));
   ok('высота текста — по содержимому, без своей прокрутки', tx.grow);
 
+  // Лёжа текст развёрнут; кнопкой сворачивается до четырёх строк, выбор помнится.
+  const fold = async (pg) => pg.evaluate(async () => {
+    const b = document.querySelector('[data-cf="scene-text-fold"]');
+    const r = b.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const before = (document.querySelector('[data-cf="scene-script"]') || document.querySelector('[data-cf="scene-script-shut"]')).getBoundingClientRect().height;
+    const label = b.textContent;
+    b.click(); await new Promise(r => setTimeout(r, 300));
+    const shut = document.querySelector('[data-cf="scene-script-shut"]');
+    return { hit: !!hit && b.contains(hit), label, before: Math.round(before),
+             after: shut ? Math.round(shut.getBoundingClientRect().height) : null, shut: !!shut,
+             lines: shut ? Math.round(shut.getBoundingClientRect().height / parseFloat(getComputedStyle(shut).lineHeight)) : 0,
+             saved: localStorage.getItem('cf_scene_text') };
+  });
+  const f1 = await fold(p);
+  ok('лёжа текст развёрнут, «свернуть» под пальцем', f1.hit && /свернуть/.test(f1.label), JSON.stringify(f1));
+  ok('свёрнутый текст — четыре строки и заметно ниже', f1.shut && f1.lines === 4 && f1.after < f1.before / 2, `${f1.before} → ${f1.after}, строк ${f1.lines}`);
+  ok('выбор запомнен для этого положения', /"landscape":true/.test(f1.saved || ''), f1.saved);
+  const f2 = await p.evaluate(async () => {
+    document.querySelector('[data-cf="scene-script-shut"]').click(); await new Promise(r => setTimeout(r, 300));
+    return { open: !!document.querySelector('[data-cf="scene-script"]'), label: document.querySelector('[data-cf="scene-text-fold"]').textContent };
+  });
+  ok('нажатие по свёрнутому тексту разворачивает его', f2.open && /свернуть/.test(f2.label), JSON.stringify(f2));
+
+  // Заметка — текст с линейкой цвета стикера, без цветной плашки.
+  const nt = await p.evaluate(() => [...document.querySelectorAll('[data-cf="scene-note"]')].map(n => {
+    const c = getComputedStyle(n), t = n.querySelector('textarea'), tc = getComputedStyle(t);
+    return { bg: c.backgroundColor, rule: c.borderLeftWidth + ' ' + c.borderLeftColor, top: c.borderTopWidth, weight: tc.fontWeight, color: tc.color, cut: t.scrollHeight > t.clientHeight + 2 };
+  }));
+  ok('заметки сцены на месте', nt.length === 2, JSON.stringify(nt));
+  ok('заметка без цветной плашки и рамки-коробки', nt.every(n => /rgba\(0, 0, 0, 0\)/.test(n.bg) && n.top === '0px'), JSON.stringify(nt.map(n => n.bg + ' ' + n.top)));
+  ok('цвет стикера — в линейке слева', nt[0] && nt[0].rule === '3px rgb(255, 201, 201)' && nt[1].rule === '3px rgb(254, 240, 138)', nt.map(n => n.rule).join(' | '));
+  ok('текст заметки обычный, светлый, не жирный чёрный', nt.every(n => +n.weight < 600 && n.color !== 'rgb(26, 25, 24)'), JSON.stringify(nt.map(n => n.weight + ' ' + n.color)));
+  ok('текст заметки виден целиком, без своей прокрутки', nt.every(n => !n.cut));
+  const nh = await p.evaluate(async () => {
+    const n = document.querySelector('[data-cf="scene-note"]'), t = n.querySelector('textarea');
+    const rest = { rule: Math.round(n.getBoundingClientRect().height), line: parseFloat(getComputedStyle(t).lineHeight) };
+    t.focus(); await new Promise(r => setTimeout(r, 200));
+    const dots = n.querySelectorAll('button[title="Цвет заметки"]').length;
+    t.blur(); await new Promise(r => setTimeout(r, 400));
+    return { ...rest, dots, after: n.querySelectorAll('button[title="Цвет заметки"]').length };
+  });
+  ok('в покое линейка по высоте текста, без пустой строки под ним', nh.rule <= nh.line + 8, JSON.stringify(nh));
+  ok('палитра — только пока курсор в заметке', nh.dots === 6 && nh.after === 0, JSON.stringify(nh));
+
   await go(p, 'КПП');
   const seg = await p.evaluate(() => {
     const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'По сменам');
@@ -118,6 +166,21 @@ TITLES.forEach((t, i) => {
   ok('галерея: выбранная папка — не оранжевая заливка', gal.folder && gal.folder !== ACCENT, gal.folder);
   ok('галерея: у карточки нет рамки в покое', gal.card === 'rgba(0, 0, 0, 0)', gal.card);
   ok('без ошибок на планшете', errs.length === 0, errs.join(' | '));
+
+  // ---- ПЛАНШЕТ СТОЯ: текст свёрнут без всякого выбора, до референсов не листать
+  const { page: v, errs: e3 } = await mk(834, 1194);
+  const pv = await v.evaluate(() => {
+    const shut = document.querySelector('[data-cf="scene-script-shut"]'), b = document.querySelector('[data-cf="scene-text-fold"]');
+    return { shut: !!shut, open: !!document.querySelector('[data-cf="scene-script"]'), label: b && b.textContent,
+             h: shut ? Math.round(shut.getBoundingClientRect().height) : null };
+  });
+  ok('стоя текст сцены свёрнут сразу', pv.shut && !pv.open && /развернуть/.test(pv.label || ''), JSON.stringify(pv));
+  const pv2 = await v.evaluate(async () => {
+    document.querySelector('[data-cf="scene-text-fold"]').click(); await new Promise(r => setTimeout(r, 300));
+    return { open: !!document.querySelector('[data-cf="scene-script"]'), saved: localStorage.getItem('cf_scene_text') };
+  });
+  ok('стоя разворачивается, и это помнится отдельно', pv2.open && /"portrait":false/.test(pv2.saved || ''), JSON.stringify(pv2));
+  ok('без ошибок на планшете стоя', e3.length === 0, e3.join(' | '));
 
   // ---- ТЕЛЕФОН
   const { page: q, errs: e2 } = await mk(390, 844);
