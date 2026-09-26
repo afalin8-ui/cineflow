@@ -20,6 +20,12 @@
 //   → ОБОРВАННАЯ СВЯЗЬ: пустой ответ «из кэша» не стирает нарисованное
 //     и не шлёт в облако ни одного удаления
 //   → режим просмотра: наружу не уходит ничего
+//   → ФОТО: цвет на экране ровно тот, что в файле (холст не выворачивается),
+//     уменьшение без ряби (полосы в одну точку становятся ровным серым),
+//     пропорция из самого файла и записывается в референс, кадр
+//     раскадровки обрезается по рамке проекта, а не растягивается
+//   → доска, нарисованная при прежней выворачивающей теме, переводит
+//     свои цвета один раз и метит себя
 //   → телефон: доска открывается, рисовать есть чем
 //   → своя доска рядом по-прежнему на своём движке
 //
@@ -47,26 +53,32 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
 
 // Картинка без внешних файлов: PNG одного цвета.
 const png = (w, h, rgb) => {
+  const px = typeof rgb === 'function' ? rgb : () => rgb;
   const T = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; T[n] = c >>> 0; }
   const crc = (b) => { let c = 0xffffffff; for (const x of b) c = T[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
   const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
   const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2;
   const raw = Buffer.alloc((w * 3 + 1) * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = y * (w * 3 + 1) + 1 + x * 3; raw[o] = rgb[0]; raw[o + 1] = rgb[1]; raw[o + 2] = rgb[2]; }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = y * (w * 3 + 1) + 1 + x * 3, c = px(x, y); raw[o] = c[0]; raw[o + 1] = c[1]; raw[o + 2] = c[2]; }
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 };
 const IMG = 'data:image/png;base64,' + png(90, 60, [200, 60, 40]).toString('base64');
 const PASTE = png(64, 48, [40, 90, 200]).toString('base64');
+// Вертикальные полосы в ОДНУ точку, чёрная-белая. Честное уменьшение
+// сливает их в ровный серый; грубое (выборка без усреднения) даёт рябь —
+// её и меряем разбросом яркости. Пропорция 3:2, а записи о ней нет.
+const STRIPES = 'data:image/png;base64,' + png(1200, 800, (x) => x % 2 ? [255, 255, 255] : [0, 0, 0]).toString('base64');
 
 const SEED = () => ({
   boards: { 'board-main': { id: 'board-main', title: 'Основная', order: 0 },
-            bx1: { id: 'bx1', title: 'Excalidraw', order: 1, engine: 'excalidraw' } },
+            bx1: { id: 'bx1', title: 'Excalidraw', order: 1, engine: 'excalidraw', xc: 1 } },
   scenes: {
     sc1: { id: 'sc1', number: '1', title: 'ИНТ. КВАРТИРА', content: 'Утро, свет из окна', boardId: 'bx1', x: 100, y: 100, gear: {}, lightGear: {} },
     sc2: { id: 'sc2', number: '2', title: 'НАТ. ДВОР', content: '', boardId: 'bx1', x: 700, y: 100, gear: {}, lightGear: {} },
     sc3: { id: 'sc3', number: '3', title: 'ИНТ. ПОДЪЕЗД', content: '', boardId: '', x: 0, y: 0, gear: {}, lightGear: {} }
   },
-  references: { r1: { id: 'r1', url: IMG, boardId: 'bx1', x: 100, y: 420, w: 180, ar: 1.5, sceneId: 'sc1', tags: [], label: '' } },
+  references: { r1: { id: 'r1', url: IMG, boardId: 'bx1', x: 100, y: 420, w: 180, ar: 1.5, sceneId: 'sc1', tags: [], label: '' },
+                r2: { id: 'r2', url: STRIPES, boardId: 'bx1', x: 1100, y: 420, w: 200, sceneId: '', tags: [], label: '' } },
   stickies: { st1: { id: 'st1', boardId: 'bx1', x: 420, y: 700, w: 224, h: 128, text: 'Свет из окна', color: '#fef08a', sceneId: '' } },
   storyboard: { f1: { id: 'f1', sceneId: 'sc2', frameNum: '2.1', description: 'общий план', image: IMG, boardId: 'bx1', x: 760, y: 420, w: 240 } }
 });
@@ -170,6 +182,46 @@ const SEED = () => ({
   });
   ok('нажатие по фото попадает в холст Excalidraw', /CANVAS/.test(hitCard || '') && /interactive/.test(hitCard || ''), hitCard);
 
+  // --- 1б. фото
+  // Цвет — по СНИМКУ ЭКРАНА, а не по холсту: выворачивал фильтр именно
+  // экранный слой.
+  const pxAt = async (page, x, y) => {
+    const q = await scr(page, x, y);
+    const buf = await page.screenshot({ clip: { x: Math.round(q.x), y: Math.round(q.y), width: 1, height: 1 } });
+    return page.evaluate(async (b64) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+      const c = document.createElement('canvas'); c.width = c.height = 1;
+      const x = c.getContext('2d'); x.drawImage(img, 0, 0); return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    }, buf.toString('base64'));
+  };
+  const red = await pxAt(p, 190, 480);
+  ok('цвет фото на экране — как в файле (200, 60, 40)', red.every((v, i) => Math.abs(v - [200, 60, 40][i]) <= 2), red.join(','));
+  const filt = await p.evaluate(() => getComputedStyle(document.querySelector('.excalidraw__canvas.static')).filter);
+  ok('холст ничем не выворачивается', filt === 'none', filt);
+  const ripple = await p.evaluate(() => {
+    const e = window.__cfExc.api.getSceneElements().find(x => x.id === 'r2');
+    const s = window.__cfExc.api.getAppState(), z = s.zoom.value, dpr = window.devicePixelRatio;
+    const cv = document.querySelector('.excalidraw__canvas.static');
+    const x0 = Math.round(((e.x + s.scrollX) * z + 8) * dpr), y0 = Math.round(((e.y + s.scrollY) * z + 8) * dpr);
+    const w = Math.round((e.width * z - 16) * dpr), h = Math.round((e.height * z - 16) * dpr);
+    const d = cv.getContext('2d').getImageData(x0, y0, w, h).data;
+    let n = 0, sum = 0, sq = 0;
+    for (let i = 0; i < d.length; i += 4) { const l = (d[i] + d[i + 1] + d[i + 2]) / 3; n++; sum += l; sq += l * l; }
+    const mean = sum / n;
+    return { mean: Math.round(mean), sd: Math.round(Math.sqrt(sq / n - mean * mean) * 10) / 10, w, h };
+  });
+  ok('уменьшение фото без ряби: полосы в одну точку слились в ровный серый', ripple.sd < 12 && ripple.mean > 90 && ripple.mean < 170, JSON.stringify(ripple));
+  E = live(await els(p));
+  const r2 = E.find(e => e.id === 'r2');
+  ok('пропорция фото — из самого файла (3:2), а не 16:9', r2 && Math.abs(r2.w / r2.h - 1.5) < 0.02, r2 && `${r2.w}×${r2.h}`);
+  await settle(p, 900);
+  ok('и записана в референс — её увидят старая доска и печать', Math.abs(((await store(p, 'references')).r2 || {}).ar - 1.5) < 0.01,
+     JSON.stringify(((await store(p, 'references')).r2 || {}).ar));
+  const fr = await p.evaluate(() => { const e = window.__cfExc.api.getSceneElements().find(x => x.id === 'f1');
+    return e && { w: e.width, h: e.height, crop: e.crop }; });
+  ok('кадр раскадровки обрезан по рамке проекта, а не растянут', fr && fr.crop && Math.abs(fr.crop.width / fr.crop.height - fr.w / fr.h) < 0.02,
+     JSON.stringify(fr));
+
   // --- 2. перенос фото мышью → место в записи референса
   const a = await scr(p, 190, 480), b = await scr(p, 290, 560);
   await drag(p, a, b);
@@ -244,10 +296,17 @@ const SEED = () => ({
   ST = await store(p, 'stickies');
   ok('текст стикера, набранный на доске, лёг в запись стикера', ST.st1 && ST.st1.text === 'Контровой свет', ST.st1 && ST.st1.text);
 
-  // --- 7. правка подписи сцены на доске не держится: название — из записи
+  // --- 7. правка подписи сцены на доске не держится: название — из записи.
+  // Двойное нажатие по сцене теперь ОТКРЫВАЕТ её (раздел 11б), поэтому
+  // до подписи добираемся штатным путём Excalidraw: выделил — Enter.
   const sct = await scr(p, 100 + 60, 100 + 12);
-  await p.mouse.dblclick(sct.x, sct.y);
+  await p.mouse.click(sct.x, sct.y);
+  await p.waitForTimeout(200);
+  await p.keyboard.press('Enter');
   await p.waitForTimeout(300);
+  const editing = await p.evaluate(() => { const t = window.__cfExc.api.getAppState().editingTextElement; return t && t.id; });
+  ok('Enter по выделенной сцене открыл её подпись для правки (проверка ниже не пустая)', editing === 'sc1~t', String(editing));
+  await p.keyboard.press('End');
   await p.keyboard.type(' ЛИШНЕЕ');
   await escape(p);
   await settle(p);
@@ -352,6 +411,58 @@ const SEED = () => ({
   if (d) { const f = await d.path(); const buf = fs.readFileSync(f); pngOk = buf.slice(1, 4).toString() === 'PNG' && buf.length > 2000; }
   ok('«Выгрузить PNG» отдаёт картинку доски', pngOk, d ? d.suggestedFilename() : 'нет загрузки');
 
+  // --- 11б. открыть с доски: двойное по фото — во весь экран, кнопка
+  // у выделенной сцены — сама сцена. Проверяется НАЖАТИЕМ: кнопка лежит
+  // поверх холста Excalidraw, и «есть ли элемент» тут не значит ничего.
+  await escape(p); await escape(p);
+  let R1 = live(await els(p)).find(e => e.id === 'r1');
+  const r1c = await scr(p, R1.x + R1.w / 2, R1.y + R1.h / 2);
+  await p.mouse.move(r1c.x, r1c.y); await p.mouse.dblclick(r1c.x, r1c.y);
+  await p.waitForTimeout(600);
+  const lb = await p.evaluate(() => {
+    const box = document.querySelector('[class*="z-[350]"]');
+    const img = box && [...box.querySelectorAll('img')].find(i => i.getBoundingClientRect().width > 50);
+    return { open: !!box, img: !!img, crop: window.__cfExc.api.getAppState().croppingElementId || null };
+  });
+  ok('двойное нажатие по фото на доске открыло его во весь экран', lb.open && lb.img, JSON.stringify(lb));
+  ok('и Excalidraw при этом не включил обрезку картинки', !lb.crop, String(lb.crop));
+  // Стрелка листает кадры — а фото под просмотром выделено первым
+  // нажатием, и доска сдвинула бы его, дойди до неё клавиша.
+  await p.keyboard.press('ArrowRight'); await p.waitForTimeout(300);
+  const R1b = live(await els(p)).find(e => e.id === 'r1');
+  ok('стрелка в просмотре не сдвинула фото на доске под ним', Math.abs(R1b.x - R1.x) < 0.5 && Math.abs(R1b.y - R1.y) < 0.5, `${R1.x}→${R1b.x}`);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(400);
+  ok('Escape закрыл просмотр и вернул на доску', await p.evaluate(() => { const h = document.querySelector('[data-cf="exc-board"]');
+    return !document.querySelector('[class*="z-[350]"]') && !!h && h.getBoundingClientRect().width > 0; }));
+  // Одно нажатие по сцене — выделение, над ней кнопка «Открыть сцену».
+  const S1 = live(await els(p)).find(e => e.id === 'sc1');
+  // Правый край карточки: левый её край закрыт панелью свойств Excalidraw,
+  // пока выделено фото.
+  const s1c = await scr(p, S1.x + S1.w - 40, S1.y + S1.h - 20);
+  await p.mouse.click(s1c.x, s1c.y);
+  await p.waitForTimeout(500);
+  const btn = await p.evaluate(() => {
+    const b = document.querySelector('[data-cf="exc-open"]');
+    if (!b) return null;
+    const r = b.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const hit = document.elementFromPoint(cx, cy);
+    return { x: cx, y: cy, w: Math.round(r.width), h: Math.round(r.height), hit: !!hit && (hit === b || b.contains(hit)), text: b.textContent.trim() };
+  });
+  ok('у выделенной сцены — кнопка «Открыть сцену», и нажатие попадает в неё', !!btn && btn.hit && /сцену/.test(btn.text), JSON.stringify(btn));
+  if (btn) { await p.mouse.click(btn.x, btn.y); await p.waitForTimeout(700); }
+  // Доска при уходе на другой экран не выгружается, а прячется — смотрим
+  // на её размер, а не на то, есть ли она в разметке.
+  const opened = await p.evaluate(() => { const h = document.querySelector('[data-cf="exc-board"]');
+    return { board: !!h && h.getBoundingClientRect().width > 0,
+      title: [...document.querySelectorAll('input, textarea, h1, h2')].some(e => e.getBoundingClientRect().width > 0 && /ИНТ\. КВАРТИРА/.test(e.value || e.textContent || '')) }; });
+  ok('кнопка открыла саму сцену', !opened.board && opened.title, JSON.stringify(opened));
+  // Обратно на доску тем же путём, что и человек.
+  await p.evaluate(() => { const t = [...document.querySelectorAll('button')].find(x => x.title === 'Доски'); if (t) t.click(); });
+  await p.waitForTimeout(500);
+  await p.evaluate(() => { const t = [...document.querySelectorAll('button')].find(b => /^Excalidraw\s*Ex$/.test(b.textContent.trim())); if (t) t.click(); });
+  await p.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'bx1', { timeout: 30000 });
+  await p.waitForTimeout(600);
+
   // --- 12. своя доска рядом по-прежнему своя
   await p.evaluate(() => { const t = [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Основная')); t.click(); });
   await p.waitForTimeout(800);
@@ -395,6 +506,35 @@ const SEED = () => ({
   ok('ответ сервера без элемента — стёрли на другом устройстве, ушёл и тут', !live(await els(q)).some(e => e.id === 'known-rect'));
   await ctx2.close();
 
+  // ================= ПРЕЖНЯЯ ТЁМНАЯ ТЕМА =================
+  // Доска, нарисованная, пока холст выворачивался фильтром, хранит цвета
+  // «до фильтра»: чёрный карандаш на экране был светлым. Обязана перевести
+  // их один раз тем же счётом и пометить себя.
+  const oldToDirect = (c) => {
+    const h = c.slice(1), iv = (i) => 0.93 - 0.86 * (parseInt(h.slice(i, i + 2), 16) / 255);
+    const R = iv(0), G = iv(2), B = iv(4), cl = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+    return '#' + cl(-0.574 * R + 1.430 * G + 0.144 * B) + cl(0.426 * R + 0.430 * G + 0.144 * B) + cl(0.426 * R + 1.430 * G - 0.856 * B);
+  };
+  const seed5 = SEED();
+  delete seed5.boards.bx1.xc;
+  const oldEl = { ...known, id: 'old-rect', strokeColor: '#1e1e1e', backgroundColor: '#ffc9c9', index: 'a3', updated: 5 };
+  seed5.boardEls = { 'bx1~old-rect': { b: 'bx1', id: 'old-rect', v: 4, e: JSON.stringify(oldEl) } };
+  const ctx5 = await mkCtx(1440, 900, seed5);
+  const { page: o, errs: oerr } = await open(ctx5);
+  await settle(o, 1500);
+  const oe = (await els(o)).find(e => e.id === 'old-rect');
+  const oc = await o.evaluate(() => { const e = window.__cfExc.api.getSceneElements().find(x => x.id === 'old-rect');
+    return e && { s: e.strokeColor, b: e.backgroundColor, m: e.customData }; });
+  ok('старый чёрный карандаш стал тем светлым, каким был на экране', oc && oc.s === oldToDirect('#1e1e1e') && oc.b === oldToDirect('#ffc9c9'), JSON.stringify(oc));
+  const cloudOld = ((await store(o, 'boardEls'))['bx1~old-rect'] || {}).e || '';
+  ok('перевод уехал в облако, доска помечена', /"cfc":1/.test(cloudOld) && (await store(o, 'boards')).bx1.xc === 1);
+  // Сцена со стикером, нарисованная УЖЕ после перевода, не трогается:
+  // повторный заход на ту же доску ничего не переводит второй раз.
+  const again = await o.evaluate(() => window.__cfExc.api.getSceneElements().find(x => x.id === 'old-rect').strokeColor);
+  ok('второй раз не переводится', again === oldToDirect('#1e1e1e'), again);
+  ok('ни одной ошибки страницы', oerr.length === 0, oerr.join(' | '));
+  await ctx5.close();
+
   // ================= РЕЖИМ ПРОСМОТРА =================
   const ctx3 = await mkCtx(1440, 900, SEED());
   const { page: v } = await open(ctx3, '/index.html?view=board&board=bx1&room=x-room');
@@ -420,6 +560,13 @@ const SEED = () => ({
     return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight };
   });
   ok('телефон: панель инструментов на экране', !!tools && tools.bottom <= tools.vh + 1 && tools.top >= 0, JSON.stringify(tools));
+  // Пальцем браузер о двойном касании не сообщает — считаем сами.
+  const pr = live(await els(ph)).find(e => e.id === 'r1');
+  const prc = await scr(ph, pr.x + pr.w / 2, pr.y + pr.h / 2);
+  const onCanvas = await ph.evaluate(([x, y]) => { const h = document.elementFromPoint(x, y); return !!h && h.tagName === 'CANVAS'; }, [prc.x, prc.y]);
+  await ph.touchscreen.tap(prc.x, prc.y); await ph.waitForTimeout(120); await ph.touchscreen.tap(prc.x, prc.y);
+  await ph.waitForTimeout(600);
+  ok('телефон: двойное касание по фото открыло его во весь экран', onCanvas && await ph.evaluate(() => !!document.querySelector('[class*="z-[350]"]')), `фото под пальцем: ${onCanvas}`);
   ok('телефон: ни одной ошибки страницы', perr.length === 0, perr.join(' | '));
   await ctx4.close();
 

@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v12';
+const VERSION = 'cineflow-v13';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -40,7 +40,7 @@ const LIBS = [
 // Шрифты доски докачиваются по требованию и ложатся в кэш сами (ниже,
 // «всё остальное»): их девять семейств, а нужны обычно два.
 const VENDOR = [
-  './vendor/excalidraw/excalidraw-0.18.1.min.js',
+  './vendor/excalidraw/excalidraw-0.18.1-cf2.min.js',
   './vendor/excalidraw/excalidraw-0.18.1.css'
 ];
 

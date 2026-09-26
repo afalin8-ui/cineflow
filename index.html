@@ -683,16 +683,18 @@
         }
         /* ДОСКА НА EXCALIDRAW (пробная). Интерфейс Excalidraw — под нашу
            палитру: терракотовый акцент вместо его фиолетового и наши шесть
-           поверхностей в тёмной теме. Холст НЕ трогаем: в тёмной теме
-           Excalidraw выворачивает его фильтром, и любая подмена цветов
-           там разошлась бы с тем, что он выгружает картинкой. */
+           поверхностей в тёмной теме. Цвета холста задаёт сама доска
+           (фон --bg, карточки нашими цветами), см. ExcBoard. */
         .cf-exc { background: var(--bg); }
         .cf-exc .excalidraw { --ui-font: var(--font-ui);
           --color-primary: #d97757; --color-primary-darker: #c2410c; --color-primary-darkest: #9a3412;
           --color-primary-light: #f6dfd6; --color-primary-light-darker: #efcdbf; --color-primary-hover: #c9663f;
           --color-surface-primary-container: #f6dfd6; --color-on-primary-container: #5b2413;
           --color-brand-hover: #c9663f; --color-brand-active: #b85a36; --color-selection: #d97757; }
+        /* --theme-filter: none — холст и образцы цветов НЕ выворачиваются
+           (JS-половина этой правки — в vendor/excalidraw/build.mjs). */
         .cf-exc .excalidraw.theme--dark {
+          --theme-filter: none;
           --island-bg-color: #242322; --default-bg-color: #1a1918; --input-bg-color: #1a1918;
           --input-border-color: #33312d; --input-hover-bg-color: #1e1d1c; --popup-secondary-bg-color: #1e1d1c;
           --button-gray-1: #33312d; --button-gray-2: #2b2a28; --button-gray-3: #242322;
@@ -7254,6 +7256,9 @@
         // в предел документа Firestore (1 МБ); по элементу предела нет,
         // а несколько человек рисуют на одной доске одновременно.
         const EXC_VER = '0.18.1';
+        // Имя файла библиотеки несёт метку наших правок (см. build.mjs):
+        // под прежним именем service worker отдал бы старую сборку из кэша.
+        const EXC_FILE = '0.18.1-cf2';
         const EXC_ENGINE = 'excalidraw';
         // Файл-снимок открыт с диска, и папки vendor рядом с ним нет —
         // поэтому доску он берёт оттуда, откуда снимок сделан.
@@ -7273,7 +7278,7 @@
               document.head.appendChild(l);
             }
             const s = document.createElement('script');
-            s.src = base + `excalidraw-${EXC_VER}.min.js`;
+            s.src = base + `excalidraw-${EXC_FILE}.min.js`;
             s.onload = () => {
               if (window.ExcalidrawLib) resolve(window.ExcalidrawLib);
               else { excLoading = null; reject(new Error('файл доски пришёл, но библиотека не завелась')); }
@@ -7290,12 +7295,34 @@
         const EXC_TYPES = ['scene', 'doc', 'frame', 'ref', 'sticky'];
         const EXC_COLL = { scene: 'scenes', ref: 'references', sticky: 'stickies', doc: 'docs', frame: 'storyboard' };
         const EXC_LIST = { scene: 'scenes', ref: 'refs', sticky: 'stickies', doc: 'docs', frame: 'frames' };
-        // Цвета — в «светлом» пространстве Excalidraw: в тёмной теме он
-        // выворачивает холст фильтром, и светлая подложка становится тёмной.
-        // Так карточка читается одинаково и в тёмной теме, и в светлой.
-        const EXC_INK = '#1e1e1e';
-        const EXC_CARD_BG = '#f4f2ee';
-        const EXC_LINK = '#c2410c';
+        // Цвета — НАСТОЯЩИЕ, из нашей палитры. Холст Excalidraw больше не
+        // выворачивается фильтром (см. build.mjs, иначе фотографии бледнеют),
+        // поэтому что записано в элементе, то и на экране.
+        const EXC_TEXT = '#f0eee6';      // --text
+        const EXC_TEXT2 = '#c9c5bb';     // --text-2: подпись кадра
+        const EXC_MUTED = '#a6a39a';     // --muted: «нет фото», «кадр N»
+        const EXC_CARD_BG = '#242322';   // --card
+        const EXC_EDGE = '#33312d';      // --border
+        const EXC_DIM = '#6f6b63';       // --muted-2: рамка пустого окошка
+        const EXC_STICKY_INK = '#1e1e1e';// по пастели стикера — тёмным
+        const EXC_LINK = '#d97757';      // --accent
+        const EXC_BG = '#1a1918';        // --bg: холст
+        // Доски, нарисованные при ВЫВОРАЧИВАЮЩЕЙ тёмной теме, хранят цвета
+        // «до фильтра»: чёрный карандаш на экране был светлым. Переводим их
+        // ровно тем же счётом, что делал фильтр (invert 93% и поворот
+        // оттенка на 180°), — на экране остаётся то, что человек видел.
+        const excOldToDirect = (c) => {
+          const m = typeof c === 'string' ? /^#([0-9a-f]{3,8})$/i.exec(c.trim()) : null;
+          if (!m) return c;
+          let h = m[1];
+          if (h.length === 3 || h.length === 4) h = h.split('').map(x => x + x).join('');
+          if (h.length !== 6 && h.length !== 8) return c;
+          const iv = (i) => 0.93 - 0.86 * (parseInt(h.slice(i, i + 2), 16) / 255);
+          const R = iv(0), G = iv(2), B = iv(4);
+          const cl = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+          return '#' + cl(-0.574 * R + 1.430 * G + 0.144 * B) + cl(0.426 * R + 0.430 * G + 0.144 * B)
+                     + cl(0.426 * R + 1.430 * G - 0.856 * B) + h.slice(6);
+        };
         const excClip = (s, n) => { s = String(s || '').replace(/\s+\n/g, '\n').trim(); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; };
         // Ключ картинки: по нему Excalidraw кэширует файл. Считать хэш от
         // строки в двести килобайт на каждой сборке дорого, а длины и хвоста
@@ -7303,15 +7330,55 @@
         const excUrlKey = (u) => u ? u.length.toString(36) + '-' + u.slice(-24).replace(/[^a-zA-Z0-9]/g, '') : '';
         const excMime = (u) => { const m = /^data:([^;,]+)/.exec(u || ''); return m ? m[1] : 'image/jpeg'; };
         const excSeed = (id) => { let h = 7; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0; return Math.abs(h) || 1; };
+        // НАСТОЯЩИЙ размер картинки — из её заголовка, без распаковки.
+        // Пропорция лежит в записи референса (`ar`), только если его хоть раз
+        // показала старая доска; у остальных стояло 16:9, и фото на доске
+        // Excalidraw выходили сплющенными. jpeg и png называют размер в первых
+        // байтах; что не назвало (ссылка, webp) — через Image, асинхронно,
+        // и доска пересобирается, когда размер узнан.
+        const excDims = new Map();   // ключ картинки → {w, h}; {} — ещё узнаём
+        const pngSizeOf = (u) => {
+          try {
+            if (!/^data:image\/png;base64,/i.test(u)) return null;
+            const i = u.indexOf(','), bin = atob(u.slice(i + 1, i + 1 + 44));
+            if (bin.slice(12, 16) !== 'IHDR') return null;
+            const n = (o) => ((bin.charCodeAt(o) << 24) | (bin.charCodeAt(o + 1) << 16) | (bin.charCodeAt(o + 2) << 8) | bin.charCodeAt(o + 3)) >>> 0;
+            return { w: n(16), h: n(20) };
+          } catch (e) { return null; }
+        };
+        const excDimsOf = (u, ready) => {
+          if (!u) return null;
+          const k = excUrlKey(u), hit = excDims.get(k);
+          if (hit) return hit.w ? hit : null;
+          const d = dataUrlJpegSize(u) || pngSizeOf(u);
+          if (d && d.w && d.h) { excDims.set(k, d); return d; }
+          excDims.set(k, {});
+          const img = new Image();
+          img.onload = () => { if (img.naturalWidth) { excDims.set(k, { w: img.naturalWidth, h: img.naturalHeight }); if (ready) ready(); } };
+          img.src = u;
+          return null;
+        };
+        // Кадр раскадровки стоит в рамке ПРОПОРЦИИ ПРОЕКТА, а картинка в нём
+        // бывает любой. Растягивать её нельзя (то же «сплющено»), поэтому
+        // обрезаем края по рамке — как `object-fit: cover` у старой доски.
+        const excCoverCrop = (d, boxAR) => {
+          if (!d || !d.w || !d.h || !boxAR) return null;
+          const ar = d.w / d.h;
+          if (Math.abs(ar - boxAR) / boxAR < 0.01) return null;
+          const w = ar > boxAR ? d.h * boxAR : d.w, h = ar > boxAR ? d.h : d.w / boxAR;
+          return { x: (d.w - w) / 2, y: (d.h - h) / 2, width: w, height: h, naturalWidth: d.w, naturalHeight: d.h };
+        };
         // Габарит карточки из записи. Те же размеры по умолчанию, что
         // у старой доски: карточка на обеих досках одного размера.
-        const excGeo = (type, r, ratio) => {
+        // `d` — настоящий размер картинки референса: он важнее записи.
+        const excGeo = (type, r, ratio, d) => {
           const x = +r.x || 0, y = +r.y || 0;
           if (type === 'scene') return { x, y, w: +r.w || 288, h: +r.h || 150 };
           if (type === 'sticky') return { x, y, w: +r.w || 224, h: +r.h || 128 };
           if (type === 'doc') return { x, y, w: +r.w || 280, h: +r.h || 220 };
           if (type === 'frame') { const w = +r.w || 240; return { x, y, w, h: Math.round(w / (ratio || 16 / 9)) }; }
-          const w = +r.w || 192; const ar = (r.ar && r.ar > 0.05 && r.ar < 20) ? r.ar : 16 / 9;
+          const w = +r.w || 192;
+          const ar = (d && d.w && d.h) ? d.w / d.h : (r.ar && r.ar > 0.05 && r.ar < 20) ? r.ar : 16 / 9;
           return { x, y, w, h: Math.round(w / ar) };
         };
         const excLabel = (type, r) => {
@@ -7324,15 +7391,16 @@
         // Картинка карточки: у референса — превью из записи, у кадра —
         // скетч или снимок. Нет картинки — рисуем рамку с подписью.
         const excImage = (type, r) => type === 'ref' ? (r.url || '') : type === 'frame' ? (r.image || '') : '';
-        const excSig = (type, r, ratio) => {
-          const g = excGeo(type, r, ratio);
-          return [g.x, g.y, g.w, g.h, type === 'sticky' ? r.color : '', excLabel(type, r), excUrlKey(excImage(type, r))].join('|');
+        const excSig = (type, r, ratio, d) => {
+          const g = excGeo(type, r, ratio, d);
+          return [g.x, g.y, g.w, g.h, type === 'sticky' ? r.color : '', excLabel(type, r), excUrlKey(excImage(type, r)),
+                  d ? d.w + 'x' + d.h : ''].join('|');
         };
         // Строим элементы одной карточки. `prev` — то, что сейчас лежит
         // в сцене под этими id: версия новой обязана быть выше, иначе
         // Excalidraw посчитает замену старой.
-        const excBuildCard = (lib, type, r, ratio, prev) => {
-          const g = excGeo(type, r, ratio);
+        const excBuildCard = (lib, type, r, ratio, prev, d) => {
+          const g = excGeo(type, r, ratio, d);
           const cd = (part) => ({ cf: type, id: r.id, part });
           const img = excImage(type, r);
           const ver = (id) => ((prev.get(id) || {}).version || 0) + 1;
@@ -7343,13 +7411,14 @@
               fileId: 'cf-' + excUrlKey(img), status: 'saved', strokeColor: 'transparent',
               customData: cd('box')
             }], { regenerateIds: false });
-            out.push(el);
+            const crop = type === 'frame' ? excCoverCrop(d, g.w / g.h) : null;
+            out.push(crop ? { ...el, crop } : el);
           } else {
             const text = type === 'ref' ? 'нет фото' : type === 'frame' ? `кадр ${r.frameNum || ''}`.trim() : excLabel(type, r);
             const top = type === 'scene' || type === 'doc';
             const els = lib.convertToExcalidrawElements([{
               type: 'rectangle', id: r.id, x: g.x, y: g.y, width: g.w, height: g.h,
-              strokeColor: type === 'sticky' ? 'transparent' : EXC_INK, strokeWidth: 1,
+              strokeColor: type === 'sticky' ? 'transparent' : top ? EXC_EDGE : EXC_DIM, strokeWidth: 1,
               strokeStyle: (type === 'ref' || type === 'frame') ? 'dashed' : 'solid',
               backgroundColor: type === 'sticky' ? (r.color || '#fef08a') : (top ? EXC_CARD_BG : 'transparent'),
               // Сцена и документ — с прямыми углами: подпись у Excalidraw
@@ -7357,7 +7426,8 @@
               fillStyle: 'solid', roughness: 0, roundness: top ? null : { type: 3 },
               customData: cd('box'),
               label: text ? { text, fontSize: type === 'sticky' ? 20 : 16, fontFamily: 6,
-                              textAlign: top ? 'left' : 'center', verticalAlign: top ? 'top' : 'middle', strokeColor: EXC_INK } : undefined
+                              textAlign: top ? 'left' : 'center', verticalAlign: top ? 'top' : 'middle',
+                              strokeColor: type === 'sticky' ? EXC_STICKY_INK : top ? EXC_TEXT : EXC_MUTED } : undefined
             }], { regenerateIds: false });
             // Подпись внутри карточки получает постоянный id: по нему её
             // узнают и на другом устройстве, и после перезагрузки.
@@ -7375,7 +7445,7 @@
             if (cap) {
               const [t] = lib.convertToExcalidrawElements([{
                 type: 'text', id: r.id + '~c', x: g.x, y: g.y + g.h + 6, text: cap,
-                fontSize: 14, fontFamily: 6, strokeColor: EXC_INK, customData: cd('cap')
+                fontSize: 14, fontFamily: 6, strokeColor: EXC_TEXT2, customData: cd('cap')
               }], { regenerateIds: false });
               out.push(t);
               const gid = 'g~' + r.id;
@@ -7441,7 +7511,30 @@
         };
         const excViewKey = (b) => 'cf_xb_view_' + b;
 
-        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, children }) => {
+        // Кнопка у ВЫДЕЛЕННОЙ карточки: открыть фото во весь экран, сцену,
+        // документ. Ручка появляется по нажатию, а не висит у каждой
+        // карточки — то же правило покоя, что у старой доски. Своё
+        // состояние у неё СВОЁ: положение меняется с каждой прокруткой,
+        // и перерисовывать ради него весь Excalidraw нельзя.
+        const EXC_OPEN_LABEL = { ref: 'Во весь экран', scene: 'Открыть сцену', doc: 'Открыть', frame: 'К сцене' };
+        const ExcCardActions = ({ bind, onOpen }) => {
+          const [s, setS] = useState(null);
+          useEffect(() => { bind.current = setS; return () => { bind.current = null; }; }, []);
+          if (!s) return null;
+          return (
+            <button onPointerDown={(e) => e.stopPropagation()} onClick={() => onOpen(s.type, s.id)}
+                    data-cf="exc-open" title={EXC_OPEN_LABEL[s.type]}
+                    className="absolute flex items-center gap-1.5"
+                    style={{ left: s.x, top: s.y, transform: 'translate(-100%, -100%)', zIndex: 5, minHeight: 'var(--tap-sm)',
+                             padding: '0 10px', borderRadius: 'var(--r-md)', background: 'var(--card)', border: '1px solid var(--border)',
+                             color: 'var(--text)', fontSize: 'var(--fs-2)', whiteSpace: 'nowrap' }}>
+              {s.type === 'ref' ? <span style={{ fontSize: 'var(--fs-3)', lineHeight: 1 }}>⤢</span> : null}
+              {s.type === 'ref' ? '' : EXC_OPEN_LABEL[s.type]}
+            </button>
+          );
+        };
+
+        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, children }) => {
           const [lib, setLib] = useState(() => window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const [api, setApi] = useState(null);
@@ -7471,7 +7564,12 @@
               // нарисованное из местной копии). Ждём первого onChange
               // с isLoading = false.
               loaded: false,
-              applying: false, timer: 0, saveT: 0, viewT: 0, warned: {}
+              // Доска старше «настоящих цветов» (нет `xc` у доски): её
+              // нарисованное переводится один раз (`excOldToDirect`). Метка
+              // `cfc` на элементе не даёт перевести его дважды, а `t0`
+              // отделяет старое от того, что рисуют уже сейчас.
+              legacy: !!legacyColors, t0: Date.now(),
+              applying: false, timer: 0, saveT: 0, viewT: 0, dimsT: 0, warned: {}
             };
           }
 
@@ -7488,6 +7586,22 @@
           const isCardPart = (e) => !!(e && e.customData && e.customData.cf);
           const byOrder = (a, b) => (a.index && b.index) ? (a.index < b.index ? -1 : a.index > b.index ? 1 : (a.id < b.id ? -1 : 1)) : (a.index ? -1 : b.index ? 1 : 0);
 
+          const readOnlyNow = () => !!P.current.readOnly;
+          // Размер картинки узнался позже (не jpeg и не png) — пересобираем
+          // один раз на пачку, а не на каждую картинку.
+          const dimsReady = () => { const st = S.current; clearTimeout(st.dimsT); st.dimsT = setTimeout(() => rebuild(), 60); };
+          // Перевод цветов доски, нарисованной при выворачивающей теме.
+          const convertOld = (free) => {
+            const st = S.current; let n = 0;
+            const out = free.map(e => {
+              if (!st.legacy || isCardPart(e) || (e.customData && e.customData.cfc) || !(e.updated < st.t0)) return e;
+              n++;
+              return { ...e, strokeColor: excOldToDirect(e.strokeColor), backgroundColor: excOldToDirect(e.backgroundColor),
+                       customData: { ...(e.customData || {}), cfc: 1 },
+                       version: e.version + 1, versionNonce: (e.versionNonce + 7919) | 0, updated: Date.now() };
+            });
+            return n ? out : free;
+          };
           // Карточки и связи — из записей; нарисованное — как есть.
           // Возвращает полный список элементов для updateScene.
           const compose = (L, free, cur) => {
@@ -7499,10 +7613,18 @@
             EXC_TYPES.forEach(type => (cards[EXC_LIST[type]] || []).forEach(r => {
               const ids = [r.id, r.id + '~t', r.id + '~c'];
               const pend = st.pend.get(r.id);
-              const g = excGeo(type, r, projectRatio);
               const reflected = pend && Object.keys(pend).every(k => k === 'text' ? String(r.text || '') === pend.text : (k === 'color' ? r.color === pend.color : Math.abs((+r[k] || 0) - pend[k]) < 0.5));
               if (reflected) st.pend.delete(r.id);
-              const sig = excSig(type, r, projectRatio);
+              const u = excImage(type, r);
+              const d = u ? excDimsOf(u, dimsReady) : null;
+              // Размер фото узнан, а в записи пропорции нет или она другая —
+              // записываем: так её увидят и старая доска, и печать.
+              if (type === 'ref' && d && !readOnlyNow() && !st.seen.has('ar' + r.id + d.w + 'x' + d.h)
+                  && (!(r.ar > 0.05) || Math.abs(r.ar - d.w / d.h) / (d.w / d.h) > 0.01)) {
+                st.seen.add('ar' + r.id + d.w + 'x' + d.h);
+                st.ops.push({ k: 'ar', id: r.id, ar: Math.round((d.w / d.h) * 1000) / 1000 });
+              }
+              const sig = excSig(type, r, projectRatio, d);
               const c = st.cache.get(r.id);
               const have = ids.map(id => prev.get(id)).filter(Boolean);
               const main = prev.get(r.id);
@@ -7512,7 +7634,8 @@
               if (main && !main.isDeleted && ((pend && !reflected) || ids.includes(editing))) els = have;
               else if (main && !main.isDeleted && c && c.sig === sig && c.ver === main.version) els = have;
               else {
-                els = excBuildCard(L, type, r, projectRatio, prev);
+                els = excBuildCard(L, type, r, projectRatio, prev, d);
+                const g = excGeo(type, r, projectRatio, d);
                 const tEl = els.find(e => e.id === r.id + '~t'), cEl = els.find(e => e.id === r.id + '~c');
                 st.cache.set(r.id, { sig, type, geo: g, text: type === 'sticky' ? String(r.text || '') : null,
                                      shown: tEl ? tEl.originalText : null, cap: cEl ? cEl.originalText : null,
@@ -7567,6 +7690,7 @@
             // новый. Сами нарисованные элементы (они уезжают в облако) он
             // при этом не тронет: их порядок уже верный, и лишней записи
             // в облако не будет.
+            if (st.ops.length) flushSoon();
             const sorted = free.slice().sort(byOrder);
             const floor = (sorted.find(e => e.index) || {}).index || null;
             const keep = new Set([editing]);
@@ -7614,6 +7738,7 @@
             const cur = a.getSceneElementsIncludingDeleted();
             let free = cur.filter(e => !isCardPart(e));
             if (st.remote) { free = mergeRemote(free, st.remote.els, st.remote.server); st.remote = null; }
+            free = convertOld(free);
             feedFiles(a);
             apply(compose(P.current.lib, free, cur));
           };
@@ -7693,6 +7818,34 @@
             }
             if (st.dirty.size || st.ops.length || st.pend.size) flushSoon(busy);
             saveViewSoon(app);
+            trackSelection(els, app, busy);
+          };
+
+          // Выделена одна карточка (у кадра это картинка с подписью —
+          // тоже одна) и ничего не тащат — показываем кнопку «открыть»
+          // над её правым верхним углом.
+          const selBind = useRef(null);
+          const trackSelection = (els, app, busy) => {
+            const st = S.current;
+            let sel = null;
+            const ids = Object.keys(app.selectedElementIds || {}).filter(k => app.selectedElementIds[k]);
+            if (ids.length && !busy && !app.editingTextElement) {
+              const owners = new Set();
+              ids.forEach(id => { const e = els.find(x => x.id === id); const cd = e && e.customData; owners.add(cd && cd.cf && cd.cf !== 'link' ? cd.cf + '|' + cd.id : '-'); });
+              const one = owners.size === 1 ? [...owners][0] : '-';
+              const [type, id] = one.split('|');
+              if (one !== '-' && EXC_OPEN_LABEL[type]) {
+                const m = els.find(x => x.id === id && !x.isDeleted);
+                if (m) {
+                  const z = app.zoom.value;
+                  sel = { type, id, x: Math.round((m.x + m.width + app.scrollX) * z), y: Math.round((m.y + app.scrollY) * z) - 8 };
+                }
+              }
+            }
+            const key = sel ? [sel.type, sel.id, sel.x, sel.y].join('|') : '';
+            if (key === st.selKey) return;
+            st.selKey = key;
+            if (selBind.current) selBind.current(sel);
           };
 
           const watchCard = (e, cd) => {
@@ -7788,6 +7941,7 @@
               else if (op.k === 'back') act.back(op.type, op.id, { x: Math.round(op.x), y: Math.round(op.y) });
               else if (op.k === 'unlink') act.link(op.type, op.id, '');
               else if (op.k === 'relink') act.link(op.type, op.id, op.scene);
+              else if (op.k === 'ar') act.patch('references', op.id, { ar: op.ar });
               else if (op.k === 'kill') op.ids.forEach(id => kill.add(id));
               else if (op.k === 'revert') reverted = op.type;
               else if (op.k === 'dup') {
@@ -7880,10 +8034,52 @@
               const at = apiRef.current.at(ev.clientX - host.getBoundingClientRect().left, ev.clientY - host.getBoundingClientRect().top);
               P.current.act.drop(dt, at);
             };
+            // Двойное нажатие по фото, сцене, документу или кадру — открыть
+            // его. Считаем сами, по двум нажатиям: пальцем браузер о двойном
+            // касании не сообщает, а Excalidraw на двойное по картинке
+            // включил бы обрезку. Второе нажатие до него не доходит.
+            const tapDown = (ev) => {
+              if (ev.button !== undefined && ev.button !== 0) return;
+              const hit = cardAt(ev.clientX, ev.clientY);
+              const st = S.current, now = Date.now(), last = st.tap;
+              if (hit && last && last.id === hit.id && now - last.t < 380 && Math.hypot(ev.clientX - last.x, ev.clientY - last.y) < 24) {
+                st.tap = null;
+                ev.stopPropagation(); ev.preventDefault();
+                P.current.act.open(hit.type, hit.id);
+                return;
+              }
+              st.tap = hit ? { id: hit.id, t: now, x: ev.clientX, y: ev.clientY } : null;
+            };
+            // Браузерный dblclick мышью Excalidraw ловит отдельно — гасим его
+            // над теми же карточками, иначе поверх открытого включилась бы
+            // обрезка картинки.
+            const dbl = (ev) => { if (cardAt(ev.clientX, ev.clientY)) { ev.stopPropagation(); ev.preventDefault(); } };
             host.addEventListener('dragover', over, true);
             host.addEventListener('drop', drop, true);
-            return () => { host.removeEventListener('dragover', over, true); host.removeEventListener('drop', drop, true); };
+            host.addEventListener('pointerdown', tapDown, true);
+            host.addEventListener('dblclick', dbl, true);
+            return () => {
+              host.removeEventListener('dragover', over, true); host.removeEventListener('drop', drop, true);
+              host.removeEventListener('pointerdown', tapDown, true); host.removeEventListener('dblclick', dbl, true);
+            };
           }, [lib]);
+
+          // Какая карточка под точкой экрана: сверху вниз по слоям, только
+          // главные элементы (у кадра подпись тоже считается кадром).
+          // Стикер сюда не входит: двойное нажатие по нему — это письмо.
+          const cardAt = (cx, cy) => {
+            const a = apiRef.current && apiRef.current.api, host = hostRef.current;
+            if (!a || !host) return null;
+            const app = a.getAppState(), r = host.getBoundingClientRect(), z = app.zoom.value;
+            const x = (cx - r.left) / z - app.scrollX, y = (cy - r.top) / z - app.scrollY;
+            const els = a.getSceneElements();
+            for (let i = els.length - 1; i >= 0; i--) {
+              const e = els[i], cd = e.customData;
+              if (!cd || !EXC_OPEN_LABEL[cd.cf] || cd.cf === 'link') continue;
+              if (x >= e.x && x <= e.x + e.width && y >= e.y && y <= e.y + e.height) return { type: cd.cf, id: cd.id };
+            }
+            return null;
+          };
 
           // Ручки для приложения: где середина экрана, навести на область,
           // выгрузить картинкой, стереть нарисованное.
@@ -7914,7 +8110,8 @@
             },
             exportImage: async (kind) => {
               const a = apiRef.current.api, L = P.current.lib; if (!a || !L) return null;
-              const elements = a.getSceneElements(), appState = { ...a.getAppState(), exportBackground: true }, files = a.getFiles();
+              const elements = a.getSceneElements(), files = a.getFiles();
+              const appState = { ...a.getAppState(), exportBackground: true, exportWithDarkMode: false, viewBackgroundColor: EXC_BG };
               if (!elements.length) return null;
               if (kind === 'svg') {
                 const svg = await L.exportToSvg({ elements, appState, files, exportPadding: 24 });
@@ -7948,9 +8145,7 @@
             // прокрутку предыдущей доски Excalidraw.
             apiRef.current.view = view || { x: 0, y: 0, z: 1 };
             S.current.fit = !view;
-            let theme = 'dark';
-            try { theme = localStorage.getItem('cf_xb_theme') || 'dark'; } catch (e) {}
-            const free = S.current.local.els.filter(e => e && e.id && !isCardPart(e));
+            const free = convertOld(S.current.local.els.filter(e => e && e.id && !isCardPart(e)));
             free.forEach(e => { if ((S.current.synced.get(e.id) || 0) < e.version) S.current.dirty.add(e.id); });
             const elements = compose(lib, free, []);
             const files = {};
@@ -7961,10 +8156,11 @@
             return {
               elements, files,
               appState: {
-                // Фон подобран так, чтобы тёмная тема Excalidraw (он
-                // выворачивает холст фильтром) дала наш --bg, а светлая —
-                // тёплый белый, а не голубоватый.
-                theme, viewBackgroundColor: '#f8f7f6', currentItemFontFamily: 5,
+                // Оформление тёмное, холст — наш --bg, карандаш — светлый.
+                // Холст больше не выворачивается (см. build.mjs), поэтому
+                // тема здесь — только цвет панелей Excalidraw.
+                theme: 'dark', viewBackgroundColor: EXC_BG, currentItemFontFamily: 5,
+                currentItemStrokeColor: EXC_TEXT,
                 ...(view ? { scrollX: view.x, scrollY: view.y, zoom: { value: view.z } } : {})
               }
             };
@@ -7977,18 +8173,21 @@
           // (эффект вставки на доске), иначе он сказал бы «картинки
           // отключены».
           const uiOptions = useMemo(() => ({
-            canvasActions: { loadScene: false, clearCanvas: false, saveToActiveFile: false, toggleTheme: true, export: { saveFileToDisk: true } },
+            canvasActions: { loadScene: false, clearCanvas: false, saveToActiveFile: false, toggleTheme: false,
+                             changeViewBackgroundColor: false, export: { saveFileToDisk: true } },
             tools: { image: false }
           }), []);
-          // Тема помнится: в светлой фотографии показываются точно, в тёмной
-          // Excalidraw пропускает их через свой фильтр и они бледнеют.
-          const themeSeen = useRef('');
           const onChangeTop = (els, app, files) => {
             const st = S.current;
             if (!st.loaded) {
               if (app.isLoading) return;
               st.loaded = true;
               rebuild();
+              // Перевод цветов сделан — метим доску, чтобы на других
+              // устройствах и в следующий раз его не делали вовсе. Сам
+              // перевод в этом сеансе продолжается для того, что ещё
+              // приедет из облака.
+              if (st.legacy && !readOnlyNow()) P.current.act.markColors();
               // «Положить на доску» с другого экрана просило навести доску
               // на положенное, пока она грузилась, — наводим сейчас.
               // Иначе в первый раз вписываем в экран всё, что на доске:
@@ -8007,11 +8206,6 @@
               }
               return;
             }
-            if (app.theme !== themeSeen.current) {
-              themeSeen.current = app.theme;
-              try { localStorage.setItem('cf_xb_theme', app.theme); } catch (e) {}
-              if (hostRef.current) hostRef.current.dataset.theme = app.theme;
-            }
             onChange(els, app, files);
           };
 
@@ -8025,7 +8219,7 @@
           );
           const X = lib && lib.Excalidraw, M = lib && lib.MainMenu;
           return (
-            <div ref={hostRef} className="cf-exc w-full flex-1 min-h-0 relative" data-cf="exc-board" data-theme={themeSeen.current || 'dark'}>
+            <div ref={hostRef} className="cf-exc w-full flex-1 min-h-0 relative" data-cf="exc-board">
               {!lib || !initial ? (
                 <div className="absolute inset-0 flex items-center justify-center" style={{ color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>
                   Открываю доску Excalidraw…
@@ -8039,18 +8233,21 @@
                    UIOptions={uiOptions}>
                   {/* Меню Excalidraw без «Открыть» и «Сбросить холст»:
                       открыть чужой файл значило бы заменить доску целиком
-                      вместе с карточками сцен, сброс — снять их все разом. */}
+                      вместе с карточками сцен, сброс — снять их все разом.
+                      Без смены темы и фона холста: холст теперь не
+                      выворачивается, и светлый фон под светлым карандашом
+                      дал бы невидимые линии. */}
                   <M>
                     <M.DefaultItems.SaveAsImage />
                     <M.DefaultItems.Export />
                     <M.DefaultItems.SearchMenu />
                     <M.DefaultItems.Help />
-                    <M.Separator />
-                    <M.DefaultItems.ToggleTheme />
-                    <M.DefaultItems.ChangeCanvasBackground />
                   </M>
                 </X>
               )}
+              {/* Открыть — это чтение: у гостя не прячем (выделять ему, впрочем,
+                  Excalidraw в режиме просмотра не даёт — остаётся двойное). */}
+              <ExcCardActions bind={selBind} onOpen={(t, id) => P.current.act.open(t, id)} />
               {children}
             </div>
           );
@@ -15696,6 +15893,38 @@
               cardsRef.current = { ...cardsRef.current, stickies: up };
               setStickies(up); syncDoc('stickies', ns.id, ns);
             },
+            // Открыть карточку с доски: фото — во весь экран (листается по
+            // всем фото этой доски, сверху вниз и слева направо), сцену и
+            // кадр — экраном сцены, документ — в «Экспликациях».
+            open: (type, id) => {
+              // Фокус уходит с доски. Excalidraw слушает клавиши, только
+              // пока фокус у него, и гасит их всплытие: Escape не дошёл бы
+              // до просмотра (закрыть его было бы нечем), а стрелка, которой
+              // листают кадры, сдвинула бы выделенное фото под ним.
+              if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+              if (type === 'ref') {
+                const list = ((excCards && excCards.refs) || []).slice().sort((a, b) => ((a.y || 0) - (b.y || 0)) || ((a.x || 0) - (b.x || 0)));
+                const b = sortedBoards.find(x => x.id === activeBoardId);
+                setLightboxData({ scope: list.map(r => r.id), scopeLabel: b ? b.title : 'Доска', currentId: id });
+                return;
+              }
+              const sceneId = type === 'scene' ? id : type === 'frame' ? (storyboardRef.current.find(f => f.id === id) || {}).sceneId : '';
+              const view = type === 'doc' ? 'docs' : 'notion';
+              if (CF_VIEWS.indexOf(view) < 0) { showToast(view === 'docs' ? 'По этой ссылке документы не открываются' : 'По этой ссылке сцены не открываются'); return; }
+              if (type === 'doc') { setActiveDocId(id); setPhoneDocOpen(true); setCurrentView('docs'); return; }
+              if (!sceneId) { showToast('У этого кадра нет сцены'); return; }
+              setActiveSceneId(sceneId); setPhoneSceneOpen(true); setCurrentView('notion');
+            },
+            // Доска переведена на настоящие цвета — метка у самой доски,
+            // чтобы перевод не повторялся нигде.
+            markColors: () => {
+              if (READ_ONLY) return;
+              const b = boards.find(x => x.id === activeBoardId);
+              if (!b || b.xc) return;
+              const nb = { ...b, xc: 1 };
+              setBoards(prev => prev.map(x => x.id === nb.id ? nb : x));
+              syncDoc('boards', nb.id, nb);
+            },
             files: (files, at) => handleMultiFileUpload(files, null, { boardId: activeBoardId, x: at.x, y: at.y }),
             drop: (dt, at) => acceptDropped(dt, { place: { boardId: activeBoardId, x: at.x, y: at.y } }),
             accepts: dropHasImage,
@@ -19010,7 +19239,9 @@
                           и сравнивать их можно на одном проекте. */}
                       <button onClick={() => {
                                 const n = sortedBoards.filter(x => x.engine === EXC_ENGINE).length + 1;
-                                const nb = { id: `board-${Date.now()}`, title: n > 1 ? `Excalidraw ${n}` : 'Excalidraw', order: sortedBoards.length, engine: EXC_ENGINE };
+                                // xc — цвета на ней НАСТОЯЩИЕ (холст не выворачивается):
+                                // переводить с прежней темы нечего.
+                                const nb = { id: `board-${Date.now()}`, title: n > 1 ? `Excalidraw ${n}` : 'Excalidraw', order: sortedBoards.length, engine: EXC_ENGINE, xc: 1 };
                                 setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
                               }}
                               title="Новая доска на Excalidraw (проба): карточки сцен и связи те же"
@@ -19164,6 +19395,7 @@
                         отмены и своя подписка на облако. */}
                     {excActive ? (
                       <ExcBoard key={activeBoardId} boardId={activeBoardId} readOnly={READ_ONLY} cards={excCards || {}}
+                                legacyColors={!((sortedBoards.find(b => b.id === activeBoardId) || {}).xc)}
                                 projectRatio={projectRatio} store={excStore} act={excAct} apiRef={excApiRef}>
                         {renderScenePicker(true)}
                         <input ref={excFileRef} type="file" multiple accept="image/*,video/*,.pdf" className="hidden"
