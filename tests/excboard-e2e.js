@@ -470,6 +470,134 @@ const SEED = () => ({
   ok('вкладка «Основная» открывает свою доску, а не Excalidraw', own.old && !own.exc, JSON.stringify(own));
   await ctx.close();
 
+  // ================= ПЕРЕВОД СТАРОЙ ДОСКИ =================
+  // Старая доска с фигурами, подписью внутри фигуры, группой, стрелками
+  // к фигуре и к КАРТОЧКЕ, текстом и штрихами пера. «Перевести на
+  // Excalidraw» обязано перенести всё это родными элементами, не тронуть
+  // прежние данные доски, и «Вернуть прежнюю доску» — вернуть её как была.
+  const seed6 = SEED();
+  seed6.scenes.sc9 = { id: 'sc9', number: '9', title: 'ИНТ. СТУДИЯ', content: '', boardId: 'board-main', x: 900, y: 400, gear: {}, lightGear: {} };
+  seed6.stickies.st9 = { id: 'st9', boardId: 'board-main', x: 900, y: 120, w: 200, h: 120, text: 'Контра', color: '#fef08a', sceneId: '' };
+  const OLD_SHAPES = [
+    { id: 'shA', k: 'rect', x: 100, y: 100, w: 200, h: 120, sc: '#d97757', bg: '#34d399', sw: 2, sd: 'dashed', fs: 'solid', rd: 1, ro: 1, op: 1, g: 'grp1', sd8: 123 },
+    { id: 'shL', k: 'text', ct: 'shA', tx: 'Камера А', fz: 20, sc: '#f0eee6', x: 0, y: 0, w: 10, h: 10 },
+    { id: 'shB', k: 'ellipse', x: 500, y: 100, w: 160, h: 100, sc: '#38bdf8', bg: 'transparent', sw: 4, sd: 'solid', fs: 'solid', rd: 1, ro: 0, op: 0.6, g: 'grp1', sd8: 7 },
+    { id: 'shC', k: 'arrow', x: 300, y: 160, w: 200, h: 0, sc: '#fbbf24', bg: 'transparent', sw: 2, sd: 'solid', fs: 'solid', rd: 1, ro: 1, op: 1, a1: 'none', a2: 'arrow', rt: 'curved', b1: 'shA', b2: 'shB', sd8: 9 },
+    { id: 'shD', k: 'arrow', x: 660, y: 150, w: 240, h: 30, sc: '#fb7185', bg: 'transparent', sw: 2, sd: 'solid', fs: 'solid', rd: 1, ro: 0, op: 1, a1: 'none', a2: 'arrow', b1: 'shB', b2: 'st9', sd8: 11 },
+    { id: 'shF', k: 'arrow', x: 1000, y: 240, w: 0, h: 160, sc: '#f0eee6', bg: 'transparent', sw: 1, sd: 'solid', fs: 'solid', rd: 1, ro: 0, op: 1, a1: 'none', a2: 'arrow', b1: 'st9', b2: 'sc9', sd8: 12 },
+    { id: 'shT', k: 'text', x: 100, y: 400, w: 220, h: 60, tx: 'Свет с окна слева, контровой сзади', fz: 20, sc: '#f0eee6' },
+    { id: 'shE', k: 'line', x: 100, y: 600, w: 300, h: 0, sc: '#f0eee6', bg: 'transparent', sw: 1, sd: 'dotted', fs: 'solid', rd: 1, ro: 0, op: 1, a1: 'none', a2: 'none', sd8: 13 },
+    // Линия с наконечником: старая доска рисует его и у линии.
+    { id: 'shG', k: 'line', x: 100, y: 640, w: 300, h: 0, sc: '#f0eee6', bg: 'transparent', sw: 1, sd: 'solid', fs: 'solid', rd: 1, ro: 0, op: 1, a1: 'none', a2: 'arrow', sd8: 14 },
+    // Текст по центру своей рамки.
+    { id: 'shM', k: 'text', x: 500, y: 400, w: 300, h: 30, tx: 'Середина', fz: 20, sc: '#f0eee6', ta: 'center' }
+  ];
+  const OLD_INK = [
+    { id: 'kx1', t: 'pen', c: '#fbbf24', w: 4, p: [100, 700, 0.5, 150, 720, 0.6, 200, 700, 0.7, 260, 730, 0.5] },
+    { id: 'kx2', t: 'marker', c: '#fb7185', w: 10, p: [400, 700, 0.5, 480, 690, 0.5, 560, 710, 0.5] }
+  ];
+  seed6.canvas = { 'shape-board-main': { shapes: JSON.stringify(OLD_SHAPES) }, 'ink-board-main': { strokes: JSON.stringify(OLD_INK) } };
+  const ctx6 = await mkCtx(1440, 900, seed6, `localStorage.setItem('cf_active_board', 'board-main');`);
+  const c6 = await ctx6.newPage();
+  const cerr = [];
+  c6.on('pageerror', e => cerr.push(String(e).slice(0, 300)));
+  await c6.goto(`http://127.0.0.1:${PORT}/index.html`);
+  await c6.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+  await c6.waitForTimeout(700);
+  const toBoards = (pg, tab) => pg.evaluate(async (tab) => {
+    const d = [...document.querySelectorAll('button')].find(x => x.title === 'Доски'); if (d) d.click();
+    await new Promise(r => setTimeout(r, 500));
+    const t = [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(tab)); if (t) t.click();
+  }, tab);
+  await toBoards(c6, 'Основная');
+  await c6.waitForTimeout(1500);
+  ok('перевод: старая доска открыта своей', await c6.evaluate(() => !!document.getElementById('whiteboard-canvas') && !document.querySelector('[data-cf="exc-board"]')));
+  // Строка меню — настоящим нажатием: меню под строкой вкладок, и
+  // «есть ли элемент» тут не значит ничего (см. «Доски» в CLAUDE.md).
+  const menuHit = async (pg, cf) => {
+    await pg.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '···' && /Выгрузить/.test(b.title)).click());
+    await pg.waitForTimeout(300);
+    const r = await pg.evaluate((cf) => { const b = document.querySelector(`[data-cf="${cf}"]`); if (!b) return null;
+      const q = b.getBoundingClientRect(), x = q.left + q.width / 2, y = q.top + q.height / 2, h = document.elementFromPoint(x, y);
+      return { x, y, hit: !!h && (h === b || b.contains(h)) }; }, cf);
+    if (r && r.hit) await pg.mouse.click(r.x, r.y);
+    await pg.waitForTimeout(400);
+    return r;
+  };
+  const mh = await menuHit(c6, 'board-to-exc');
+  ok('перевод: строка «Перевести на Excalidraw» в «···» нажимается', !!mh && mh.hit, JSON.stringify(mh));
+  const dlg = await c6.evaluate(() => { const b = document.querySelector('[data-cf="confirm-ok"]'); const box = b && b.closest('[role="dialog"]');
+    return b && { label: b.textContent.trim(), red: /bg-red/.test(b.className), trash: !!(box && box.querySelector('.bg-red-500\\/20')), text: box ? box.textContent : '' }; });
+  ok('перевод: спрашивает спокойно — без корзины и красной кнопки, и говорит, что прежняя не стирается',
+     !!dlg && dlg.label === 'Перевести' && !dlg.red && !dlg.trash && /не стирается/.test(dlg.text) && /9 фигур/.test(dlg.text) && /2 штриха/.test(dlg.text), dlg && dlg.text.slice(0, 200));
+  await c6.click('[data-cf="confirm-ok"]');
+  await c6.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'board-main', { timeout: 60000 }).catch(() => {});
+  await settle(c6, 2500);
+  let C = live(await els(c6));
+  const X = await c6.evaluate(() => Object.fromEntries(window.__cfExc.api.getSceneElements().filter(e => /^o~/.test(e.id)).map(e => [e.id, {
+    type: e.type, x: Math.round(e.x), y: Math.round(e.y), w: Math.round(e.width), h: Math.round(e.height), sc: e.strokeColor, bg: e.backgroundColor,
+    ss: e.strokeStyle, sw: e.strokeWidth, op: e.opacity, g: e.groupIds, rd: e.roundness, text: e.originalText || e.text, cid: e.containerId,
+    sb: e.startBinding && e.startBinding.elementId, eb: e.endBinding && e.endBinding.elementId, ah: e.endArrowhead, n: e.points && e.points.length,
+    pr: e.pressures && e.pressures.length, be: (e.boundElements || []).map(b => b.id), cd: e.customData }])));
+  ok('перевод: доска открылась в Excalidraw', await c6.evaluate(() => window.__cfExc && window.__cfExc.boardId === 'board-main'));
+  const A = X['o~shA'] || {};
+  ok('прямоугольник: место, цвет, пунктир, полупрозрачная заливка', A.type === 'rectangle' && A.x === 100 && A.y === 100 && A.w === 200 && A.h === 120
+     && A.sc === '#d97757' && A.ss === 'dashed' && A.bg === '#34d39938', JSON.stringify(A));
+  ok('подпись внутри фигуры стала её подписью', (X['o~shA~l'] || {}).text === 'Камера А' && X['o~shA~l'].cid === 'o~shA' && A.be.includes('o~shA~l'), JSON.stringify(X['o~shA~l']));
+  ok('овал: толщина и прозрачность', (X['o~shB'] || {}).type === 'ellipse' && X['o~shB'].sw === 4 && X['o~shB'].op === 60, JSON.stringify(X['o~shB']));
+  ok('группа сохранилась', JSON.stringify(A.g) === '["o~grp1"]' && JSON.stringify((X['o~shB'] || {}).g) === '["o~grp1"]');
+  const Cc = X['o~shC'] || {};
+  ok('стрелка между фигурами держится за обе и осталась дугой', Cc.type === 'arrow' && Cc.sb === 'o~shA' && Cc.eb === 'o~shB' && Cc.ah === 'arrow' && Cc.n === 3 && (Cc.rd || {}).type === 2
+     && A.be.includes('o~shC') && (X['o~shB'] || {}).be.includes('o~shC'), JSON.stringify(Cc));
+  ok('стрелка к карточке держится за карточку', (X['o~shD'] || {}).eb === 'st9' && (C.find(e => e.id === 'st9') ? true : false), JSON.stringify(X['o~shD']));
+  const ST6 = await store(c6, 'stickies');
+  ok('стрелка «стикер → сцена» осталась рисунком: запись стикера не тронута', (X['o~shF'] || {}).eb === 'sc9' && ST6.st9.sceneId === '', JSON.stringify({ a: X['o~shF'], sid: ST6.st9.sceneId }));
+  ok('текст перенесён с переносом строк', (X['o~shT'] || {}).type === 'text' && /Свет с окна слева,?\s*\n?\s*контровой сзади/.test(X['o~shT'].text) && /\n/.test(X['o~shT'].text), JSON.stringify(X['o~shT'] && X['o~shT'].text));
+  ok('линия пунктиром — линией', (X['o~shE'] || {}).type === 'line' && X['o~shE'].ss === 'dotted');
+  ok('линия с наконечником — стрелкой с наконечником', (X['o~shG'] || {}).type === 'arrow' && X['o~shG'].ah === 'arrow', JSON.stringify(X['o~shG']));
+  const M = X['o~shM'] || {};
+  ok('текст по центру стоит по центру своей прежней рамки', Math.abs(M.x + M.w / 2 - 650) <= 12, JSON.stringify(M));
+  ok('штрихи пера — свободным рисунком со своим нажимом и цветом', (X['o~kx1'] || {}).type === 'freedraw' && X['o~kx1'].n === 4 && X['o~kx1'].pr === 4 && X['o~kx1'].sc === '#fbbf24'
+     && (X['o~kx2'] || {}).op === 32, JSON.stringify({ k1: X['o~kx1'], k2: X['o~kx2'] && X['o~kx2'].op }));
+  ok('карточки старой доски на своих местах', !!C.find(e => e.id === 'st9' && Math.round(e.x) === 900) && !!C.find(e => e.id === 'sc9'));
+  const B6 = await store(c6, 'boards'), E6 = await store(c6, 'boardEls'), K6 = await store(c6, 'canvas');
+  ok('доска помечена: Excalidraw, переведена со своей', B6['board-main'].engine === 'excalidraw' && B6['board-main'].from === 'own' && B6['board-main'].xc === 1, JSON.stringify(B6['board-main']));
+  const nOld = Object.keys(X).length;
+  ok('всё переведённое уехало в облако отдельными документами', Object.keys(E6).filter(k => /^board-main~o~/.test(k)).length === nOld, `${Object.keys(E6).filter(k => /^board-main~o~/.test(k)).length} из ${nOld}`);
+  ok('прежние данные доски в облаке не тронуты', K6['shape-board-main'].shapes === JSON.stringify(OLD_SHAPES) && K6['ink-board-main'].strokes === JSON.stringify(OLD_INK));
+  ok('перевод: ни одной ошибки страницы', cerr.length === 0, cerr.join(' | '));
+  // Другое устройство открывает ту же доску: всё из облака.
+  const ctx7 = await mkCtx(1440, 900, await c6.evaluate(() => JSON.parse(JSON.stringify(window.__cfStore))), `localStorage.setItem('cf_active_board', 'board-main');`);
+  const c7 = await ctx7.newPage();
+  await c7.goto(`http://127.0.0.1:${PORT}/index.html`);
+  await c7.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+  await c7.waitForTimeout(700);
+  await toBoards(c7, 'Основная');
+  await c7.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'board-main', { timeout: 60000 }).catch(() => {});
+  await settle(c7, 2000);
+  const X7 = live(await els(c7)).filter(e => /^o~/.test(e.id));
+  ok('другое устройство: переведённая доска та же', X7.length === nOld && X7.some(e => e.id === 'o~shC' && e.sb === 'o~shA'), `${X7.length} из ${nOld}`);
+  ok('другое устройство: второй раз ничего не переводит', !(await writes(c7)).some(w => w.coll === 'boardEls'));
+  await ctx7.close();
+  // Обратно.
+  const mb = await menuHit(c6, 'board-from-exc');
+  ok('«Вернуть прежнюю доску» в «···» нажимается', !!mb && mb.hit, JSON.stringify(mb));
+  await c6.click('[data-cf="confirm-ok"]');
+  await settle(c6, 1500);
+  const back = await c6.evaluate(() => { const w = document.getElementById('whiteboard-canvas'); return { own: !!w && w.getBoundingClientRect().width > 0, exc: !!document.querySelector('[data-cf="exc-board"]') }; });
+  ok('вернули — открылась прежняя доска', back.own && !back.exc && (await store(c6, 'boards'))['board-main'].engine === '', JSON.stringify(back));
+  const K6b = await store(c6, 'canvas');
+  ok('и её фигуры и рисунок на месте', K6b['shape-board-main'].shapes === JSON.stringify(OLD_SHAPES) && K6b['ink-board-main'].strokes === JSON.stringify(OLD_INK));
+  // Снова перевели — ничего не задвоилось.
+  await menuHit(c6, 'board-to-exc');
+  await c6.click('[data-cf="confirm-ok"]');
+  await c6.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'board-main', { timeout: 60000 }).catch(() => {});
+  await settle(c6, 2500);
+  const again6 = live(await els(c6)).filter(e => /^o~/.test(e.id));
+  ok('перевели снова — ничего не задвоилось', again6.length === nOld && new Set(again6.map(e => e.id)).size === nOld, `${again6.length} из ${nOld}`);
+  ok('ни одной ошибки страницы', cerr.length === 0, cerr.join(' | '));
+  await ctx6.close();
+
   // ================= ОБОРВАННАЯ СВЯЗЬ =================
   // Открыли без сети: облако отвечает «из кэша» и пусто, а на устройстве
   // лежит нарисованное, которое облако уже видело. Стирать его нельзя —

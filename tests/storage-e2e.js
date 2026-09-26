@@ -31,7 +31,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
 (async () => {
   await new Promise(r => setTimeout(r, 1200));
   const browser = await playwright.chromium.launch({ executablePath: process.env.CF_CHROME || '/opt/pw-browsers/chromium', args: ['--no-sandbox'] });
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
   await ctx.route('**/*', (route) => {
     const u = route.request().url();
     if (/firestore|firebase|googleapis|gstatic|nominatim/.test(u)) return route.abort();
@@ -113,7 +113,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
      /без них|БЕЗ них/.test(inProject.text || ''), (inProject.text || inProject.err || '').slice(0, 130));
 
   // ВЛЕЗЛО СНОВА — флаг снимается, и будущее переполнение опять новость.
-  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
   await ctx2.route('**/*', (route) => {
     const u = route.request().url();
     if (/firestore|firebase|googleapis|gstatic|nominatim/.test(u)) return route.abort();

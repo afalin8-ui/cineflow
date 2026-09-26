@@ -3363,18 +3363,24 @@
         };
 
         // «Удалить …?» — тоже окно, и оно лежит ПОВЕРХ другого: вопрос задают из «Проекта» или из карточки.
+        // Окно заведено под удаление: красное, с корзиной. Для действия,
+        // которое ничего не стирает (перевод доски), это неверный сигнал —
+        // у него `calm: true`: без корзины, главная кнопка акцентом,
+        // и своя подпись на ней (`label`).
         const ConfirmModal = ({ action, onCancel }) => {
             if (!action) return null;
+            const calm = !!action.calm;
             return (
                 <Modal onClose={onCancel} z={400} label={action.title}
-                       box="p-6 max-w-sm text-center border-t border-red-500/50" hideX>
-                    <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>
+                       box={calm ? 'p-6 max-w-sm text-center' : 'p-6 max-w-sm text-center border-t border-red-500/50'} hideX>
+                    {!calm && <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4"><Icons.Trash /></div>}
                     <h3 className="text-lg font-bold text-white mb-2">{action.title}</h3>
                     {/* pre-line — чтобы в длинных предупреждениях работал абзац */}
                     <p className="text-sm text-zinc-400 mb-6" style={{ whiteSpace: 'pre-line' }}>{action.message}</p>
                     <div className="flex gap-3">
                         <button onClick={onCancel} className="flex-1 py-3 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold transition-colors">Отмена</button>
-                        <button onClick={() => { action.onConfirm(); onCancel(); }} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold transition-colors">Подтвердить</button>
+                        <button onClick={() => { action.onConfirm(); onCancel(); }} data-cf="confirm-ok"
+                                className={'flex-1 py-3 text-white rounded-lg text-sm font-bold transition-colors ' + (calm ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-red-600 hover:bg-red-500')}>{action.label || 'Подтвердить'}</button>
                     </div>
                 </Modal>
             );
@@ -7483,6 +7489,115 @@
                    startBinding: { elementId: from.id, focus: 0, gap: 8 }, endBinding: { elementId: scene.id, focus: 0, gap: 8 } };
         };
 
+        // --- Старая доска → Excalidraw ---
+        // На входе то, что посчитала САМА старая доска (`excOldData` в
+        // AppCore): маршрут стрелки уже от края до края фигуры или карточки,
+        // текст уже разбит на строки её шрифтом, толщина штриха — с учётом
+        // вида кисти. Здесь только перевод полей: вторая копия геометрии
+        // старой доски разъехалась бы с первой при первой правке.
+        // id — `o~{старый id}`: по нему перевод узнаётся на любом
+        // устройстве и повторно не заводится, и он не встретится с id
+        // записей проекта, которыми названы карточки.
+        const EXC_FROM_OLD = (id) => 'o~' + id;
+        const excAlpha = (c, a) => /^#[0-9a-f]{6}$/i.test(c || '') ? c + Math.round(a * 255).toString(16).padStart(2, '0') : c;
+        const excFromOld = (lib, data) => {
+          const out = [], byId = new Map();
+          const mark = () => ({ cfc: 1, cv: 1 });
+          const shapes = data.shapes || [];
+          shapes.forEach(s => {
+            const id = EXC_FROM_OLD(s.id);
+            const base = { id, strokeColor: s.sc || EXC_TEXT, opacity: Math.round((s.op === undefined ? 1 : s.op) * 100),
+                           groupIds: s.g ? [EXC_FROM_OLD(s.g)] : [], customData: mark() };
+            let sk;
+            if (s.k === 'text') {
+              // Шрифт — системный гротеск, как было на старой доске, а не
+              // рукописный Excalidraw: подпись схемы не должна менять вид.
+              sk = { ...base, type: 'text', x: s.x, y: s.y, text: s.text || ' ', fontSize: s.fz || 20, fontFamily: 2, textAlign: s.ta || 'left' };
+            } else {
+              const style = { strokeWidth: s.sw || 2, strokeStyle: s.sd || 'solid', roughness: s.ro === undefined ? 1 : s.ro };
+              if (s.pts && s.pts.length > 1) {
+                const p0 = s.pts[0];
+                // Линию с наконечником (старая доска рисует их и у линии)
+                // или привязанную к фигуре Excalidraw умеет держать только
+                // стрелкой: у стрелки без наконечников вид тот же.
+                const arrow = s.k === 'arrow' || !!(s.t1 || s.t2) || s.a1 === 'arrow' || s.a2 === 'arrow';
+                sk = { ...base, ...style, type: arrow ? 'arrow' : 'line', x: p0[0], y: p0[1],
+                       points: s.pts.map(q => [q[0] - p0[0], q[1] - p0[1]]),
+                       roundness: s.curved ? { type: 2 } : null };
+                if (arrow) { sk.startArrowhead = s.a1 === 'arrow' ? 'arrow' : null; sk.endArrowhead = s.a2 === 'arrow' ? 'arrow' : null; }
+              } else {
+                const fill = !!s.bg && s.bg !== 'transparent';
+                // Сплошная заливка старой доски полупрозрачная (0,22) —
+                // иначе фигура закрыла бы собой всё, что под ней.
+                sk = { ...base, ...style, type: s.k === 'rect' ? 'rectangle' : s.k, x: s.x, y: s.y, width: Math.max(1, s.w), height: Math.max(1, s.h),
+                       backgroundColor: fill ? ((s.fs || 'solid') === 'solid' ? excAlpha(s.bg, 0.22) : s.bg) : 'transparent',
+                       fillStyle: s.fs === 'cross' ? 'cross-hatch' : (s.fs === 'hachure' ? 'hachure' : 'solid'),
+                       // Скругляла старая доска только ровный прямоугольник
+                       // (радиус min(26, 22% стороны)); «от руки» и ромб у неё
+                       // всегда с острыми углами.
+                       roundness: (s.rd && !s.ro && s.k === 'rect') ? { type: 3, value: 26 } : null };
+              }
+              if (s.label && s.label.text) sk.label = { text: s.label.text, fontSize: s.label.fz || 20, fontFamily: 2,
+                                                        strokeColor: s.label.sc || EXC_TEXT, textAlign: s.label.ta || 'center' };
+            }
+            let els;
+            try { els = lib.convertToExcalidrawElements([sk], { regenerateIds: false }); }
+            catch (e) { console.warn('excFromOld', s.id, e); return; }
+            const main = els.find(e => e.id === id);
+            if (!main) return;
+            // Подпись внутри — постоянный id от хозяина, как у карточек.
+            const lbl = els.find(e => e.id !== id);
+            if (lbl) {
+              const tid = id + '~l';
+              main.boundElements = [{ type: 'text', id: tid }];
+              els = [main, { ...lbl, id: tid, containerId: id, customData: mark(), groupIds: main.groupIds }];
+            }
+            if (s.k !== 'text' && s.seed) main.seed = s.seed;
+            els.forEach(e => { e.index = null; byId.set(e.id, e); out.push(e); });
+          });
+          // Привязки — когда все фигуры уже есть: стрелка может ссылаться
+          // на фигуру, что лежит в списке после неё. Цель — фигура (её id
+          // с приставкой) или карточка (id записи): карточке о стрелке
+          // скажет сборка доски, фигуре говорим сами.
+          shapes.forEach(s => {
+            const a = byId.get(EXC_FROM_OLD(s.id));
+            if (!a || a.type !== 'arrow') return;
+            [['startBinding', s.t1], ['endBinding', s.t2]].forEach(([k, t]) => {
+              if (!t) return;
+              a[k] = { elementId: t, focus: 0, gap: 7 };
+              const h = byId.get(t);
+              if (h) h.boundElements = [...(h.boundElements || []), { type: 'arrow', id: a.id }];
+            });
+          });
+          // Штрихи пера — свободным рисунком. Excalidraw отдаёт линию
+          // perfect-freehand с размером «толщина × 4,25», а при среднем
+          // нажиме тот рисует её ещё в sin(π/4)·2 ≈ 1,41 раза шире; старая
+          // доска при том же нажиме рисует ровно свою толщину. Отсюда 6.
+          const raw = [];
+          (data.strokes || []).forEach(k => {
+            const p = k.p || [];
+            if (p.length < 6) return;
+            const x0 = p[0], y0 = p[1], pts = [], pr = [];
+            let mnx = 0, mny = 0, mxx = 0, mxy = 0;
+            for (let i = 0; i + 2 < p.length; i += 3) {
+              const dx = p[i] - x0, dy = p[i + 1] - y0;
+              pts.push([dx, dy]); pr.push(Math.max(0.05, Math.min(1, p[i + 2] || 0.5)));
+              mnx = Math.min(mnx, dx); mny = Math.min(mny, dy); mxx = Math.max(mxx, dx); mxy = Math.max(mxy, dy);
+            }
+            const id = EXC_FROM_OLD(k.id);
+            raw.push({ type: 'freedraw', id, x: x0, y: y0, width: mxx - mnx, height: mxy - mny, points: pts, pressures: pr,
+                       simulatePressure: false, strokeWidth: Math.max(0.25, Math.round((k.w || 4) / 6 * 100) / 100),
+                       strokeColor: k.c || EXC_TEXT, opacity: k.op || 100, backgroundColor: 'transparent', fillStyle: 'solid',
+                       strokeStyle: 'solid', roughness: 0, roundness: null, angle: 0, groupIds: [], frameId: null, index: null,
+                       boundElements: null, link: null, locked: false, isDeleted: false, version: 1, versionNonce: excSeed(id + 'n'),
+                       seed: excSeed(id), updated: Date.now(), customData: mark() });
+          });
+          // lastCommittedPoint — «штрих закончен»: без него Excalidraw
+          // рисует конец линии как ещё ведомый, с недотянутым хвостом.
+          if (raw.length) { try { out.push(...lib.restoreElements(raw, null).map(e => ({ ...e, index: null, lastCommittedPoint: e.points[e.points.length - 1] }))); } catch (e) { console.warn('excFromOld ink', e); } }
+          return out;
+        };
+
         // Ключ порядка (fractional index) проверяем сами: элемент с кривым
         // ключом роняет загрузку сцены Excalidraw целиком («invalid order
         // key»), и доска не открывается вовсе. Сам он таких не делает, но
@@ -7534,7 +7649,7 @@
           );
         };
 
-        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, children }) => {
+        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, children }) => {
           const [lib, setLib] = useState(() => window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const [api, setApi] = useState(null);
@@ -7542,7 +7657,7 @@
           // Всё живое — в ref: Excalidraw зовёт обработчики из своих
           // замыканий, и свежие записи проекта обязаны быть видны оттуда.
           const P = useRef({});
-          P.current = { cards, projectRatio, store, act, readOnly, lib };
+          P.current = { cards, projectRatio, store, act, readOnly, lib, convert };
           const S = useRef(null);
           if (!S.current) {
             const loc = excReadLocal(boardId);
@@ -7739,8 +7854,26 @@
             let free = cur.filter(e => !isCardPart(e));
             if (st.remote) { free = mergeRemote(free, st.remote.els, st.remote.server); st.remote = null; }
             free = convertOld(free);
+            // Доску только что перевели со старой: её фигуры и штрихи
+            // становятся нарисованным этой доски и уезжают в облако как
+            // обычные правки. То, что уже есть (перевели раньше, вернули
+            // и перевели снова), не заводится второй раз: id постоянные.
+            const cv = P.current.convert;
+            let added = [];
+            if (cv && cv.boardId === boardId && !st.convDone && !readOnlyNow()) {
+              st.convDone = true;
+              const have = new Set(cur.map(e => e.id));
+              added = excFromOld(P.current.lib, cv).filter(e => !have.has(e.id));
+              free = [...free, ...added];
+            }
             feedFiles(a);
             apply(compose(P.current.lib, free, cur));
+            if (cv && st.convDone && !st.convSaid) {
+              st.convSaid = true;
+              added.forEach(e => st.dirty.add(e.id));
+              if (added.length) flushSoon();
+              P.current.act.converted(boardId, added.length);
+            }
           };
 
           // --- облако: чужие правки ---
@@ -7926,6 +8059,9 @@
             // Стрелка от карточки к сцене = привязать карточку к сцене.
             cur.forEach(e => {
               if (e.type !== 'arrow' || e.isDeleted || isCardPart(e) || !e.startBinding || !e.endBinding) return;
+              // Стрелка, приехавшая со старой доски, — рисунок схемы, а не
+              // связь проекта: молча менять записи при переводе нельзя.
+              if (e.customData && e.customData.cv) return;
               const A = byId.get(e.startBinding.elementId), B = byId.get(e.endBinding.elementId);
               const ca = A && A.customData, cb = B && B.customData;
               if (!ca || !cb || !ca.cf || !cb.cf || A.id !== ca.id || B.id !== cb.id) return;
@@ -15840,6 +15976,100 @@
           // в Excalidraw возвращает элемент, а мы по нему — запись.
           const excGone = useRef(new Map());
           const excFileRef = useRef(null);
+          // --- ПЕРЕВОД СТАРОЙ ДОСКИ НА EXCALIDRAW ---
+          // Та же запись доски, те же карточки (место и размер у них в самих
+          // записях), а фигуры и штрихи снимаются С ЭКРАНА старой доски —
+          // из памяти, то есть ровно то, что человек сейчас видит. Геометрию
+          // считает сама старая доска: маршрут стрелки до края карточки,
+          // перенос строк её шрифтом. Прежние данные доски (canvas/shape-…,
+          // canvas/ink-…, растровая подложка) НЕ трогаются вовсе: обратный
+          // путь «Вернуть прежнюю доску» просто переключает движок обратно.
+          const [excConvert, setExcConvert] = useState(null);
+          const excOldData = () => {
+            if (!hitCtx.current) hitCtx.current = document.createElement('canvas').getContext('2d');
+            const ctx = hitCtx.current;
+            const list = shapesRef.current || [];
+            const target = (id) => !id ? '' : findShape(id) ? EXC_FROM_OLD(id) : cardBind(id) ? id : '';
+            const shapes = [];
+            list.forEach(sh => {
+              if (isText(sh)) {
+                if (sh.ct && findShape(sh.ct)) return;   // подпись внутри — вместе с хозяином
+                ctx.font = textFont(sh);
+                const ta = sh.ta || 'left';
+                // У старой доски строки выровнены внутри рамки шириной w.
+                // Excalidraw, заводя текст по центру или вправо, считает
+                // данную точку ОПОРОЙ выравнивания (серединой или правым
+                // краем), поэтому отдаём ему середину или край той рамки.
+                const ax = ta === 'center' ? sh.x + sh.w / 2 : ta === 'right' ? sh.x + sh.w : sh.x;
+                shapes.push({ id: sh.id, k: 'text', x: ax, y: sh.y, text: wrapText(ctx, sh.tx, Math.max(10, sh.w)).join('\n'),
+                              fz: sh.fz || 20, ta, sc: sh.sc, op: sh.op, g: sh.g });
+                return;
+              }
+              const o = { id: sh.id, k: sh.k, sc: sh.sc, bg: sh.bg, sw: sh.sw, sd: sh.sd, fs: sh.fs, rd: sh.rd, ro: sh.ro, op: sh.op,
+                          a1: sh.a1, a2: sh.a2, g: sh.g, seed: sh.sd8 };
+              if (isLineKind(sh.k)) {
+                const r = arrowRoute(sh);
+                // Дуга у старой доски — квадратичная кривая с опорой В СТОРОНЕ
+                // от линии, а скруглённая линия Excalidraw проходит ЧЕРЕЗ
+                // свои точки. Поэтому средней точкой берём вершину дуги.
+                o.pts = r.curved ? [r.pts[0], [(r.pts[0][0] + 2 * r.pts[1][0] + r.pts[2][0]) / 4, (r.pts[0][1] + 2 * r.pts[1][1] + r.pts[2][1]) / 4], r.pts[2]] : r.pts;
+                o.curved = r.curved;
+                o.t1 = target(sh.b1); o.t2 = target(sh.b2);
+              } else {
+                const b = shapeBox(sh);
+                o.x = b.x; o.y = b.y; o.w = b.w; o.h = b.h;
+              }
+              const lb = list.find(q => q.ct === sh.id && isText(q));
+              if (lb && lb.tx) o.label = { text: lb.tx, fz: lb.fz || 20, sc: lb.sc, ta: lb.ta || 'center' };
+              shapes.push(o);
+            });
+            const strokes = (strokesRef.current || []).map(k => ({ id: k.id, c: k.c, w: k.w * brushWidthK(k.t), op: Math.round(brushAlpha(k.t) * 100), p: k.p }));
+            return { shapes, strokes };
+          };
+          const convertBoardToExc = () => {
+            if (READ_ONLY || INK_OFF) return;
+            const b = boards.find(x => x.id === activeBoardId);
+            if (!b || b.engine === EXC_ENGINE) return;
+            const data = excOldData();
+            const raster = !!legacyCv.current && (!legacyMap.current || legacyMap.current.some(v => v));
+            const nShapes = data.shapes.length, nInk = data.strokes.length;
+            setConfirmAction({
+              title: 'Перевести доску на Excalidraw?',
+              message: `Карточки останутся на своих местах, ${nShapes} ${plur(nShapes, 'фигура', 'фигуры', 'фигур')} и ${nInk} ${plur(nInk, 'штрих', 'штриха', 'штрихов')} станут элементами Excalidraw.`
+                + (raster ? ' Старый растровый рисунок (до перехода на векторы) Excalidraw показать не может — он останется на прежней доске.' : '')
+                + ' Прежняя доска не стирается: вернуть её можно в «···».',
+              calm: true, label: 'Перевести',
+              onConfirm: () => {
+                if (typeof flushInk === 'function') { try { flushInk(); } catch (e) {} }
+                const parts = [];
+                if (nShapes) parts.push(`${nShapes} ${plur(nShapes, 'фигура', 'фигуры', 'фигур')}`);
+                if (nInk) parts.push(`${nInk} ${plur(nInk, 'штрих', 'штриха', 'штрихов')}`);
+                setExcConvert({ boardId: b.id, ...data, say: (parts.length ? parts.join(' и ') + ' перенесены' : 'карточки на месте') + (raster ? '; старый растровый рисунок остался на прежней' : '') });
+                const nb = { ...b, engine: EXC_ENGINE, xc: 1, from: 'own' };
+                setBoards(prev => prev.map(x => x.id === nb.id ? nb : x));
+                syncDoc('boards', nb.id, nb);
+              }
+            });
+          };
+          // Обратно: движок доски — прежний. Нарисованное на Excalidraw
+          // остаётся в облаке и вернётся, если перевести снова.
+          const revertBoardFromExc = () => {
+            if (READ_ONLY) return;
+            const b = boards.find(x => x.id === activeBoardId);
+            if (!b || b.engine !== EXC_ENGINE || b.from !== 'own') return;
+            setConfirmAction({
+              title: 'Вернуть прежнюю доску?',
+              message: 'Доска откроется такой, какой была до перевода: фигуры и рисунок старой доски на месте, карточки там, куда их передвинули сейчас. Нарисованное на Excalidraw не стирается — оно вернётся, если перевести доску снова.',
+              calm: true, label: 'Вернуть',
+              onConfirm: () => {
+                const nb = { ...b, engine: '' };
+                setBoards(prev => prev.map(x => x.id === nb.id ? nb : x));
+                syncDoc('boards', nb.id, nb);
+                showToast('Прежняя доска на месте');
+              }
+            });
+          };
+
           const excAct = {
             patch: excPatch,
             link: (type, id, sceneId) => {
@@ -15928,7 +16158,15 @@
             files: (files, at) => handleMultiFileUpload(files, null, { boardId: activeBoardId, x: at.x, y: at.y }),
             drop: (dt, at) => acceptDropped(dt, { place: { boardId: activeBoardId, x: at.x, y: at.y } }),
             accepts: dropHasImage,
-            toast: showToast
+            toast: showToast,
+            // Перевод со старой доски лёг на эту — говорим, что сделано, и
+            // забываем данные: второй раз их не понадобится.
+            converted: (boardId, n) => {
+              const cv = excConvert;
+              setExcConvert(null);
+              if (!cv || cv.boardId !== boardId) return;
+              showToast(`Доска на Excalidraw: ${cv.say}. Прежняя цела — вернуть её можно в «···»`);
+            }
           };
           // Нарисованное на доске Excalidraw — по элементу в `boardEls`.
           // Подписка — запросом по доске: ответ на запрос приходит ЦЕЛИКОМ,
@@ -19216,7 +19454,9 @@
                                         deleteNetDoc('canvas', canvasDocId(b.id));
                                         deleteNetDoc('canvas', strokesDocId(b.id));
                                         deleteNetDoc('canvas', shapesDocId(b.id));
-                                        if (b.engine === EXC_ENGINE) purgeExcBoard(b.id);
+                                        // Доска, которую переводили и вернули, хранит нарисованное
+                                        // на Excalidraw до следующего перевода — стираем и его.
+                                        if (b.engine === EXC_ENGINE || b.from === 'own') purgeExcBoard(b.id);
                                         setActiveBoardId((rest[0] || DEFAULT_BOARD).id);
                                         showToast('Доска удалена · референсы остались в галерее');
                                       }});
@@ -19380,6 +19620,23 @@
                                 Выгрузить SVG
                               </button>
                               <hr className="cf-edit-only" />
+                              {/* Перевод старой доски на Excalidraw и обратно. Прежние
+                                  данные доски не стираются ни в ту, ни в другую
+                                  сторону — поэтому это не «опасная» строка. */}
+                              {!excActive && !INK_OFF && (
+                                <button className="cf-edit-only" data-cf="board-to-exc" onClick={() => { setBoardMenu(false); convertBoardToExc(); }}
+                                        title="Та же доска на Excalidraw: карточки, фигуры и рисунок переедут, прежняя не стирается">
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', fontWeight: 700, width: 16, textAlign: 'center' }}>Ex</span>
+                                  Перевести на Excalidraw
+                                </button>
+                              )}
+                              {excActive && ((sortedBoards.find(b => b.id === activeBoardId) || {}).from === 'own') && (
+                                <button className="cf-edit-only" data-cf="board-from-exc" onClick={() => { setBoardMenu(false); revertBoardFromExc(); }}
+                                        title="Открыть доску такой, какой она была до перевода">
+                                  <span style={{ width: 16, textAlign: 'center' }}>↩</span>
+                                  Вернуть прежнюю доску
+                                </button>
+                              )}
                               <button className="cf-edit-only" style={{ color: 'var(--danger)' }} title="Линии и фигуры; карточки останутся"
                                       onClick={() => { setBoardMenu(false); if (excActive) { if (excApiRef.current.clearDrawing) excApiRef.current.clearDrawing(); showToast('Нарисованное стёрто · карточки остались, «отменить» вернёт'); return; } setConfirmAction({title: 'Очистить рисунок на доске?', message: 'Все линии и фигуры на этой доске будут стёрты. Карточки, референсы и заметки останутся. Другие доски не тронем.', onConfirm:()=>{ pushUndo(!!legacyCv.current); strokesRef.current = []; shapesRef.current = []; setSelShapes([]); loadLegacy(null); legacyDirty.current = false; saveCanvas(activeBoardId, ''); saveStrokes(activeBoardId, []); saveShapes(activeBoardId, []); bumpInk(); showToast("Холст очищен"); }}); }}>
                                 <Icons.Trash/> Очистить рисунок
@@ -19395,7 +19652,7 @@
                         отмены и своя подписка на облако. */}
                     {excActive ? (
                       <ExcBoard key={activeBoardId} boardId={activeBoardId} readOnly={READ_ONLY} cards={excCards || {}}
-                                legacyColors={!((sortedBoards.find(b => b.id === activeBoardId) || {}).xc)}
+                                legacyColors={!((sortedBoards.find(b => b.id === activeBoardId) || {}).xc)} convert={excConvert}
                                 projectRatio={projectRatio} store={excStore} act={excAct} apiRef={excApiRef}>
                         {renderScenePicker(true)}
                         <input ref={excFileRef} type="file" multiple accept="image/*,video/*,.pdf" className="hidden"
