@@ -83,7 +83,7 @@ const SEED = () => ({
                 rv: { id: 'rv', url: IMG, video: true, dur: 42, full: 'https://example.invalid/clip.mp4', boardId: 'bx1', x: 100, y: 1000, w: 180, ar: 1.5,
                       sceneId: '', tags: ['видео'], label: '' } },
   stickies: { st1: { id: 'st1', boardId: 'bx1', x: 420, y: 700, w: 224, h: 128, text: 'Свет из окна', color: '#fef08a', sceneId: '' } },
-  storyboard: { f1: { id: 'f1', sceneId: 'sc2', frameNum: '2.1', description: 'общий план', image: IMG, boardId: 'bx1', x: 760, y: 420, w: 240 } }
+  storyboard: { f1: { id: 'f1', sceneId: 'sc2', frameNum: '2.1', description: 'общий план', image: IMG, boardId: 'bx1', x: 760, y: 420, w: 240, shot: true } }
 });
 
 (async () => {
@@ -622,6 +622,52 @@ const SEED = () => ({
   }
   ok('двойное нажатие по ролику открывает плеер', await p.evaluate(() => { const b = document.querySelector('[class*="z-[350]"]'); return !!b && !!b.querySelector('video'); }));
   await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+
+  // --- 11ж. копия кадра раскадровки: новый кадр той же сцены со своим
+  // номером и без «снято ✓», картинка и описание — с собой. Копия рамки
+  // и подписи в облако не уходит: карточку строит новая запись.
+  const toastText = (page) => page.evaluate(() => { const t = document.querySelector('[data-cf="toast"]'); return t ? t.textContent : ''; });
+  const frameAt = async () => p.evaluate(() => { const e = window.__cfExc.api.getSceneElements().find(x => x.id === 'f1'); return e && { x: e.x, y: e.y, w: e.width, h: e.height }; });
+  let F1 = await frameAt();
+  await p.evaluate(([x, y]) => { const a = window.__cfExc.api, s = a.getAppState(); a.updateScene({ appState: { zoom: { value: 1 }, scrollX: s.width / 2 - x, scrollY: s.height / 2 - y } }); }, [F1.x + F1.w / 2, F1.y + F1.h / 2]);
+  await p.waitForTimeout(300);
+  const sb0 = Object.keys(await store(p, 'storyboard')).length;
+  let fc = await scr(p, F1.x + F1.w * 0.75, F1.y + F1.h / 2);
+  await p.mouse.click(fc.x, fc.y); await p.waitForTimeout(250);
+  await p.keyboard.press('Control+d');
+  await settle(p);
+  let SB = await store(p, 'storyboard');
+  const cp1 = Object.values(SB).find(f => f.id !== 'f1' && f.frameNum === '2.2');
+  ok('Ctrl+D по кадру — новый кадр той же сцены с номером 2.2, без «снято ✓», с картинкой и описанием',
+     Object.keys(SB).length === sb0 + 1 && !!cp1 && cp1.sceneId === 'sc2' && cp1.boardId === 'bx1' && !cp1.shot && cp1.image === SB.f1.image && cp1.description === 'общий план' && SB.f1.shot === true,
+     JSON.stringify(Object.values(SB).map(f => [f.id, f.frameNum, f.shot, f.boardId])));
+  E = live(await els(p));
+  ok('копия лежит на доске своей карточкой с подписью «2.2 · общий план»', !!cp1 && E.some(e => e.id === cp1.id) && (E.find(e => e.id === cp1.id + '~c') || {}).text === '2.2 · общий план',
+     JSON.stringify(E.filter(e => e.cd && e.cd.cf === 'frame').map(e => [e.id, e.text])));
+  ok('лишних копий рамки на доске не осталось', E.filter(e => e.cd && e.cd.cf === 'frame' && !/^(f1|sb-)/.test(e.id)).length === 0);
+  ok('в облако копия рамки нарисованным не ушла', !Object.values(await store(p, 'boardEls')).some(d => /"cf":"frame"/.test(d.e || '')));
+  ok('полоска говорит, какой номер у копии и что она в раскадровке сцены', /Копия кадра — 2\.2/.test(await toastText(p)), await toastText(p));
+  // Перетаскивание с Alt — тоже копия.
+  await escape(p);
+  // Хватаем исходник за край, который копия (сдвинутая на 10) не накрывает.
+  F1 = await frameAt();
+  fc = await scr(p, F1.x + 4, F1.y + F1.h / 2);
+  await p.keyboard.down('Alt');
+  await drag(p, fc, { x: fc.x, y: fc.y + F1.h + 80 });
+  await p.keyboard.up('Alt');
+  await settle(p);
+  SB = await store(p, 'storyboard');
+  const cp2 = Object.values(SB).find(f => f.frameNum === '2.3');
+  ok('перетаскивание с Alt — ещё один кадр, 2.3', Object.keys(SB).length === sb0 + 2 && !!cp2 && cp2.sceneId === 'sc2',
+     JSON.stringify(Object.values(SB).map(f => [f.id, f.frameNum, Math.round(f.x), Math.round(f.y)])));
+  const nums = [SB.f1, cp2].filter(Boolean).map(f => [f.frameNum, Math.round(f.y)]);
+  ok('копия — там, куда утащили, а исходный кадр остался на месте', !!cp2 && Math.abs(SB.f1.y - F1.y) <= 2 && cp2.y > F1.y + F1.h, JSON.stringify(nums));
+  E = live(await els(p));
+  const onBd = (id) => E.find(e => e.id === id);
+  ok('и на доске так же: 2.1 на прежнем месте, 2.3 под рукой, лишних рамок нет', !!cp2 && Math.abs(onBd('f1').y - F1.y) <= 2 && !!onBd(cp2.id) && Math.abs(onBd(cp2.id).y - cp2.y) <= 2
+     && E.filter(e => e.cd && e.cd.cf === 'frame' && e.cd.part === 'box').length === 3,
+     JSON.stringify(E.filter(e => e.cd && e.cd.cf === 'frame').map(e => [e.id, Math.round(e.y), e.text])));
+  await escape(p);
 
   // --- 12. своя доска рядом по-прежнему своя
   await p.evaluate(() => { const t = [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Основная')); t.click(); });

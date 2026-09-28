@@ -8409,7 +8409,8 @@
               act.link(it.cf, it.id, sc.id);
             });
             const ops = st.ops; st.ops = [];
-            let reverted = false;
+            let reverted = false, back = false;
+            const copied = [];
             ops.forEach(op => {
               if (op.k === 'remove') act.remove(op.type, op.id);
               else if (op.k === 'back') act.back(op.type, op.id, { x: Math.round(op.x), y: Math.round(op.y) });
@@ -8421,10 +8422,38 @@
               else if (op.k === 'dup') {
                 kill.add(op.el.id);
                 if (op.type === 'sticky' && op.part === 'box') act.copySticky(op.id, { x: Math.round(op.el.x), y: Math.round(op.el.y), w: Math.round(op.el.width), h: Math.round(op.el.height) });
+                // Копия кадра — новый кадр той же сцены со своим номером:
+                // окошко раскадровки дёшево, и копируют его ради соседнего
+                // плана. Подпись кадра едет в той же группе и уходит вместе
+                // с копией рамки — её построит новая запись.
+                else if (op.type === 'frame' && op.part === 'box') {
+                  // Перетаскивание с Alt: Excalidraw оставляет копию на
+                  // ПРЕЖНЕМ месте, а утаскивает исходник. Номер у копии
+                  // свой, и новый «2.2» остался бы позади, а под рукой
+                  // уехал бы старый «2.1». Меняем местами: копия — там,
+                  // куда тащили, исходный кадр возвращается на своё место.
+                  const c = st.cache.get(op.id), m = byId.get(op.id), pd = st.pend.get(op.id);
+                  const swap = !!(c && m && !m.isDeleted && pd && ('x' in pd || 'y' in pd)
+                                  && Math.abs(op.el.x - c.geo.x) < 1 && Math.abs(op.el.y - c.geo.y) < 1);
+                  const at = swap ? m : op.el;
+                  const n = act.copyFrame(op.id, { x: Math.round(at.x), y: Math.round(at.y), w: Math.round(at.width) });
+                  if (n) copied.push(n);
+                  if (n && swap) {
+                    delete pd.x; delete pd.y;
+                    if (!Object.keys(pd).length) st.pend.delete(op.id);
+                    c.sig = ''; back = true;
+                  }
+                }
                 else if (op.part === 'box') st.warned.dup = true;
               }
             });
-            if (st.warned.dup) { st.warned.dup = false; act.toast('Сцены, референсы, документы и кадры не копируются — это записи проекта. Копируются стикеры и нарисованное'); }
+            // Копия кадра ложится и в раскадровку сцены — говорим об этом:
+            // иначе новый «5.4» в сцене выглядел бы взявшимся ниоткуда.
+            const said = [];
+            if (st.warned.dup) { st.warned.dup = false; said.push('Сцены, референсы и документы не копируются — это записи проекта. Копируются стикеры, кадры и нарисованное'); }
+            if (copied.length) said.push(copied.length === 1 ? `Копия кадра — ${copied[0]}, она же добавлена в раскадровку сцены`
+                                                              : `Копии кадров — ${copied.join(', ')}, они же добавлены в раскадровку сцен`);
+            if (said.length) act.toast(said.join('. '));
             if (reverted) act.toast({ scene: 'Название и текст сцены правятся в «Сценах»', doc: 'Документ правится в «Экспликациях»',
                                       frame: 'Номер и описание кадра правятся в раскадровке сцены', ref: 'Фотографию кладут бросив файл или вставкой' }[reverted] || 'Эта подпись берётся из проекта');
             st.pend.forEach((patch, id) => {
@@ -8453,7 +8482,11 @@
               try { a.updateScene({ elements: next, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER }); } finally { st.applying = false; }
               kill.forEach(id => { const e = a.getSceneElementsIncludingDeleted().find(x => x.id === id); if (e) st.synced.set(id, e.version); });
             }
-            if (reverted) rebuild();
+            if (back) {
+              // Выделение осталось бы на исходнике — а он уехал обратно.
+              a.updateScene({ appState: { selectedElementIds: {}, selectedGroupIds: {} }, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER });
+            }
+            if (reverted || back) rebuild();
             saveLocalSoon();
           };
 
@@ -16488,6 +16521,22 @@
               const up = [...cardListOf('stickies'), ns];
               cardsRef.current = { ...cardsRef.current, stickies: up };
               setStickies(up); syncDoc('stickies', ns.id, ns);
+            },
+            // Копия кадра — новый кадр ТОЙ ЖЕ сцены, как у своей доски:
+            // свой номер «сцена.следующий» и без «снято ✓» — это факт
+            // о настоящем дубле, а не о плане. Картинка и описание едут
+            // с копией: её заводят ради соседнего плана того же кадра.
+            copyFrame: (fromId, geo) => {
+              if (READ_ONLY) return '';
+              const src = storyboardRef.current.find(x => x.id === fromId);
+              if (!src) return '';
+              const o = { ...src, id: newId('sb'), boardId: activeBoardId, frameNum: nextFrameNum(src.sceneId).num, ...geo };
+              delete o.shot;
+              const up = [...storyboardRef.current, o];
+              storyboardRef.current = up;
+              cardsRef.current = { ...cardsRef.current, storyboard: up };
+              setStoryboard(up); syncDoc('storyboard', o.id, o);
+              return o.frameNum;
             },
             // Открыть карточку с доски: фото — во весь экран (листается по
             // всем фото этой доски, сверху вниз и слева направо), сцену и
