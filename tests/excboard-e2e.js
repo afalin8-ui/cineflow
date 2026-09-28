@@ -627,6 +627,9 @@ const SEED = () => ({
   // номером и без «снято ✓», картинка и описание — с собой. Копия рамки
   // и подписи в облако не уходит: карточку строит новая запись.
   const toastText = (page) => page.evaluate(() => { const t = document.querySelector('[data-cf="toast"]'); return t ? t.textContent : ''; });
+  // Пересборок до сих пор было множество (перенос, связи, правки из облака) —
+  // и ни одна не имела права выдать себя за перестановку слоёв.
+  ok('пересборки доски не записывают порядок слоёв сами', (await store(p, 'boards')).bx1.zo === undefined, JSON.stringify((await store(p, 'boards')).bx1.zo));
   const frameAt = async () => p.evaluate(() => { const e = window.__cfExc.api.getSceneElements().find(x => x.id === 'f1'); return e && { x: e.x, y: e.y, w: e.width, h: e.height }; });
   let F1 = await frameAt();
   await p.evaluate(([x, y]) => { const a = window.__cfExc.api, s = a.getAppState(); a.updateScene({ appState: { zoom: { value: 1 }, scrollX: s.width / 2 - x, scrollY: s.height / 2 - y } }); }, [F1.x + F1.w / 2, F1.y + F1.h / 2]);
@@ -668,6 +671,46 @@ const SEED = () => ({
      && E.filter(e => e.cd && e.cd.cf === 'frame' && e.cd.part === 'box').length === 3,
      JSON.stringify(E.filter(e => e.cd && e.cd.cf === 'frame').map(e => [e.id, Math.round(e.y), e.text])));
   await escape(p);
+
+  // --- 11з. порядок слоёв карточек помнится: подняли кадр над соседним —
+  // он остаётся сверху и после пересборки, и на другом устройстве, и
+  // чужая перестановка приезжает сюда. Пишется ОДНОЙ записью доски.
+  const order = (page, ids) => page.evaluate((ids) => { const all = window.__cfExc.api.getSceneElements().map(e => e.id); return ids.map(id => all.indexOf(id)); }, ids);
+  const cpA = cp1 && cp1.id;
+  let ord = await order(p, ['f1', cpA]);
+  ok('до перестановки копия 2.2 лежит над кадром 2.1', ord[0] >= 0 && ord[1] > ord[0], JSON.stringify(ord));
+  F1 = await frameAt();
+  fc = await scr(p, F1.x + 4, F1.y + F1.h / 2);
+  await p.mouse.click(fc.x, fc.y); await p.waitForTimeout(250);
+  const wBoards0 = (await writes(p)).filter(w => w.coll === 'boards').length;
+  const wSb0 = (await writes(p)).filter(w => w.coll === 'storyboard').length;
+  await p.keyboard.press('Control+Shift+BracketRight');
+  await settle(p);
+  ord = await order(p, ['f1', cpA]);
+  const zo1 = (await store(p, 'boards')).bx1.zo || [];
+  ok('«на передний план»: кадр 2.1 над копией, и порядок лёг в запись доски', ord[0] > ord[1] && zo1.indexOf('f1') > zo1.indexOf(cpA) && zo1.indexOf(cpA) >= 0,
+     JSON.stringify({ ord, zo1 }));
+  const wB = (await writes(p)).filter(w => w.coll === 'boards').length - wBoards0;
+  const wS = (await writes(p)).filter(w => w.coll === 'storyboard').length - wSb0;
+  ok('перестановка стоит одной записи доски, записи кадров не тронуты', wB === 1 && wS === 0, `доска ${wB}, кадры ${wS}`);
+  await escape(p);
+  // Пересборка: утащили стикер (запись поменялась — доска пересобрана).
+  const S1b = (live(await els(p))).find(e => e.id === 'st1');
+  if (S1b) { const sa = await scr(p, S1b.x + S1b.w - 20, S1b.y + 20); await drag(p, sa, { x: sa.x + 40, y: sa.y + 30 }); await settle(p); await escape(p); }
+  ord = await order(p, ['f1', cpA]);
+  ok('после пересборки кадр 2.1 по-прежнему сверху', ord[0] > ord[1], JSON.stringify(ord));
+  const zoCloud = await p.evaluate(() => JSON.parse(JSON.stringify(window.__cfStore)));
+  const ctxZ = await mkCtx(1440, 900, zoCloud);
+  const { page: pz, errs: errsZ } = await open(ctxZ);
+  ord = await order(pz, ['f1', cpA]);
+  ok('другое устройство: кадр 2.1 тоже сверху', ord[0] >= 0 && ord[0] > ord[1], JSON.stringify(ord));
+  ok('другое устройство: ни одной ошибки страницы', errsZ.length === 0, errsZ.join(' | '));
+  await ctxZ.close();
+  // Чужая перестановка: другое устройство опустило 2.1 под копию.
+  await p.evaluate(([a]) => { const b = window.__cfStore.boards.bx1; const z = b.zo.filter(x => x !== 'f1'); z.splice(z.indexOf(a), 0, 'f1'); b.zo = z; window.__cfEmit('boards'); }, [cpA]);
+  await settle(p, 900);
+  ord = await order(p, ['f1', cpA]);
+  ok('чужая перестановка приезжает: 2.1 снова под копией', ord[0] >= 0 && ord[0] < ord[1], JSON.stringify(ord));
 
   // --- 12. своя доска рядом по-прежнему своя
   await p.evaluate(() => { const t = [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Основная')); t.click(); });

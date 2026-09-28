@@ -7489,6 +7489,14 @@
         // и плашка, стоящая после метки, накрыла бы её.
         const EXC_PARTS = ['~t', '~c', '~vb', '~v'];
         const excPartIds = (id) => [id, ...EXC_PARTS.map(p => id + p)];
+        // Разошёлся ли порядок карточек на экране с собранным. Сравниваем
+        // только общие id: карточка, которая только что легла или ушла,
+        // перестановкой не считается.
+        const excOrderMoved = (now, was) => {
+          const inWas = new Set(was), inNow = new Set(now);
+          const a = now.filter(id => inWas.has(id)), b = was.filter(id => inNow.has(id));
+          return a.some((id, i) => id !== b[i]);
+        };
         // Точка на краю прямоугольника по линии между центрами — туда
         // упирается связь. Тот же смысл, что у привязки Excalidraw с
         // focus 0: линия смотрит в центр карточки.
@@ -7846,7 +7854,7 @@
           );
         };
 
-        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, linkMode, onLinkMode, children }) => {
+        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, linkMode, onLinkMode, layers, children }) => {
           const [lib, setLib] = useState(() => window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const [api, setApi] = useState(null);
@@ -7854,7 +7862,7 @@
           // Всё живое — в ref: Excalidraw зовёт обработчики из своих
           // замыканий, и свежие записи проекта обязаны быть видны оттуда.
           const P = useRef({});
-          P.current = { cards, projectRatio, store, act, readOnly, lib, convert, linkMode, onLinkMode };
+          P.current = { cards, projectRatio, store, act, readOnly, lib, convert, linkMode, onLinkMode, layers };
           const S = useRef(null);
           if (!S.current) {
             const loc = excReadLocal(boardId);
@@ -7921,7 +7929,14 @@
             const prev = new Map(cur.map(e => [e.id, e]));
             const app = apiRef.current && apiRef.current.api ? apiRef.current.api.getAppState() : null;
             const editing = app && app.editingTextElement ? app.editingTextElement.id : '';
-            const out = [], boxes = new Map(), drawn = new Map();
+            const out = [], boxes = new Map(), drawn = new Map(), groups = [];
+            // Порядок слоёв карточек — список id снизу вверх в записи доски
+            // (`zo`). Пока наша правка порядка едет в запись, берём её
+            // (`zoPend`) — иначе пересборка вернула бы старый порядок.
+            // Запись доски поменялась — своя правка вернулась или чужая
+            // победила, в обоих случаях верим записи.
+            if (st.zoPend && st.zoPend.base !== P.current.layers) st.zoPend = null;
+            const Z = new Map((st.zoPend ? st.zoPend.ids : (P.current.layers || [])).map((id, i) => [id, i]));
             EXC_TYPES.forEach(type => (cards[EXC_LIST[type]] || []).forEach(r => {
               const ids = excPartIds(r.id);
               const pend = st.pend.get(r.id);
@@ -7956,8 +7971,13 @@
               const m = els.find(e => e.id === r.id) || els[0];
               boxes.set(r.id, { x: m.x, y: m.y, w: m.width, h: m.height });
               drawn.set(r.id, type);
-              out.push(...els);
+              groups.push({ id: r.id, els, k: groups.length });
             }));
+            // Карточки из списка — в его порядке; каких в нём нет (легли
+            // на доску позже) — сверху, как всё новое в Excalidraw.
+            groups.forEach(g => { g.k = Z.has(g.id) ? Z.get(g.id) : Z.size + g.k; });
+            groups.sort((a, b) => a.k - b.k).forEach(g => out.push(...g.els));
+            st.cardSeq = groups.map(g => g.id);
             // Связи со сценой — только когда оба конца на этой доске.
             const links = [];
             const sceneIds = new Set((cards.scenes || []).map(s => s.id));
@@ -8118,7 +8138,7 @@
           }, [api, boardId]);
 
           // Записи проекта поменялись (свои или из облака) — пересобираем.
-          useEffect(() => { if (api) rebuild(); }, [api, cards, projectRatio]);
+          useEffect(() => { if (api) rebuild(); }, [api, cards, projectRatio, layers]);
 
           // --- наши правки: наружу ---
           const saveLocalSoon = () => {
@@ -8141,10 +8161,33 @@
             const st = S.current;
             if (st.applying || !P.current.lib) return;
             const busy = app.cursorButton === 'down' || !!app.newElement || !!app.multiElement || !!app.editingTextElement;
+            const seq = [];
             for (const e of els) {
               const cd = e.customData;
-              if (cd && cd.cf) { watchCard(e, cd); continue; }
+              if (cd && cd.cf) {
+                if (cd.cf !== 'link' && e.id === cd.id && !e.isDeleted && st.drawn.has(e.id)) seq.push(e.id);
+                watchCard(e, cd); continue;
+              }
               if ((st.synced.get(e.id) || 0) !== e.version) st.dirty.add(e.id);
+            }
+            // Карточку подняли или опустили («на передний план» и прочее):
+            // порядок карточек на экране разошёлся с собранным. Запоминаем
+            // его, иначе первая же пересборка вернула бы прежний. Но только
+            // если сдвинулись ВЫДЕЛЕННЫЕ, а остальные стоят как стояли:
+            // «отменить» у Excalidraw возвращает карточкам старые ключи
+            // порядка, и они всплывают сами — это не просьба человека.
+            // Такой сдвиг не пишем, а возвращаем запомненный порядок.
+            if (!busy && st.cardSeq && excOrderMoved(seq, st.cardSeq)) {
+              const sel = app.selectedElementIds || {}, rest = (l) => l.filter(id => !sel[id]);
+              if (seq.some(id => sel[id]) && !excOrderMoved(rest(seq), rest(st.cardSeq))) { st.layersNew = seq; flushSoon(); }
+              else if (!st.orderFixT) {
+                const fix = () => {
+                  const a = apiRef.current && apiRef.current.api;
+                  if (a && a.getAppState().cursorButton === 'down') { st.orderFixT = setTimeout(fix, 300); return; }
+                  st.orderFixT = 0; rebuild();
+                };
+                st.orderFixT = setTimeout(fix, 150);
+              }
             }
             if (st.dirty.size || st.ops.length || st.pend.size) flushSoon(busy);
             saveViewSoon(app);
@@ -8410,6 +8453,17 @@
             });
             const ops = st.ops; st.ops = [];
             let reverted = false, back = false;
+            // Перестановка слоёв — в запись доски. Кроме той, что пришла
+            // вместе с копией: Alt-копирование у Excalidraw само поднимает
+            // утаскиваемое наверх, а человек просил копию, а не слой.
+            if (st.layersNew) {
+              const ids = st.layersNew; st.layersNew = null;
+              if (ops.some(op => op.k === 'dup')) back = true;
+              else {
+                st.cardSeq = ids;
+                if (!readOnly && act.layers) { st.zoPend = { ids, base: P.current.layers }; act.layers(ids); }
+              }
+            }
             const copied = [];
             ops.forEach(op => {
               if (op.k === 'remove') act.remove(op.type, op.id);
@@ -8523,7 +8577,12 @@
             const vis = () => { if (document.visibilityState === 'hidden') out(); };
             window.addEventListener('pagehide', out);
             document.addEventListener('visibilitychange', vis);
-            return () => { window.removeEventListener('pagehide', out); document.removeEventListener('visibilitychange', vis); out(); };
+            return () => {
+              window.removeEventListener('pagehide', out); document.removeEventListener('visibilitychange', vis); out();
+              // Отложенная пересборка чужой доски не должна лечь на новую:
+              // apiRef общий, и после смены доски в нём уже другая.
+              clearTimeout(S.current.orderFixT); S.current.orderFixT = 0; clearTimeout(S.current.dimsT);
+            };
           }, [api]);
 
           // Файл, брошенный на холст, — через общий приём файлов проекта
@@ -16560,6 +16619,18 @@
               if (!sceneId) { showToast('У этого кадра нет сцены'); return; }
               setActiveSceneId(sceneId); setPhoneSceneOpen(true); setCurrentView('notion');
             },
+            // Порядок слоёв карточек — у самой доски одним списком id снизу
+            // вверх: одна маленькая запись на перестановку. В записях
+            // карточек ему не место — там картинки, и поднять одну
+            // фотографию над другой стоило бы отправки обеих в облако.
+            layers: (ids) => {
+              if (READ_ONLY) return;
+              const b = boards.find(x => x.id === activeBoardId);
+              if (!b) return;
+              const nb = { ...b, zo: ids };
+              setBoards(prev => prev.map(x => x.id === nb.id ? nb : x));
+              syncDoc('boards', nb.id, nb);
+            },
             // Доска переведена на настоящие цвета — метка у самой доски,
             // чтобы перевод не повторялся нигде.
             markColors: () => {
@@ -20157,6 +20228,7 @@
                       <ExcBoard key={activeBoardId} boardId={activeBoardId} readOnly={READ_ONLY} cards={excCards || {}}
                                 legacyColors={!((sortedBoards.find(b => b.id === activeBoardId) || {}).xc)} convert={excConvert}
                                 linkMode={excLinkMode && !READ_ONLY} onLinkMode={setExcLinkMode}
+                                layers={(sortedBoards.find(b => b.id === activeBoardId) || {}).zo}
                                 projectRatio={projectRatio} store={excStore} act={excAct} apiRef={excApiRef}>
                         {renderScenePicker(true)}
                         {!READ_ONLY && excBlank && excCards && !EXC_TYPES.some(t => (excCards[EXC_LIST[t]] || []).length) && renderBoardTemplates(true)}
