@@ -78,7 +78,10 @@ const SEED = () => ({
     sc3: { id: 'sc3', number: '3', title: 'ИНТ. ПОДЪЕЗД', content: '', boardId: '', x: 0, y: 0, gear: {}, lightGear: {} }
   },
   references: { r1: { id: 'r1', url: IMG, boardId: 'bx1', x: 100, y: 420, w: 180, ar: 1.5, sceneId: 'sc1', tags: [], label: '' },
-                r2: { id: 'r2', url: STRIPES, boardId: 'bx1', x: 1100, y: 420, w: 200, sceneId: '', tags: [], label: '' } },
+                r2: { id: 'r2', url: STRIPES, boardId: 'bx1', x: 1100, y: 420, w: 200, sceneId: '', tags: [], label: '' },
+                // Ролик: постер в url, сам файл «в облаке».
+                rv: { id: 'rv', url: IMG, video: true, dur: 42, full: 'https://example.invalid/clip.mp4', boardId: 'bx1', x: 100, y: 1000, w: 180, ar: 1.5,
+                      sceneId: '', tags: ['видео'], label: '' } },
   stickies: { st1: { id: 'st1', boardId: 'bx1', x: 420, y: 700, w: 224, h: 128, text: 'Свет из окна', color: '#fef08a', sceneId: '' } },
   storyboard: { f1: { id: 'f1', sceneId: 'sc2', frameNum: '2.1', description: 'общий план', image: IMG, boardId: 'bx1', x: 760, y: 420, w: 240 } }
 });
@@ -158,7 +161,7 @@ const SEED = () => ({
   const escape = async (page) => { await page.keyboard.press('Escape'); await page.waitForTimeout(150); };
 
   // ================= НОУТБУК =================
-  const ctx = await mkCtx(1440, 900, SEED());
+  const ctx = await mkCtx(1440, 900, SEED(), `localStorage.setItem('cf_gemini_key', 'AIza-test-key');`);
   const { page: p, errs } = await open(ctx);
 
   // --- 1. карточки и связи
@@ -463,6 +466,163 @@ const SEED = () => ({
   await p.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'bx1', { timeout: 30000 });
   await p.waitForTimeout(600);
 
+  // --- 11в. мини-карта: всё содержимое и рамка «где я»; нажатие по
+  // середине карты ставит в середину экрана середину содержимого.
+  await escape(p);
+  await p.evaluate(() => { const a = window.__cfExc.api; a.updateScene({ appState: { selectedElementIds: {} } });
+    a.scrollToContent(a.getSceneElements(), { fitToContent: true, animate: false }); });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => { const a = window.__cfExc.api, s = a.getAppState();
+    a.updateScene({ appState: { zoom: { value: 2 }, scrollX: s.scrollX - 150, scrollY: s.scrollY - 80 } }); });
+  await p.waitForTimeout(500);
+  const mini = await p.evaluate(() => {
+    const c = document.querySelector('[data-cf="exc-mini-map"]'); if (!c) return null;
+    const r = c.getBoundingClientRect(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0, orange = 0; for (let i = 0; i < d.length; i += 4) { if (d[i + 3] > 0) n++; if (d[i] > 190 && d[i + 1] > 90 && d[i + 1] < 140 && d[i + 2] < 110 && d[i + 3] > 150) orange++; }
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, h = document.elementFromPoint(cx, cy);
+    const help = document.querySelector('.excalidraw .help-icon');
+    const hr = help && help.getBoundingClientRect(), hh = hr && document.elementFromPoint(hr.left + hr.width / 2, hr.top + hr.height / 2);
+    return { cx, cy, w: Math.round(r.width), painted: n, orange, hit: h === c, helpFree: !help || (!!hh && help.contains(hh)) };
+  });
+  ok('мини-карта на доске, на ней видно содержимое и сцены своим цветом', !!mini && mini.painted > 300 && mini.orange > 20, JSON.stringify(mini));
+  ok('мини-карта нажимается и не закрывает «?» самого Excalidraw', !!mini && mini.hit && mini.helpFree, JSON.stringify(mini));
+  const contentMid = await p.evaluate(() => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    window.__cfExc.api.getSceneElements().forEach(e => {
+      if (e.customData && e.customData.cf === 'link') return;
+      let b = { x: e.x, y: e.y, w: e.width, h: e.height };
+      if (Array.isArray(e.points) && e.points.length) { const xs = e.points.map(q => q[0]), ys = e.points.map(q => q[1]);
+        b = { x: e.x + Math.min(...xs), y: e.y + Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; }
+      x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+    });
+    return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  });
+  if (mini) { await p.mouse.click(mini.cx, mini.cy); await p.waitForTimeout(400); }
+  const viewMid = await p.evaluate(() => { const s = window.__cfExc.api.getAppState(), z = s.zoom.value;
+    return { x: s.width / (2 * z) - s.scrollX, y: s.height / (2 * z) - s.scrollY, sel: Object.keys(s.selectedElementIds).length }; });
+  ok('нажатие по середине карты привело доску к середине содержимого', Math.abs(viewMid.x - contentMid.x) < 12 && Math.abs(viewMid.y - contentMid.y) < 12 && viewMid.sel === 0,
+     `${Math.round(viewMid.x)},${Math.round(viewMid.y)} против ${Math.round(contentMid.x)},${Math.round(contentMid.y)}, выделено ${viewMid.sel}`);
+  await p.evaluate(() => { const b = [...document.querySelectorAll('[data-cf="exc-mini"] button')].find(x => /Свернуть/.test(x.title)); if (b) b.click(); });
+  await p.waitForTimeout(300);
+  const folded = await p.evaluate(() => ({ map: !!document.querySelector('[data-cf="exc-mini-map"]'), btn: !!document.querySelector('[data-cf="exc-mini-open"]') }));
+  await p.evaluate(() => { const b = document.querySelector('[data-cf="exc-mini-open"]'); if (b) b.click(); });
+  await p.waitForTimeout(300);
+  ok('карта сворачивается в кнопку и разворачивается обратно', !folded.map && folded.btn && await p.evaluate(() => !!document.querySelector('[data-cf="exc-mini-map"]')), JSON.stringify(folded));
+
+  // --- 11г. рукопись в текст: пишем пером, выделяем рамкой, ручка
+  // «Рукопись в текст» — поддельный ИИ смотрит, ЧТО ушло, и отвечает.
+  let ocrSeen = null;
+  await p.route(/generativelanguage\.googleapis\.com/, async (route) => {
+    let body = {}; try { body = JSON.parse(route.request().postData() || '{}'); } catch (e) {}
+    const part = (((body.contents || [])[0] || {}).parts || []).find(x => x.inline_data) || {};
+    ocrSeen = { mime: (part.inline_data || {}).mime_type || '', data: (part.inline_data || {}).data || '' };
+    await route.fulfill({ contentType: 'application/json',
+      body: JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Контровой слева\nдиммер на 40' }] } }] }) });
+  });
+  const nDocs0 = Object.keys(await store(p, 'docs')).length;
+  await p.evaluate(() => { const a = window.__cfExc.api, s = a.getAppState(), z = 1;
+    a.updateScene({ appState: { zoom: { value: z }, scrollX: s.width / 2 - 1650, scrollY: s.height / 2 - 200, selectedElementIds: {} } });
+    a.setActiveTool({ type: 'freedraw' }); });
+  await p.waitForTimeout(300);
+  for (const [ax, ay, bx, by] of [[1560, 170, 1620, 230], [1640, 230, 1680, 170], [1700, 170, 1760, 230]]) {
+    const A = await scr(p, ax, ay), B = await scr(p, bx, by);
+    await p.mouse.move(A.x, A.y); await p.mouse.down();
+    for (let i = 1; i <= 12; i++) await p.mouse.move(A.x + (B.x - A.x) * i / 12, A.y + (B.y - A.y) * i / 12 + Math.sin(i) * 6);
+    await p.mouse.up(); await p.waitForTimeout(80);
+  }
+  await p.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'selection' }));
+  const Q0 = await scr(p, 1530, 140), Q1 = await scr(p, 1790, 260);
+  await drag(p, Q0, Q1);
+  await p.waitForTimeout(400);
+  const ob = await p.evaluate(() => {
+    const b = document.querySelector('[data-cf="exc-open"]'); if (!b) return null;
+    const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
+    return { x, y, text: b.textContent.trim(), hit: !!h && (h === b || b.contains(h)),
+             sel: window.__cfExc.api.getAppState().selectedElementIds && Object.keys(window.__cfExc.api.getAppState().selectedElementIds).length };
+  });
+  ok('выделили написанное пером — над ним ручка «Рукопись в текст», и она нажимается', !!ob && /Рукопись в текст/.test(ob.text) && ob.hit && ob.sel >= 3, JSON.stringify(ob));
+  if (ob) await p.mouse.click(ob.x, ob.y);
+  await p.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')].some(d => /Рукопись прочитана/.test(d.textContent)), { timeout: 15000 }).catch(() => {});
+  const ocrPix = ocrSeen && ocrSeen.data ? await p.evaluate(async (b64) => {
+    const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0); const d = x.getImageData(0, 0, c.width, c.height).data;
+    let white = 0, dark = 0, n = d.length / 4; for (let i = 0; i < d.length; i += 4) { if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240) white++; if (d[i] < 60 && d[i + 1] < 60 && d[i + 2] < 60) dark++; }
+    return { w: c.width, h: c.height, white: +(white / n).toFixed(3), dark: +(dark / n).toFixed(3) };
+  }, ocrSeen.data) : null;
+  ok('ИИ получил рукопись чёрным по белому — и больше ничего', !!ocrSeen && ocrSeen.mime === 'image/png' && ocrPix && ocrPix.white > 0.7 && ocrPix.dark > 0.01,
+     JSON.stringify({ mime: ocrSeen && ocrSeen.mime, px: ocrPix }));
+  const dlgText = await p.evaluate(() => { const t = [...document.querySelectorAll('[role="dialog"] textarea')][0]; return t ? t.value : null; });
+  ok('расшифровка показана в окне до того, как лечь в гайд', dlgText === 'Контровой слева\nдиммер на 40', JSON.stringify(dlgText));
+  await p.evaluate(() => { const b = [...document.querySelectorAll('[role="dialog"] button')].find(x => /Новым гайдом/.test(x.textContent)); if (b) b.click(); });
+  await settle(p, 1500);
+  const D = await store(p, 'docs'), nd = Object.values(D).find(d => d.title === 'Контровой слева');
+  E = live(await els(p));
+  ok('«Новым гайдом на доску» — гайд лёг на ЭТУ доску под рукописью', Object.keys(D).length === nDocs0 + 1 && !!nd && nd.boardId === 'bx1' && nd.y > 230 && E.some(e => e.id === nd.id),
+     nd ? `${nd.title} · ${nd.boardId} · ${Math.round(nd.x)},${Math.round(nd.y)}` : 'нет гайда');
+  await p.unroute(/generativelanguage\.googleapis\.com/);
+
+  // --- 11д. «Связь» в два нажатия: кнопка на панели доски, полоска
+  // называет режим; гайд → овал даёт привязанную стрелку, фото → сцена —
+  // привязку к сцене (правило доски), Escape выходит из режима.
+  await escape(p);
+  await p.evaluate(() => { const a = window.__cfExc.api; a.updateScene({ appState: { selectedElementIds: {} } });
+    a.scrollToContent(a.getSceneElements(), { fitToContent: true, animate: false }); });
+  await p.waitForTimeout(400);
+  const lt = await p.evaluate(() => { const b = document.querySelector('[data-cf="exc-link-tool"]'); if (!b) return null;
+    const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
+    return { x, y, hit: !!h && (h === b || b.contains(h)) }; });
+  ok('кнопка «Связь» на панели доски нажимается', !!lt && lt.hit, JSON.stringify(lt));
+  if (lt) await p.mouse.click(lt.x, lt.y);
+  await p.waitForTimeout(300);
+  const bar0 = await p.evaluate(() => { const b = document.querySelector('[data-cf="exc-linkbar"]'); return b ? b.textContent : ''; });
+  ok('полоска называет режим', /нажмите на первую/.test(bar0), bar0);
+  const center = async (id) => { const e = live(await els(p)).find(x => x.id === id); return e ? scr(p, e.x + e.w / 2, e.y + e.h / 2) : null; };
+  const docId = nd && nd.id;
+  const c1 = docId && await center(docId), c2 = await center('remote-ellipse');
+  if (c1 && c2) { await p.mouse.click(c1.x, c1.y); await p.waitForTimeout(250); }
+  const bar1 = await p.evaluate(() => { const b = document.querySelector('[data-cf="exc-linkbar"]'); return b ? b.textContent : ''; });
+  const pickA = await p.evaluate(() => ({ frame: !!document.querySelector('[data-cf="exc-link-a"]'), sel: Object.keys(window.__cfExc.api.getAppState().selectedElementIds).length }));
+  ok('первое выбранное обведено рамкой, а не выделением (панель свойств не выезжает)', pickA.frame && pickA.sel === 0, JSON.stringify(pickA));
+  if (c1 && c2) { await p.mouse.click(c2.x, c2.y); }
+  await settle(p);
+  let LN = live(await els(p)).filter(e => e.type === 'arrow' && e.sb === docId && e.eb === 'remote-ellipse');
+  const LB = await store(p, 'boardEls');
+  ok('гайд → овал: стрелка привязана к обоим и уехала в облако', !!c1 && !!c2 && /на второе/.test(bar1) && LN.length === 1 && !!LB['bx1~' + (LN[0] || {}).id],
+     JSON.stringify({ bar1, n: LN.length, cloud: !!LB['bx1~' + (LN[0] || {}).id] }));
+  const ellBound = await p.evaluate(() => (window.__cfExc.api.getSceneElements().find(e => e.id === 'remote-ellipse').boundElements || []).map(b => b.id));
+  ok('и овал знает о своей стрелке (поедет за ним)', LN[0] && ellBound.includes(LN[0].id), JSON.stringify(ellBound));
+  const cr = await center('r2'), cs = await center('sc1');
+  if (cr && cs) { await p.mouse.click(cr.x, cr.y); await p.waitForTimeout(250); await p.mouse.click(cs.x, cs.y); }
+  await settle(p);
+  R = await store(p, 'references');
+  ok('фото → сцена: это привязка к сцене, а не нарисованная стрелка', R.r2 && R.r2.sceneId === 'sc1' && live(await els(p)).some(e => e.id === 'lnk~r2'), JSON.stringify(R.r2 && R.r2.sceneId));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  ok('Escape выходит из режима «Связь»', await p.evaluate(() => !document.querySelector('[data-cf="exc-linkbar"]') && !document.querySelector('[data-cf="exc-link-tool"].on')));
+  const selAfter = await p.evaluate(() => { const a = window.__cfExc.api, e = a.getSceneElements().find(x => x.id === 'st1'); return !!e; });
+  ok('после выхода доска снова своя: нажатие выделяет, а не связывает', selAfter);
+
+  // --- 11е. ролик: на постере метка «▶ 0:42», она часть карточки
+  // (одна группа, внутри постера), двойное нажатие открывает плеер.
+  await escape(p);
+  const V = await p.evaluate(() => { const all = window.__cfExc.api.getSceneElements();
+    const m = all.find(e => e.id === 'rv'), t = all.find(e => e.id === 'rv~v'), b = all.find(e => e.id === 'rv~vb');
+    return m && t && b && { text: t.originalText || t.text, g: [m.groupIds, t.groupIds, b.groupIds].map(x => x.join()),
+      inside: t.x >= m.x && t.x + t.width <= m.x + m.width && t.y >= m.y && t.y + t.height <= m.y + m.height,
+      order: all.indexOf(b) < all.indexOf(t) && all.indexOf(m) < all.indexOf(b), mx: m.x, my: m.y, mw: m.width, mh: m.height }; });
+  ok('у ролика на постере метка «▶ 0:42» на плашке, одной группой с постером', !!V && V.text === '▶ 0:42' && V.inside && V.order && new Set(V.g).size === 1 && V.g[0] === 'g~rv',
+     JSON.stringify(V));
+  ok('метка ролика не считается копией карточки: в облако не ушла, ролик на доске', !Object.keys(await store(p, 'boardEls')).some(k => /rv~/.test(k))
+     && (await store(p, 'references')).rv.boardId === 'bx1');
+  if (V) {
+    await p.evaluate(([x, y]) => { const a = window.__cfExc.api, s = a.getAppState(); a.updateScene({ appState: { zoom: { value: 1 }, scrollX: s.width / 2 - x, scrollY: s.height / 2 - y } }); }, [V.mx + V.mw / 2, V.my + V.mh / 2]);
+    await p.waitForTimeout(300);
+    const vc = await scr(p, V.mx + V.mw / 2, V.my + V.mh / 3);
+    await p.mouse.dblclick(vc.x, vc.y); await p.waitForTimeout(700);
+  }
+  ok('двойное нажатие по ролику открывает плеер', await p.evaluate(() => { const b = document.querySelector('[class*="z-[350]"]'); return !!b && !!b.querySelector('video'); }));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+
   // --- 12. своя доска рядом по-прежнему своя
   await p.evaluate(() => { const t = [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('Основная')); t.click(); });
   await p.waitForTimeout(800);
@@ -598,6 +758,56 @@ const SEED = () => ({
   ok('ни одной ошибки страницы', cerr.length === 0, cerr.join(' | '));
   await ctx6.close();
 
+  // ================= ПУСТАЯ ДОСКА: ШАБЛОНЫ =================
+  // Те же три шаблона, что у своей доски. Видны, пока доска пуста и
+  // в руке стрелка; взяли карандаш или что-то нарисовали — уходят.
+  const seed8 = SEED();
+  Object.values(seed8.scenes).forEach(x => { x.boardId = ''; });
+  Object.values(seed8.references).forEach(x => { x.boardId = ''; });
+  Object.values(seed8.stickies).forEach(x => { x.boardId = 'board-main'; });
+  Object.values(seed8.storyboard).forEach(x => { x.boardId = ''; });
+  const ctx8 = await mkCtx(1440, 900, seed8);
+  const { page: t8, errs: terr } = await open(ctx8);
+  await t8.waitForTimeout(600);
+  const tpl = () => t8.evaluate(() => { const b = document.querySelector('[data-cf="board-templates"]'); if (!b) return null;
+    const cards = [...b.querySelectorAll('.cf-tpl')].map(c => { const r = c.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + 20);
+      return { t: c.textContent.slice(0, 20), hit: !!h && c.contains(h) }; });
+    return cards; });
+  const T0 = await tpl();
+  ok('пустая доска Excalidraw: три шаблона, и каждый нажимается', !!T0 && T0.length === 3 && T0.every(c => c.hit), JSON.stringify(T0));
+  await t8.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'freedraw' }));
+  await t8.waitForTimeout(300);
+  const T1 = await tpl();
+  await t8.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'selection' }));
+  await t8.waitForTimeout(300);
+  const T2 = await tpl();
+  ok('взяли карандаш — шаблоны ушли, вернули стрелку — снова тут', T1 === null && !!T2, JSON.stringify({ T1: !!T1, T2: !!T2 }));
+  await t8.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'rectangle' }));
+  const g1 = { x: 300, y: 700 }, g2 = { x: 420, y: 780 };
+  await drag(t8, g1, g2);
+  await t8.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'selection' }));
+  await t8.waitForTimeout(400);
+  ok('нарисовали — шаблоны не возвращаются', (await tpl()) === null);
+  await t8.keyboard.press('Control+z'); await t8.waitForTimeout(500);
+  ok('отменили нарисованное — доска снова пуста, шаблоны снова тут', !!(await tpl()));
+  await t8.evaluate(() => { const c = [...document.querySelectorAll('[data-cf="board-templates"] .cf-tpl')].find(x => /Раскадровка/.test(x.textContent)); c.click(); });
+  await settle(t8, 2000);
+  const SC8 = await store(t8, 'scenes'), FR8 = await store(t8, 'storyboard');
+  const onB = Object.values(SC8).filter(x => x.boardId === 'bx1'), frB = Object.values(FR8).filter(x => x.boardId === 'bx1');
+  const E8 = live(await els(t8));
+  ok('«Раскадровка» положила сцену и её кадры на эту доску Excalidraw', onB.length === 1 && frB.length >= 1 && E8.some(e => e.id === onB[0].id) && frB.every(f => E8.some(e => e.id === f.id)),
+     JSON.stringify({ scenes: onB.map(x => x.id), frames: frB.length }));
+  ok('и шаблоны ушли, а карточки видно на экране', (await tpl()) === null && await t8.evaluate((id) => { const a = window.__cfExc.api, s = a.getAppState(), e = a.getSceneElements().find(x => x.id === id);
+    const x = (e.x + s.scrollX) * s.zoom.value, y = (e.y + s.scrollY) * s.zoom.value; return x >= 0 && y >= 0 && x < s.width && y < s.height; }, onB[0] && onB[0].id));
+  ok('пустая доска: ни одной ошибки страницы', terr.length === 0, terr.join(' | '));
+  await ctx8.close();
+  // Гость на пустой доске шаблонов не видит: они кладут на доску записи.
+  const ctx9 = await mkCtx(1440, 900, seed8);
+  const { page: g9 } = await open(ctx9, '/index.html?view=board&board=bx1&room=x-room');
+  await g9.waitForTimeout(600);
+  ok('гостю по ссылке шаблоны не показываются', await g9.evaluate(() => !document.querySelector('[data-cf="board-templates"]')));
+  await ctx9.close();
+
   // ================= ОБОРВАННАЯ СВЯЗЬ =================
   // Открыли без сети: облако отвечает «из кэша» и пусто, а на устройстве
   // лежит нарисованное, которое облако уже видело. Стирать его нельзя —
@@ -688,6 +898,36 @@ const SEED = () => ({
     return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight };
   });
   ok('телефон: панель инструментов на экране', !!tools && tools.bottom <= tools.vh + 1 && tools.top >= 0, JSON.stringify(tools));
+  // «Связь» на телефоне — строкой в «···» (панели значков там нет).
+  const rowL = await ph.evaluate(async () => {
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '···' && /Выгрузить/.test(b.title)).click();
+    await new Promise(r => setTimeout(r, 300));
+    const b = document.querySelector('[data-cf="exc-link-row"]'); if (!b) return null;
+    const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
+    return { x, y, hit: !!h && (h === b || b.contains(h)) };
+  });
+  if (rowL && rowL.hit) await ph.mouse.click(rowL.x, rowL.y);
+  await ph.waitForTimeout(300);
+  const barP = await ph.evaluate(() => { const b = document.querySelector('[data-cf="exc-linkbar"]'); if (!b) return null;
+    const r = b.getBoundingClientRect(), g = [...b.querySelectorAll('button')].find(x => /Готово/.test(x.textContent)), gr = g && g.getBoundingClientRect();
+    const h = gr && document.elementFromPoint(gr.left + gr.width / 2, gr.top + gr.height / 2);
+    return { l: Math.round(r.left), r: Math.round(r.right), vw: window.innerWidth, done: !!h && g.contains(h) }; });
+  ok('телефон: «Связать две карточки» в «···», полоска режима в ширину экрана и «Готово» нажимается',
+     !!rowL && rowL.hit && !!barP && barP.l >= 0 && barP.r <= barP.vw && barP.done, JSON.stringify({ rowL, barP }));
+  await ph.evaluate(() => { const g = [...document.querySelectorAll('[data-cf="exc-linkbar"] button')].find(x => /Готово/.test(x.textContent)); if (g) g.click(); });
+  await ph.waitForTimeout(300);
+  // Карту — ДО двойного касания: открытый просмотр фото лёг бы поверх.
+  // Сравниваем с самими панелями Excalidraw, а не с их контейнером
+  // App-bottom-bar: тот прозрачный и тянется почти во всю высоту.
+  const pm = await ph.evaluate(() => {
+    const m = document.querySelector('[data-cf="exc-mini"]'); if (!m) return null;
+    const r = m.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const bars = [...document.querySelectorAll('.excalidraw .App-toolbar, .excalidraw .mobile-misc-tools-container')]
+      .map(b => b.getBoundingClientRect()).filter(b => b.width && b.height);
+    const cross = bars.some(b => !(b.right <= r.left || b.left >= r.right || b.bottom <= r.top || b.top >= r.bottom));
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight, hit: !!h && m.contains(h), cross };
+  });
+  ok('телефон: карта на экране, нажимается и не наезжает на панели Excalidraw', !!pm && pm.hit && !pm.cross && pm.bottom <= pm.vh, JSON.stringify(pm));
   // Пальцем браузер о двойном касании не сообщает — считаем сами.
   const pr = live(await els(ph)).find(e => e.id === 'r1');
   const prc = await scr(ph, pr.x + pr.w / 2, pr.y + pr.h / 2);

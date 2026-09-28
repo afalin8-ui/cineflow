@@ -7400,7 +7400,7 @@
         const excSig = (type, r, ratio, d) => {
           const g = excGeo(type, r, ratio, d);
           return [g.x, g.y, g.w, g.h, type === 'sticky' ? r.color : '', excLabel(type, r), excUrlKey(excImage(type, r)),
-                  d ? d.w + 'x' + d.h : ''].join('|');
+                  d ? d.w + 'x' + d.h : '', r.video ? 'v' + (r.dur || 0) + (r.full ? 'c' : '') : ''].join('|');
         };
         // Строим элементы одной карточки. `prev` — то, что сейчас лежит
         // в сцене под этими id: версия новой обязана быть выше, иначе
@@ -7458,9 +7458,37 @@
               out.forEach(e => { e.groupIds = [gid]; });
             }
           }
+          // Ролик — постер с меткой «▶ 0:42» в углу, как в галерее: без неё
+          // видео на доске не отличить от фотографии и не догадаться, что
+          // двойное нажатие его и играет. Плашка под надписью обязательна —
+          // акцент поверх светлого кадра не читается. Всё одной группой
+          // с постером: едет и снимается вместе с ним.
+          if (type === 'ref' && r.video && img) {
+            const vt = r.full ? `▶ ${fmtDur(r.dur)}` : '▶ ещё не в облаке';
+            const [t] = lib.convertToExcalidrawElements([{
+              type: 'text', id: r.id + '~v', x: g.x + 12, y: g.y, text: vt,
+              fontSize: 14, fontFamily: 3, strokeColor: EXC_LINK, customData: cd('video')
+            }], { regenerateIds: false });
+            t.y = g.y + g.h - t.height - 12;
+            const [plate] = lib.convertToExcalidrawElements([{
+              type: 'rectangle', id: r.id + '~vb', x: t.x - 6, y: t.y - 3, width: t.width + 12, height: t.height + 6,
+              strokeColor: 'transparent', backgroundColor: '#000000bf', fillStyle: 'solid', roughness: 0, roundness: { type: 3 },
+              customData: cd('plate')
+            }], { regenerateIds: false });
+            out.push(plate, t);
+            const gid = 'g~' + r.id;
+            out.forEach(e => { e.groupIds = [gid]; });
+          }
           out.forEach(e => { e.version = ver(e.id); e.seed = excSeed(e.id); e.index = null; e.locked = false; });
           return out;
         };
+        // Части карточки, кроме главной: подпись внутри, подпись кадра,
+        // плашка метки ролика и сама метка. Всё прочее с меткой карточки —
+        // копия (Ctrl+D, Alt, вставка) и разбирается как копия. ПОРЯДОК
+        // ЗДЕСЬ — ЭТО ПОРЯДОК СЛОЁВ: пересборка берёт части с экрана в нём,
+        // и плашка, стоящая после метки, накрыла бы её.
+        const EXC_PARTS = ['~t', '~c', '~vb', '~v'];
+        const excPartIds = (id) => [id, ...EXC_PARTS.map(p => id + p)];
         // Точка на краю прямоугольника по линии между центрами — туда
         // упирается связь. Тот же смысл, что у привязки Excalidraw с
         // focus 0: линия смотрит в центр карточки.
@@ -7632,24 +7660,193 @@
         // состояние у неё СВОЁ: положение меняется с каждой прокруткой,
         // и перерисовывать ради него весь Excalidraw нельзя.
         const EXC_OPEN_LABEL = { ref: 'Во весь экран', scene: 'Открыть сцену', doc: 'Открыть', frame: 'К сцене' };
+        // Та же ручка у выделенной РУКОПИСИ — «в текст». Режима «обвести
+        // рамкой», как у своей доски, тут нет: рамку выделения Excalidraw
+        // уже умеет, и второй жест того же смысла был бы лишним.
+        const EXC_ACT_LABEL = { ...EXC_OPEN_LABEL, ocr: 'Рукопись в текст' };
         const ExcCardActions = ({ bind, onOpen }) => {
           const [s, setS] = useState(null);
           useEffect(() => { bind.current = setS; return () => { bind.current = null; }; }, []);
           if (!s) return null;
           return (
             <button onPointerDown={(e) => e.stopPropagation()} onClick={() => onOpen(s.type, s.id)}
-                    data-cf="exc-open" title={EXC_OPEN_LABEL[s.type]}
+                    data-cf="exc-open" title={EXC_ACT_LABEL[s.type]}
                     className="absolute flex items-center gap-1.5"
                     style={{ left: s.x, top: s.y, transform: 'translate(-100%, -100%)', zIndex: 5, minHeight: 'var(--tap-sm)',
                              padding: '0 10px', borderRadius: 'var(--r-md)', background: 'var(--card)', border: '1px solid var(--border)',
                              color: 'var(--text)', fontSize: 'var(--fs-2)', whiteSpace: 'nowrap' }}>
               {s.type === 'ref' ? <span style={{ fontSize: 'var(--fs-3)', lineHeight: 1 }}>⤢</span> : null}
-              {s.type === 'ref' ? '' : EXC_OPEN_LABEL[s.type]}
+              {s.type === 'ocr' ? <Icons.Ocr /> : null}
+              {s.type === 'ref' ? '' : EXC_ACT_LABEL[s.type]}
             </button>
           );
         };
 
-        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, children }) => {
+        // Полоска режима «Связь» (ниже подсказки Excalidraw под его панелью
+        // инструментов — иначе ложилась поверх неё): жест, который делает
+        // не то, что обычно, обязан себя называть — иначе нажатие по карточке «ничего не
+        // выделяет», и это читается как поломка. Своё состояние у неё своё
+        // (стадия через `bind`): перерисовывать ради строки весь Excalidraw
+        // незачем.
+        // Первое выбранное обведено СВОЕЙ рамкой, а не выделением Excalidraw:
+        // выделение выдвигает слева панель свойств, и второе нажатие по
+        // карточке у левого края попадало в неё, а не в карточку.
+        const ExcLinkBar = ({ bind, onDone }) => {
+          const [st, setSt] = useState({ stage: 0, rect: null });
+          useEffect(() => { bind.current = (stage, rect) => setSt({ stage, rect: rect || null }); return () => { bind.current = null; }; }, []);
+          const stage = st.stage, rect = st.rect;
+          return (
+            <React.Fragment>
+            {stage && rect ? (
+              <div data-cf="exc-link-a" className="absolute"
+                   style={{ left: rect.x - 4, top: rect.y - 4, width: rect.w + 8, height: rect.h + 8, zIndex: 4, pointerEvents: 'none',
+                            border: '2px solid var(--accent)', borderRadius: 'var(--r-md)' }} />
+            ) : null}
+            <div className="absolute flex items-center gap-2" data-cf="exc-linkbar"
+                 onPointerDown={(e) => e.stopPropagation()}
+                 style={{ left: '50%', top: 'calc(var(--tap) + 84px)', transform: 'translateX(-50%)', zIndex: 5, padding: '4px 4px 4px 12px',
+                          background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)',
+                          color: 'var(--text-2)', fontSize: 'var(--fs-2)', maxWidth: 'calc(100% - 24px)', width: 'max-content' }}>
+              <Icons.Link />
+              <span style={{ minWidth: 0 }}>{stage ? 'Теперь нажмите на второе' : 'Связь: нажмите на первую карточку или фигуру'}</span>
+              <button onClick={onDone} className="cf-hbtn" style={{ minHeight: 'var(--tap-sm)', padding: '0 10px' }}>Готово</button>
+            </div>
+            </React.Fragment>
+          );
+        };
+
+        // МИНИ-КАРТА доски Excalidraw — та же, что у своей доски: всё
+        // содержимое и рамка «где я», нажатие и ведение переносят доску.
+        // Своего Excalidraw не заводит вовсе. Охват — ВСЁ СОДЕРЖИМОЕ и
+        // ничего сверх него (экран добавляется, только если уехал мимо
+        // содержимого целиком), рамка обрезается по краям карты — правила
+        // и цвета те же, что у `drawMini`: две карты в одном приложении
+        // обязаны читаться одинаково. Свёрнута ли — общий `cf_mini`.
+        // Данные приходят из onChange доски через `bind`, а рисуем не чаще
+        // десяти раз в секунду: onChange сыплет на каждое движение пальца.
+        const EXC_MINI_COL = { scene: '#d97757', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
+        const excElBox = (e) => {
+          if (Array.isArray(e.points) && e.points.length) {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const q of e.points) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; }
+            return { x: e.x + x0, y: e.y + y0, w: x1 - x0, h: y1 - y0 };
+          }
+          return { x: e.x, y: e.y, w: e.width || 0, h: e.height || 0 };
+        };
+        const ExcMiniMap = ({ bind, onGo, phone }) => {
+          const cvRef = useRef(null);
+          const data = useRef(null);
+          const fit = useRef({ k: 1, ox: 0, oy: 0 });
+          const drag = useRef(false);
+          const tm = useRef({ at: 0, pend: 0 });
+          const [open, setOpen] = useState(() => { try { return localStorage.getItem('cf_mini') !== '0'; } catch (e) { return true; } });
+          useEffect(() => { try { localStorage.setItem('cf_mini', open ? '1' : '0'); } catch (e) {} }, [open]);
+          const draw = () => {
+            const cv = cvRef.current, d = data.current;
+            if (!cv || !d) return;
+            const CW = cv.clientWidth || 232, CH = cv.clientHeight || 156;
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            if (cv.width !== Math.round(CW * dpr) || cv.height !== Math.round(CH * dpr)) { cv.width = Math.round(CW * dpr); cv.height = Math.round(CH * dpr); }
+            const ctx = cv.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, CW, CH);
+            const { els, app } = d, z = app.zoom.value || 1;
+            const vis = { x: -app.scrollX, y: -app.scrollY, w: (app.width || 0) / z, h: (app.height || 0) / z };
+            const live = els.filter(e => !e.isDeleted && !(e.customData && e.customData.cf === 'link'));
+            let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+            live.forEach(e => { const b = excElBox(e); bx0 = Math.min(bx0, b.x); by0 = Math.min(by0, b.y); bx1 = Math.max(bx1, b.x + b.w); by1 = Math.max(by1, b.y + b.h); });
+            let x0, y0, x1, y1;
+            if (isFinite(bx0)) {
+              const m = Math.max(bx1 - bx0, by1 - by0) * 0.06;
+              x0 = bx0 - m; y0 = by0 - m; x1 = bx1 + m; y1 = by1 + m;
+              if (vis.x + vis.w < x0 || vis.x > x1 || vis.y + vis.h < y0 || vis.y > y1) {
+                x0 = Math.min(x0, vis.x); y0 = Math.min(y0, vis.y); x1 = Math.max(x1, vis.x + vis.w); y1 = Math.max(y1, vis.y + vis.h);
+              }
+            } else { x0 = vis.x; y0 = vis.y; x1 = vis.x + vis.w; y1 = vis.y + vis.h; }
+            const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+            const k = Math.min(CW / bw, CH / bh) * 0.92;
+            const ox = (CW - bw * k) / 2 - x0 * k, oy = (CH - bh * k) / 2 - y0 * k;
+            fit.current = { k, ox, oy };
+            const X = v => v * k + ox, Y = v => v * k + oy;
+            // Нарисованное рукой и стрелки — одной ломаной; фигуры — габаритом;
+            // карточки — заливкой по виду. Подписи карточек не рисуем.
+            ctx.strokeStyle = 'rgba(240,238,230,.8)'; ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            ctx.beginPath();
+            live.forEach(e => {
+              if (e.customData && e.customData.cf) return;
+              if (!Array.isArray(e.points) || e.points.length < 2) return;
+              const step = Math.max(1, Math.floor(e.points.length / 40));
+              for (let i = 0; i < e.points.length; i += step) {
+                const px = X(e.x + e.points[i][0]), py = Y(e.y + e.points[i][1]);
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+              }
+            });
+            ctx.stroke();
+            ctx.strokeStyle = 'rgba(240,238,230,.35)'; ctx.lineWidth = 0.7;
+            live.forEach(e => {
+              if ((e.customData && e.customData.cf) || Array.isArray(e.points)) return;
+              ctx.strokeRect(X(e.x), Y(e.y), Math.max(1, (e.width || 0) * k), Math.max(1, (e.height || 0) * k));
+            });
+            ctx.globalAlpha = 0.9;
+            live.forEach(e => {
+              const cd = e.customData;
+              if (!cd || !cd.cf || e.id !== cd.id) return;
+              ctx.fillStyle = cd.cf === 'sticky' ? (e.backgroundColor || EXC_MINI_COL.sticky) : (EXC_MINI_COL[cd.cf] || '#a6a39a');
+              ctx.fillRect(X(e.x), Y(e.y), Math.max(1.5, e.width * k), Math.max(1.5, e.height * k));
+            });
+            ctx.globalAlpha = 1;
+            const rx0 = Math.max(0, X(vis.x)), ry0 = Math.max(0, Y(vis.y));
+            const rx1 = Math.min(CW, X(vis.x + vis.w)), ry1 = Math.min(CH, Y(vis.y + vis.h));
+            if (rx1 > rx0 && ry1 > ry0) {
+              ctx.strokeStyle = '#f0eee6'; ctx.lineWidth = 1.2;
+              ctx.strokeRect(rx0 + 0.5, ry0 + 0.5, Math.max(3, rx1 - rx0 - 1), Math.max(3, ry1 - ry0 - 1));
+            }
+          };
+          const drawSoon = () => {
+            const t = tm.current, now = Date.now();
+            if (now - t.at >= 90) { t.at = now; draw(); return; }
+            if (t.pend) return;
+            t.pend = setTimeout(() => { t.pend = 0; t.at = Date.now(); draw(); }, 90);
+          };
+          useEffect(() => { bind.current = (els, app) => { data.current = { els, app }; drawSoon(); };
+                            return () => { bind.current = null; clearTimeout(tm.current.pend); }; }, []);
+          useEffect(() => { if (open) draw(); }, [open, phone]);
+          const go = (e) => {
+            const cv = cvRef.current; if (!cv) return;
+            const r = cv.getBoundingClientRect(), m = fit.current;
+            onGo(((e.clientX - r.left) - m.ox) / m.k, ((e.clientY - r.top) - m.oy) / m.k);
+          };
+          // Над подсказкой «?» Excalidraw в правом нижнем углу.
+          return (
+            <div className="cf-mini absolute" data-cf="exc-mini" style={{ right: 12, bottom: phone ? 72 : 64, zIndex: 5 }}
+                 onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
+              {open ? (
+                <div className="rounded-lg overflow-hidden" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+                  <div className="flex items-center justify-between" style={{ padding: '2px 4px 2px 8px' }}>
+                    <span className="cf-meta">карта доски</span>
+                    <button onClick={() => setOpen(false)} title="Свернуть карту"
+                            className="flex items-center justify-center"
+                            style={{ width: 22, height: 22, borderRadius: 'var(--r-sm)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>✕</button>
+                  </div>
+                  <canvas ref={cvRef} data-cf="exc-mini-map"
+                          style={{ width: phone ? 124 : 232, height: phone ? 84 : 156, display: 'block', cursor: 'pointer', touchAction: 'none' }}
+                          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); drag.current = true; go(e); }}
+                          onPointerMove={(e) => { if (drag.current) go(e); }}
+                          onPointerUp={() => { drag.current = false; }}
+                          onPointerCancel={() => { drag.current = false; }} />
+                </div>
+              ) : (
+                <button onClick={() => setOpen(true)} title="Карта доски — где что лежит" data-cf="exc-mini-open"
+                        className="flex items-center justify-center transition-colors hover:bg-[var(--raised)]"
+                        style={{ width: 40, height: 40, borderRadius: 'var(--r-md)', background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg>
+                </button>
+              )}
+            </div>
+          );
+        };
+
+        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, linkMode, onLinkMode, children }) => {
           const [lib, setLib] = useState(() => window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const [api, setApi] = useState(null);
@@ -7657,7 +7854,7 @@
           // Всё живое — в ref: Excalidraw зовёт обработчики из своих
           // замыканий, и свежие записи проекта обязаны быть видны оттуда.
           const P = useRef({});
-          P.current = { cards, projectRatio, store, act, readOnly, lib, convert };
+          P.current = { cards, projectRatio, store, act, readOnly, lib, convert, linkMode, onLinkMode };
           const S = useRef(null);
           if (!S.current) {
             const loc = excReadLocal(boardId);
@@ -7726,7 +7923,7 @@
             const editing = app && app.editingTextElement ? app.editingTextElement.id : '';
             const out = [], boxes = new Map(), drawn = new Map();
             EXC_TYPES.forEach(type => (cards[EXC_LIST[type]] || []).forEach(r => {
-              const ids = [r.id, r.id + '~t', r.id + '~c'];
+              const ids = excPartIds(r.id);
               const pend = st.pend.get(r.id);
               const reflected = pend && Object.keys(pend).every(k => k === 'text' ? String(r.text || '') === pend.text : (k === 'color' ? r.color === pend.color : Math.abs((+r[k] || 0) - pend[k]) < 0.5));
               if (reflected) st.pend.delete(r.id);
@@ -7794,7 +7991,7 @@
             cur.forEach(e => {
               if (!isCardPart(e) || e.customData.cf === 'link' && links.some(l => l.id === e.id)) return;
               if (e.customData.cf !== 'link' && drawn.has(e.customData.id)) return;
-              if (e.customData.cf !== 'link' && ![e.customData.id, e.customData.id + '~t', e.customData.id + '~c'].includes(e.id)) return;
+              if (e.customData.cf !== 'link' && !excPartIds(e.customData.id).includes(e.id)) return;
               gone.push(e.isDeleted ? e : { ...e, isDeleted: true, version: e.version + 1 });
             });
             st.drawn = drawn;
@@ -7952,12 +8149,139 @@
             if (st.dirty.size || st.ops.length || st.pend.size) flushSoon(busy);
             saveViewSoon(app);
             trackSelection(els, app, busy);
+            if (miniBind.current) miniBind.current(els, app);
+            if (st.linkA && linkBar.current) linkBar.current(1, linkRect(st.linkA, els, app));
+            // Пустая ли доска для шаблонов: ничего не нарисовано и в руке
+            // стрелка. Взяли карандаш — шаблоны уходят, иначе рисовать
+            // посередине было бы нечем: они лежат ровно там. Сообщаем
+            // только смену, а не каждое движение.
+            const blank = !els.some(e => !e.isDeleted && !isCardPart(e)) && (!app.activeTool || app.activeTool.type === 'selection');
+            if (blank !== st.blank) { st.blank = blank; if (P.current.act.blank) P.current.act.blank(blank); }
           };
 
           // Выделена одна карточка (у кадра это картинка с подписью —
           // тоже одна) и ничего не тащат — показываем кнопку «открыть»
           // над её правым верхним углом.
           const selBind = useRef(null);
+          const miniBind = useRef(null);
+          const phone = useMedia('(max-width: 767px)');
+          // Нажатие по карте: середина экрана встаёт в эту точку доски.
+          const miniGo = (bx, by) => {
+            const a = apiRef.current && apiRef.current.api; if (!a || !P.current.lib) return;
+            const s = a.getAppState(), z = s.zoom.value || 1;
+            a.updateScene({ appState: { scrollX: s.width / (2 * z) - bx, scrollY: s.height / (2 * z) - by }, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER });
+          };
+          // --- «Связь» в два нажатия ---
+          // Что под пальцем: карточка (любая, стикер тоже) или нарисованная
+          // фигура; линии и рукопись целью не бывают — их на доске много,
+          // и они пересекают всё подряд (то же правило, что `bindAt` у своей
+          // доски). Подпись внутри — это её хозяин.
+          const linkBar = useRef(null);
+          const linkTargetAt = (cx, cy) => {
+            const a = apiRef.current && apiRef.current.api, host = hostRef.current;
+            if (!a || !host) return null;
+            const app = a.getAppState(), r = host.getBoundingClientRect(), z = app.zoom.value;
+            const x = (cx - r.left) / z - app.scrollX, y = (cy - r.top) / z - app.scrollY;
+            const els = a.getSceneElements();
+            for (let i = els.length - 1; i >= 0; i--) {
+              const e = els[i], cd = e.customData;
+              if ((cd && cd.cf === 'link') || e.type === 'arrow' || e.type === 'line' || e.type === 'freedraw') continue;
+              const b = excElBox(e);
+              if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) continue;
+              if (cd && cd.cf) return cd.id;
+              return e.containerId || e.id;
+            }
+            return null;
+          };
+          // Рамка первого выбранного — в точках экрана; зовётся и из onChange,
+          // чтобы при прокрутке и масштабе рамка ехала вместе с доской.
+          const linkRect = (id, els, app) => {
+            const e = id && els.find(x => x.id === id && !x.isDeleted); if (!e) return null;
+            const b = excElBox(e), z = app.zoom.value;
+            return { x: (b.x + app.scrollX) * z, y: (b.y + app.scrollY) * z, w: b.w * z, h: b.h * z };
+          };
+          const setLinkStage = (n) => {
+            if (!linkBar.current) return;
+            const a = apiRef.current && apiRef.current.api, id = S.current.linkA;
+            linkBar.current(n, n && a ? linkRect(id, a.getSceneElements(), a.getAppState()) : null);
+          };
+          const pickLink = (id) => {
+            const st = S.current;
+            if (!id || st.linkA === id) { st.linkA = null; setLinkStage(0); return; }
+            if (!st.linkA) { st.linkA = id; setLinkStage(1); return; }
+            const from = st.linkA; st.linkA = null; setLinkStage(0);
+            makeLink(from, id);
+          };
+          // Стрелка, привязанная к обоим концам, — родная, со стилем, который
+          // сейчас выбран в Excalidraw. Дальше она живёт как любая стрелка:
+          // уезжает в облако, отменяется, а от карточки к сцене — по правилу
+          // доски становится привязкой к сцене (см. `flush`).
+          const makeLink = (aId, bId) => {
+            const a = apiRef.current.api, L = P.current.lib;
+            const cur = a.getSceneElementsIncludingDeleted();
+            const A = cur.find(e => e.id === aId && !e.isDeleted), B = cur.find(e => e.id === bId && !e.isDeleted);
+            if (!A || !B) return;
+            const ba = excElBox(A), bb = excElBox(B);
+            const ca = { x: ba.x + ba.w / 2, y: ba.y + ba.h / 2 }, cb = { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };
+            const p1 = excEdge(ba, cb, 8), p2 = excEdge(bb, ca, 8);
+            const app = a.getAppState();
+            const id = 'ln-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            const [arrow] = L.convertToExcalidrawElements([{
+              type: 'arrow', id, x: p1.x, y: p1.y, points: [[0, 0], [p2.x - p1.x, p2.y - p1.y]],
+              strokeColor: app.currentItemStrokeColor || EXC_TEXT, strokeWidth: app.currentItemStrokeWidth || 2,
+              strokeStyle: app.currentItemStrokeStyle || 'solid', roughness: app.currentItemRoughness === undefined ? 1 : app.currentItemRoughness,
+              startArrowhead: null, endArrowhead: 'arrow'
+            }], { regenerateIds: false });
+            arrow.startBinding = { elementId: aId, focus: 0, gap: 8 };
+            arrow.endBinding = { elementId: bId, focus: 0, gap: 8 };
+            // Нарисованной фигуре о стрелке говорим сами; карточке скажет
+            // сборка доски (`compose`).
+            const next = cur.map(e => (e.id === aId || e.id === bId) && !isCardPart(e)
+              ? { ...e, boundElements: [...(e.boundElements || []), { type: 'arrow', id }], version: e.version + 1, versionNonce: (e.versionNonce + 7919) | 0 }
+              : e);
+            a.updateScene({ elements: [...next, arrow], captureUpdate: L.CaptureUpdateAction.IMMEDIATELY });
+            flushSoon();
+          };
+          useEffect(() => {
+            S.current.linkA = null; setLinkStage(0);
+            // Входя в режим, снимаем выделение: иначе слева стоит панель
+            // свойств и закрывает карточки, в которые сейчас будут нажимать.
+            const a = apiRef.current && apiRef.current.api;
+            if (linkMode && a && P.current.lib) a.updateScene({ appState: { selectedElementIds: {} }, captureUpdate: P.current.lib.CaptureUpdateAction.NEVER });
+          }, [linkMode]);
+          useEffect(() => {
+            if (!linkMode) return;
+            // В перехвате на окне: Excalidraw гасит всплытие клавиш, пока
+            // фокус у него, и до документа Escape не доходит.
+            const esc = (e) => { if (e.key === 'Escape' && P.current.onLinkMode) P.current.onLinkMode(false); };
+            window.addEventListener('keydown', esc, true);
+            return () => window.removeEventListener('keydown', esc, true);
+          }, [linkMode]);
+
+          // Рукопись → картинка для ИИ: только выделенные штрихи и только
+          // чёрным по белому (как у своей доски — почерк узнаётся тем
+          // лучше, чем ближе картинка к странице блокнота). Мелкое
+          // увеличиваем до 2,4 раза, крупное ужимаем до 1600 точек.
+          const readInk = async (ids) => {
+            const a = apiRef.current && apiRef.current.api, L = P.current.lib;
+            if (!a || !L || readOnlyNow()) return;
+            const want = new Set(String(ids || '').split(','));
+            const ink = a.getSceneElements().filter(e => want.has(e.id) && e.type === 'freedraw');
+            if (!ink.length) return;
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            ink.forEach(e => { const b = excElBox(e); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); });
+            let cv;
+            try {
+              cv = await L.exportToCanvas({
+                elements: ink.map(e => ({ ...e, strokeColor: '#101010', opacity: 100 })),
+                appState: { exportBackground: true, viewBackgroundColor: '#ffffff', exportWithDarkMode: false },
+                files: null, exportPadding: 24,
+                getDimensions: (w, h) => { const k = Math.min(2.4, 1600 / Math.max(1, w, h)); return { width: Math.round(w * k), height: Math.round(h * k), scale: k }; }
+              });
+            } catch (e) { P.current.act.toast('Не удалось снять рукопись с доски'); return; }
+            a.updateScene({ appState: { selectedElementIds: {} }, captureUpdate: L.CaptureUpdateAction.NEVER });
+            P.current.act.ocr(cv.toDataURL('image/png'), { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+          };
           const trackSelection = (els, app, busy) => {
             const st = S.current;
             let sel = null;
@@ -7972,6 +8296,17 @@
                 if (m) {
                   const z = app.zoom.value;
                   sel = { type, id, x: Math.round((m.x + m.width + app.scrollX) * z), y: Math.round((m.y + app.scrollY) * z) - 8 };
+                }
+              }
+              // Выделена рукопись (пусть и вперемешку с чем-то ещё) —
+              // ручка «в текст» над ней. Гостю — нет: она заводит гайд.
+              if (!sel && !readOnlyNow()) {
+                const ink = ids.map(i => els.find(x => x.id === i)).filter(e => e && !e.isDeleted && e.type === 'freedraw');
+                if (ink.length) {
+                  let x1 = -Infinity, y0 = Infinity;
+                  ink.forEach(e => { const b = excElBox(e); x1 = Math.max(x1, b.x + b.w); y0 = Math.min(y0, b.y); });
+                  const z = app.zoom.value;
+                  sel = { type: 'ocr', id: ink.map(e => e.id).join(','), x: Math.round((x1 + app.scrollX) * z), y: Math.round((y0 + app.scrollY) * z) - 8 };
                 }
               }
             }
@@ -7992,6 +8327,9 @@
               return;
             }
             const main = e.id === cd.id, text = e.id === cd.id + '~t', cap = e.id === cd.id + '~c';
+            // Метка ролика и её плашка — часть карточки, а не копия: своих
+            // правок у них нет, их строит запись.
+            if (e.id === cd.id + '~v' || e.id === cd.id + '~vb') return;
             // Дубль карточки (Ctrl+D, копирование с Alt, вставка). Сцена,
             // референс, документ и кадр — записи проекта, их копия завела
             // бы вторую сцену в списке и вторую фотографию в галерее.
@@ -8176,6 +8514,14 @@
             // включил бы обрезку. Второе нажатие до него не доходит.
             const tapDown = (ev) => {
               if (ev.button !== undefined && ev.button !== 0) return;
+              if (ev.target && ev.target.closest && ev.target.closest('.cf-mini, [data-cf="exc-open"], [data-cf="exc-linkbar"]')) return;
+              // Режим «Связь»: нажатие по холсту — выбор конца, а не жест
+              // Excalidraw. Его панели (инструменты, меню) нажимаются как всегда.
+              if (P.current.linkMode && !P.current.readOnly && ev.target && ev.target.tagName === 'CANVAS') {
+                ev.stopPropagation(); ev.preventDefault();
+                pickLink(linkTargetAt(ev.clientX, ev.clientY));
+                return;
+              }
               const hit = cardAt(ev.clientX, ev.clientY);
               const st = S.current, now = Date.now(), last = st.tap;
               if (hit && last && last.id === hit.id && now - last.t < 380 && Math.hypot(ev.clientX - last.x, ev.clientY - last.y) < 24) {
@@ -8189,7 +8535,8 @@
             // Браузерный dblclick мышью Excalidraw ловит отдельно — гасим его
             // над теми же карточками, иначе поверх открытого включилась бы
             // обрезка картинки.
-            const dbl = (ev) => { if (cardAt(ev.clientX, ev.clientY)) { ev.stopPropagation(); ev.preventDefault(); } };
+            const dbl = (ev) => { if (ev.target && ev.target.closest && ev.target.closest('.cf-mini')) return;
+                                  if (cardAt(ev.clientX, ev.clientY)) { ev.stopPropagation(); ev.preventDefault(); } };
             host.addEventListener('dragover', over, true);
             host.addEventListener('drop', drop, true);
             host.addEventListener('pointerdown', tapDown, true);
@@ -8383,7 +8730,10 @@
               )}
               {/* Открыть — это чтение: у гостя не прячем (выделять ему, впрочем,
                   Excalidraw в режиме просмотра не даёт — остаётся двойное). */}
-              <ExcCardActions bind={selBind} onOpen={(t, id) => P.current.act.open(t, id)} />
+              <ExcCardActions bind={selBind} onOpen={(t, id) => t === 'ocr' ? readInk(id) : P.current.act.open(t, id)} />
+              {/* Карта — чтение: у гостя по ссылке она нужна не меньше. */}
+              {lib && initial && <ExcMiniMap bind={miniBind} onGo={miniGo} phone={phone} />}
+              {lib && initial && linkMode && <ExcLinkBar bind={linkBar} onDone={() => onLinkMode && onLinkMode(false)} />}
               {children}
             </div>
           );
@@ -11183,6 +11533,12 @@
           const runOcr = async (box) => {
             const img = box && box.w > 4 && box.h > 4 ? inkImage(box) : '';
             if (!img) { showToast('В рамке нет рукописи — обведите то, что написано пером'); return; }
+            return readInkImage(img, box);
+          };
+          // Картинка рукописи → текст. Одна на обе доски: своя рисует штрихи
+          // сама (`inkImage`), доска Excalidraw — своим `exportToCanvas`,
+          // а дальше путь общий — тот же ИИ, то же окно, тот же гайд.
+          const readInkImage = async (img, box) => {
             setOcrBusy(true);
             showToast('🔎 Читаю рукопись...');
             const text = await callGeminiAI(OCR_PROMPT, false, { mime: 'image/png', data: img.split(',')[1] }, OCR_SYSTEM);
@@ -15985,6 +16341,16 @@
           // canvas/ink-…, растровая подложка) НЕ трогаются вовсе: обратный
           // путь «Вернуть прежнюю доску» просто переключает движок обратно.
           const [excConvert, setExcConvert] = useState(null);
+          // «Связь» в два нажатия на доске Excalidraw. Режим живёт до «Готово»,
+          // Escape или смены доски — как инструмент «Связь» у своей доски.
+          const [excLinkMode, setExcLinkMode] = useState(false);
+          // Пуста ли доска Excalidraw под шаблоны — знает только она сама
+          // (нарисованное живёт в ней), сообщает через `act.blank`.
+          const [excBlank, setExcBlank] = useState(false);
+          useEffect(() => { setExcLinkMode(false); }, [activeBoardId, excActive, currentView]);
+          // Новая доска скажет о себе сама на первом onChange; до тех пор
+          // шаблонов не показываем — иначе они мигнули бы поверх рисунка.
+          useEffect(() => { setExcBlank(false); }, [activeBoardId]);
           const excOldData = () => {
             if (!hitCtx.current) hitCtx.current = document.createElement('canvas').getContext('2d');
             const ctx = hitCtx.current;
@@ -16159,6 +16525,9 @@
             drop: (dt, at) => acceptDropped(dt, { place: { boardId: activeBoardId, x: at.x, y: at.y } }),
             accepts: dropHasImage,
             toast: showToast,
+            // Рукопись с доски — в тот же разбор и то же окно, что у своей.
+            ocr: (img, box) => readInkImage(img, box),
+            blank: setExcBlank,
             // Перевод со старой доски лёг на эту — говорим, что сделано, и
             // забываем данные: второй раз их не понадобится.
             converted: (boardId, n) => {
@@ -16851,6 +17220,80 @@
           // свою и Excalidraw: вторая копия разъехалась бы с первой.
           // На доске Excalidraw панель прижата вправо: слева у него
           // свои меню и настройки стиля.
+          // ПУСТАЯ ДОСКА — НЕ ПУСТОЙ ЭКРАН. Три шаблона — одни на обе доски
+          // (своя и на Excalidraw): всё, что они делают, кладёт записи
+          // проекта на доску, а не рисует на холсте, поэтому движок доски
+          // им всё равно. Вторая копия разметки разъехалась бы с первой.
+          const renderBoardTemplates = (exc) => (
+            <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none" style={{ paddingLeft: exc ? 0 : 70 }} data-cf="board-templates">
+              {/* width:100% обязателен вместе с maxWidth: во flex
+                  с центрированием ширина иначе считается по
+                  содержимому, и сетка шаблонов схлопывалась
+                  в одну колонку. */}
+              <div className="text-center pointer-events-auto" style={{ width: '100%', maxWidth: 640, padding: 24 }}>
+                <div style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em' }}>Пустой холст — начните с шаблона</div>
+                <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', marginTop: 6 }}>или перетащите сюда кадры из галереи — они лягут стопкой</div>
+                <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))' }}>
+                  <button onClick={newSchemeHere} className="cf-tpl text-left">
+                    <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
+                      <rect x="60" y="26" width="40" height="20" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <path d="M30 14 L52 30 M30 14 l14 2 M30 14 l2 13" stroke="var(--warn)" strokeWidth="1.5" />
+                      <circle cx="26" cy="12" r="6" stroke="var(--warn)" strokeWidth="1.5" />
+                      <path d="M128 58 L104 44 M128 58 l-4 -13 M128 58 l-13 -3" stroke="var(--accent)" strokeWidth="1.5" />
+                      <rect x="128" y="54" width="10" height="8" rx="1" stroke="var(--accent)" strokeWidth="1.5" />
+                    </svg>
+                    <div style={{ fontSize: 'var(--fs-2)', fontWeight: 600, marginTop: 8 }}>Схема света</div>
+                    <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 3 }}>план площадки: приборы с конусами, камера с углом обзора</div>
+                  </button>
+
+                  <button onClick={() => setRefPicker({ mode: 'board' })} className="cf-tpl text-left">
+                    <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
+                      <rect x="14" y="10" width="42" height="30" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <rect x="62" y="18" width="36" height="46" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <rect x="104" y="8" width="44" height="26" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <rect x="30" y="46" width="26" height="18" rx="2" stroke="var(--accent)" strokeWidth="1.5" />
+                    </svg>
+                    <div style={{ fontSize: 'var(--fs-2)', fontWeight: 600, marginTop: 8 }}>Мудборд</div>
+                    <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 3 }}>свободная сетка под референсы из галереи</div>
+                  </button>
+
+                  {/* Карточка кликается ЦЕЛИКОМ. Раньше обработчик
+                      висел только на строке с названием, и нажатие
+                      почти в любое место карточки не делало ничего:
+                      выглядело как сломанная кнопка. Чипы пропорции
+                      внутри — отдельные нажатия, они всплытие гасят. */}
+                  <div className="cf-tpl text-left"
+                       onClick={() => { if (activeSceneId) spreadSceneOnBoard(activeSceneId, activeBoardId, { frames: true }); else showToast('Сначала выберите сцену на экране «Сцены»'); }}>
+                    <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
+                      <rect x="10" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <rect x="59" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <rect x="108" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
+                      <path d="M52 31 h7 M101 31 h7" stroke="var(--accent)" strokeWidth="1.5" />
+                    </svg>
+                    <div style={{ fontSize: 'var(--fs-2)', fontWeight: 600, marginTop: 8 }}>
+                      Раскадровка{(() => { const sc = scenes.find(x => x.id === activeSceneId); return sc ? ` · сц ${sc.number}` : ''; })()}
+                    </div>
+                    <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 3 }}>лента кадров сцены на эту доску · нет кадров — положит пустые окошки · пропорция:</div>
+                    {/* Пропорция кадра — общая для проекта: её же
+                        берут превью раскадровки на экране сцены,
+                        чтобы раскадровка обещала тот кадр, который
+                        в итоге снимут. */}
+                    <div className="flex gap-1 mt-1.5">
+                      {SHOT_RATIOS.map(([label, val]) => (
+                        <button key={label} onClick={(e) => { e.stopPropagation(); setProjectRatio(val); }}
+                                title={`Пропорция кадра ${label} для всего проекта`}
+                                style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', padding: '3px 7px', borderRadius: 'var(--r-sm)', fontWeight: 600,
+                                         background: projectRatio === val ? 'var(--raised)' : 'transparent',
+                                         color: projectRatio === val ? 'var(--text)' : 'var(--muted)',
+                                         border: projectRatio === val ? 'none' : '1px solid var(--border)' }}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+
           const renderScenePicker = (exc) => scenePickerOpen && (
                         <div className={`absolute glass-panel rounded-lg z-30 w-72 max-w-[calc(100vw-2rem)] border-t border-[var(--border)] flex flex-col ${exc ? '' : 'top-16 md:top-6 left-2 md:left-24'}`}
                              data-cf="board-picker" style={exc ? { maxHeight: '60vh', top: 64, right: 12 } : { maxHeight: '60vh' }}>
@@ -19583,6 +20026,12 @@
                                   className="cf-tool cf-edit-only" title="Стикер"><Icons.Sticky/></button>
                           <button onClick={addRefCardHere}
                                   className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
+                          {/* «Связь» в два нажатия — у доски Excalidraw её рельса нет,
+                              поэтому кнопка тут, рядом с остальными действиями доски. */}
+                          {excActive && (
+                            <button onClick={() => setExcLinkMode(v => !v)} data-cf="exc-link-tool"
+                                    className={`cf-tool cf-edit-only ${excLinkMode ? 'on' : ''}`} title="Связь: нажмите две карточки или фигуры"><Icons.Link/></button>
+                          )}
                           <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
                         </React.Fragment>
                         )}
@@ -19608,6 +20057,11 @@
                                   <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addRefCardHere(); }}>
                                     <Icons.Gallery/> Новый референс
                                   </button>
+                                  {excActive && (
+                                    <button className="cf-edit-only" data-cf="exc-link-row" onClick={() => { setBoardMenu(false); setExcLinkMode(true); }}>
+                                      <Icons.Link/> Связать две карточки
+                                    </button>
+                                  )}
                                   <hr />
                                 </React.Fragment>
                               )}
@@ -19653,8 +20107,10 @@
                     {excActive ? (
                       <ExcBoard key={activeBoardId} boardId={activeBoardId} readOnly={READ_ONLY} cards={excCards || {}}
                                 legacyColors={!((sortedBoards.find(b => b.id === activeBoardId) || {}).xc)} convert={excConvert}
+                                linkMode={excLinkMode && !READ_ONLY} onLinkMode={setExcLinkMode}
                                 projectRatio={projectRatio} store={excStore} act={excAct} apiRef={excApiRef}>
                         {renderScenePicker(true)}
+                        {!READ_ONLY && excBlank && excCards && !EXC_TYPES.some(t => (excCards[EXC_LIST[t]] || []).length) && renderBoardTemplates(true)}
                         <input ref={excFileRef} type="file" multiple accept="image/*,video/*,.pdf" className="hidden"
                                onChange={(e) => {
                                  const files = Array.from(e.target.files || []);
@@ -20653,73 +21109,7 @@
                         && !stickies.some(st => belongsToBoard(st, activeBoardId))
                         && !references.some(r => r.boardId === activeBoardId)
                         && boardFrames.length === 0 && (
-                        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none" style={{ paddingLeft: 70 }}>
-                          {/* width:100% обязателен вместе с maxWidth: во flex
-                              с центрированием ширина иначе считается по
-                              содержимому, и сетка шаблонов схлопывалась
-                              в одну колонку. */}
-                          <div className="text-center pointer-events-auto" style={{ width: '100%', maxWidth: 640, padding: 24 }}>
-                            <div style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em' }}>Пустой холст — начните с шаблона</div>
-                            <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', marginTop: 6 }}>или перетащите сюда кадры из галереи — они лягут стопкой</div>
-                            <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))' }}>
-                              <button onClick={newSchemeHere} className="cf-tpl text-left">
-                                <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
-                                  <rect x="60" y="26" width="40" height="20" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <path d="M30 14 L52 30 M30 14 l14 2 M30 14 l2 13" stroke="var(--warn)" strokeWidth="1.5" />
-                                  <circle cx="26" cy="12" r="6" stroke="var(--warn)" strokeWidth="1.5" />
-                                  <path d="M128 58 L104 44 M128 58 l-4 -13 M128 58 l-13 -3" stroke="var(--accent)" strokeWidth="1.5" />
-                                  <rect x="128" y="54" width="10" height="8" rx="1" stroke="var(--accent)" strokeWidth="1.5" />
-                                </svg>
-                                <div style={{ fontSize: 'var(--fs-2)', fontWeight: 600, marginTop: 8 }}>Схема света</div>
-                                <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 3 }}>план площадки: приборы с конусами, камера с углом обзора</div>
-                              </button>
-
-                              <button onClick={() => setRefPicker({ mode: 'board' })} className="cf-tpl text-left">
-                                <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
-                                  <rect x="14" y="10" width="42" height="30" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <rect x="62" y="18" width="36" height="46" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <rect x="104" y="8" width="44" height="26" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <rect x="30" y="46" width="26" height="18" rx="2" stroke="var(--accent)" strokeWidth="1.5" />
-                                </svg>
-                                <div style={{ fontSize: 'var(--fs-2)', fontWeight: 600, marginTop: 8 }}>Мудборд</div>
-                                <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 3 }}>свободная сетка под референсы из галереи</div>
-                              </button>
-
-                              {/* Карточка кликается ЦЕЛИКОМ. Раньше обработчик
-                                  висел только на строке с названием, и нажатие
-                                  почти в любое место карточки не делало ничего:
-                                  выглядело как сломанная кнопка. Чипы пропорции
-                                  внутри — отдельные нажатия, они всплытие гасят. */}
-                              <div className="cf-tpl text-left"
-                                   onClick={() => { if (activeSceneId) spreadSceneOnBoard(activeSceneId, activeBoardId, { frames: true }); else showToast('Сначала выберите сцену на экране «Сцены»'); }}>
-                                <svg width="100%" height="72" viewBox="0 0 160 72" fill="none">
-                                  <rect x="10" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <rect x="59" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <rect x="108" y="22" width="42" height="18" rx="2" stroke="var(--muted-2)" strokeWidth="1.5" />
-                                  <path d="M52 31 h7 M101 31 h7" stroke="var(--accent)" strokeWidth="1.5" />
-                                </svg>
-                                <div style={{ fontSize: 'var(--fs-2)', fontWeight: 600, marginTop: 8 }}>
-                                  Раскадровка{(() => { const sc = scenes.find(x => x.id === activeSceneId); return sc ? ` · сц ${sc.number}` : ''; })()}
-                                </div>
-                                <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 3 }}>лента кадров сцены на эту доску · нет кадров — положит пустые окошки · пропорция:</div>
-                                {/* Пропорция кадра — общая для проекта: её же
-                                    берут превью раскадровки на экране сцены,
-                                    чтобы раскадровка обещала тот кадр, который
-                                    в итоге снимут. */}
-                                <div className="flex gap-1 mt-1.5">
-                                  {SHOT_RATIOS.map(([label, val]) => (
-                                    <button key={label} onClick={(e) => { e.stopPropagation(); setProjectRatio(val); }}
-                                            title={`Пропорция кадра ${label} для всего проекта`}
-                                            style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', padding: '3px 7px', borderRadius: 'var(--r-sm)', fontWeight: 600,
-                                                     background: projectRatio === val ? 'var(--raised)' : 'transparent',
-                                                     color: projectRatio === val ? 'var(--text)' : 'var(--muted)',
-                                                     border: projectRatio === val ? 'none' : '1px solid var(--border)' }}>{label}</button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
+                        renderBoardTemplates(false)
                       )}
 
                       {/* Какие сцены можно положить на эту доску. Доска — текущая
