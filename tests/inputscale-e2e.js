@@ -1,7 +1,7 @@
 // Шкала по способу ввода: на ноутбуке с сенсорным экраном (Flow X13)
 // интерфейс крупный от пальца и пера и плотный от мыши и тачпада. iPad
 // и телефон это не задевает — там крупный всегда, компьютер без касания —
-// плотный всегда. Проверяется в браузере: «сменилась ли шкала» — это
+// плотный всегда. Ручного переключателя нет намеренно. Проверяется в браузере: «сменилась ли шкала» — это
 // вычисленный размер цели, а «дошло ли нажатие» — открылось ли меню.
 const fs = require('fs'), os = require('os'), path = require('path');
 const { execSync, spawn } = require('child_process');
@@ -68,11 +68,6 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     await p.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Проект').click());
     await p.waitForTimeout(500);
   };
-  const pickScale = (p, label) => p.evaluate((t) => {
-    const b = [...document.querySelectorAll('[data-cf="input-scale"] button')].find(x => x.textContent === t);
-    b.click(); return !!b;
-  }, label);
-
   // ---- НОУТБУК С СЕНСОРНЫМ ЭКРАНОМ (как Flow X13): Linux, касание есть
   {
     const { ctx, page: p, errs } = await mk({ hasTouch: true }, { cf_input_last: 'mouse' });
@@ -107,23 +102,8 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     ok('после перезапуска — та шкала, которой работали последней', s.touch, JSON.stringify(s));
 
     await openProject(p);
-    const row = await p.evaluate(() => { const r = document.querySelector('[data-cf="input-scale"]'); return r ? r.textContent : null; });
-    ok('в «Проекте» есть «Размер интерфейса» с состоянием', !!row && /Сейчас крупный/.test(row), row);
-    await pickScale(p, 'Плотный'); await p.waitForTimeout(200);
-    // Касаемся внутри окна (по подписи строки): нажатие по фону окно закрыло бы
-    const lab = await p.evaluate(() => { const r = document.querySelector('[data-cf="input-scale"] .min-w-0').getBoundingClientRect(); return { x: r.x + 20, y: r.y + 8 }; });
-    await tapTouch(p, lab.x, lab.y);
-    s = await state(p);
-    ok('«Плотный» держится и после касания', !s.touch && s.tap === '34px', JSON.stringify(s));
-    await pickScale(p, 'Крупный'); await p.waitForTimeout(200);
-    await swipeMouse(p);
-    s = await state(p);
-    ok('«Крупный» держится и после мыши', s.touch && s.tap === '44px', JSON.stringify(s));
-    await pickScale(p, 'Авто'); await p.waitForTimeout(200);
-    await swipeMouse(p);
-    s = await state(p);
-    const pref = await p.evaluate(() => localStorage.getItem('cf_input_scale'));
-    ok('«Авто» возвращает автоматику и запоминается', !s.touch && pref === 'auto', JSON.stringify({ pref, ...s }));
+    const row = await p.evaluate(() => !!document.querySelector('[data-cf="input-scale"]') || /Размер интерфейса/.test(document.body.textContent));
+    ok('ручного переключателя шкалы в «Проекте» нет', !row);
     await p.keyboard.press('Escape'); await p.waitForTimeout(300);
 
     // «Откуда взять фото»: на ноутбуке выбирать не из чего — окно файла сразу
@@ -155,9 +135,6 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     await swipeMouse(p);
     let s = await state(p);
     ok('iPad: мышь/трекпад шкалу не сжимают', s.touch && s.tap === '44px', JSON.stringify(s));
-    await openProject(p);
-    const row = await p.evaluate(() => { const r = document.querySelector('[data-cf="input-scale"]'); return r ? r.textContent : null; });
-    ok('iPad: в «Проекте» «Авто» значит крупный', !!row && /держат в руках/.test(row), row);
     ok('iPad: без ошибок', !errs.length, errs.join(' | '));
     await ctx.close();
   }
@@ -184,9 +161,6 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     const { ctx, page: p } = await mk({ hasTouch: false }, { cf_input_last: 'touch' });
     const s = await state(p);
     ok('без касания: плотная шкала, что бы ни было записано', !s.touch && s.tap === '34px', JSON.stringify(s));
-    await openProject(p);
-    const row = await p.evaluate(() => !!document.querySelector('[data-cf="input-scale"]'));
-    ok('без касания: переключателя в «Проекте» нет', !row);
     await ctx.close();
   }
 

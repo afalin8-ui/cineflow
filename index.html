@@ -4935,24 +4935,20 @@
         // мышью или тачпадом — плотный. iPad и телефоны это не задевает:
         // там всегда крупный, даже с клавиатурой и трекпадом (этим iPad и
         // держат в руках). Без сенсорного экрана — всегда плотный.
-        // Ручной выбор в «Проекте» (`cf_input_scale`: auto · touch · mouse)
-        // сильнее автоматики. Последний способ помним (`cf_input_last`),
+        // Ручного переключателя НЕТ намеренно: шкала следует за рукой сама,
+        // и выбор, который надо помнить и переставлять, был бы лишним.
+        // Последний способ помним (`cf_input_last`),
         // иначе ноутбук при каждом запуске сначала показывал бы крупное,
         // а на первом движении тачпада сжимался.
         const INPUT_AUTO = TOUCH_DEVICE && !MOBILE_OS;
         const inputScale = {
-          pref: (() => { try { return localStorage.getItem('cf_input_scale') || 'auto'; } catch (e) { return 'auto'; } })(),
           last: (() => {
             try { const v = localStorage.getItem('cf_input_last'); if (v === 'touch' || v === 'mouse') return v; } catch (e) {}
             // Первый запуск: спрашиваем, чем устройство водит ГЛАВНЫМ образом.
             return (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'touch' : 'mouse';
           })(),
-          subs: new Set(),
         };
         const touchUi = () => {
-          const p = inputScale.pref;
-          if (p === 'touch') return true;
-          if (p === 'mouse') return false;
           if (!TOUCH_DEVICE) return false;
           if (!INPUT_AUTO) return true;
           return inputScale.last === 'touch';
@@ -4962,19 +4958,6 @@
           const on = touchUi();
           if (document.documentElement.classList.contains('cf-touch') === on) return;
           document.documentElement.classList.toggle('cf-touch', on);
-          inputScale.subs.forEach(f => { try { f(on); } catch (e) {} });
-        };
-        const setInputScale = (p) => {
-          inputScale.pref = p;
-          try { localStorage.setItem('cf_input_scale', p); } catch (e) {}
-          applyTouchUi();
-        };
-        // Для кнопок, чей вид зависит от шкалы (подпись «камера · плёнка»):
-        // класс на <html> React не видит, а перерисоваться им надо.
-        const useTouchUi = () => {
-          const [on, setOn] = useState(touchUi);
-          useEffect(() => { inputScale.subs.add(setOn); setOn(touchUi()); return () => inputScale.subs.delete(setOn); }, []);
-          return on;
         };
         applyTouchUi();
         if (INPUT_AUTO && typeof window !== 'undefined') {
@@ -17355,10 +17338,6 @@
           // адресной строки, и параметр туда просто не набрать.
           const [fpsOn, setFpsOn] = useState(() =>
             localStorage.getItem('cf_fps') === '1' || new URLSearchParams(location.search).has('fps'));
-          // Размер интерфейса: сам выбор живёт в inputScale (он нужен ещё до
-          // первой отрисовки), здесь — только чтобы кнопки показали его.
-          const [inputPref, setInputPref] = useState(() => inputScale.pref);
-          const touchNow = useTouchUi();
           const toggleFps = () => setFpsOn(v => {
             const n = !v;
             try { localStorage.setItem('cf_fps', n ? '1' : '0'); } catch (e) {}
@@ -22961,29 +22940,6 @@
                       <input type="checkbox" checked={fpsOn} onChange={toggleFps}
                              className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
                     </label>
-
-                    {/* Шкала касания. Только там, где есть сенсорный экран:
-                        без него выбирать нечего, интерфейс всегда плотный */}
-                    {TOUCH_DEVICE && (
-                      <div className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 mb-2" data-cf="input-scale"
-                           style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-zinc-200">Размер интерфейса</span>
-                          <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
-                            {inputPref === 'auto'
-                              ? (INPUT_AUTO ? `Крупный от пальца и пера, плотный от мыши и тачпада. Сейчас ${touchNow ? 'крупный' : 'плотный'}.`
-                                            : 'Крупный: устройство держат в руках.')
-                              : inputPref === 'touch' ? 'Всегда крупный, под палец.' : 'Всегда плотный, под мышь.'}
-                          </span>
-                        </span>
-                        <div className="cf-seg" role="group" aria-label="Размер интерфейса">
-                          {[['auto', 'Авто'], ['touch', 'Крупный'], ['mouse', 'Плотный']].map(([k, t]) => (
-                            <button key={k} type="button" className={inputPref === k ? 'on' : ''} aria-pressed={inputPref === k}
-                                    onClick={() => { setInputScale(k); setInputPref(k); }}>{t}</button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
 
                     <StorageInfo light={!!Object.keys(lightOnly.current || {}).length} />
 
