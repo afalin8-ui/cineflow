@@ -4907,16 +4907,117 @@
         // у телефона: все три пути ведут в одно и то же окно выбора
         // файла, и список посреди дороги был бы лишним нажатием на
         // каждую загрузку — а референсы грузят пачками. Поэтому на
-        // мыши открываем окно сразу, как было всегда.
+        // компьютере открываем окно сразу, как было всегда.
         //
-        // Считаем именно КАСАНИЕ, а не отсутствие мыши: iPad с клавиатурой
-        // и трекпадом отвечает `(hover: hover)`, и по наведению мы отняли
-        // бы выбор ровно у главного устройства.
+        // Спрашиваем по СИСТЕМЕ (`MOBILE_OS`), а не по мыши и не по касанию:
+        // iPad с клавиатурой и трекпадом отвечает `(hover: hover)`, и по
+        // наведению мы отняли бы выбор ровно у главного устройства; а у
+        // ноутбука с сенсорным экраном касание есть, но все три строки
+        // списка открыли бы одно и то же окно.
         const TOUCH_DEVICE = (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
                           || (typeof window !== 'undefined' && 'ontouchstart' in window);
-        // Касание — свой масштаб (см. html.cf-touch в <style>): один класс на <html>,
-        // и токены переопределяются одним правилом, а не по месту.
-        if (TOUCH_DEVICE && typeof document !== 'undefined') document.documentElement.classList.add('cf-touch');
+        // Телефон или планшет Apple/Android. У них одних и есть из чего
+        // выбирать в «Откуда взять фото»: у ноутбука с сенсорным экраном
+        // (Flow X13, Surface) камера по `capture` не открывается, а
+        // «фотоплёнка» и «файлы» ведут в одно и то же окно выбора файла.
+        // iPadOS представляется Маком — узнаём его по касанию.
+        const MOBILE_OS = typeof navigator !== 'undefined' && (
+          /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')
+          || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+        // КАСАНИЕ — СВОЙ МАСШТАБ (см. html.cf-touch в <style>): один класс на
+        // <html>, и токены переопределяются одним правилом, а не по месту.
+        //
+        // Решаем, ЧЕМ НАЖАЛИ ПОСЛЕДНИМ, а не «есть ли сенсорный экран».
+        // У ноутбука-трансформера (Flow X13) экран сенсорный всегда, и по
+        // старому правилу интерфейс был крупным и тогда, когда им работают
+        // тачпадом. Теперь: коснулись пальцем или пером — крупный, повели
+        // мышью или тачпадом — плотный. iPad и телефоны это не задевает:
+        // там всегда крупный, даже с клавиатурой и трекпадом (этим iPad и
+        // держат в руках). Без сенсорного экрана — всегда плотный.
+        // Ручной выбор в «Проекте» (`cf_input_scale`: auto · touch · mouse)
+        // сильнее автоматики. Последний способ помним (`cf_input_last`),
+        // иначе ноутбук при каждом запуске сначала показывал бы крупное,
+        // а на первом движении тачпада сжимался.
+        const INPUT_AUTO = TOUCH_DEVICE && !MOBILE_OS;
+        const inputScale = {
+          pref: (() => { try { return localStorage.getItem('cf_input_scale') || 'auto'; } catch (e) { return 'auto'; } })(),
+          last: (() => {
+            try { const v = localStorage.getItem('cf_input_last'); if (v === 'touch' || v === 'mouse') return v; } catch (e) {}
+            // Первый запуск: спрашиваем, чем устройство водит ГЛАВНЫМ образом.
+            return (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'touch' : 'mouse';
+          })(),
+          subs: new Set(),
+        };
+        const touchUi = () => {
+          const p = inputScale.pref;
+          if (p === 'touch') return true;
+          if (p === 'mouse') return false;
+          if (!TOUCH_DEVICE) return false;
+          if (!INPUT_AUTO) return true;
+          return inputScale.last === 'touch';
+        };
+        const applyTouchUi = () => {
+          if (typeof document === 'undefined') return;
+          const on = touchUi();
+          if (document.documentElement.classList.contains('cf-touch') === on) return;
+          document.documentElement.classList.toggle('cf-touch', on);
+          inputScale.subs.forEach(f => { try { f(on); } catch (e) {} });
+        };
+        const setInputScale = (p) => {
+          inputScale.pref = p;
+          try { localStorage.setItem('cf_input_scale', p); } catch (e) {}
+          applyTouchUi();
+        };
+        // Для кнопок, чей вид зависит от шкалы (подпись «камера · плёнка»):
+        // класс на <html> React не видит, а перерисоваться им надо.
+        const useTouchUi = () => {
+          const [on, setOn] = useState(touchUi);
+          useEffect(() => { inputScale.subs.add(setOn); setOn(touchUi()); return () => inputScale.subs.delete(setOn); }, []);
+          return on;
+        };
+        applyTouchUi();
+        if (INPUT_AUTO && typeof window !== 'undefined') {
+          const note = (mode) => {
+            if (inputScale.last === mode) return;
+            inputScale.last = mode;
+            try { localStorage.setItem('cf_input_last', mode); } catch (e) {}
+            applyTouchUi();
+          };
+          // Переключаем ПОСЛЕ жеста, а не на нажатии: иначе раскладка
+          // поменялась бы между pointerdown и click, и нажатие ушло бы
+          // в ту кнопку, что приехала на это место. 250 мс хватает, чтобы
+          // click дошёл до своей цели.
+          let touchT = 0, down = 0;
+          window.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'touch' || e.pointerType === 'pen') { down++; clearTimeout(touchT); }
+          }, true);
+          const up = (e) => {
+            if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+            down = Math.max(0, down - 1);
+            if (down) return;
+            clearTimeout(touchT);
+            touchT = setTimeout(() => note('touch'), 250);
+          };
+          window.addEventListener('pointerup', up, true);
+          window.addEventListener('pointercancel', up, true);
+          // Мышь и тачпад — по НАСТОЯЩЕМУ движению, а не по одному событию:
+          // палец рождает совместимые события мыши, а рука, задевшая тачпад,
+          // даёт пару точек. 60 точек пути за полсекунды — это уже работа.
+          let path = 0, since = 0, lx = null, ly = null;
+          window.addEventListener('pointermove', (e) => {
+            if (e.pointerType !== 'mouse' || inputScale.last === 'mouse') { lx = null; return; }
+            const t = e.timeStamp || performance.now();
+            if (lx === null || t - since > 500) { path = 0; since = t; lx = e.clientX; ly = e.clientY; return; }
+            path += Math.abs(e.clientX - lx) + Math.abs(e.clientY - ly);
+            lx = e.clientX; ly = e.clientY;
+            if (path >= 60) { lx = null; note('mouse'); }
+          }, true);
+          // Прокрутка двумя пальцами по тачпаду — тоже работа тачпадом.
+          // Мышь в плотную шкалу переводит и щелчок: он нажатие, а не случайность.
+          window.addEventListener('wheel', () => note('mouse'), { capture: true, passive: true });
+          window.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse') setTimeout(() => note('mouse'), 250); }, true);
+        }
         if (typeof navigator !== 'undefined' && navigator.standalone === true && typeof document !== 'undefined') document.documentElement.classList.add('cf-standalone');
 
         // Плитка «+ фото» со списком источников. Своё состояние живёт
@@ -4955,7 +5056,7 @@
             // жестом человека — окно выбора файла по нему не откроется.
             // Поэтому в таком случае ВСЕГДА показываем список: настоящее
             // нажатие по строке и откроет окно.
-            if (!TOUCH_DEVICE && e && e.isTrusted !== false) { pick('lib'); return; }
+            if (!MOBILE_OS && e && e.isTrusted !== false) { pick('lib'); return; }
             const phone = !!(window.matchMedia && window.matchMedia('(max-width: 767px)').matches);
             let at = null;
             if (!phone && btnRef.current) {
@@ -5012,7 +5113,7 @@
                 {children}
                 {/* Подпись только там, где выбор и правда есть: на мыши
                     она обещала бы камеру, которой нет. */}
-                {hint && TOUCH_DEVICE && <span style={{ fontSize: 'var(--fs-1)', color: 'var(--border)' }}>{hint}</span>}
+                {hint && MOBILE_OS && <span style={{ fontSize: 'var(--fs-1)', color: 'var(--border)' }}>{hint}</span>}
               </button>
               {PHOTO_SOURCES.map(s => (
                 <input key={s.key} ref={el => { inputs.current[s.key] = el; }}
@@ -17254,6 +17355,10 @@
           // адресной строки, и параметр туда просто не набрать.
           const [fpsOn, setFpsOn] = useState(() =>
             localStorage.getItem('cf_fps') === '1' || new URLSearchParams(location.search).has('fps'));
+          // Размер интерфейса: сам выбор живёт в inputScale (он нужен ещё до
+          // первой отрисовки), здесь — только чтобы кнопки показали его.
+          const [inputPref, setInputPref] = useState(() => inputScale.pref);
+          const touchNow = useTouchUi();
           const toggleFps = () => setFpsOn(v => {
             const n = !v;
             try { localStorage.setItem('cf_fps', n ? '1' : '0'); } catch (e) {}
@@ -22856,6 +22961,29 @@
                       <input type="checkbox" checked={fpsOn} onChange={toggleFps}
                              className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
                     </label>
+
+                    {/* Шкала касания. Только там, где есть сенсорный экран:
+                        без него выбирать нечего, интерфейс всегда плотный */}
+                    {TOUCH_DEVICE && (
+                      <div className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 mb-2" data-cf="input-scale"
+                           style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-zinc-200">Размер интерфейса</span>
+                          <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
+                            {inputPref === 'auto'
+                              ? (INPUT_AUTO ? `Крупный от пальца и пера, плотный от мыши и тачпада. Сейчас ${touchNow ? 'крупный' : 'плотный'}.`
+                                            : 'Крупный: устройство держат в руках.')
+                              : inputPref === 'touch' ? 'Всегда крупный, под палец.' : 'Всегда плотный, под мышь.'}
+                          </span>
+                        </span>
+                        <div className="cf-seg" role="group" aria-label="Размер интерфейса">
+                          {[['auto', 'Авто'], ['touch', 'Крупный'], ['mouse', 'Плотный']].map(([k, t]) => (
+                            <button key={k} type="button" className={inputPref === k ? 'on' : ''} aria-pressed={inputPref === k}
+                                    onClick={() => { setInputScale(k); setInputPref(k); }}>{t}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <StorageInfo light={!!Object.keys(lightOnly.current || {}).length} />
 
