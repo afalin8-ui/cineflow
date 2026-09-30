@@ -141,6 +141,31 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   const cat = await p.evaluate(() => { try { return JSON.parse(localStorage.getItem('cf_lightgeartypes') || '{}'); } catch (e) { return {}; } });
   ok('прибор лёг в каталог света', Object.values(cat).some(g => g.label === (target.name.toLowerCase().startsWith(target.brand.toLowerCase() + " ") ? target.name : `${target.brand} ${target.name}`)), JSON.stringify(Object.values(cat).map(g => g.label)));
   ok('кнопка говорит, что уже в каталоге', /Уже в каталоге/.test(await p.evaluate(() => document.querySelector('[data-cf="hb-add"]').innerText)));
+
+  // ---- СРАВНЕНИЕ: два прибора с разными режимами на одном расстоянии
+  const pickRow = async (name) => {
+    await p.fill('[data-cf="hb-search"]', name); await p.waitForTimeout(200);
+    const i = await p.evaluate((n) => [...document.querySelectorAll('[data-cf="hb-row"]')].findIndex(r => r.querySelector('.truncate').innerText.trim() === n), name);
+    return tap(p, '[data-cf="hb-row"]', i);
+  };
+  await p.evaluate(() => localStorage.setItem('cf_hb_cmp', '[]'));
+  ok('сравнение: прибор открывается', await pickRow('LS 600d Pro'));
+  ok('сравнение: «+ в сравнение» нажимается', await tap(p, '[data-cf="hb-cmp-add"]'));
+  await pickRow('Electro Storm XT26');
+  await tap(p, '[data-cf="hb-mode"]', 1);                       // 50° рефлектор
+  await tap(p, '[data-cf="hb-cmp-add"]');
+  await p.fill('[data-cf="hb-search"]', ''); await p.waitForTimeout(200);
+  ok('сравнение: кнопка «Сравнение · 2» в списке нажимается', await tap(p, '[data-cf="hb-cmp-open"]'));
+  await p.evaluate(() => { const r = document.querySelector('[data-cf="hb-dist"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(r, '5'); r.dispatchEvent(new Event('input', { bubbles: true })); });
+  await p.waitForTimeout(250);
+  const cmpv = await p.evaluate(() => [...document.querySelectorAll('[data-cf="hb-cmp-row"]')].map(r => ({
+    t: r.innerText.replace(/\s+/g, ' '), w: r.querySelector('[data-cf="hb-cmp-bar"]').getBoundingClientRect().width })));
+  ok('сравнение: две строки, у XT26 50° на 5 м ровно 12 540 лк', cmpv.length === 2 && /12 540 лк/.test(cmpv[1].t) && /50° Reflector/.test(cmpv[1].t), JSON.stringify(cmpv.map(c => c.t.slice(0, 140))));
+  // LS 600d Pro без насадки на 5 м — 1 020 лк: полоса во столько же раз короче
+  const ratio = cmpv.length === 2 ? cmpv[0].w / cmpv[1].w : 0;
+  ok('сравнение: длина полосы пропорциональна освещённости', /1 020 лк/.test(cmpv[0].t) && Math.abs(ratio - 1020 / 12540) < 0.02, ratio.toFixed(3));
+  ok('сравнение: нажатие по имени открывает прибор на той же насадке', await tap(p, '[data-cf="hb-cmp-row"] button', 2) &&
+     await p.evaluate(() => /Electro Storm XT26/.test(document.querySelector('[data-cf="hb-card"] h1').innerText) && document.querySelectorAll('[data-cf="hb-mode"]')[1].classList.contains('cf-sel')));
   ok('без ошибок на планшете', errs.length === 0, errs.join(' | '));
 
   // ---- ТЕЛЕФОН
@@ -175,6 +200,7 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   await tap(pv, '[data-cf="hb-row"]', vIdx);
   ok('просмотр: ползунок расстояния под пальцем', await tap(pv, '[data-cf="hb-dist"]'));
   ok('просмотр: поиск принимает ввод', await pv.evaluate(() => { const el = document.querySelector('[data-cf="hb-search"]'); const b = el.getBoundingClientRect(); const h = document.elementFromPoint(b.left + 10, b.top + b.height / 2); return h === el; }));
+  ok('просмотр: сравнение доступно гостю', await tap(pv, '[data-cf="hb-cmp-add"]') && await tap(pv, '[data-cf="hb-cmp-open"]') && await pv.evaluate(() => document.querySelectorAll('[data-cf="hb-cmp-row"]').length >= 1));
   ok('без ошибок в просмотре', errs3.length === 0, errs3.join(' | '));
 
   await browser.close(); server.kill();
