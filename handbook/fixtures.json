@@ -1,1 +1,10482 @@
-[]
+[
+ {
+  "brand": "Aputure",
+  "name": "LS 600d Pro",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 720,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 4.64,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-600d-pro",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      22150
+     ],
+     [
+      3,
+      2600
+     ],
+     [
+      5,
+      1020
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      98500
+     ],
+     [
+      3,
+      8500
+     ],
+     [
+      5,
+      3000
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Flood 45°)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      89200
+     ],
+     [
+      3,
+      11440
+     ],
+     [
+      5,
+      4260
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Spot 15°)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      224200
+     ],
+     [
+      3,
+      29300
+     ],
+     [
+      5,
+      10580
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 600x Pro",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 720,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 5.16,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-600x-pro",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      16060
+     ],
+     [
+      2,
+      4150
+     ],
+     [
+      3,
+      1880
+     ],
+     [
+      5,
+      728
+     ],
+     [
+      7,
+      393
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      63900
+     ],
+     [
+      2,
+      13530
+     ],
+     [
+      3,
+      5610
+     ],
+     [
+      5,
+      1996
+     ],
+     [
+      7,
+      1012
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      55800
+     ],
+     [
+      2,
+      15280
+     ],
+     [
+      3,
+      7070
+     ],
+     [
+      5,
+      2653
+     ],
+     [
+      7,
+      1398
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      137000
+     ],
+     [
+      2,
+      38600
+     ],
+     [
+      3,
+      18510
+     ],
+     [
+      5,
+      6730
+     ],
+     [
+      7,
+      3530
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      45300
+     ],
+     [
+      2,
+      9650
+     ],
+     [
+      3,
+      4010
+     ],
+     [
+      5,
+      1426
+     ],
+     [
+      7,
+      722
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Spot)",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      98500
+     ],
+     [
+      2,
+      27550
+     ],
+     [
+      3,
+      13270
+     ],
+     [
+      5,
+      4840
+     ],
+     [
+      7,
+      2526
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 600c Pro II",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 720,
+  "cct": [
+   2300,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 5.9,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-600c-pro-ii",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      21610
+     ],
+     [
+      3,
+      2401
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      91500
+     ],
+     [
+      3,
+      10167
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      48400
+     ],
+     [
+      3,
+      5378
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      97600
+     ],
+     [
+      3,
+      10844
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      78700
+     ],
+     [
+      3,
+      8744
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 1200d Pro",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 1440,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 8.95,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-1200d-pro",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": 66,
+    "pts": [
+     [
+      3,
+      6380
+     ],
+     [
+      5,
+      2802
+     ],
+     [
+      7,
+      1538
+     ],
+     [
+      9,
+      964
+     ]
+    ]
+   },
+   {
+    "mod": "BM1215 Bowens Mount Hyper Reflector (Narrow)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      83100
+     ],
+     [
+      5,
+      28340
+     ],
+     [
+      7,
+      15200
+     ],
+     [
+      9,
+      8580
+     ]
+    ]
+   },
+   {
+    "mod": "BM1230 Bowens Mount Hyper Reflector (Medium)",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      22400
+     ],
+     [
+      5,
+      8200
+     ],
+     [
+      7,
+      4660
+     ],
+     [
+      9,
+      2880
+     ]
+    ]
+   },
+   {
+    "mod": "BM1245 Bowens Mount Hyper Reflector (Wide)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      13010
+     ],
+     [
+      5,
+      4800
+     ],
+     [
+      7,
+      2706
+     ],
+     [
+      9,
+      1775
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      14470
+     ],
+     [
+      5,
+      5590
+     ],
+     [
+      7,
+      2840
+     ],
+     [
+      9,
+      1920
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      32410
+     ],
+     [
+      5,
+      12090
+     ],
+     [
+      7,
+      6160
+     ],
+     [
+      9,
+      3940
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 600d",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 720,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 4.69,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-600d",
+  "photometry": [
+   {
+    "mod": "Light Only",
+    "cct": 5600,
+    "beam": 105,
+    "pts": [
+     [
+      1,
+      22150
+     ],
+     [
+      3,
+      2600
+     ],
+     [
+      5,
+      1020
+     ]
+    ]
+   },
+   {
+    "mod": "LS 600 Series Hyper Reflector",
+    "cct": 5600,
+    "beam": 55,
+    "pts": [
+     [
+      1,
+      98500
+     ],
+     [
+      3,
+      8500
+     ],
+     [
+      5,
+      3000
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Flood)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      89200
+     ],
+     [
+      3,
+      11440
+     ],
+     [
+      5,
+      4260
+     ]
+    ]
+   },
+   {
+    "mod": "F10 Fresnel (Spot)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      224200
+     ],
+     [
+      3,
+      29300
+     ],
+     [
+      5,
+      10580
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 300d II",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 350,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": null,
+  "weight": 3.2,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-300d-ii",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      11000
+     ],
+     [
+      3,
+      1300
+     ],
+     [
+      5,
+      550
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      45000
+     ],
+     [
+      3,
+      3500
+     ],
+     [
+      5,
+      1200
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 2X (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      38000
+     ],
+     [
+      3,
+      5000
+     ],
+     [
+      5,
+      1900
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 2X (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      80000
+     ],
+     [
+      3,
+      9500
+     ],
+     [
+      5,
+      3500
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 300x",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 350,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": null,
+  "mount": "Bowens",
+  "url": "https://aputure.com/en-US/products/ls-300x",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      6300
+     ],
+     [
+      3,
+      700
+     ],
+     [
+      5,
+      250
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper-Reflector",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      20500
+     ],
+     [
+      3,
+      1700
+     ],
+     [
+      5,
+      550
+     ]
+    ]
+   },
+   {
+    "mod": "Bare Bulb",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      5100
+     ],
+     [
+      3,
+      580
+     ],
+     [
+      5,
+      220
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper-Reflector",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      16200
+     ],
+     [
+      3,
+      1300
+     ],
+     [
+      5,
+      450
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 60d",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 90,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 1.8,
+  "mount": "LS 60 Mini Mount",
+  "url": "https://aputure.com/en-US/products/ls-60d",
+  "photometry": [
+   {
+    "mod": "Spot (15°)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      54300
+     ],
+     [
+      3,
+      7602
+     ],
+     [
+      5,
+      2715
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (45°)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      9014
+     ],
+     [
+      3,
+      1096
+     ],
+     [
+      5,
+      402
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "LS 60x",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 90,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 1.8,
+  "mount": "LS 60 Mini Mount",
+  "url": "https://aputure.com/en-US/products/ls-60x",
+  "photometry": [
+   {
+    "mod": "Spot (15°)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      33480
+     ],
+     [
+      3,
+      4241
+     ],
+     [
+      5,
+      1451
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (45°)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      5803
+     ],
+     [
+      3,
+      703
+     ],
+     [
+      5,
+      268
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (15°)",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      30132
+     ],
+     [
+      3,
+      3794
+     ],
+     [
+      5,
+      1339
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (45°)",
+    "cct": 3200,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      5357
+     ],
+     [
+      3,
+      647
+     ],
+     [
+      5,
+      234
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "Electro Storm CS15",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 2200,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 18.0,
+  "mount": "Bowens / Aputure Mount",
+  "url": "https://aputure.com/en-US/products/electro-storm-cs15",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 62,
+    "pts": [
+     [
+      3,
+      5540
+     ],
+     [
+      5,
+      2143
+     ]
+    ]
+   },
+   {
+    "mod": "50° Reflector",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      16740
+     ],
+     [
+      5,
+      6420
+     ]
+    ]
+   },
+   {
+    "mod": "35° Reflector",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      3,
+      32600
+     ],
+     [
+      5,
+      11650
+     ]
+    ]
+   },
+   {
+    "mod": "20° Reflector",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      3,
+      94500
+     ],
+     [
+      5,
+      33100
+     ]
+    ]
+   },
+   {
+    "mod": "20° Reflector",
+    "cct": 3200,
+    "beam": 20,
+    "pts": [
+     [
+      3,
+      85400
+     ],
+     [
+      5,
+      30100
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "Electro Storm XT26",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 3500,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 97,
+  "tlci": 98,
+  "weight": 18.0,
+  "mount": "Bowens / Aputure Mount",
+  "url": "https://aputure.com/en-US/products/electro-storm-xt26",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 62,
+    "pts": [
+     [
+      3,
+      11320
+     ],
+     [
+      5,
+      4580
+     ]
+    ]
+   },
+   {
+    "mod": "50° Reflector",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      33600
+     ],
+     [
+      5,
+      12540
+     ]
+    ]
+   },
+   {
+    "mod": "35° Reflector",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      3,
+      65200
+     ],
+     [
+      5,
+      22700
+     ]
+    ]
+   },
+   {
+    "mod": "20° Reflector",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      3,
+      193100
+     ],
+     [
+      5,
+      64700
+     ]
+    ]
+   },
+   {
+    "mod": "20° Reflector",
+    "cct": 3200,
+    "beam": 20,
+    "pts": [
+     [
+      3,
+      136100
+     ],
+     [
+      5,
+      45600
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM XT52",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 5600,
+  "cct": [
+   2500,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 31.3,
+  "mount": "Aputure Mount",
+  "url": "https://aputure.com/en-US/products/storm-xt52",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 93,
+    "pts": [
+     [
+      3,
+      22080
+     ],
+     [
+      5,
+      8420
+     ]
+    ]
+   },
+   {
+    "mod": "50° Reflector",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      68400
+     ],
+     [
+      5,
+      24480
+     ]
+    ]
+   },
+   {
+    "mod": "35° Reflector",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      3,
+      124400
+     ],
+     [
+      5,
+      41900
+     ]
+    ]
+   },
+   {
+    "mod": "25° Reflector",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      3,
+      222000
+     ],
+     [
+      5,
+      77500
+     ]
+    ]
+   },
+   {
+    "mod": "20° Reflector",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      5,
+      136500
+     ]
+    ]
+   },
+   {
+    "mod": "CF16 Fresnel @ 18°",
+    "cct": 5600,
+    "beam": 18,
+    "pts": [
+     [
+      3,
+      177500
+     ],
+     [
+      5,
+      65900
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM CS32",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 3200,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 97,
+  "tlci": 98,
+  "weight": 19.8,
+  "mount": "Aputure Mount",
+  "url": "https://aputure.com/en-US/products/storm-cs32",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": 78,
+    "pts": [
+     [
+      3,
+      15000
+     ],
+     [
+      5,
+      5850
+     ]
+    ]
+   },
+   {
+    "mod": "30° Reflector",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      106000
+     ],
+     [
+      5,
+      35500
+     ]
+    ]
+   },
+   {
+    "mod": "Bare Bulb",
+    "cct": 3200,
+    "beam": 78,
+    "pts": [
+     [
+      3,
+      14800
+     ],
+     [
+      5,
+      5800
+     ]
+    ]
+   },
+   {
+    "mod": "30° Reflector",
+    "cct": 3200,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      103000
+     ],
+     [
+      5,
+      35000
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM 1200x",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 1550,
+  "cct": [
+   2500,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 9.5,
+  "mount": "ProLock Bowens",
+  "url": "https://aputure.com/en-US/products/storm-1200x",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 67,
+    "pts": [
+     [
+      3,
+      8490
+     ],
+     [
+      5,
+      3230
+     ]
+    ]
+   },
+   {
+    "mod": "15° Reflector",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      96100
+     ],
+     [
+      5,
+      33300
+     ]
+    ]
+   },
+   {
+    "mod": "30° Reflector",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      41800
+     ],
+     [
+      5,
+      14100
+     ]
+    ]
+   },
+   {
+    "mod": "45° Reflector",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      22500
+     ],
+     [
+      5,
+      7070
+     ]
+    ]
+   },
+   {
+    "mod": "15° Reflector",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      94600
+     ],
+     [
+      5,
+      30900
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM 1000c",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 1440,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 97,
+  "tlci": 97,
+  "weight": 9.66,
+  "mount": "ProLock Bowens",
+  "url": "https://aputure.com/en-US/products/storm-1000c",
+  "photometry": [
+   {
+    "mod": "Bare COB",
+    "cct": 5600,
+    "beam": 67,
+    "pts": [
+     [
+      3,
+      6300
+     ],
+     [
+      5,
+      2450
+     ]
+    ]
+   },
+   {
+    "mod": "15° Hyper Reflector",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      70000
+     ],
+     [
+      5,
+      24000
+     ]
+    ]
+   },
+   {
+    "mod": "30° Hyper Reflector",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      31000
+     ],
+     [
+      5,
+      10000
+     ]
+    ]
+   },
+   {
+    "mod": "45° Hyper Reflector",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      14200
+     ],
+     [
+      5,
+      5000
+     ]
+    ]
+   },
+   {
+    "mod": "15° Hyper Reflector",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      72000
+     ],
+     [
+      5,
+      24500
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM 700x",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 880,
+  "cct": [
+   2500,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 5.15,
+  "mount": "ProLock Bowens",
+  "url": "https://aputure.com/en-US/products/storm-700x",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 58,
+    "pts": [
+     [
+      3,
+      6370
+     ],
+     [
+      5,
+      2394
+     ]
+    ]
+   },
+   {
+    "mod": "35° Reflector",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      3,
+      18670
+     ],
+     [
+      5,
+      5390
+     ]
+    ]
+   },
+   {
+    "mod": "25° Reflector",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      3,
+      27190
+     ],
+     [
+      5,
+      7700
+     ]
+    ]
+   },
+   {
+    "mod": "CF10 Full Spot (15°)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      56200
+     ],
+     [
+      5,
+      19550
+     ]
+    ]
+   },
+   {
+    "mod": "CF10 Full Flood (40°)",
+    "cct": 5600,
+    "beam": 40,
+    "pts": [
+     [
+      3,
+      11900
+     ],
+     [
+      5,
+      4570
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM 400x",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 500,
+  "cct": [
+   2500,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 3.95,
+  "mount": "ProLock Bowens",
+  "url": "https://aputure.com/en-US/products/storm-400x",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 57,
+    "pts": [
+     [
+      1,
+      27100
+     ],
+     [
+      3,
+      3110
+     ]
+    ]
+   },
+   {
+    "mod": "35º Reflector",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      64600
+     ],
+     [
+      3,
+      5090
+     ]
+    ]
+   },
+   {
+    "mod": "CF7 Full Spot (15º)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      236700
+     ],
+     [
+      3,
+      23260
+     ]
+    ]
+   },
+   {
+    "mod": "CF7 Full Flood (40º)",
+    "cct": 5600,
+    "beam": 40,
+    "pts": [
+     [
+      1,
+      53900
+     ],
+     [
+      3,
+      6380
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "STORM 80c",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 100,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 97,
+  "tlci": 99,
+  "weight": 1.35,
+  "mount": "Mini ProLock Bowens",
+  "url": "https://aputure.com/en-US/products/storm-80c",
+  "photometry": [
+   {
+    "mod": "Bare COB",
+    "cct": 5600,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      6502
+     ],
+     [
+      3,
+      721
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      19850
+     ],
+     [
+      3,
+      1924
+     ]
+    ]
+   },
+   {
+    "mod": "Mini Lantern Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      1183
+     ],
+     [
+      3,
+      135
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      19443
+     ],
+     [
+      3,
+      1942
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "Nova P300c",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 360,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 10.35,
+  "mount": "Nova P300c Drop-in Accessory Slot",
+  "url": "https://aputure.com/en-US/products/nova-p300c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5500,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      9000
+     ],
+     [
+      3,
+      1100
+     ],
+     [
+      5,
+      430
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      8200
+     ],
+     [
+      3,
+      960
+     ],
+     [
+      5,
+      370
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "Nova P600c",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 720,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": null,
+  "mount": "Nova P600c Accessory Slot",
+  "url": "https://aputure.com/en-US/products/nova-p600c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      17520
+     ],
+     [
+      3,
+      2167
+     ],
+     [
+      5,
+      847
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      15240
+     ],
+     [
+      3,
+      1936
+     ],
+     [
+      5,
+      746
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "NOVA II 2x1",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 1250,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 16.25,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/nova-ii-2x1",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      197300
+     ],
+     [
+      3,
+      28380
+     ]
+    ]
+   },
+   {
+    "mod": "Flat Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      40700
+     ],
+     [
+      3,
+      5130
+     ]
+    ]
+   },
+   {
+    "mod": "Dome Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      38200
+     ],
+     [
+      3,
+      4680
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      194400
+     ],
+     [
+      3,
+      27750
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "NOVA II 1x1",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 650,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 9.55,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/nova-ii-1x1",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      108200
+     ],
+     [
+      3,
+      13300
+     ],
+     [
+      5,
+      4920
+     ]
+    ]
+   },
+   {
+    "mod": "Flat Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      20080
+     ],
+     [
+      3,
+      2466
+     ],
+     [
+      5,
+      941
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      107100
+     ],
+     [
+      3,
+      13160
+     ],
+     [
+      5,
+      4870
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "NOVA 9° 2x1",
+  "kind": "panel",
+  "color": "bicolor",
+  "watts": 800,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 17.25,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/nova-9-2x1",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": 9,
+    "pts": [
+     [
+      5,
+      29730
+     ],
+     [
+      10,
+      8320
+     ],
+     [
+      20,
+      2229
+     ]
+    ]
+   },
+   {
+    "mod": "Flat Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      5,
+      935
+     ]
+    ]
+   },
+   {
+    "mod": "Dome Diffuser (Heavy Frost)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      5,
+      2345
+     ]
+    ]
+   },
+   {
+    "mod": "Dome Diffuser (Light Frost)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      5,
+      2660
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": 9,
+    "pts": [
+     [
+      5,
+      28090
+     ],
+     [
+      10,
+      7660
+     ],
+     [
+      20,
+      2040
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIMAT 1x2",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 111,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 1.0,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/aputure-infinimat-1x2-with-softbox",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3590
+     ],
+     [
+      3,
+      443
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      2895
+     ],
+     [
+      3,
+      319
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox + Grid",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      2183
+     ],
+     [
+      3,
+      235
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3210
+     ],
+     [
+      3,
+      409
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIMAT 1x4",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 201,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 2.4,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/aputure-infinimat-1x4-with-softbox",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      6140
+     ],
+     [
+      3,
+      972
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      4900
+     ],
+     [
+      3,
+      586
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox + Grid",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3870
+     ],
+     [
+      3,
+      494
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      5400
+     ],
+     [
+      3,
+      855
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIMAT 2x4",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 400,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 4.8,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/aputure-infinimat-2x4-with-softbox",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      12510
+     ],
+     [
+      3,
+      1630
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      11250
+     ],
+     [
+      3,
+      1247
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox + Grid",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      7010
+     ],
+     [
+      3,
+      988
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      11060
+     ],
+     [
+      3,
+      1459
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIMAT 4x4",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 800,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": null,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/aputure-infinimat-4x4-with-softbox",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      21500
+     ],
+     [
+      3,
+      3170
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      16520
+     ],
+     [
+      3,
+      2453
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox + Grid",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      9910
+     ],
+     [
+      3,
+      2059
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      19100
+     ],
+     [
+      3,
+      2822
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIMAT 8x8",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 2000,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": null,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/aputure-infinimat-8x8-with-softbox",
+  "photometry": [
+   {
+    "mod": "No Modifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      7230
+     ],
+     [
+      5,
+      3170
+     ],
+     [
+      7,
+      1828
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      5630
+     ],
+     [
+      5,
+      2385
+     ],
+     [
+      7,
+      1340
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox + Grid",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      4460
+     ],
+     [
+      5,
+      1895
+     ],
+     [
+      7,
+      1062
+     ]
+    ]
+   },
+   {
+    "mod": "No Modifier",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      6530
+     ],
+     [
+      5,
+      2869
+     ],
+     [
+      7,
+      1651
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIMAT 20x20",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 8000,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": null,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/infinimat-20x20",
+  "photometry": [
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      5,
+      5490
+     ],
+     [
+      7,
+      2801
+     ],
+     [
+      9,
+      1694
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox + Grid",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      5,
+      3610
+     ],
+     [
+      7,
+      1842
+     ],
+     [
+      9,
+      1114
+     ]
+    ]
+   },
+   {
+    "mod": "Inflatable Softbox",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      5,
+      5070
+     ],
+     [
+      7,
+      2587
+     ],
+     [
+      9,
+      1565
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIBAR PB12",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 36.5,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 1.96,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/infinibar-pb12",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 120,
+    "pts": [
+     [
+      0.5,
+      1600
+     ],
+     [
+      1,
+      593
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 120,
+    "pts": [
+     [
+      0.5,
+      1410
+     ],
+     [
+      1,
+      542
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIBAR PB6",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 18,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 1.0,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/infinibar-pb6",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 120,
+    "pts": [
+     [
+      0.5,
+      1026
+     ],
+     [
+      1,
+      317
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 120,
+    "pts": [
+     [
+      0.5,
+      940
+     ],
+     [
+      1,
+      288
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "INFINIBAR PB3",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 9,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 0.6,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/infinibar-pb3",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 120,
+    "pts": [
+     [
+      0.5,
+      545
+     ],
+     [
+      1,
+      145
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 120,
+    "pts": [
+     [
+      0.5,
+      512
+     ],
+     [
+      1,
+      130
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "MC Pro",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 7,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 0.247,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/mc-pro",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      1585
+     ],
+     [
+      1,
+      396
+     ]
+    ]
+   },
+   {
+    "mod": "Dome Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      392
+     ],
+     [
+      1,
+      98
+     ]
+    ]
+   },
+   {
+    "mod": "Flat Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      706
+     ],
+     [
+      1,
+      177
+     ]
+    ]
+   },
+   {
+    "mod": "30º Grid",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      0.5,
+      1322
+     ],
+     [
+      1,
+      331
+     ]
+    ]
+   },
+   {
+    "mod": "Bubble Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      297
+     ],
+     [
+      1,
+      74
+     ]
+    ]
+   },
+   {
+    "mod": "Bare Bulb",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      1459
+     ],
+     [
+      1,
+      365
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "MC",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": null,
+  "cct": [
+   3200,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": null,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/mc",
+  "photometry": [
+   {
+    "mod": "Maximum Brightness",
+    "cct": null,
+    "beam": null,
+    "pts": [
+     [
+      0.3,
+      1100
+     ],
+     [
+      0.5,
+      400
+     ],
+     [
+      1,
+      100
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "MT Pro",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 9,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 0.391,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/mt-pro",
+  "photometry": [
+   {
+    "mod": "No Accessories",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      585
+     ],
+     [
+      1,
+      159
+     ]
+    ]
+   },
+   {
+    "mod": "Light Control Grid (45°)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      0.5,
+      523
+     ],
+     [
+      1,
+      142
+     ]
+    ]
+   },
+   {
+    "mod": "No Accessories",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      532
+     ],
+     [
+      1,
+      144
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Aputure",
+  "name": "Accent B7c",
+  "kind": "other",
+  "color": "rgb",
+  "watts": null,
+  "cct": [
+   2000,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 96,
+  "weight": 0.24,
+  "mount": null,
+  "url": "https://aputure.com/en-US/products/accent-b7c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      0.3,
+      1180
+     ],
+     [
+      0.5,
+      460
+     ],
+     [
+      1,
+      124
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      0.3,
+      885
+     ],
+     [
+      0.5,
+      345
+     ],
+     [
+      1,
+      89
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "200d S",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 221,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 99,
+  "weight": 1.56,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-200d-s",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 110,
+    "pts": [
+     [
+      0.5,
+      30700
+     ],
+     [
+      1,
+      7890
+     ],
+     [
+      3,
+      945
+     ],
+     [
+      5,
+      364
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 25.9,
+    "pts": [
+     [
+      0.5,
+      258400
+     ],
+     [
+      1,
+      55800
+     ],
+     [
+      3,
+      5730
+     ],
+     [
+      5,
+      2021
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "200x S",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 229,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 1.56,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-200x-s",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 111.4,
+    "pts": [
+     [
+      1,
+      6400
+     ],
+     [
+      3,
+      764
+     ],
+     [
+      5,
+      291
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 26.1,
+    "pts": [
+     [
+      1,
+      45400
+     ],
+     [
+      3,
+      4630
+     ],
+     [
+      5,
+      1635
+     ]
+    ]
+   },
+   {
+    "mod": "No Reflector",
+    "cct": 3200,
+    "beam": 111.4,
+    "pts": [
+     [
+      1,
+      5630
+     ],
+     [
+      3,
+      675
+     ],
+     [
+      5,
+      257
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": 26.1,
+    "pts": [
+     [
+      1,
+      40200
+     ],
+     [
+      3,
+      4120
+     ],
+     [
+      5,
+      1455
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "100d S",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 110.9,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 99,
+  "weight": 1.42,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-100d-s",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 110.9,
+    "pts": [
+     [
+      0.5,
+      15870
+     ],
+     [
+      1,
+      4060
+     ],
+     [
+      3,
+      490
+     ],
+     [
+      5,
+      189
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 17.1,
+    "pts": [
+     [
+      0.5,
+      149200
+     ],
+     [
+      1,
+      34600
+     ],
+     [
+      3,
+      3750
+     ],
+     [
+      5,
+      1302
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "100x S",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 113,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 95,
+  "tlci": 97,
+  "weight": 1.42,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-100x-s",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 110.4,
+    "pts": [
+     [
+      1,
+      3640
+     ],
+     [
+      3,
+      433
+     ],
+     [
+      5,
+      166
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 17.9,
+    "pts": [
+     [
+      1,
+      30500
+     ],
+     [
+      3,
+      3240
+     ],
+     [
+      5,
+      1156
+     ]
+    ]
+   },
+   {
+    "mod": "No Reflector",
+    "cct": 3200,
+    "beam": 110.4,
+    "pts": [
+     [
+      1,
+      3410
+     ],
+     [
+      3,
+      405
+     ],
+     [
+      5,
+      157
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": 17.9,
+    "pts": [
+     [
+      1,
+      28180
+     ],
+     [
+      3,
+      2970
+     ],
+     [
+      5,
+      1066
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "150c",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 180,
+  "cct": [
+   2500,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": null,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-150c",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 85.9,
+    "pts": [
+     [
+      1,
+      5300
+     ],
+     [
+      3,
+      629
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 63.4,
+    "pts": [
+     [
+      1,
+      15610
+     ],
+     [
+      3,
+      1322
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 2X (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      16580
+     ],
+     [
+      3,
+      2145
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 2X (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      33500
+     ],
+     [
+      3,
+      4090
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": 63.4,
+    "pts": [
+     [
+      1,
+      13680
+     ],
+     [
+      3,
+      1156
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "300c",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 360,
+  "cct": [
+   2500,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": null,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-300c",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 89.6,
+    "pts": [
+     [
+      1,
+      9370
+     ],
+     [
+      3,
+      1140
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 5600,
+    "beam": 64.8,
+    "pts": [
+     [
+      1,
+      26580
+     ],
+     [
+      3,
+      2351
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 2X (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      25120
+     ],
+     [
+      3,
+      3180
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 2X (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      43600
+     ],
+     [
+      3,
+      5410
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector",
+    "cct": 3200,
+    "beam": 64.8,
+    "pts": [
+     [
+      1,
+      21390
+     ],
+     [
+      3,
+      1896
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "COB 60d S",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 77,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 99,
+  "weight": 0.695,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-cob-60d-s",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 107.8,
+    "pts": [
+     [
+      0.5,
+      11500
+     ],
+     [
+      1,
+      2940
+     ],
+     [
+      3,
+      344
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector (Mini)",
+    "cct": 5600,
+    "beam": 13.9,
+    "pts": [
+     [
+      0.5,
+      134700
+     ],
+     [
+      1,
+      37800
+     ],
+     [
+      3,
+      4200
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "COB 60x S",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 78,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": null,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-cob-60x-s",
+  "photometry": [
+   {
+    "mod": "No Reflector",
+    "cct": 5600,
+    "beam": 109.4,
+    "pts": [
+     [
+      0.5,
+      9560
+     ],
+     [
+      1,
+      2427
+     ],
+     [
+      3,
+      288
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector (Mini)",
+    "cct": 5600,
+    "beam": 13.5,
+    "pts": [
+     [
+      0.5,
+      114700
+     ],
+     [
+      1,
+      33300
+     ],
+     [
+      3,
+      3510
+     ]
+    ]
+   },
+   {
+    "mod": "No Reflector",
+    "cct": 3200,
+    "beam": 109.4,
+    "pts": [
+     [
+      0.5,
+      8300
+     ],
+     [
+      1,
+      2100
+     ],
+     [
+      3,
+      252
+     ]
+    ]
+   },
+   {
+    "mod": "Hyper Reflector (Mini)",
+    "cct": 3200,
+    "beam": 13.5,
+    "pts": [
+     [
+      0.5,
+      97400
+     ],
+     [
+      1,
+      28160
+     ],
+     [
+      3,
+      2980
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "F21c",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 120,
+  "cct": [
+   2500,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": null,
+  "mount": null,
+  "url": "https://amarancreators.com/pages/amaran-f21c",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      11420
+     ],
+     [
+      1,
+      3360
+     ],
+     [
+      3,
+      403
+     ]
+    ]
+   },
+   {
+    "mod": "Softbox (1/2 stop)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      6850
+     ],
+     [
+      1,
+      2048
+     ],
+     [
+      3,
+      280
+     ]
+    ]
+   },
+   {
+    "mod": "Bare Bulb",
+    "cct": 3200,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      9860
+     ],
+     [
+      1,
+      2890
+     ],
+     [
+      3,
+      344
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "F21x",
+  "kind": "mat",
+  "color": "bicolor",
+  "watts": 120,
+  "cct": [
+   2500,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": null,
+  "mount": null,
+  "url": "https://amarancreators.com/pages/amaran-f21x",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      11200
+     ],
+     [
+      1,
+      3632
+     ],
+     [
+      3,
+      400
+     ]
+    ]
+   },
+   {
+    "mod": "Softbox (1/2 stop)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      6590
+     ],
+     [
+      1,
+      1944
+     ],
+     [
+      3,
+      263
+     ]
+    ]
+   },
+   {
+    "mod": "Bare Bulb",
+    "cct": 3200,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      10510
+     ],
+     [
+      1,
+      3208
+     ],
+     [
+      3,
+      376
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "F22c",
+  "kind": "mat",
+  "color": "rgb",
+  "watts": 240,
+  "cct": [
+   2500,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 97,
+  "weight": null,
+  "mount": null,
+  "url": "https://amarancreators.com/pages/amaran-f22c",
+  "photometry": [
+   {
+    "mod": "No Softbox",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      21260
+     ],
+     [
+      1,
+      6420
+     ],
+     [
+      3,
+      790
+     ]
+    ]
+   },
+   {
+    "mod": "With Soft Box (1/2 Grid Cloth)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      13400
+     ],
+     [
+      1,
+      4610
+     ],
+     [
+      3,
+      603
+     ]
+    ]
+   },
+   {
+    "mod": "With Soft Box (2.5 Stop Diffusion)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      10340
+     ],
+     [
+      1,
+      3260
+     ],
+     [
+      3,
+      402
+     ]
+    ]
+   },
+   {
+    "mod": "No Softbox",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      18760
+     ],
+     [
+      1,
+      5750
+     ],
+     [
+      3,
+      703
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "F22x",
+  "kind": "mat",
+  "color": "bicolor",
+  "watts": 240,
+  "cct": [
+   2500,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": null,
+  "mount": null,
+  "url": "https://amarancreators.com/pages/amaran-f22x",
+  "photometry": [
+   {
+    "mod": "Bare Bulb",
+    "cct": 5600,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      23270
+     ],
+     [
+      1,
+      6960
+     ],
+     [
+      3,
+      824
+     ],
+     [
+      5,
+      317
+     ]
+    ]
+   },
+   {
+    "mod": "Softbox (1/2 stop)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      14040
+     ],
+     [
+      1,
+      4510
+     ],
+     [
+      3,
+      582
+     ],
+     [
+      5,
+      232
+     ]
+    ]
+   },
+   {
+    "mod": "Bare Bulb",
+    "cct": 3200,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      19930
+     ],
+     [
+      1,
+      6050
+     ],
+     [
+      3,
+      706
+     ],
+     [
+      5,
+      280
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "PT4c",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 32,
+  "cct": [
+   2700,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 1.375,
+  "mount": null,
+  "url": "https://amarancreators.com/pages/amaran-pt4c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      956
+     ],
+     [
+      1,
+      332
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      868
+     ],
+     [
+      1,
+      306
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "PT2c",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 16,
+  "cct": [
+   2700,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 0.705,
+  "mount": null,
+  "url": "https://amarancreators.com/pages/amaran-pt2c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      647
+     ],
+     [
+      1,
+      195
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 180,
+    "pts": [
+     [
+      0.5,
+      595
+     ],
+     [
+      1,
+      181
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "Ray 660c",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 750,
+  "cct": [
+   2300,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 5.7,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-ray-660c",
+  "photometry": [
+   {
+    "mod": "No Accessories",
+    "cct": 5600,
+    "beam": 70,
+    "pts": [
+     [
+      1,
+      37900
+     ],
+     [
+      3,
+      4420
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      90400
+     ],
+     [
+      3,
+      9010
+     ]
+    ]
+   },
+   {
+    "mod": "Octa Dome 90",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      25700
+     ],
+     [
+      3,
+      1751
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      31300
+     ],
+     [
+      5,
+      11500
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      6600
+     ],
+     [
+      5,
+      2525
+     ]
+    ]
+   },
+   {
+    "mod": "No Accessories",
+    "cct": 3200,
+    "beam": 70,
+    "pts": [
+     [
+      1,
+      36300
+     ],
+     [
+      3,
+      4220
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "amaran",
+  "name": "Halo 600x",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 610,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 2.91,
+  "mount": "Bowens",
+  "url": "https://amarancreators.com/pages/amaran-halo-600x",
+  "photometry": [
+   {
+    "mod": "No Accessories",
+    "cct": 5600,
+    "beam": 85,
+    "pts": [
+     [
+      1,
+      32500
+     ],
+     [
+      3,
+      3610
+     ],
+     [
+      5,
+      1494
+     ]
+    ]
+   },
+   {
+    "mod": "Light Dome 90",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      30300
+     ],
+     [
+      3,
+      2087
+     ],
+     [
+      5,
+      782
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      102100
+     ],
+     [
+      3,
+      9680
+     ],
+     [
+      5,
+      3480
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel (Spot)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      259100
+     ],
+     [
+      3,
+      31600
+     ],
+     [
+      5,
+      11030
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel (Flood)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      52700
+     ],
+     [
+      3,
+      6190
+     ],
+     [
+      5,
+      2292
+     ]
+    ]
+   },
+   {
+    "mod": "No Accessories",
+    "cct": 3200,
+    "beam": 85,
+    "pts": [
+     [
+      1,
+      27920
+     ],
+     [
+      3,
+      3100
+     ],
+     [
+      5,
+      1280
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 1200",
+  "kind": "point",
+  "color": "daylight",
+  "watts": 1200,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 6.94,
+  "mount": "NL mount",
+  "url": "https://www.nanlux.com/product-evoke-1200",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      5532
+     ],
+     [
+      5,
+      2373
+     ],
+     [
+      7,
+      1266
+     ],
+     [
+      10,
+      679
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 26° (RF-NLM-26)",
+    "cct": 5600,
+    "beam": 26,
+    "pts": [
+     [
+      3,
+      58050
+     ],
+     [
+      5,
+      18370
+     ],
+     [
+      7,
+      9180
+     ],
+     [
+      10,
+      4626
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45° (RF-NLM-45)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      18460
+     ],
+     [
+      5,
+      6583
+     ],
+     [
+      7,
+      3671
+     ],
+     [
+      10,
+      2021
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 60° (RF-NLM-60)",
+    "cct": 5600,
+    "beam": 60,
+    "pts": [
+     [
+      3,
+      12460
+     ],
+     [
+      5,
+      4645
+     ],
+     [
+      7,
+      2654
+     ],
+     [
+      10,
+      1432
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Lens 11°",
+    "cct": 5600,
+    "beam": 11,
+    "pts": [
+     [
+      3,
+      65280
+     ],
+     [
+      5,
+      22080
+     ],
+     [
+      7,
+      11765
+     ],
+     [
+      10,
+      6308
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Lens 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      15170
+     ],
+     [
+      5,
+      5718
+     ],
+     [
+      7,
+      3065
+     ],
+     [
+      10,
+      1644
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 1200B",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 1200,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 7.75,
+  "mount": "NL mount",
+  "url": "https://www.nanlux.com/product-evoke-1200b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      5258
+     ],
+     [
+      5,
+      2244
+     ],
+     [
+      7,
+      1261
+     ],
+     [
+      9,
+      770
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      4571
+     ],
+     [
+      5,
+      1955
+     ],
+     [
+      7,
+      1088
+     ],
+     [
+      9,
+      670
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 26°",
+    "cct": 5600,
+    "beam": 26,
+    "pts": [
+     [
+      3,
+      61030
+     ],
+     [
+      5,
+      18860
+     ],
+     [
+      7,
+      9377
+     ],
+     [
+      9,
+      5882
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      18570
+     ],
+     [
+      5,
+      6800
+     ],
+     [
+      7,
+      3872
+     ],
+     [
+      9,
+      2547
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Lens 11° (FL-35YK)",
+    "cct": 5600,
+    "beam": 11,
+    "pts": [
+     [
+      3,
+      49940
+     ],
+     [
+      5,
+      17810
+     ],
+     [
+      7,
+      9211
+     ],
+     [
+      9,
+      5716
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Lens 45° (FL-35YK)",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      13010
+     ],
+     [
+      5,
+      5286
+     ],
+     [
+      7,
+      3067
+     ],
+     [
+      9,
+      2021
+     ]
+    ]
+   },
+   {
+    "mod": "NL70 Parallel Beam Reflector (RF-NL-PB)",
+    "cct": 5600,
+    "beam": 6,
+    "pts": [
+     [
+      5,
+      95040
+     ],
+     [
+      10,
+      25080
+     ],
+     [
+      15,
+      8607
+     ],
+     [
+      20,
+      4706
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 900C",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 940,
+  "cct": [
+   1800,
+   20000
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 7.7,
+  "mount": "NL mount",
+  "url": "https://www.nanlux.com/product-evoke-900c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      4341
+     ],
+     [
+      5,
+      1688
+     ],
+     [
+      7,
+      945
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 26°",
+    "cct": 5600,
+    "beam": 26,
+    "pts": [
+     [
+      3,
+      40300
+     ],
+     [
+      5,
+      12560
+     ],
+     [
+      7,
+      6176
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      12940
+     ],
+     [
+      5,
+      4501
+     ],
+     [
+      7,
+      2305
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 60°",
+    "cct": 5600,
+    "beam": 60,
+    "pts": [
+     [
+      3,
+      8541
+     ],
+     [
+      5,
+      3110
+     ],
+     [
+      7,
+      1693
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Lens 11°",
+    "cct": 5600,
+    "beam": 11,
+    "pts": [
+     [
+      3,
+      43270
+     ],
+     [
+      5,
+      15470
+     ],
+     [
+      7,
+      8056
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Lens 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      10420
+     ],
+     [
+      5,
+      3923
+     ],
+     [
+      7,
+      2108
+     ]
+    ]
+   },
+   {
+    "mod": "FL-28 Fresnel 17°",
+    "cct": 5600,
+    "beam": 17,
+    "pts": [
+     [
+      3,
+      38580
+     ],
+     [
+      5,
+      13230
+     ],
+     [
+      7,
+      6649
+     ],
+     [
+      10,
+      3212
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 2400B",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 2400,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 96,
+  "tlci": 97,
+  "weight": 15,
+  "mount": "NL mount",
+  "url": "https://www.nanlux.com/product-evoke-2400b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      9584
+     ],
+     [
+      5,
+      3801
+     ],
+     [
+      7,
+      2028
+     ],
+     [
+      10,
+      1039
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      116900
+     ],
+     [
+      5,
+      61000
+     ],
+     [
+      7,
+      34100
+     ],
+     [
+      10,
+      17450
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 30°",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      111800
+     ],
+     [
+      5,
+      34800
+     ],
+     [
+      7,
+      16950
+     ],
+     [
+      10,
+      8170
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      41910
+     ],
+     [
+      5,
+      14070
+     ],
+     [
+      7,
+      7254
+     ],
+     [
+      10,
+      3607
+     ]
+    ]
+   },
+   {
+    "mod": "FL-35E Fresnel 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      75700
+     ],
+     [
+      5,
+      25510
+     ],
+     [
+      7,
+      13070
+     ],
+     [
+      10,
+      6425
+     ]
+    ]
+   },
+   {
+    "mod": "FL-35E Fresnel 46°",
+    "cct": 5600,
+    "beam": 46,
+    "pts": [
+     [
+      3,
+      17750
+     ],
+     [
+      5,
+      6745
+     ],
+     [
+      7,
+      3635
+     ],
+     [
+      10,
+      1872
+     ]
+    ]
+   },
+   {
+    "mod": "NL70 Parallel Beam Reflector",
+    "cct": 5600,
+    "beam": 6,
+    "pts": [
+     [
+      5,
+      76300
+     ],
+     [
+      10,
+      22420
+     ],
+     [
+      15,
+      10160
+     ],
+     [
+      20,
+      5749
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 5000B",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 5200,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 97,
+  "tlci": 98,
+  "weight": 41,
+  "mount": "NL mount",
+  "url": "https://www.nanlux.com/product-evoke-5000b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 95,
+    "pts": [
+     [
+      5,
+      7720
+     ],
+     [
+      10,
+      2137
+     ],
+     [
+      15,
+      778
+     ],
+     [
+      20,
+      437
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      5,
+      118700
+     ],
+     [
+      10,
+      29200
+     ],
+     [
+      15,
+      12030
+     ],
+     [
+      20,
+      6800
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 30°",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      5,
+      57000
+     ],
+     [
+      10,
+      13880
+     ],
+     [
+      15,
+      5440
+     ],
+     [
+      20,
+      3010
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      5,
+      24020
+     ],
+     [
+      10,
+      6220
+     ],
+     [
+      15,
+      2351
+     ],
+     [
+      20,
+      1302
+     ]
+    ]
+   },
+   {
+    "mod": "FL-45E Fresnel 16°",
+    "cct": 5600,
+    "beam": 16,
+    "pts": [
+     [
+      5,
+      79500
+     ],
+     [
+      10,
+      19640
+     ],
+     [
+      15,
+      7790
+     ],
+     [
+      20,
+      4300
+     ]
+    ]
+   },
+   {
+    "mod": "FL-45E Fresnel 50°",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      5,
+      12520
+     ],
+     [
+      10,
+      3360
+     ],
+     [
+      15,
+      1287
+     ],
+     [
+      20,
+      713
+     ]
+    ]
+   },
+   {
+    "mod": "NL70 Parallel Beam Reflector",
+    "cct": 5600,
+    "beam": 6,
+    "pts": [
+     [
+      5,
+      146100
+     ],
+     [
+      10,
+      34500
+     ],
+     [
+      15,
+      14490
+     ],
+     [
+      20,
+      8110
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 600C",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 600,
+  "cct": [
+   1000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 7.26,
+  "mount": "BE mount (Bowens-compatible)",
+  "url": "https://www.nanlux.com/product-evoke-600c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 65,
+    "pts": [
+     [
+      1,
+      24620
+     ],
+     [
+      3,
+      2754
+     ],
+     [
+      5,
+      1042
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 25°",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      3,
+      20820
+     ],
+     [
+      5,
+      6810
+     ],
+     [
+      7,
+      3380
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      3,
+      7740
+     ],
+     [
+      5,
+      2766
+     ],
+     [
+      7,
+      1429
+     ]
+    ]
+   },
+   {
+    "mod": "BE55 Parallel Beam Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      51300
+     ],
+     [
+      5,
+      24400
+     ],
+     [
+      7,
+      12100
+     ]
+    ]
+   },
+   {
+    "mod": "FL-22E Fresnel 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      282100
+     ],
+     [
+      3,
+      22110
+     ],
+     [
+      5,
+      7350
+     ]
+    ]
+   },
+   {
+    "mod": "FL-22E Fresnel 50°",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      1,
+      29710
+     ],
+     [
+      3,
+      3180
+     ],
+     [
+      5,
+      1190
+     ]
+    ]
+   },
+   {
+    "mod": "FL-20G Fresnel 10°",
+    "cct": 5600,
+    "beam": 10,
+    "pts": [
+     [
+      3,
+      16400
+     ],
+     [
+      5,
+      5600
+     ],
+     [
+      7,
+      2816
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 150C",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 150,
+  "cct": [
+   1000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 2.11,
+  "mount": "FE mount (FM-compatible)",
+  "url": "https://www.nanlux.com/product-evoke-150c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 47,
+    "pts": [
+     [
+      1,
+      12160
+     ],
+     [
+      2,
+      2940
+     ],
+     [
+      3,
+      1328
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 25°",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      1,
+      83500
+     ],
+     [
+      2,
+      13730
+     ],
+     [
+      3,
+      5460
+     ]
+    ]
+   },
+   {
+    "mod": "Reflector 45°",
+    "cct": 5600,
+    "beam": 45,
+    "pts": [
+     [
+      1,
+      22230
+     ],
+     [
+      2,
+      4950
+     ],
+     [
+      3,
+      2155
+     ]
+    ]
+   },
+   {
+    "mod": "FE30 Parallel Beam Reflector",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      16120
+     ],
+     [
+      5,
+      5820
+     ],
+     [
+      7,
+      2600
+     ]
+    ]
+   },
+   {
+    "mod": "FL-12 Fresnel 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      88600
+     ],
+     [
+      3,
+      9370
+     ],
+     [
+      5,
+      3310
+     ]
+    ]
+   },
+   {
+    "mod": "FL-12E Fresnel 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      105500
+     ],
+     [
+      3,
+      10080
+     ],
+     [
+      5,
+      3490
+     ]
+    ]
+   },
+   {
+    "mod": "FL-12E Fresnel 35°",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      19030
+     ],
+     [
+      3,
+      2133
+     ],
+     [
+      5,
+      777
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Evoke 5C",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 6,
+  "cct": [
+   1000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 0.16,
+  "mount": "magnetic",
+  "url": "https://www.nanlux.com/product-evoke-5c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      0.3,
+      5970
+     ],
+     [
+      0.5,
+      2026
+     ],
+     [
+      1,
+      496
+     ]
+    ]
+   },
+   {
+    "mod": "Magnetic Fresnel Lens 25° (FL-5)",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      0.3,
+      13830
+     ],
+     [
+      0.5,
+      4020
+     ],
+     [
+      1,
+      830
+     ]
+    ]
+   },
+   {
+    "mod": "Magnetic Fresnel Lens 35° (FL-5)",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      0.3,
+      7860
+     ],
+     [
+      0.5,
+      2533
+     ],
+     [
+      1,
+      580
+     ]
+    ]
+   },
+   {
+    "mod": "Magnetic Spot Beam Lens",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.5,
+      10770
+     ],
+     [
+      1,
+      2828
+     ],
+     [
+      2,
+      677
+     ]
+    ]
+   },
+   {
+    "mod": "Projection Attachment 15°",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      0.5,
+      3380
+     ],
+     [
+      1,
+      726
+     ]
+    ]
+   },
+   {
+    "mod": "Magnetic Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      0.3,
+      303
+     ],
+     [
+      0.5,
+      97
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Matrix 2500B",
+  "kind": "panel",
+  "color": "bicolor",
+  "watts": 2500,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 17,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-matrix-2500b-2500c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 80,
+    "pts": [
+     [
+      3,
+      13470
+     ],
+     [
+      5,
+      5120
+     ],
+     [
+      7,
+      2651
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 80,
+    "pts": [
+     [
+      3,
+      11390
+     ],
+     [
+      5,
+      4320
+     ],
+     [
+      7,
+      2240
+     ]
+    ]
+   },
+   {
+    "mod": "FL-MT25 Motorized Fresnel 16°",
+    "cct": 5600,
+    "beam": 16,
+    "pts": [
+     [
+      3,
+      103000
+     ],
+     [
+      5,
+      38200
+     ],
+     [
+      7,
+      19450
+     ]
+    ]
+   },
+   {
+    "mod": "FL-MT25 Motorized Fresnel 48°",
+    "cct": 5600,
+    "beam": 48,
+    "pts": [
+     [
+      3,
+      25240
+     ],
+     [
+      5,
+      9470
+     ],
+     [
+      7,
+      4990
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Matrix 2500C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 2500,
+  "cct": [
+   1000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 18.5,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-matrix-2500b-2500c",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": 70,
+    "pts": [
+     [
+      3,
+      9570
+     ],
+     [
+      5,
+      3650
+     ],
+     [
+      7,
+      1897
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": 70,
+    "pts": [
+     [
+      3,
+      8570
+     ],
+     [
+      5,
+      3230
+     ],
+     [
+      7,
+      1673
+     ]
+    ]
+   },
+   {
+    "mod": "FL-MT25 Motorized Fresnel 16°",
+    "cct": 5600,
+    "beam": 16,
+    "pts": [
+     [
+      3,
+      67900
+     ],
+     [
+      5,
+      24590
+     ],
+     [
+      7,
+      12530
+     ]
+    ]
+   },
+   {
+    "mod": "FL-MT25 Motorized Fresnel 48°",
+    "cct": 5600,
+    "beam": 48,
+    "pts": [
+     [
+      3,
+      16300
+     ],
+     [
+      5,
+      6110
+     ],
+     [
+      7,
+      3200
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Dyno 650C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 650,
+  "cct": [
+   2700,
+   20000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 15.18,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-dyno-650c-1200c",
+  "photometry": [
+   {
+    "mod": "Boost Mode",
+    "cct": 5600,
+    "beam": 160,
+    "pts": [
+     [
+      3,
+      2649
+     ],
+     [
+      5,
+      1082
+     ],
+     [
+      7,
+      601
+     ]
+    ]
+   },
+   {
+    "mod": "Boost Mode",
+    "cct": 3200,
+    "beam": 160,
+    "pts": [
+     [
+      3,
+      2403
+     ],
+     [
+      5,
+      979
+     ],
+     [
+      7,
+      546
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Mode",
+    "cct": 5600,
+    "beam": 160,
+    "pts": [
+     [
+      3,
+      2237
+     ],
+     [
+      5,
+      919
+     ],
+     [
+      7,
+      512
+     ]
+    ]
+   },
+   {
+    "mod": "Diffusion Intensifier (DF-DN650C-ITSF)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      23160
+     ],
+     [
+      2,
+      6311
+     ],
+     [
+      3,
+      2915
+     ],
+     [
+      4,
+      1735
+     ],
+     [
+      5,
+      1195
+     ]
+    ]
+   },
+   {
+    "mod": "Space Light Softbox, positive surface (SB-SL-DN650C), Boost Mode",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      1615
+     ],
+     [
+      5,
+      595
+     ],
+     [
+      7,
+      294
+     ],
+     [
+      9,
+      172
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "Dyno 1200C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 1200,
+  "cct": [
+   2700,
+   20000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 26.2,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-dyno-650c-1200c",
+  "photometry": [
+   {
+    "mod": "Boost Mode",
+    "cct": 5600,
+    "beam": 160,
+    "pts": [
+     [
+      3,
+      5596
+     ],
+     [
+      5,
+      2282
+     ],
+     [
+      7,
+      1247
+     ]
+    ]
+   },
+   {
+    "mod": "Boost Mode",
+    "cct": 3200,
+    "beam": 160,
+    "pts": [
+     [
+      3,
+      5083
+     ],
+     [
+      5,
+      2077
+     ],
+     [
+      7,
+      1145
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Mode",
+    "cct": 5600,
+    "beam": 160,
+    "pts": [
+     [
+      3,
+      4718
+     ],
+     [
+      5,
+      1934
+     ],
+     [
+      7,
+      1048
+     ]
+    ]
+   },
+   {
+    "mod": "Diffusion Intensifier (DF-DN1200C-ITSF)",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      45610
+     ],
+     [
+      2,
+      13040
+     ],
+     [
+      3,
+      6161
+     ],
+     [
+      4,
+      3740
+     ],
+     [
+      5,
+      2576
+     ]
+    ]
+   },
+   {
+    "mod": "Space Light Softbox, positive surface (SB-SL-DN1200C), Boost Mode",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      3326
+     ],
+     [
+      5,
+      1241
+     ],
+     [
+      7,
+      640
+     ],
+     [
+      9,
+      370
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "TK-200",
+  "kind": "panel",
+  "color": "daylight",
+  "watts": 240,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 5.68,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-tk-200-450-140b-280b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      6888
+     ],
+     [
+      3,
+      901
+     ],
+     [
+      5,
+      374
+     ],
+     [
+      7,
+      208
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "TK-450",
+  "kind": "panel",
+  "color": "daylight",
+  "watts": 455,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 96,
+  "tlci": 98,
+  "weight": 8.58,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-tk-200-450-140b-280b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      12480
+     ],
+     [
+      3,
+      1776
+     ],
+     [
+      5,
+      736
+     ],
+     [
+      7,
+      405
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "TK-140B",
+  "kind": "panel",
+  "color": "bicolor",
+  "watts": 160,
+  "cct": [
+   2700,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 6.06,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-tk-200-450-140b-280b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3757
+     ],
+     [
+      3,
+      428
+     ],
+     [
+      5,
+      175
+     ],
+     [
+      7,
+      97
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3506
+     ],
+     [
+      3,
+      407
+     ],
+     [
+      5,
+      168
+     ],
+     [
+      7,
+      93
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "NANLUX",
+  "name": "TK-280B",
+  "kind": "panel",
+  "color": "bicolor",
+  "watts": 280,
+  "cct": [
+   2700,
+   7500
+  ],
+  "cri": 95,
+  "tlci": 98,
+  "weight": 10.5,
+  "mount": null,
+  "url": "https://www.nanlux.com/product-tk-200-450-140b-280b",
+  "photometry": [
+   {
+    "mod": "без насадки",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      5900
+     ],
+     [
+      3,
+      860
+     ],
+     [
+      5,
+      353
+     ],
+     [
+      7,
+      195
+     ]
+    ]
+   },
+   {
+    "mod": "без насадки",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      5572
+     ],
+     [
+      3,
+      809
+     ],
+     [
+      5,
+      333
+     ],
+     [
+      7,
+      185
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel S30-C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 200,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 91,
+  "weight": 7.7,
+  "mount": "16 mm / 28 mm Combo Pin",
+  "url": "https://www.arri.com/resource/blob/31084/8ac45b356f4fb47424e28f4ed2a2ab90/arri-skypanel-s30-c-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Standard Diffusion",
+    "cct": 5600,
+    "beam": 104,
+    "pts": [
+     [
+      3,
+      782
+     ],
+     [
+      5,
+      282
+     ],
+     [
+      7,
+      144
+     ],
+     [
+      9,
+      87
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Diffusion",
+    "cct": 3200,
+    "beam": 107,
+    "pts": [
+     [
+      3,
+      670
+     ],
+     [
+      5,
+      241
+     ],
+     [
+      7,
+      123
+     ],
+     [
+      9,
+      74
+     ]
+    ]
+   },
+   {
+    "mod": "Lite Diffusion",
+    "cct": 5600,
+    "beam": 106,
+    "pts": [
+     [
+      3,
+      842
+     ],
+     [
+      5,
+      303
+     ],
+     [
+      7,
+      155
+     ],
+     [
+      9,
+      94
+     ]
+    ]
+   },
+   {
+    "mod": "Heavy Diffusion",
+    "cct": 5600,
+    "beam": 114,
+    "pts": [
+     [
+      3,
+      643
+     ],
+     [
+      5,
+      231
+     ],
+     [
+      7,
+      118
+     ],
+     [
+      9,
+      71
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 72,
+    "pts": [
+     [
+      3,
+      1193
+     ],
+     [
+      5,
+      429
+     ],
+     [
+      7,
+      219
+     ],
+     [
+      9,
+      133
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 72,
+    "pts": [
+     [
+      3,
+      1065
+     ],
+     [
+      5,
+      383
+     ],
+     [
+      7,
+      196
+     ],
+     [
+      9,
+      118
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel S60-C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 400,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 90,
+  "weight": 12.6,
+  "mount": "28 mm Junior Pin",
+  "url": "https://www.arri.com/resource/blob/31124/a3ef8cd7d9f50f5dcd314e9e1b2299de/arri-skypanel-s60-c-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Standard Diffusion",
+    "cct": 5600,
+    "beam": 106,
+    "pts": [
+     [
+      3,
+      1535
+     ],
+     [
+      5,
+      553
+     ],
+     [
+      7,
+      282
+     ],
+     [
+      9,
+      171
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Diffusion",
+    "cct": 3200,
+    "beam": 106,
+    "pts": [
+     [
+      3,
+      1305
+     ],
+     [
+      5,
+      470
+     ],
+     [
+      7,
+      240
+     ],
+     [
+      9,
+      145
+     ]
+    ]
+   },
+   {
+    "mod": "Lite Diffusion",
+    "cct": 5600,
+    "beam": 108,
+    "pts": [
+     [
+      3,
+      1561
+     ],
+     [
+      5,
+      562
+     ],
+     [
+      7,
+      287
+     ],
+     [
+      9,
+      173
+     ]
+    ]
+   },
+   {
+    "mod": "Heavy Diffusion",
+    "cct": 5600,
+    "beam": 116,
+    "pts": [
+     [
+      3,
+      1213
+     ],
+     [
+      5,
+      437
+     ],
+     [
+      7,
+      223
+     ],
+     [
+      9,
+      135
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 71,
+    "pts": [
+     [
+      3,
+      2431
+     ],
+     [
+      5,
+      875
+     ],
+     [
+      7,
+      447
+     ],
+     [
+      9,
+      270
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 71,
+    "pts": [
+     [
+      3,
+      2011
+     ],
+     [
+      5,
+      724
+     ],
+     [
+      7,
+      369
+     ],
+     [
+      9,
+      223
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel S120-C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 400,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 90,
+  "weight": 16.5,
+  "mount": "28 mm Junior Pin",
+  "url": "https://www.arri.com/resource/blob/31140/2a8a90b50c1501bcb589157f7d1e5d9e/arri-skypanel-s120-c-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Standard Diffusion",
+    "cct": 5600,
+    "beam": 106,
+    "pts": [
+     [
+      3,
+      1556
+     ],
+     [
+      5,
+      560
+     ],
+     [
+      7,
+      286
+     ],
+     [
+      9,
+      173
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Diffusion",
+    "cct": 3200,
+    "beam": 106,
+    "pts": [
+     [
+      3,
+      1678
+     ],
+     [
+      5,
+      604
+     ],
+     [
+      7,
+      308
+     ],
+     [
+      9,
+      186
+     ]
+    ]
+   },
+   {
+    "mod": "Lite Diffusion",
+    "cct": 5600,
+    "beam": 108,
+    "pts": [
+     [
+      3,
+      1628
+     ],
+     [
+      5,
+      586
+     ],
+     [
+      7,
+      299
+     ],
+     [
+      9,
+      181
+     ]
+    ]
+   },
+   {
+    "mod": "Heavy Diffusion",
+    "cct": 5600,
+    "beam": 114,
+    "pts": [
+     [
+      3,
+      1272
+     ],
+     [
+      5,
+      458
+     ],
+     [
+      7,
+      234
+     ],
+     [
+      9,
+      141
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 74,
+    "pts": [
+     [
+      3,
+      2425
+     ],
+     [
+      5,
+      873
+     ],
+     [
+      7,
+      445
+     ],
+     [
+      9,
+      269
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 74,
+    "pts": [
+     [
+      3,
+      2631
+     ],
+     [
+      5,
+      947
+     ],
+     [
+      7,
+      483
+     ],
+     [
+      9,
+      292
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel S360-C",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 1500,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 90,
+  "weight": 45,
+  "mount": "28 mm Junior Pin",
+  "url": "https://www.arri.com/resource/blob/31148/9fe1c2bbbb72b2087121ac007dc52838/arri-skypanel-s360-c-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Standard Diffusion",
+    "cct": 5600,
+    "beam": 105,
+    "pts": [
+     [
+      3,
+      6444
+     ],
+     [
+      5,
+      2320
+     ],
+     [
+      7,
+      1184
+     ],
+     [
+      9,
+      716
+     ],
+     [
+      12,
+      403
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Diffusion",
+    "cct": 3200,
+    "beam": 105,
+    "pts": [
+     [
+      3,
+      5878
+     ],
+     [
+      5,
+      2116
+     ],
+     [
+      7,
+      1080
+     ],
+     [
+      9,
+      653
+     ],
+     [
+      12,
+      367
+     ]
+    ]
+   },
+   {
+    "mod": "Lite Diffusion",
+    "cct": 5600,
+    "beam": 106,
+    "pts": [
+     [
+      3,
+      6600
+     ],
+     [
+      5,
+      2376
+     ],
+     [
+      7,
+      1212
+     ],
+     [
+      9,
+      733
+     ],
+     [
+      12,
+      412
+     ]
+    ]
+   },
+   {
+    "mod": "Heavy Diffusion",
+    "cct": 5600,
+    "beam": 114,
+    "pts": [
+     [
+      3,
+      5311
+     ],
+     [
+      5,
+      1912
+     ],
+     [
+      7,
+      975
+     ],
+     [
+      9,
+      590
+     ],
+     [
+      12,
+      332
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 73,
+    "pts": [
+     [
+      3,
+      9544
+     ],
+     [
+      5,
+      3436
+     ],
+     [
+      7,
+      1753
+     ],
+     [
+      9,
+      1060
+     ],
+     [
+      12,
+      596
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 73,
+    "pts": [
+     [
+      3,
+      8700
+     ],
+     [
+      5,
+      3132
+     ],
+     [
+      7,
+      1598
+     ],
+     [
+      9,
+      967
+     ],
+     [
+      12,
+      544
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel S60 Pro",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 500,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 90,
+  "weight": 14,
+  "mount": "28 mm spigot (Junior Pin)",
+  "url": "https://www.arri.com/en/lighting/led-panel-lights/skypanel-pro/tech-data",
+  "photometry": [
+   {
+    "mod": "Standard Diffusion",
+    "cct": 5600,
+    "beam": 103,
+    "pts": [
+     [
+      1,
+      16995
+     ],
+     [
+      3,
+      1888
+     ],
+     [
+      5,
+      680
+     ],
+     [
+      9,
+      210
+     ]
+    ]
+   },
+   {
+    "mod": "Standard Diffusion",
+    "cct": 3200,
+    "beam": 103,
+    "pts": [
+     [
+      1,
+      16171
+     ],
+     [
+      3,
+      1797
+     ],
+     [
+      5,
+      647
+     ],
+     [
+      9,
+      200
+     ]
+    ]
+   },
+   {
+    "mod": "Lite Diffusion",
+    "cct": 5600,
+    "beam": 105,
+    "pts": [
+     [
+      1,
+      17098
+     ],
+     [
+      3,
+      1900
+     ],
+     [
+      5,
+      684
+     ],
+     [
+      9,
+      211
+     ]
+    ]
+   },
+   {
+    "mod": "Heavy Diffusion",
+    "cct": 5600,
+    "beam": 114,
+    "pts": [
+     [
+      1,
+      12360
+     ],
+     [
+      3,
+      1373
+     ],
+     [
+      5,
+      494
+     ],
+     [
+      9,
+      153
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 71,
+    "pts": [
+     [
+      1,
+      25029
+     ],
+     [
+      3,
+      2781
+     ],
+     [
+      5,
+      1001
+     ],
+     [
+      9,
+      309
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 71,
+    "pts": [
+     [
+      1,
+      23999
+     ],
+     [
+      3,
+      2667
+     ],
+     [
+      5,
+      960
+     ],
+     [
+      9,
+      296
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel X21",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 800,
+  "cct": [
+   1500,
+   20000
+  ],
+  "cri": 90,
+  "tlci": 93,
+  "weight": 18,
+  "mount": "28 mm spigot",
+  "url": "https://www.arri.com/en/lighting/led-panel-lights/skypanel-x/tech-data",
+  "photometry": [
+   {
+    "mod": "HyPer Optic (High Output)",
+    "cct": 5600,
+    "beam": 11,
+    "pts": [
+     [
+      1,
+      480000
+     ],
+     [
+      3,
+      53300
+     ],
+     [
+      6,
+      13300
+     ],
+     [
+      10,
+      4800
+     ]
+    ]
+   },
+   {
+    "mod": "HyPer Optic (High Output)",
+    "cct": 3200,
+    "beam": 11,
+    "pts": [
+     [
+      1,
+      464600
+     ],
+     [
+      3,
+      51600
+     ],
+     [
+      6,
+      12900
+     ],
+     [
+      10,
+      4650
+     ]
+    ]
+   },
+   {
+    "mod": "Open-Face (High Output)",
+    "cct": 5600,
+    "beam": 121,
+    "pts": [
+     [
+      1,
+      15300
+     ],
+     [
+      3,
+      1700
+     ],
+     [
+      6,
+      425
+     ],
+     [
+      10,
+      153
+     ]
+    ]
+   },
+   {
+    "mod": "X21 Dome (High Output)",
+    "cct": 5600,
+    "beam": 107,
+    "pts": [
+     [
+      1,
+      13800
+     ],
+     [
+      3,
+      1530
+     ],
+     [
+      6,
+      383
+     ],
+     [
+      10,
+      138
+     ]
+    ]
+   },
+   {
+    "mod": "X21 Dome (High Output)",
+    "cct": 3200,
+    "beam": 107,
+    "pts": [
+     [
+      1,
+      13300
+     ],
+     [
+      3,
+      1480
+     ],
+     [
+      6,
+      369
+     ],
+     [
+      10,
+      133
+     ]
+    ]
+   },
+   {
+    "mod": "S60 Adapter + Standard Diffusion (High Output)",
+    "cct": 5600,
+    "beam": 101,
+    "pts": [
+     [
+      1,
+      14300
+     ],
+     [
+      3,
+      1590
+     ],
+     [
+      6,
+      397
+     ],
+     [
+      10,
+      143
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel X22",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 1600,
+  "cct": [
+   1500,
+   20000
+  ],
+  "cri": 90,
+  "tlci": 93,
+  "weight": 38,
+  "mount": "28 mm spigot",
+  "url": "https://www.arri.com/en/lighting/led-panel-lights/skypanel-x/tech-data",
+  "photometry": [
+   {
+    "mod": "HyPer Optic (High Output)",
+    "cct": 5600,
+    "beam": 11,
+    "pts": [
+     [
+      1,
+      960000
+     ],
+     [
+      3,
+      106700
+     ],
+     [
+      6,
+      26700
+     ],
+     [
+      10,
+      9600
+     ]
+    ]
+   },
+   {
+    "mod": "HyPer Optic (High Output)",
+    "cct": 3200,
+    "beam": 11,
+    "pts": [
+     [
+      1,
+      929200
+     ],
+     [
+      3,
+      103200
+     ],
+     [
+      6,
+      25800
+     ],
+     [
+      10,
+      9290
+     ]
+    ]
+   },
+   {
+    "mod": "Open-Face (High Output)",
+    "cct": 5600,
+    "beam": 121,
+    "pts": [
+     [
+      1,
+      30600
+     ],
+     [
+      3,
+      3400
+     ],
+     [
+      6,
+      850
+     ],
+     [
+      10,
+      306
+     ]
+    ]
+   },
+   {
+    "mod": "X21 Dome (High Output)",
+    "cct": 5600,
+    "beam": 107,
+    "pts": [
+     [
+      1,
+      27600
+     ],
+     [
+      3,
+      3070
+     ],
+     [
+      6,
+      767
+     ],
+     [
+      10,
+      276
+     ]
+    ]
+   },
+   {
+    "mod": "X21 Dome (High Output)",
+    "cct": 3200,
+    "beam": 107,
+    "pts": [
+     [
+      1,
+      26600
+     ],
+     [
+      3,
+      2960
+     ],
+     [
+      6,
+      739
+     ],
+     [
+      10,
+      266
+     ]
+    ]
+   },
+   {
+    "mod": "S60 Adapter + Standard Diffusion (High Output)",
+    "cct": 5600,
+    "beam": 101,
+    "pts": [
+     [
+      1,
+      28600
+     ],
+     [
+      3,
+      3180
+     ],
+     [
+      6,
+      794
+     ],
+     [
+      10,
+      286
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "SkyPanel X23",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 2400,
+  "cct": [
+   1500,
+   20000
+  ],
+  "cri": 90,
+  "tlci": 93,
+  "weight": 54,
+  "mount": "28 mm spigot",
+  "url": "https://www.arri.com/en/lighting/led-panel-lights/skypanel-x/tech-data",
+  "photometry": [
+   {
+    "mod": "HyPer Optic (High Output)",
+    "cct": 5600,
+    "beam": 11,
+    "pts": [
+     [
+      1,
+      1440000
+     ],
+     [
+      3,
+      160000
+     ],
+     [
+      6,
+      40000
+     ],
+     [
+      10,
+      14400
+     ]
+    ]
+   },
+   {
+    "mod": "HyPer Optic (High Output)",
+    "cct": 3200,
+    "beam": 11,
+    "pts": [
+     [
+      1,
+      1393800
+     ],
+     [
+      3,
+      154900
+     ],
+     [
+      6,
+      38700
+     ],
+     [
+      10,
+      13900
+     ]
+    ]
+   },
+   {
+    "mod": "Open-Face (High Output)",
+    "cct": 5600,
+    "beam": 121,
+    "pts": [
+     [
+      1,
+      45900
+     ],
+     [
+      3,
+      5100
+     ],
+     [
+      6,
+      1280
+     ],
+     [
+      10,
+      459
+     ]
+    ]
+   },
+   {
+    "mod": "X21 Dome (High Output)",
+    "cct": 5600,
+    "beam": 107,
+    "pts": [
+     [
+      1,
+      41400
+     ],
+     [
+      3,
+      4600
+     ],
+     [
+      6,
+      1150
+     ],
+     [
+      10,
+      414
+     ]
+    ]
+   },
+   {
+    "mod": "X21 Dome (High Output)",
+    "cct": 3200,
+    "beam": 107,
+    "pts": [
+     [
+      1,
+      39900
+     ],
+     [
+      3,
+      4430
+     ],
+     [
+      6,
+      1110
+     ],
+     [
+      10,
+      399
+     ]
+    ]
+   },
+   {
+    "mod": "S60 Adapter + Standard Diffusion (High Output)",
+    "cct": 5600,
+    "beam": 101,
+    "pts": [
+     [
+      1,
+      42900
+     ],
+     [
+      3,
+      4770
+     ],
+     [
+      6,
+      1190
+     ],
+     [
+      10,
+      429
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Orbiter (Open Face optics)",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 500,
+  "cct": [
+   2000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 95,
+  "weight": 14.2,
+  "mount": "28 mm spigot (Junior Pin)",
+  "url": "https://www.arri.com/en/lighting/led-spotlights/orbiter/tech-specs",
+  "photometry": [
+   {
+    "mod": "Open Face 15° (HiOut)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      178000
+     ],
+     [
+      3,
+      19780
+     ],
+     [
+      5,
+      7120
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face 15° (HiOut)",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      138000
+     ],
+     [
+      3,
+      15330
+     ],
+     [
+      5,
+      5520
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face 30° (HiOut)",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      1,
+      58000
+     ],
+     [
+      3,
+      6445
+     ],
+     [
+      5,
+      2320
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face 30° (HiOut)",
+    "cct": 3200,
+    "beam": 30,
+    "pts": [
+     [
+      1,
+      44700
+     ],
+     [
+      3,
+      4970
+     ],
+     [
+      5,
+      1790
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face 60° (HiOut)",
+    "cct": 5600,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      21000
+     ],
+     [
+      3,
+      2333
+     ],
+     [
+      5,
+      840
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face 60° (HiOut)",
+    "cct": 3200,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      16100
+     ],
+     [
+      3,
+      1800
+     ],
+     [
+      5,
+      645
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Orbiter Fresnel",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 500,
+  "cct": [
+   2000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 95,
+  "weight": 14.2,
+  "mount": "28 mm spigot (Junior Pin)",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Fresnel Spot (HiOUT)",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      10,
+      1100
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Spot (HiOUT)",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      10,
+      844
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Middle (HiOUT)",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      10,
+      382
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Middle (HiOUT)",
+    "cct": 3200,
+    "beam": 30,
+    "pts": [
+     [
+      10,
+      295
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Flood (HiOUT)",
+    "cct": 5600,
+    "beam": 65,
+    "pts": [
+     [
+      10,
+      82
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel Flood (HiOUT)",
+    "cct": 3200,
+    "beam": 65,
+    "pts": [
+     [
+      10,
+      66
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Orbiter Dome",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 500,
+  "cct": [
+   2000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 95,
+  "weight": 14.2,
+  "mount": "28 mm spigot (Junior Pin)",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "ARRI Dome Mini (HiOUT)",
+    "cct": 5600,
+    "beam": 198,
+    "pts": [
+     [
+      3,
+      233
+     ]
+    ]
+   },
+   {
+    "mod": "ARRI Dome Mini (HiOUT)",
+    "cct": 3200,
+    "beam": 198,
+    "pts": [
+     [
+      3,
+      178
+     ]
+    ]
+   },
+   {
+    "mod": "Chimera Dome M (HiOUT)",
+    "cct": 5600,
+    "beam": 190,
+    "pts": [
+     [
+      3,
+      209
+     ]
+    ]
+   },
+   {
+    "mod": "Chimera Dome L (HiOUT)",
+    "cct": 5600,
+    "beam": 219,
+    "pts": [
+     [
+      3,
+      187
+     ]
+    ]
+   },
+   {
+    "mod": "DoPchoice Dome M (HiOUT)",
+    "cct": 5600,
+    "beam": 197,
+    "pts": [
+     [
+      3,
+      202
+     ]
+    ]
+   },
+   {
+    "mod": "DoPchoice Dome L (HiOUT)",
+    "cct": 5600,
+    "beam": 180,
+    "pts": [
+     [
+      3,
+      242
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Orbiter Projection",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 500,
+  "cct": [
+   2000,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 95,
+  "weight": 14.2,
+  "mount": "28 mm spigot (Junior Pin)",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Projection 25° (HiOUT)",
+    "cct": 5600,
+    "beam": 25,
+    "pts": [
+     [
+      10,
+      720
+     ]
+    ]
+   },
+   {
+    "mod": "Projection 25° (HiOUT)",
+    "cct": 3200,
+    "beam": 25,
+    "pts": [
+     [
+      10,
+      558
+     ]
+    ]
+   },
+   {
+    "mod": "Projection 35° (HiOUT)",
+    "cct": 5600,
+    "beam": 35,
+    "pts": [
+     [
+      10,
+      367
+     ]
+    ]
+   },
+   {
+    "mod": "Projection 35° (HiOUT)",
+    "cct": 3200,
+    "beam": 35,
+    "pts": [
+     [
+      10,
+      282
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "L5-C",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 115,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 94,
+  "tlci": 90,
+  "weight": 5.0,
+  "mount": "16 mm / 28 mm Combo pin",
+  "url": "https://www.arri.com/resource/blob/31106/f5ad50bab709169453eaa2334dae7f83/arri-l-series-l5-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      3711
+     ],
+     [
+      5,
+      1336
+     ],
+     [
+      7,
+      682
+     ],
+     [
+      9,
+      412
+     ]
+    ]
+   },
+   {
+    "mod": "Spot",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      3289
+     ],
+     [
+      5,
+      1184
+     ],
+     [
+      7,
+      604
+     ],
+     [
+      9,
+      365
+     ]
+    ]
+   },
+   {
+    "mod": "Middle",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      1117
+     ],
+     [
+      5,
+      402
+     ],
+     [
+      7,
+      205
+     ],
+     [
+      9,
+      124
+     ]
+    ]
+   },
+   {
+    "mod": "Middle",
+    "cct": 3200,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      989
+     ],
+     [
+      5,
+      356
+     ],
+     [
+      7,
+      182
+     ],
+     [
+      9,
+      110
+     ]
+    ]
+   },
+   {
+    "mod": "Flood",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      428
+     ],
+     [
+      5,
+      154
+     ],
+     [
+      7,
+      79
+     ],
+     [
+      9,
+      48
+     ]
+    ]
+   },
+   {
+    "mod": "Flood",
+    "cct": 3200,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      378
+     ],
+     [
+      5,
+      136
+     ],
+     [
+      7,
+      69
+     ],
+     [
+      9,
+      42
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "L7-C",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 220,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 94,
+  "tlci": 90,
+  "weight": 8.2,
+  "mount": "28 mm Junior pin",
+  "url": "https://www.arri.com/resource/blob/31098/dcc9384184e8e310d186423d279f97df/arri-l-series-l7-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      7511
+     ],
+     [
+      5,
+      2704
+     ],
+     [
+      7,
+      1380
+     ],
+     [
+      9,
+      835
+     ]
+    ]
+   },
+   {
+    "mod": "Spot",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      6689
+     ],
+     [
+      5,
+      2408
+     ],
+     [
+      7,
+      1229
+     ],
+     [
+      9,
+      743
+     ]
+    ]
+   },
+   {
+    "mod": "Middle",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      2210
+     ],
+     [
+      5,
+      796
+     ],
+     [
+      7,
+      406
+     ],
+     [
+      9,
+      246
+     ]
+    ]
+   },
+   {
+    "mod": "Middle",
+    "cct": 3200,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      1980
+     ],
+     [
+      5,
+      713
+     ],
+     [
+      7,
+      364
+     ],
+     [
+      9,
+      220
+     ]
+    ]
+   },
+   {
+    "mod": "Flood",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      898
+     ],
+     [
+      5,
+      323
+     ],
+     [
+      7,
+      165
+     ],
+     [
+      9,
+      100
+     ]
+    ]
+   },
+   {
+    "mod": "Flood",
+    "cct": 3200,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      807
+     ],
+     [
+      5,
+      290
+     ],
+     [
+      7,
+      148
+     ],
+     [
+      9,
+      90
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "L10-C",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 510,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 91,
+  "weight": 19.0,
+  "mount": "28 mm Junior pin",
+  "url": "https://www.arri.com/resource/blob/31102/9300949b9495ba82dd2ee0ae23f7fb3d/arri-l-series-l10-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot",
+    "cct": 5600,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      15422
+     ],
+     [
+      5,
+      5552
+     ],
+     [
+      7,
+      2833
+     ],
+     [
+      9,
+      1714
+     ]
+    ]
+   },
+   {
+    "mod": "Spot",
+    "cct": 3200,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      13744
+     ],
+     [
+      5,
+      4948
+     ],
+     [
+      7,
+      2527
+     ],
+     [
+      9,
+      1527
+     ]
+    ]
+   },
+   {
+    "mod": "Middle",
+    "cct": 5600,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      5278
+     ],
+     [
+      5,
+      1900
+     ],
+     [
+      7,
+      969
+     ],
+     [
+      9,
+      586
+     ]
+    ]
+   },
+   {
+    "mod": "Middle",
+    "cct": 3200,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      4722
+     ],
+     [
+      5,
+      1700
+     ],
+     [
+      7,
+      867
+     ],
+     [
+      9,
+      525
+     ]
+    ]
+   },
+   {
+    "mod": "Flood",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      2133
+     ],
+     [
+      5,
+      768
+     ],
+     [
+      7,
+      392
+     ],
+     [
+      9,
+      237
+     ]
+    ]
+   },
+   {
+    "mod": "Flood",
+    "cct": 3200,
+    "beam": 50,
+    "pts": [
+     [
+      3,
+      1922
+     ],
+     [
+      5,
+      692
+     ],
+     [
+      7,
+      353
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "L5-C Plus",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 135,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 92,
+  "weight": 5.4,
+  "mount": "16 mm / 28 mm Combo pin",
+  "url": "https://www.arri.com/en/lighting/led-spotlights/l-series-plus/tech-specs",
+  "photometry": [
+   {
+    "mod": "Spot 12°",
+    "cct": 5600,
+    "beam": 12,
+    "pts": [
+     [
+      1,
+      51300
+     ],
+     [
+      3,
+      5700
+     ],
+     [
+      5,
+      2052
+     ],
+     [
+      9,
+      633
+     ]
+    ]
+   },
+   {
+    "mod": "Spot 12°",
+    "cct": 3200,
+    "beam": 12,
+    "pts": [
+     [
+      1,
+      47900
+     ],
+     [
+      3,
+      5322
+     ],
+     [
+      5,
+      1916
+     ],
+     [
+      9,
+      591
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 31°",
+    "cct": 5600,
+    "beam": 31,
+    "pts": [
+     [
+      1,
+      12900
+     ],
+     [
+      3,
+      1433
+     ],
+     [
+      5,
+      516
+     ],
+     [
+      9,
+      159
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 31°",
+    "cct": 3200,
+    "beam": 31,
+    "pts": [
+     [
+      1,
+      12100
+     ],
+     [
+      3,
+      1344
+     ],
+     [
+      5,
+      484
+     ],
+     [
+      9,
+      149
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 46°",
+    "cct": 5600,
+    "beam": 46,
+    "pts": [
+     [
+      1,
+      5600
+     ],
+     [
+      3,
+      622
+     ],
+     [
+      5,
+      224
+     ],
+     [
+      9,
+      69
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 46°",
+    "cct": 3200,
+    "beam": 46,
+    "pts": [
+     [
+      1,
+      5220
+     ],
+     [
+      3,
+      580
+     ],
+     [
+      5,
+      209
+     ],
+     [
+      9,
+      64
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "L7-C Plus",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 220,
+  "cct": [
+   2800,
+   10000
+  ],
+  "cri": 95,
+  "tlci": 89,
+  "weight": 8.7,
+  "mount": "28 mm Junior pin",
+  "url": "https://www.arri.com/en/lighting/led-spotlights/l-series-plus/tech-specs",
+  "photometry": [
+   {
+    "mod": "Spot 12°",
+    "cct": 5600,
+    "beam": 12,
+    "pts": [
+     [
+      1,
+      107400
+     ],
+     [
+      3,
+      11933
+     ],
+     [
+      5,
+      4296
+     ],
+     [
+      9,
+      1326
+     ]
+    ]
+   },
+   {
+    "mod": "Spot 12°",
+    "cct": 3200,
+    "beam": 12,
+    "pts": [
+     [
+      1,
+      113500
+     ],
+     [
+      3,
+      12611
+     ],
+     [
+      5,
+      4540
+     ],
+     [
+      9,
+      1401
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 31°",
+    "cct": 5600,
+    "beam": 31,
+    "pts": [
+     [
+      1,
+      25600
+     ],
+     [
+      3,
+      2844
+     ],
+     [
+      5,
+      1024
+     ],
+     [
+      9,
+      316
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 31°",
+    "cct": 3200,
+    "beam": 31,
+    "pts": [
+     [
+      1,
+      26700
+     ],
+     [
+      3,
+      2967
+     ],
+     [
+      5,
+      1068
+     ],
+     [
+      9,
+      330
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 46°",
+    "cct": 5600,
+    "beam": 46,
+    "pts": [
+     [
+      1,
+      12500
+     ],
+     [
+      3,
+      1389
+     ],
+     [
+      5,
+      500
+     ],
+     [
+      9,
+      154
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 46°",
+    "cct": 3200,
+    "beam": 46,
+    "pts": [
+     [
+      1,
+      13200
+     ],
+     [
+      3,
+      1467
+     ],
+     [
+      5,
+      528
+     ],
+     [
+      9,
+      163
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Omnibar 2",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 25,
+  "cct": [
+   1700,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 1.3,
+  "mount": "Omnipin 16 mm (5/8\") / magnets",
+  "url": "https://www.arri.com/en/lighting/led-linear-lights/omnibar/omnibar-tech-data-downloads",
+  "photometry": [
+   {
+    "mod": "Open Face",
+    "cct": 5600,
+    "beam": 115,
+    "pts": [
+     [
+      1,
+      784
+     ],
+     [
+      3,
+      96
+     ],
+     [
+      5,
+      34
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face",
+    "cct": 3200,
+    "beam": 115,
+    "pts": [
+     [
+      1,
+      710
+     ],
+     [
+      3,
+      87
+     ],
+     [
+      5,
+      31
+     ]
+    ]
+   },
+   {
+    "mod": "Round Diffuser",
+    "cct": 5600,
+    "beam": 145,
+    "pts": [
+     [
+      1,
+      473
+     ],
+     [
+      3,
+      56
+     ],
+     [
+      5,
+      20
+     ]
+    ]
+   },
+   {
+    "mod": "Flat Diffuser",
+    "cct": 5600,
+    "beam": 130,
+    "pts": [
+     [
+      1,
+      419
+     ],
+     [
+      3,
+      50
+     ],
+     [
+      5,
+      18
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      834
+     ],
+     [
+      3,
+      105
+     ],
+     [
+      5,
+      38
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      751
+     ],
+     [
+      3,
+      95
+     ],
+     [
+      5,
+      34
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Omnibar 4",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 50,
+  "cct": [
+   1700,
+   20000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 2.3,
+  "mount": "Omnipin 16 mm (5/8\") / magnets",
+  "url": "https://www.arri.com/en/lighting/led-linear-lights/omnibar/omnibar-tech-data-downloads",
+  "photometry": [
+   {
+    "mod": "Open Face",
+    "cct": 5600,
+    "beam": 115,
+    "pts": [
+     [
+      1,
+      1475
+     ],
+     [
+      3,
+      195
+     ],
+     [
+      5,
+      72
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face",
+    "cct": 3200,
+    "beam": 115,
+    "pts": [
+     [
+      1,
+      1339
+     ],
+     [
+      3,
+      177
+     ],
+     [
+      5,
+      65
+     ]
+    ]
+   },
+   {
+    "mod": "Round Diffuser",
+    "cct": 5600,
+    "beam": 145,
+    "pts": [
+     [
+      1,
+      832
+     ],
+     [
+      3,
+      115
+     ],
+     [
+      5,
+      43
+     ]
+    ]
+   },
+   {
+    "mod": "Flat Diffuser",
+    "cct": 5600,
+    "beam": 130,
+    "pts": [
+     [
+      1,
+      737
+     ],
+     [
+      3,
+      100
+     ],
+     [
+      5,
+      37
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      1287
+     ],
+     [
+      3,
+      200
+     ],
+     [
+      5,
+      76
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      1168
+     ],
+     [
+      3,
+      182
+     ],
+     [
+      5,
+      69
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "M8",
+  "kind": "par",
+  "color": "daylight",
+  "watts": 800,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 8.4,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/31482/56bc56e239913e13a3482379507b0c38/arri-m-series-m8-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 15°",
+    "cct": null,
+    "beam": 15,
+    "pts": [
+     [
+      5,
+      16200
+     ],
+     [
+      10,
+      4050
+     ],
+     [
+      15,
+      1800
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 40°",
+    "cct": null,
+    "beam": 40,
+    "pts": [
+     [
+      5,
+      3020
+     ],
+     [
+      10,
+      755
+     ],
+     [
+      15,
+      336
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 60°",
+    "cct": null,
+    "beam": 60,
+    "pts": [
+     [
+      5,
+      1600
+     ],
+     [
+      10,
+      400
+     ],
+     [
+      15,
+      178
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "M18",
+  "kind": "par",
+  "color": "daylight",
+  "watts": 1800,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 11.5,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/31486/159a5bdb453bde6aa20d8cdb132e196e/arri-m-series-m18-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 15° (1800 W lamp)",
+    "cct": null,
+    "beam": 15,
+    "pts": [
+     [
+      7,
+      22950
+     ],
+     [
+      10,
+      11250
+     ],
+     [
+      15,
+      5000
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 40° (1800 W lamp)",
+    "cct": null,
+    "beam": 40,
+    "pts": [
+     [
+      7,
+      4325
+     ],
+     [
+      10,
+      2120
+     ],
+     [
+      15,
+      940
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 58° (1800 W lamp)",
+    "cct": null,
+    "beam": 58,
+    "pts": [
+     [
+      7,
+      2245
+     ],
+     [
+      10,
+      1100
+     ],
+     [
+      15,
+      490
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "M40",
+  "kind": "par",
+  "color": "daylight",
+  "watts": 4000,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 20.0,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/31490/e8392f1b0918baec5fb185c896e617bc/arri-m-series-m40-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 18° (4000 W lamp)",
+    "cct": null,
+    "beam": 18,
+    "pts": [
+     [
+      7,
+      40300
+     ],
+     [
+      10,
+      19700
+     ],
+     [
+      15,
+      8750
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30° (4000 W lamp)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      7,
+      13500
+     ],
+     [
+      10,
+      6500
+     ],
+     [
+      15,
+      2900
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 52° (4000 W lamp)",
+    "cct": null,
+    "beam": 52,
+    "pts": [
+     [
+      7,
+      5000
+     ],
+     [
+      10,
+      2450
+     ],
+     [
+      15,
+      1075
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "M90",
+  "kind": "par",
+  "color": "daylight",
+  "watts": 9000,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 40.0,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/31494/5b84ef13af575c8468b68d08a3352d80/arri-m-series-m90-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 15° (9000 W lamp)",
+    "cct": null,
+    "beam": 15,
+    "pts": [
+     [
+      10,
+      51000
+     ],
+     [
+      20,
+      12750
+     ],
+     [
+      30,
+      5670
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30° (9000 W lamp)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      10,
+      14450
+     ],
+     [
+      20,
+      3610
+     ],
+     [
+      30,
+      1600
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 49° (9000 W lamp)",
+    "cct": null,
+    "beam": 49,
+    "pts": [
+     [
+      10,
+      7590
+     ],
+     [
+      20,
+      1900
+     ],
+     [
+      30,
+      840
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "ARRIMAX 18/12",
+  "kind": "par",
+  "color": "daylight",
+  "watts": 18000,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 70.0,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/31498/c515dde2857cc911f74dc86ff3302cca/arri-m-series-arrimax-data-sheet-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 15° (18 kW lamp)",
+    "cct": null,
+    "beam": 15,
+    "pts": [
+     [
+      15,
+      55300
+     ],
+     [
+      20,
+      31100
+     ],
+     [
+      30,
+      13800
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 50° (18 kW lamp)",
+    "cct": null,
+    "beam": 50,
+    "pts": [
+     [
+      15,
+      5700
+     ],
+     [
+      20,
+      3210
+     ],
+     [
+      30,
+      1420
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue D5 (575 W HMI Fresnel)",
+  "kind": "fresnel",
+  "color": "daylight",
+  "watts": 575,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 5.9,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/324514/88bf4800bc0e0e7c16c9a25130d06eff/arri-d-series-overview-poster-feb2023-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 6°",
+    "cct": null,
+    "beam": 6,
+    "pts": [
+     [
+      7,
+      6561
+     ],
+     [
+      10,
+      3215
+     ],
+     [
+      15,
+      1429
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      7,
+      1414
+     ],
+     [
+      10,
+      693
+     ],
+     [
+      15,
+      308
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 56°",
+    "cct": null,
+    "beam": 56,
+    "pts": [
+     [
+      7,
+      591
+     ],
+     [
+      10,
+      290
+     ],
+     [
+      15,
+      129
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue D12 (1200 W HMI Fresnel)",
+  "kind": "fresnel",
+  "color": "daylight",
+  "watts": 1200,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 9.4,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/324514/88bf4800bc0e0e7c16c9a25130d06eff/arri-d-series-overview-poster-feb2023-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 7.5°",
+    "cct": null,
+    "beam": 7.5,
+    "pts": [
+     [
+      9,
+      7315
+     ],
+     [
+      15,
+      2633
+     ],
+     [
+      20,
+      1481
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      9,
+      1701
+     ],
+     [
+      15,
+      612
+     ],
+     [
+      20,
+      344
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 50°",
+    "cct": null,
+    "beam": 50,
+    "pts": [
+     [
+      9,
+      864
+     ],
+     [
+      15,
+      311
+     ],
+     [
+      20,
+      175
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue D25 (2500 W HMI Fresnel)",
+  "kind": "fresnel",
+  "color": "daylight",
+  "watts": 2500,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 15.5,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/324514/88bf4800bc0e0e7c16c9a25130d06eff/arri-d-series-overview-poster-feb2023-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 6°",
+    "cct": null,
+    "beam": 6,
+    "pts": [
+     [
+      12,
+      11269
+     ],
+     [
+      15,
+      7212
+     ],
+     [
+      20,
+      4057
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      12,
+      1924
+     ],
+     [
+      15,
+      1231
+     ],
+     [
+      20,
+      692
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 59°",
+    "cct": null,
+    "beam": 59,
+    "pts": [
+     [
+      12,
+      852
+     ],
+     [
+      15,
+      545
+     ],
+     [
+      20,
+      307
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue D40 (4000 W HMI Fresnel)",
+  "kind": "fresnel",
+  "color": "daylight",
+  "watts": 4000,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 18.0,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/324514/88bf4800bc0e0e7c16c9a25130d06eff/arri-d-series-overview-poster-feb2023-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 6.5°",
+    "cct": null,
+    "beam": 6.5,
+    "pts": [
+     [
+      16,
+      7717
+     ],
+     [
+      20,
+      4939
+     ],
+     [
+      25,
+      3161
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      16,
+      1766
+     ],
+     [
+      20,
+      1130
+     ],
+     [
+      25,
+      723
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 61°",
+    "cct": null,
+    "beam": 61,
+    "pts": [
+     [
+      16,
+      760
+     ],
+     [
+      20,
+      486
+     ],
+     [
+      25,
+      311
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "Daylight 18/12",
+  "kind": "fresnel",
+  "color": "daylight",
+  "watts": 18000,
+  "cct": [
+   6000,
+   6000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 70,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (HMI 18000 W)",
+    "cct": null,
+    "beam": 11,
+    "pts": [
+     [
+      10,
+      64400
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (HMI 18000 W)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      10,
+      16000
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (HMI 18000 W)",
+    "cct": null,
+    "beam": 56,
+    "pts": [
+     [
+      10,
+      6900
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (HMI 12000 W)",
+    "cct": null,
+    "beam": 10,
+    "pts": [
+     [
+      10,
+      54700
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (HMI 12000 W)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      10,
+      12200
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (HMI 12000 W)",
+    "cct": null,
+    "beam": 57,
+    "pts": [
+     [
+      10,
+      5250
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue T1",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 1000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 4.8,
+  "mount": "28 mm spigot (short) / 16 mm socket",
+  "url": "https://www.arri.com/resource/blob/188694/f9f11a41dfd310d2ff4700a188732e97/arri-true-blue-t-series-overview-poster-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 7.7°",
+    "cct": null,
+    "beam": 7.7,
+    "pts": [
+     [
+      5,
+      5836
+     ],
+     [
+      10,
+      1459
+     ],
+     [
+      15,
+      648
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      5,
+      1436
+     ],
+     [
+      10,
+      359
+     ],
+     [
+      15,
+      160
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 53°",
+    "cct": null,
+    "beam": 53,
+    "pts": [
+     [
+      5,
+      680
+     ],
+     [
+      10,
+      170
+     ],
+     [
+      15,
+      76
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue T2",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 2000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 7.1,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/188694/f9f11a41dfd310d2ff4700a188732e97/arri-true-blue-t-series-overview-poster-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 12.7°",
+    "cct": null,
+    "beam": 12.7,
+    "pts": [
+     [
+      5,
+      7776
+     ],
+     [
+      10,
+      1944
+     ],
+     [
+      15,
+      864
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      5,
+      3084
+     ],
+     [
+      10,
+      771
+     ],
+     [
+      15,
+      343
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 60°",
+    "cct": null,
+    "beam": 60,
+    "pts": [
+     [
+      5,
+      1300
+     ],
+     [
+      10,
+      325
+     ],
+     [
+      15,
+      144
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "True Blue T5",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 5000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 12.0,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/188694/f9f11a41dfd310d2ff4700a188732e97/arri-true-blue-t-series-overview-poster-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 15.5°",
+    "cct": null,
+    "beam": 15.5,
+    "pts": [
+     [
+      5,
+      14920
+     ],
+     [
+      10,
+      3730
+     ],
+     [
+      15,
+      1658
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      5,
+      7984
+     ],
+     [
+      10,
+      1996
+     ],
+     [
+      15,
+      887
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 50.6°",
+    "cct": null,
+    "beam": 50.6,
+    "pts": [
+     [
+      5,
+      4632
+     ],
+     [
+      10,
+      1158
+     ],
+     [
+      15,
+      515
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "STUDIO T12",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 12000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 27,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/188700/17ce9d3d6abdbb6c9086110dda14010b/arri-studio-series-overview-poster-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 13°",
+    "cct": null,
+    "beam": 13,
+    "pts": [
+     [
+      8,
+      27188
+     ],
+     [
+      15,
+      7733
+     ],
+     [
+      20,
+      4350
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      8,
+      9047
+     ],
+     [
+      15,
+      2573
+     ],
+     [
+      20,
+      1448
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 55°",
+    "cct": null,
+    "beam": 55,
+    "pts": [
+     [
+      8,
+      4656
+     ],
+     [
+      15,
+      1324
+     ],
+     [
+      20,
+      745
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "STUDIO T24",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 24000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 64,
+  "mount": "28 mm spigot (1 1/8\")",
+  "url": "https://www.arri.com/resource/blob/188700/17ce9d3d6abdbb6c9086110dda14010b/arri-studio-series-overview-poster-en-data.pdf",
+  "photometry": [
+   {
+    "mod": "Spot 13°",
+    "cct": null,
+    "beam": 13,
+    "pts": [
+     [
+      11,
+      26694
+     ],
+     [
+      15,
+      14356
+     ],
+     [
+      20,
+      8075
+     ]
+    ]
+   },
+   {
+    "mod": "Medium 30°",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      11,
+      9504
+     ],
+     [
+      15,
+      5111
+     ],
+     [
+      20,
+      2875
+     ]
+    ]
+   },
+   {
+    "mod": "Flood 56°",
+    "cct": null,
+    "beam": 56,
+    "pts": [
+     [
+      11,
+      4306
+     ],
+     [
+      15,
+      2316
+     ],
+     [
+      20,
+      1302
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "650 Plus",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 650,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 2.6,
+  "mount": "16 mm (5/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (CP/89 230 V)",
+    "cct": null,
+    "beam": 12,
+    "pts": [
+     [
+      5,
+      2770
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (CP/89 230 V)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      5,
+      915
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (CP/89 230 V)",
+    "cct": null,
+    "beam": 52,
+    "pts": [
+     [
+      5,
+      510
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (CP/89 120 V)",
+    "cct": null,
+    "beam": 13,
+    "pts": [
+     [
+      5,
+      2110
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (CP/89 120 V)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      5,
+      910
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (CP/89 120 V)",
+    "cct": null,
+    "beam": 54,
+    "pts": [
+     [
+      5,
+      430
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "300 Plus",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 300,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 1.8,
+  "mount": "16 mm (5/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (CP/81 230 V)",
+    "cct": null,
+    "beam": 14,
+    "pts": [
+     [
+      3,
+      1970
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (CP/81 230 V)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      890
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (CP/81 230 V)",
+    "cct": null,
+    "beam": 53,
+    "pts": [
+     [
+      3,
+      430
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (CP/81 120 V)",
+    "cct": null,
+    "beam": 15,
+    "pts": [
+     [
+      3,
+      1867
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (CP/81 120 V)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      1000
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (CP/81 120 V)",
+    "cct": null,
+    "beam": 55,
+    "pts": [
+     [
+      3,
+      500
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "150",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 150,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 0.8,
+  "mount": "16 mm (5/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (GX6.35 230 V)",
+    "cct": null,
+    "beam": 14,
+    "pts": [
+     [
+      3,
+      665
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (GX6.35 230 V)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      360
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (GX6.35 230 V)",
+    "cct": null,
+    "beam": 42,
+    "pts": [
+     [
+      3,
+      220
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (ESP 120 V)",
+    "cct": null,
+    "beam": 14,
+    "pts": [
+     [
+      3,
+      456
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (ESP 120 V)",
+    "cct": null,
+    "beam": 30,
+    "pts": [
+     [
+      3,
+      211
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (ESP 120 V)",
+    "cct": null,
+    "beam": 44,
+    "pts": [
+     [
+      3,
+      167
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "2000 Fresnel (снят с производства)",
+  "kind": "fresnel",
+  "color": "tungsten",
+  "watts": 2000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 6.0,
+  "mount": "28 mm (1 1/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (CP/73 230 V)",
+    "cct": null,
+    "beam": 13,
+    "pts": [
+     [
+      5,
+      6842
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (CP/73 230 V)",
+    "cct": null,
+    "beam": 39,
+    "pts": [
+     [
+      5,
+      2004
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "ARRILITE 2000 Plus",
+  "kind": "other",
+  "color": "tungsten",
+  "watts": 2000,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 3.0,
+  "mount": "16 mm (5/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (FEX 230 V)",
+    "cct": null,
+    "beam": 24,
+    "pts": [
+     [
+      5,
+      4400
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (FEX 230 V)",
+    "cct": null,
+    "beam": 50,
+    "pts": [
+     [
+      5,
+      1250
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (FEX 230 V)",
+    "cct": null,
+    "beam": 62,
+    "pts": [
+     [
+      5,
+      940
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (FEY 120 V)",
+    "cct": null,
+    "beam": 20,
+    "pts": [
+     [
+      5,
+      5350
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (FEY 120 V)",
+    "cct": null,
+    "beam": 53,
+    "pts": [
+     [
+      5,
+      1100
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "ARRI",
+  "name": "ARRILITE 750 Plus",
+  "kind": "other",
+  "color": "tungsten",
+  "watts": 750,
+  "cct": [
+   3200,
+   3200
+  ],
+  "cri": 100,
+  "tlci": null,
+  "weight": 1.6,
+  "mount": "16 mm (5/8\")",
+  "url": "https://www.arri.com/en/learn-help/lighting/tools-apps/arri-photometrics",
+  "photometry": [
+   {
+    "mod": "Spot (HPL 750 W 230 V)",
+    "cct": null,
+    "beam": 21,
+    "pts": [
+     [
+      10,
+      571
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (HPL 750 W 230 V)",
+    "cct": null,
+    "beam": 50,
+    "pts": [
+     [
+      10,
+      162
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (HPL 750 W 230 V)",
+    "cct": null,
+    "beam": 73,
+    "pts": [
+     [
+      10,
+      93
+     ]
+    ]
+   },
+   {
+    "mod": "Spot (HPL 750 W 115 V)",
+    "cct": null,
+    "beam": 21,
+    "pts": [
+     [
+      10,
+      718
+     ]
+    ]
+   },
+   {
+    "mod": "Middle (HPL 750 W 115 V)",
+    "cct": null,
+    "beam": 44,
+    "pts": [
+     [
+      10,
+      209
+     ]
+    ]
+   },
+   {
+    "mod": "Flood (HPL 750 W 115 V)",
+    "cct": null,
+    "beam": 69,
+    "pts": [
+     [
+      10,
+      115
+     ]
+    ]
+   }
+  ]
+ }
+]
