@@ -5420,11 +5420,17 @@
         const hbLoad = (k, def) => { try { const v = localStorage.getItem(k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } };
         const hbSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
         // Самое яркое, что прибор даёт на 3 м — для сравнения в списке.
+        // Отдаём и режим, в котором это получено: одно число без насадки
+        // читалось как «прибор вообще» — у XT26 стояло 193 100 лк, а это
+        // 20° рефлектор, и с таблицей производителя оно не сходилось.
         const hbPeak3 = (f) => {
           let best = null;
-          f.photometry.forEach(p => { const e = hbLuxAt(p.pts, 3); if (e != null && (best == null || e > best)) best = e; });
+          f.photometry.forEach(p => { const e = hbLuxAt(p.pts, 3); if (e != null && (!best || e > best.lux)) best = { lux: e, p }; });
           return best;
         };
+        // Насадка коротко, для строки списка: угол, если он есть, иначе
+        // название режима до первой скобки.
+        const hbModShort = (p) => p.beam ? `${Math.round(p.beam)}°` : String(p.mod || '').split('(')[0].trim();
 
         const HandbookModule = ({ isPhone, phoneOpen, setPhoneOpen, readOnly, onAddToCatalog, inCatalog }) => {
           const all = useMemo(hbFixtures, []);
@@ -5452,7 +5458,7 @@
             const s = q.trim().toLowerCase();
             const out = all.filter(f => (!brand || f.brand === brand)
               && (!s || (f.brand + ' ' + f.name + ' ' + (HB_KIND[f.kind] || '') + ' ' + (HB_COLOR[f.color] || '')).toLowerCase().includes(s)));
-            if (sort === 'lux') out.sort((a, b) => (peaks[b.id] || 0) - (peaks[a.id] || 0));
+            if (sort === 'lux') out.sort((a, b) => ((peaks[b.id] || {}).lux || 0) - ((peaks[a.id] || {}).lux || 0));
             else out.sort((a, b) => brands.indexOf(a.brand) - brands.indexOf(b.brand) || (a.old ? 1 : 0) - (b.old ? 1 : 0) || a.name.localeCompare(b.name, 'ru', { numeric: true }));
             return out;
           }, [all, brand, q, sort, peaks, brands]);
@@ -5508,9 +5514,11 @@
                             {[x.watts ? `${hbNum(x.watts)} Вт` : null, HB_KIND[x.kind], HB_COLOR[x.color], sort === 'lux' && x.old ? 'снят' : null].filter(Boolean).join(' · ')}
                           </div>
                         </div>
-                        <span className="shrink-0 text-right" title="Самое яркое на 3 м среди замеров производителя"
-                              style={{ ...mono, fontSize: 'var(--fs-1)', color: pk ? 'var(--muted)' : 'var(--muted-2)' }}>
-                          {pk ? `${hbNum(pk)} лк` : 'нет замера'}
+                        <span className="shrink-0 text-right" data-cf="hb-peak"
+                              title={pk ? `Самое яркое на 3 м: ${pk.p.mod}` : ''}
+                              style={{ ...mono, fontSize: 'var(--fs-1)', color: pk ? 'var(--muted)' : 'var(--muted-2)', maxWidth: 118 }}>
+                          {pk ? `${hbNum(pk.lux)} лк` : 'нет замера'}
+                          {pk && <span className="block truncate" style={{ color: 'var(--muted-2)' }}>{[hbModShort(pk.p), '3 м'].filter(Boolean).join(' · ')}</span>}
                         </span>
                       </div>
                     </React.Fragment>

@@ -107,6 +107,10 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   await p.waitForTimeout(200);
   ok(`фильтр по бренду ${b0}`, await p.evaluate(() => document.querySelectorAll('[data-cf="hb-row"]').length) === nb0);
   await p.evaluate(() => [...document.querySelectorAll('[data-cf="hb-list"] button.cf-chip')].find(x => x.textContent === 'Все').click());
+  // Число в списке — самый яркий режим на 3 м, и режим подписан под ним:
+  // у XT26 это 20° рефлектор (193 100 лк), а не «прибор вообще».
+  const xt = await p.evaluate(() => { const r = [...document.querySelectorAll('[data-cf="hb-row"]')].find(r => /Electro Storm XT26/.test(r.innerText)); return r ? r.querySelector('[data-cf="hb-peak"]').innerText.replace(/\s+/g, ' ') : ''; });
+  ok('в списке у числа подписан режим и дистанция', /193 100 лк 20° · 3 м/.test(xt), xt);
   const target = withPh[withPh.length - 1];
   await p.fill('[data-cf="hb-search"]', target.name);
   await p.waitForTimeout(200);
