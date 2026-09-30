@@ -709,6 +709,13 @@
 <body class="no-select">
     <div id="root" class="relative z-10 w-full h-full"></div>
 
+    <!-- СПРАВОЧНИК: приборы с фотометрией производителей. Данные, а не код:
+         Babel этот блок не трогает, читается он только при открытии вкладки
+         «Справочник» (hbFixtures). Меняется ТОЛЬКО сборщиком
+         `python3 build-handbook.py` из handbook/fixtures.json — руками здесь
+         не правь, следующая сборка затрёт. -->
+    <script type="application/json" id="cf-handbook-fixtures">[]</script>
+
     <script type="text/cf-jsx" id="cf-app">
         const { useState, useEffect, useRef, useMemo } = React;
 
@@ -746,6 +753,7 @@
             Print: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
             Tag: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>,
             Image: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
+            Book: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M9 7h7M9 11h5"/></svg>,
             Scout: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18"/><circle cx="12" cy="11" r="3.4"/><path d="M12 3.5v1.8M5.2 6.2l1.3 1.3M18.8 6.2l-1.3 1.3M2.5 14h1.8M19.7 14h1.8"/></svg>,
             Camera: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/></svg>,
             Lightbulb: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>,
@@ -826,13 +834,13 @@
         // «показать всё». Теперь в `?view=` лежит список страниц через
         // запятую. Старые ссылки продолжают работать: `gallery`, `board`
         // и `all` разбираются как прежде, а их уже разослали.
-        const CF_ALL_VIEWS = ['notion', 'whiteboard', 'gallery', 'locations', 'scout', 'table', 'docs'];
+        const CF_ALL_VIEWS = ['notion', 'whiteboard', 'gallery', 'locations', 'scout', 'table', 'docs', 'handbook'];
         const CF_VIEW_ALIAS = {
           all: '*',            gallery: 'gallery',   board: 'whiteboard',
           boards: 'whiteboard', whiteboard: 'whiteboard',
           scenes: 'notion',    notion: 'notion',     locations: 'locations',
           table: 'table',      kpp: 'table',         docs: 'docs',
-          scout: 'scout'
+          scout: 'scout',      handbook: 'handbook', spravochnik: 'handbook'
         };
         const CF_VIEWS = (() => {
           if (!CF_VIEW_SCOPE) return CF_ALL_VIEWS;
@@ -5326,6 +5334,357 @@
                     style={{ minHeight: 'var(--tap-sm)', ...(style || {}) }}>
               <Icons.Mic /> {label}
             </button>
+          );
+        };
+
+        // ─── СПРАВОЧНИК ────────────────────────────────────────────────
+        // Вкладка для того, что НЕ относится к проекту, а нужно при работе
+        // над ним: сейчас это приборы с фотометрией производителей, дальше
+        // сюда лягут другие разделы (`HB_SECTIONS`). Данные справочника —
+        // не данные комнаты: в облако они не уезжают, общие у всех и
+        // приезжают вместе с приложением, блоком JSON внизу страницы
+        // (`#cf-handbook-fixtures`). Отдельным файлом их не держим: service
+        // worker отдаёт такие файлы из кэша не спрашивая сеть, и поправленная
+        // таблица до людей не доехала бы. А Babel этот блок не переводит,
+        // и читается он только когда вкладку открыли.
+        const HB_SECTIONS = [{ id: 'fixtures', label: 'Приборы' }];
+        const HB_KIND = { point: 'моноблок', panel: 'панель', tube: 'трубка', fresnel: 'френель', par: 'PAR', mat: 'мат', other: 'прибор' };
+        const HB_COLOR = { daylight: 'дневной', bicolor: 'би-колор', rgb: 'полноцвет', tungsten: 'лампа накаливания' };
+        // Экспонометр с плоским диском калибруется C = 250 (Sekonic, Minolta):
+        // N² = E · ISO · t / C. Это оценка — без фильтров, диффузии и рамок.
+        const HB_C = 250;
+        const HB_ISO = [400, 800, 1280, 1600, 3200];
+        const HB_SHUT = [['1/48', 48], ['1/50', 50], ['1/60', 60], ['1/100', 100]];
+        const HB_FULL = [1, 1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22, 32, 45, 64];
+        const HB_TARGETS = [1.4, 2, 2.8, 4, 5.6, 8, 11];
+        let hbCache = null;
+        const hbFixtures = () => {
+          if (hbCache) return hbCache;
+          let raw = [];
+          try { raw = JSON.parse((document.getElementById('cf-handbook-fixtures') || {}).textContent || '[]'); } catch (e) { raw = []; }
+          hbCache = raw.map((f, i) => ({
+            ...f, id: (f.brand + '-' + f.name).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+            photometry: (f.photometry || []).filter(p => p.pts && p.pts.length)
+              .map(p => ({ ...p, pts: p.pts.slice().sort((a, b) => a[0] - b[0]) }))
+          }));
+          return hbCache;
+        };
+        // Освещённость на расстоянии d по точкам замера производителя.
+        // Между точками — прямая в логарифмах (по сути закон обратных
+        // квадратов, но с поправкой на то, что прибор его не соблюдает
+        // вблизи), за краями — обратные квадраты от ближайшей точки.
+        const hbLuxAt = (pts, d) => {
+          if (!pts || !pts.length || !(d > 0)) return null;
+          const n = pts.length;
+          if (d <= pts[0][0]) return pts[0][1] * Math.pow(pts[0][0] / d, 2);
+          if (d >= pts[n - 1][0]) return pts[n - 1][1] * Math.pow(pts[n - 1][0] / d, 2);
+          for (let i = 0; i < n - 1; i++) {
+            const [d0, e0] = pts[i], [d1, e1] = pts[i + 1];
+            if (d >= d0 && d <= d1) {
+              if (d1 === d0) return e0;
+              const k = (Math.log(d) - Math.log(d0)) / (Math.log(d1) - Math.log(d0));
+              return Math.exp(Math.log(e0) + k * (Math.log(e1) - Math.log(e0)));
+            }
+          }
+          return null;
+        };
+        const hbStop = (lux, iso, shut) => Math.sqrt(lux * iso / shut / HB_C);
+        // Диафрагма словами, с точностью до трети ступени: «T4 +1/3».
+        const hbStopLabel = (N) => {
+          if (!(N > 0)) return '—';
+          const idx = Math.round(Math.log2(N) * 2 * 3);
+          if (idx < 0) return 'темнее T1';
+          const full = Math.floor(idx / 3), rem = idx % 3;
+          if (full >= HB_FULL.length - 1 && (full > HB_FULL.length - 1 || rem)) return 'ярче T64';
+          return 'T' + String(HB_FULL[full]).replace('.', ',') + (rem ? ` +${rem}/3` : '');
+        };
+        // На каком расстоянии получится нужная диафрагма: освещённость
+        // с расстоянием только падает, поэтому хватает деления пополам.
+        const hbDistFor = (pts, N, iso, shut) => {
+          const need = N * N * HB_C * shut / iso;
+          let lo = 0.1, hi = 200;
+          if (hbLuxAt(pts, lo) < need) return null;
+          if (hbLuxAt(pts, hi) > need) return Infinity;
+          for (let i = 0; i < 50; i++) {
+            const m = Math.sqrt(lo * hi);
+            if (hbLuxAt(pts, m) > need) lo = m; else hi = m;
+          }
+          return lo;
+        };
+        const hbNum = (v, dig = 0) => v == null ? '—' : Number(v).toLocaleString('ru-RU', { maximumFractionDigits: dig, minimumFractionDigits: 0 });
+        const hbM = (d) => hbNum(d, d < 10 ? 1 : 0) + ' м';
+        const hbLoad = (k, def) => { try { const v = localStorage.getItem(k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } };
+        const hbSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+        // Самое яркое, что прибор даёт на 3 м — для сравнения в списке.
+        const hbPeak3 = (f) => {
+          let best = null;
+          f.photometry.forEach(p => { const e = hbLuxAt(p.pts, 3); if (e != null && (best == null || e > best)) best = e; });
+          return best;
+        };
+
+        const HandbookModule = ({ isPhone, phoneOpen, setPhoneOpen, readOnly, onAddToCatalog, inCatalog }) => {
+          const all = useMemo(hbFixtures, []);
+          const [brand, setBrand] = useState(() => hbLoad('cf_hb_brand', ''));
+          const [sort, setSort] = useState(() => hbLoad('cf_hb_sort', 'name'));
+          const [q, setQ] = useState('');
+          const [selId, setSelId] = useState(() => hbLoad('cf_hb_sel', ''));
+          const [rowIdx, setRowIdx] = useState(0);
+          const [dist, setDist] = useState(() => hbLoad('cf_hb_dist', 3));
+          const [iso, setIso] = useState(() => hbLoad('cf_hb_iso', 800));
+          const [shut, setShut] = useState(() => hbLoad('cf_hb_shut', 48));
+          const [unit, setUnit] = useState(() => hbLoad('cf_hb_unit', 'lx'));
+          useEffect(() => { hbSave('cf_hb_brand', brand); }, [brand]);
+          useEffect(() => { hbSave('cf_hb_sort', sort); }, [sort]);
+          useEffect(() => { hbSave('cf_hb_sel', selId); }, [selId]);
+          useEffect(() => { hbSave('cf_hb_dist', dist); }, [dist]);
+          useEffect(() => { hbSave('cf_hb_iso', iso); }, [iso]);
+          useEffect(() => { hbSave('cf_hb_shut', shut); }, [shut]);
+          useEffect(() => { hbSave('cf_hb_unit', unit); }, [unit]);
+          useEffect(() => { setRowIdx(0); }, [selId]);
+
+          const brands = useMemo(() => [...new Set(all.map(f => f.brand))], [all]);
+          const peaks = useMemo(() => { const m = {}; all.forEach(f => { m[f.id] = hbPeak3(f); }); return m; }, [all]);
+          const list = useMemo(() => {
+            const s = q.trim().toLowerCase();
+            const out = all.filter(f => (!brand || f.brand === brand)
+              && (!s || (f.brand + ' ' + f.name + ' ' + (HB_KIND[f.kind] || '') + ' ' + (HB_COLOR[f.color] || '')).toLowerCase().includes(s)));
+            if (sort === 'lux') out.sort((a, b) => (peaks[b.id] || 0) - (peaks[a.id] || 0));
+            else out.sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name, 'ru', { numeric: true }));
+            return out;
+          }, [all, brand, q, sort, peaks]);
+          const f = all.find(x => x.id === selId) || list[0] || null;
+
+          const small = { fontSize: 'var(--fs-2)', color: 'var(--muted)' };
+          const eyebrow = { fontSize: 'var(--fs-2)', fontWeight: 600, letterSpacing: '.01em', color: 'var(--muted)' };
+          const mono = { fontFamily: 'var(--font-mono)' };
+          const fmtE = (e) => unit === 'fc' ? hbNum(e / 10.764, e / 10.764 < 10 ? 1 : 0) : hbNum(e, e < 10 ? 1 : 0);
+          const unitLabel = unit === 'fc' ? 'фк' : 'лк';
+
+          const phoneList = isPhone && !phoneOpen;
+          const listPane = (!isPhone || phoneList) && (
+            <aside className="flex flex-col shrink-0" data-cf="hb-list"
+                   style={isPhone ? { width: '100%', background: 'var(--bg)' } : { width: 256, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
+              <div className="px-2.5 pt-2.5 pb-2 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="cf-meta flex-1 truncate">{HB_SECTIONS[0].label} · {all.length}</span>
+                  <span className="cf-seg">
+                    <button className={sort === 'name' ? 'on' : ''} onClick={() => setSort('name')} title="По производителю и названию">А–Я</button>
+                    <button className={sort === 'lux' ? 'on' : ''} onClick={() => setSort('lux')} title="Самые яркие сверху — по освещённости на 3 м">ярче</button>
+                  </span>
+                </div>
+                <input type="search" value={q} onChange={e => setQ(e.target.value)} data-ro-ok data-cf="hb-search"
+                       placeholder="Найти прибор" className="w-full focus:outline-none"
+                       style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 10px', minHeight: 'var(--tap)', fontSize: 'var(--fs-2)', color: 'var(--text)' }} />
+                <div className="flex flex-wrap gap-1.5">
+                  {[['', 'Все'], ...brands.map(b => [b, b])].map(([b, label]) => (
+                    <button key={b || 'all'} onClick={() => setBrand(b)} className={'cf-chip ' + (brand === b ? 'cf-sel' : '')}>{label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {list.map((x, i) => {
+                  const on = f && x.id === f.id;
+                  const head = sort === 'name' && (i === 0 || list[i - 1].brand !== x.brand);
+                  const pk = peaks[x.id];
+                  return (
+                    <React.Fragment key={x.id}>
+                      {head && <div className="cf-meta px-2.5 pt-3 pb-1">{x.brand}</div>}
+                      <div onClick={() => { setSelId(x.id); setPhoneOpen(true); }} data-cf="hb-row"
+                           className={`cf-row flex items-center gap-2 px-2.5 ${on ? 'cf-row-on' : ''}`}
+                           style={{ minHeight: isPhone ? 52 : 40, paddingTop: 6, paddingBottom: 6 }}>
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate" style={{ fontSize: isPhone ? 'var(--fs-3)' : 'var(--fs-2)', color: on ? 'var(--text)' : 'var(--text-2)' }}>
+                            {sort === 'lux' && <span style={{ color: 'var(--muted-2)' }}>{x.brand} </span>}{x.name}
+                          </div>
+                          <div className="truncate" style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>
+                            {[x.watts ? `${hbNum(x.watts)} Вт` : null, HB_KIND[x.kind], HB_COLOR[x.color]].filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                        <span className="shrink-0 text-right" title="Самое яркое на 3 м среди замеров производителя"
+                              style={{ ...mono, fontSize: 'var(--fs-1)', color: pk ? 'var(--muted)' : 'var(--muted-2)' }}>
+                          {pk ? `${hbNum(pk)} лк` : 'нет замера'}
+                        </span>
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
+                {list.length === 0 && (
+                  <div className="p-4 text-center" style={small}>
+                    {all.length ? 'Ничего не нашлось.' : 'Справочник не загрузился.'}
+                    {all.length > 0 && (q || brand) && (
+                      <div><button onClick={() => { setQ(''); setBrand(''); }} style={{ color: 'var(--accent)', minHeight: 'var(--tap-sm)' }}>Показать все</button></div>
+                    )}
+                  </div>
+                )}
+                <p className="px-2.5 py-3" style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                  Цифры — из опубликованных замеров производителей: у каждого прибора ссылка на источник.
+                </p>
+              </div>
+            </aside>
+          );
+
+          if (phoneList) return listPane;
+          if (!f) return (
+            <React.Fragment>
+              {listPane}
+              <main className="flex-1 min-w-0 flex items-center justify-center p-8" style={small}>Выберите прибор слева</main>
+            </React.Fragment>
+          );
+
+          const rows = f.photometry;
+          const row = rows[Math.min(rowIdx, rows.length - 1)] || null;
+          const dists = [...new Set(rows.flatMap(r => r.pts.map(p => p[0])))].sort((a, b) => a - b);
+          const lux = row ? hbLuxAt(row.pts, dist) : null;
+          const N = lux != null ? hbStop(lux, iso, shut) : null;
+          const measured = row && row.pts.some(p => Math.abs(p[0] - dist) < 1e-6);
+          const specs = [
+            ['Тип', [HB_KIND[f.kind], HB_COLOR[f.color]].filter(Boolean).join(', ')],
+            ['Мощность', f.watts ? `${hbNum(f.watts)} Вт` : null],
+            ['Температура', f.cct ? (f.cct[0] === f.cct[1] ? `${f.cct[0]} K` : `${f.cct[0]}–${f.cct[1]} K`) : null],
+            ['CRI / TLCI', (f.cri || f.tlci) ? `${f.cri || '—'} / ${f.tlci || '—'}` : null],
+            ['Вес', f.weight ? `${hbNum(f.weight, 1)} кг` : null],
+            ['Крепление', f.mount || null]
+          ].filter(s => s[1]);
+          const host = (() => { try { return new URL(f.url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
+          const already = inCatalog(f);
+
+          return (
+            <React.Fragment>
+              {listPane}
+              <main className="flex-1 min-w-0 overflow-y-auto" data-cf="hb-card"
+                    style={{ padding: isPhone ? '12px 16px 36px' : '24px clamp(20px, 3.4vw, 48px) 48px' }}>
+                <div style={{ maxWidth: 900 }}>
+                  <div className="cf-meta" style={{ color: 'var(--accent)' }}>{f.brand}</div>
+                  <h1 style={{ fontSize: isPhone ? 'var(--fs-5x)' : 'var(--fs-6)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)', lineHeight: 1.15, margin: '2px 0 14px' }}>{f.name}</h1>
+
+                  <div className="grid gap-x-4" style={{ gridTemplateColumns: 'max-content 1fr', rowGap: 6, marginBottom: 12 }}>
+                    {specs.map(([k, v]) => (
+                      <React.Fragment key={k}>
+                        <span style={small}>{k}</span>
+                        <span style={{ fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>{v}</span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 36 }}>
+                    {f.url && (
+                      <a href={f.url} target="_blank" rel="noopener noreferrer" data-cf="hb-source"
+                         style={{ fontSize: 'var(--fs-2)', color: 'var(--accent)', minHeight: 'var(--tap-sm)', display: 'inline-flex', alignItems: 'center' }}>
+                        Источник: {host} ↗
+                      </a>
+                    )}
+                    {/* В КАТАЛОГ СВЕТА ПРОЕКТА — тот же список, из которого
+                        свет назначают сценам. Правка проекта, поэтому
+                        cf-edit-only; сам справочник — чтение. */}
+                    {!readOnly && (
+                      <button onClick={() => onAddToCatalog(f)} disabled={already} data-cf="hb-add"
+                              className="cf-edit-only rounded-lg disabled:opacity-60"
+                              style={{ border: '1px solid var(--accent-line)', color: already ? 'var(--muted)' : 'var(--accent)', fontSize: 'var(--fs-2)', padding: '0 12px', minHeight: 'var(--tap-sm)' }}>
+                        {already ? 'Уже в каталоге света ✓' : '+ в каталог света проекта'}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 8 }}>
+                    <span style={eyebrow}>Фотометрия{rows.length ? ` · ${rows.length} ${plur(rows.length, 'режим', 'режима', 'режимов')}` : ''}</span>
+                    {rows.length > 0 && (
+                      <span className="cf-seg ml-auto">
+                        <button className={unit === 'lx' ? 'on' : ''} onClick={() => setUnit('lx')} title="Люксы">лк</button>
+                        <button className={unit === 'fc' ? 'on' : ''} onClick={() => setUnit('fc')} title="Футкандели">фк</button>
+                      </span>
+                    )}
+                  </div>
+                  {rows.length === 0 ? (
+                    <p style={{ ...small, marginBottom: 36 }}>Производитель замеров освещённости для этого прибора не публикует.</p>
+                  ) : (
+                    <div className="overflow-x-auto" style={{ marginBottom: 40 }}>
+                      <table data-cf="hb-table" style={{ borderCollapse: 'collapse', minWidth: '100%', fontSize: 'var(--fs-2)' }}>
+                        <thead>
+                          <tr>
+                            <th className="text-left" style={{ ...small, fontWeight: 500, padding: '6px 10px 6px 0' }}>Насадка / режим</th>
+                            {dists.map(d => (
+                              <th key={d} className="text-right" style={{ ...mono, fontSize: 'var(--fs-1)', color: 'var(--muted-2)', fontWeight: 500, padding: '6px 8px', whiteSpace: 'nowrap' }}>{hbM(d)}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r, i) => (
+                            <tr key={i} onClick={() => setRowIdx(i)} data-cf="hb-mode"
+                                className={i === rowIdx ? 'cf-sel' : ''}
+                                style={{ cursor: 'pointer', borderTop: '1px solid var(--line)' }}>
+                              <td style={{ padding: '8px 10px 8px 6px', color: 'var(--text-2)', minWidth: 140 }}>
+                                {r.mod}
+                                <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-1)' }}>
+                                  {[r.beam ? ` · ${r.beam}°` : '', r.cct ? ` · ${r.cct} K` : ''].join('')}
+                                </span>
+                              </td>
+                              {dists.map(d => {
+                                const p = r.pts.find(x => x[0] === d);
+                                return (
+                                  <td key={d} className="text-right" style={{ ...mono, padding: '8px', color: p ? 'var(--text)' : 'var(--muted-2)', whiteSpace: 'nowrap' }}>
+                                    {p ? fmtE(p[1]) : '·'}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)', marginTop: 6 }}>{unit === 'fc' ? 'футкандели' : 'люксы'} · нажмите строку — по ней считает экспозиция ниже</div>
+                    </div>
+                  )}
+
+                  {row && (
+                    <section data-cf="hb-calc">
+                      <div style={{ ...eyebrow, marginBottom: 10 }}>Экспозиция · {row.mod}</div>
+                      <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
+                        <span style={{ ...small, width: 84 }}>Расстояние</span>
+                        <button className="cf-chip" onClick={() => setDist(d => Math.max(0.5, Math.round((d - 0.5) * 2) / 2))} title="Ближе на полметра">−</button>
+                        <input type="range" min="0.5" max="20" step="0.1" value={dist} data-ro-ok data-cf="hb-dist"
+                               onChange={e => setDist(parseFloat(e.target.value))} style={{ flex: '1 1 160px', accentColor: 'var(--accent)', minHeight: 'var(--tap-sm)' }} />
+                        <button className="cf-chip" onClick={() => setDist(d => Math.min(20, Math.round((d + 0.5) * 2) / 2))} title="Дальше на полметра">+</button>
+                        <span style={{ ...mono, fontSize: 'var(--fs-3)', color: 'var(--text)', minWidth: 64, textAlign: 'right' }}>{hbM(dist)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
+                        <span style={{ ...small, width: 84 }}>ISO</span>
+                        <span className="cf-seg">
+                          {HB_ISO.map(v => <button key={v} className={iso === v ? 'on' : ''} onClick={() => setIso(v)}>{v}</button>)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 18 }}>
+                        <span style={{ ...small, width: 84 }}>Выдержка</span>
+                        <span className="cf-seg">
+                          {HB_SHUT.map(([l, v]) => <button key={v} className={shut === v ? 'on' : ''} onClick={() => setShut(v)}>{l}</button>)}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-4 flex-wrap" style={{ marginBottom: 6 }}>
+                        <span data-cf="hb-stop" style={{ ...mono, fontSize: 'var(--fs-6)', fontWeight: 600, color: 'var(--text)', letterSpacing: '-.02em' }}>{hbStopLabel(N)}</span>
+                        <span style={{ ...mono, fontSize: 'var(--fs-3)', color: 'var(--text-2)' }} data-cf="hb-lux">
+                          {hbNum(lux, lux < 10 ? 1 : 0)} лк · {hbNum(lux / 10.764, lux / 10.764 < 10 ? 1 : 0)} фк
+                        </span>
+                        <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>{measured ? 'замер производителя' : 'пересчёт между замерами'}</span>
+                      </div>
+                      <div style={{ ...small, marginTop: 18, marginBottom: 8 }}>Где получится диафрагма</div>
+                      <div className="flex flex-wrap gap-x-5 gap-y-2" data-cf="hb-where">
+                        {HB_TARGETS.map(t => {
+                          const d = hbDistFor(row.pts, t, iso, shut);
+                          return (
+                            <span key={t} style={{ ...mono, fontSize: 'var(--fs-2)' }}>
+                              <span style={{ color: 'var(--muted)' }}>T{String(t).replace('.', ',')}</span>{' '}
+                              <span style={{ color: d == null ? 'var(--muted-2)' : 'var(--text)' }}>
+                                {d == null ? 'не хватит' : d === Infinity ? 'дальше 200 м' : hbM(d)}
+                              </span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <p style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)', marginTop: 16, lineHeight: 1.5, maxWidth: 560 }}>
+                        Оценка: экспонометр с калибровкой C = 250, без фильтров, диффузии и потерь в рамке. Вдали от точек замера — по закону обратных квадратов.
+                      </p>
+                    </section>
+                  )}
+                </div>
+              </main>
+            </React.Fragment>
           );
         };
 
@@ -15606,6 +15965,20 @@
             });
           };
 
+          // Прибор из справочника — в каталог света проекта, тот самый, из
+          // которого свет назначают сценам. Ключ тем же правилом, что
+          // у «своего» прибора (addCustomGear), иначе один и тот же прибор,
+          // заведённый двумя путями, лёг бы в каталог дважды.
+          const addLightFromHandbook = (f) => {
+            if (READ_ONLY) return;
+            const name = `${f.brand} ${f.name}`;
+            if (Object.values(lightGearTypes || {}).some(g => g && g.label === name)) { showToast('Этот прибор уже в каталоге света'); return; }
+            const key = name.toLowerCase().replace(/\s+/g, '_');
+            const payload = { label: name };
+            setLightGearTypes(prev => { const up = { ...prev, [key]: payload }; syncDoc('lightGearTypes', key, payload); return up; });
+            showToast(`${name} — в каталоге света · назначается сценам в панели «Свет»`);
+          };
+
           const addCustomGear = (isLight) => {
               const name = isLight ? newLightGearName : newGearName;
               if (!name.trim()) return;
@@ -16755,7 +17128,8 @@
             { id: 'locations',  label: 'Объекты',      icon: <Icons.Place /> },
             { id: 'scout',      label: 'Скаут',        icon: <Icons.Scout /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
-            { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> }
+            { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> },
+            { id: 'handbook',   label: 'Справочник',   icon: <Icons.Book /> }
           ].filter(t => {
             return CF_VIEWS.indexOf(t.id) >= 0;
           });
@@ -16912,6 +17286,8 @@
           // по нажатию объект с «‹ Объекты» в шапке. Полоска в 40 точек с
           // вертикальной подписью отнимала десятую часть экрана ради «›».
           const [phoneLocOpen, setPhoneLocOpen] = useState(false);
+          // Справочник на телефоне — те же два экрана: список приборов и прибор.
+          const [phoneHbOpen, setPhoneHbOpen] = useState(false);
           // Строка состава группы, которую сейчас правят: остальные — текст.
           const [crewEdit, setCrewEdit] = useState(null);
           // Объект, у которого сейчас правят справку ({id, field}: адрес,
@@ -17667,6 +18043,11 @@
                                 className="cf-circ ml-auto">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                         </button>
+                      </React.Fragment>
+                    ) : currentView === 'handbook' && phoneHbOpen ? (
+                      <React.Fragment>
+                        <button onClick={() => setPhoneHbOpen(false)}
+                                className="cf-hbtn" style={{ paddingRight: 6 }}>‹ Справочник</button>
                       </React.Fragment>
                     ) : currentView === 'locations' && phoneLocOpen ? (
                       <React.Fragment>
@@ -21556,6 +21937,17 @@
                     )}
                   </div>
 
+                  {/* СПРАВОЧНИК — не данные проекта, а то, что нужно при
+                      работе над ним: приборы с фотометрией производителей.
+                      Собирается только когда открыт — как скаут и печать. */}
+                  <div className={`h-full w-full ${currentView === 'handbook' ? 'flex' : 'hidden'}`}>
+                    {currentView === 'handbook' && (
+                      <HandbookModule isPhone={isPhone} phoneOpen={phoneHbOpen} setPhoneOpen={setPhoneHbOpen}
+                                      readOnly={READ_ONLY} onAddToCatalog={addLightFromHandbook}
+                                      inCatalog={(f) => Object.values(lightGearTypes || {}).some(g => g && g.label === `${f.brand} ${f.name}`)} />
+                    )}
+                  </div>
+
                   {/* КПП — ОДИН документ, два вида.
                       Рядом жила вкладка «Документ» с теми же сценами, только
                       другим порядком: два экрана про одно и то же, и человек
@@ -22174,7 +22566,7 @@
                           )}
                         </button>
                         {navItems.filter(t => !['notion', 'gallery', 'locations', 'scout'].includes(t.id)).map(t => (
-                          <button key={t.id} onClick={() => { setCurrentView(t.id); setPhoneSheet(null); setShowChat(false); }}
+                          <button key={t.id} onClick={() => { if (currentView === t.id && t.id === 'handbook') setPhoneHbOpen(false); setCurrentView(t.id); setPhoneSheet(null); setShowChat(false); }}
                                   className="w-full flex items-center gap-3 px-3 rounded-lg transition-colors"
                                   style={{ minHeight: 48, fontSize: 'var(--fs-3)', color: currentView === t.id ? 'var(--accent)' : 'var(--text-2)' }}>
                             {t.icon}{t.label}
