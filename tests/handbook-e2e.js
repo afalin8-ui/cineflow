@@ -135,7 +135,7 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   ok('«в каталог света проекта» нажимается', await tap(p, '[data-cf="hb-add"]'));
   await p.waitForTimeout(900);
   const cat = await p.evaluate(() => { try { return JSON.parse(localStorage.getItem('cf_lightgeartypes') || '{}'); } catch (e) { return {}; } });
-  ok('прибор лёг в каталог света', Object.values(cat).some(g => g.label === `${target.brand} ${target.name}`), JSON.stringify(Object.values(cat).map(g => g.label)));
+  ok('прибор лёг в каталог света', Object.values(cat).some(g => g.label === (target.name.toLowerCase().startsWith(target.brand.toLowerCase() + " ") ? target.name : `${target.brand} ${target.name}`)), JSON.stringify(Object.values(cat).map(g => g.label)));
   ok('кнопка говорит, что уже в каталоге', /Уже в каталоге/.test(await p.evaluate(() => document.querySelector('[data-cf="hb-add"]').innerText)));
   ok('без ошибок на планшете', errs.length === 0, errs.join(' | '));
 
