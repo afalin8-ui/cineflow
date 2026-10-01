@@ -27374,5 +27374,3097 @@
   "mount": null,
   "url": "https://www.pipelighting.com/s/catalogue_2026-bsew.pdf",
   "photometry": []
+ },
+ {
+  "brand": "Astera",
+  "name": "Titan Tube",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 48,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 1.35,
+  "mount": "2× M5, TubeHolder (1/4\"-20)",
+  "url": "https://astera-led.com/products/titan/specs/",
+  "note": "Производитель даёт только точку на 1 м; трубка не точечный источник, и пересчёт на другие расстояния обратными квадратами приблизителен.",
+  "photometry": [
+   {
+    "mod": "Tube (bare)",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      708
+     ]
+    ]
+   },
+   {
+    "mod": "Tube (bare)",
+    "cct": 4000,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      785
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "Helios Tube",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 24,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 0.765,
+  "mount": "2× M5, TubeHolder (1/4\"-20)",
+  "url": "https://astera-led.com/products/helios-tube/specs/",
+  "note": "Производитель даёт только точку на 1 м; трубка не точечный источник, и пересчёт на другие расстояния обратными квадратами приблизителен.",
+  "photometry": [
+   {
+    "mod": "Tube (bare)",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      360
+     ]
+    ]
+   },
+   {
+    "mod": "Tube (bare)",
+    "cct": 4000,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      393
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "Hyperion Tube",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 92,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 2.9,
+  "mount": "2× M5, TubeHolder (1/4\"-20)",
+  "url": "https://astera-led.com/products/hyperion-tube/specs/",
+  "note": "Производитель даёт только точку на 1 м; трубка не точечный источник, и пересчёт на другие расстояния обратными квадратами приблизителен.",
+  "photometry": [
+   {
+    "mod": "Tube (bare)",
+    "cct": 4000,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      1570
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX1 PixelTube",
+  "kind": "tube",
+  "color": "rgb",
+  "watts": 16,
+  "cct": null,
+  "cri": null,
+  "tlci": null,
+  "weight": 1.0,
+  "mount": "2× M5, TubeHolder (1/4\"-20)",
+  "url": "https://astera-led.com/products/ax1-pixeltube/specs/",
+  "note": "Производитель даёт только точку на 1 м; трубка не точечный источник, и пересчёт на другие расстояния обратными квадратами приблизителен. CRI/TLCI производитель пишет как «≤88».",
+  "photometry": [
+   {
+    "mod": "Tube (bare)",
+    "cct": 3200,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      254
+     ]
+    ]
+   },
+   {
+    "mod": "Tube (bare)",
+    "cct": 4000,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      255
+     ]
+    ]
+   },
+   {
+    "mod": "Tube (bare)",
+    "cct": 5500,
+    "beam": 120,
+    "pts": [
+     [
+      1,
+      253
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX2 PixelBar 50 cm",
+  "kind": "other",
+  "color": "rgb",
+  "watts": 40,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 4.5,
+  "mount": "AirlineTrack, 2× AX2 Feet (3/8\")",
+  "url": "https://astera-led.com/products/ax2-pixelbar/specs/",
+  "photometry": [
+   {
+    "mod": "Standard (21°)",
+    "cct": 5500,
+    "beam": 21,
+    "pts": [
+     [
+      1,
+      11010
+     ]
+    ]
+   },
+   {
+    "mod": "Standard (21°)",
+    "cct": 3200,
+    "beam": 21,
+    "pts": [
+     [
+      1,
+      11060
+     ]
+    ]
+   },
+   {
+    "mod": "Standard (21°)",
+    "cct": 2700,
+    "beam": 21,
+    "pts": [
+     [
+      1,
+      8995
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX2 PixelBar 100 cm",
+  "kind": "other",
+  "color": "rgb",
+  "watts": 80,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 7.4,
+  "mount": "AirlineTrack, 2× AX2 Feet (3/8\")",
+  "url": "https://astera-led.com/wp-content/uploads/Datasheet_AX2_PixelBar_V2.pdf",
+  "photometry": [
+   {
+    "mod": "Standard (21°)",
+    "cct": 5500,
+    "beam": 21,
+    "pts": [
+     [
+      1,
+      22025
+     ]
+    ]
+   },
+   {
+    "mod": "Standard (21°)",
+    "cct": 3200,
+    "beam": 21,
+    "pts": [
+     [
+      1,
+      22125
+     ]
+    ]
+   },
+   {
+    "mod": "Standard (21°)",
+    "cct": 2700,
+    "beam": 21,
+    "pts": [
+     [
+      1,
+      17995
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX3 LightDrop",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 15,
+  "cct": null,
+  "cri": null,
+  "tlci": null,
+  "weight": 0.68,
+  "mount": "Magnet, 3× M4, bracket (3/8\", 1/4\"-20)",
+  "url": "https://astera-led.com/products/ax3-lightdrop/specs/",
+  "note": "CRI/TLCI производитель пишет как «≤88».",
+  "photometry": [
+   {
+    "mod": "Standard (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      2,
+      1300
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX5 TriplePAR",
+  "kind": "par",
+  "color": "rgb",
+  "watts": 45,
+  "cct": null,
+  "cri": null,
+  "tlci": null,
+  "weight": 3.4,
+  "mount": "4× M6, bracket (3/8\"-16, 1/2\")",
+  "url": "https://astera-led.com/products/ax5-triplepar/specs/",
+  "note": "CRI/TLCI производитель пишет как «≤92».",
+  "photometry": [
+   {
+    "mod": "Standard (13°)",
+    "cct": 5500,
+    "beam": 13,
+    "pts": [
+     [
+      2,
+      5151
+     ]
+    ]
+   },
+   {
+    "mod": "Standard (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      2,
+      4800
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX7 SpotLite",
+  "kind": "par",
+  "color": "rgb",
+  "watts": 60,
+  "cct": null,
+  "cri": null,
+  "tlci": null,
+  "weight": 6.1,
+  "mount": null,
+  "url": "https://astera-led.com/products/ax7-spotlite/specs/",
+  "note": "Производитель не указывает цветовую температуру замера.",
+  "photometry": [
+   {
+    "mod": "Standard (13°)",
+    "cct": null,
+    "beam": 13,
+    "pts": [
+     [
+      2,
+      6250
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX9 PowerPAR",
+  "kind": "par",
+  "color": "rgb",
+  "watts": 70,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 5.66,
+  "mount": "AirlineTrack, 4× M6, AX9 Bracket (3/8\"-16, 1/2\")",
+  "url": "https://astera-led.com/products/ax9-powerpar/downloads/",
+  "note": "Освещённость в центре луча из отчётов гониофотометра (EVERFINE), выложенных производителем в архиве IES.",
+  "photometry": [
+   {
+    "mod": "No filter (13°)",
+    "cct": 5500,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      44410
+     ],
+     [
+      2,
+      11103
+     ],
+     [
+      3,
+      4934
+     ],
+     [
+      5,
+      1776
+     ],
+     [
+      10,
+      444
+     ]
+    ]
+   },
+   {
+    "mod": "No filter (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      47275
+     ],
+     [
+      2,
+      11819
+     ],
+     [
+      3,
+      5253
+     ],
+     [
+      5,
+      1891
+     ],
+     [
+      10,
+      473
+     ]
+    ]
+   },
+   {
+    "mod": "AX9-FF Flood",
+    "cct": 5500,
+    "beam": 32,
+    "pts": [
+     [
+      1,
+      6859
+     ],
+     [
+      2,
+      1715
+     ],
+     [
+      3,
+      762
+     ],
+     [
+      5,
+      274
+     ],
+     [
+      10,
+      69
+     ]
+    ]
+   },
+   {
+    "mod": "AX9-FF Flood",
+    "cct": 3200,
+    "beam": 32,
+    "pts": [
+     [
+      1,
+      7048
+     ],
+     [
+      2,
+      1762
+     ],
+     [
+      3,
+      783
+     ],
+     [
+      5,
+      282
+     ],
+     [
+      10,
+      70
+     ]
+    ]
+   },
+   {
+    "mod": "AX9-WWF WallWash (60°×10°)",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      8009
+     ],
+     [
+      2,
+      2002
+     ],
+     [
+      3,
+      890
+     ],
+     [
+      5,
+      320
+     ],
+     [
+      10,
+      80
+     ]
+    ]
+   },
+   {
+    "mod": "AX9-WWF WallWash (60°×10°)",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      8279
+     ],
+     [
+      2,
+      2070
+     ],
+     [
+      3,
+      920
+     ],
+     [
+      5,
+      331
+     ],
+     [
+      10,
+      83
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "AX10 SpotMax",
+  "kind": "par",
+  "color": "rgb",
+  "watts": 135,
+  "cct": null,
+  "cri": 92,
+  "tlci": 92,
+  "weight": 7.98,
+  "mount": "1/2\"-13 UNC, safety eyelet",
+  "url": "https://astera-led.com/products/ax10-spotmax/specs/",
+  "photometry": [
+   {
+    "mod": "No diffusor (13°)",
+    "cct": 4000,
+    "beam": 13,
+    "pts": [
+     [
+      2,
+      10350
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "PixelBrick",
+  "kind": "par",
+  "color": "rgb",
+  "watts": 12,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 1.12,
+  "mount": "4× AirlineTrack, 4× M5, BrickBracket",
+  "url": "https://astera-led.com/products/pixelbrick/downloads/",
+  "note": "Освещённость в центре луча из отчётов гониофотометра (EVERFINE), выложенных производителем; на странице характеристик на 1 м чуть иначе (5985 лк при 5500 K).",
+  "photometry": [
+   {
+    "mod": "No filter (13°)",
+    "cct": 5500,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      6060
+     ],
+     [
+      2,
+      1515
+     ],
+     [
+      3,
+      673
+     ],
+     [
+      5,
+      242
+     ],
+     [
+      10,
+      61
+     ]
+    ]
+   },
+   {
+    "mod": "No filter (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      7270
+     ],
+     [
+      2,
+      1818
+     ],
+     [
+      3,
+      808
+     ],
+     [
+      5,
+      291
+     ],
+     [
+      10,
+      73
+     ]
+    ]
+   },
+   {
+    "mod": "No filter (13°)",
+    "cct": 2700,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      6257
+     ],
+     [
+      2,
+      1564
+     ],
+     [
+      3,
+      695
+     ],
+     [
+      5,
+      250
+     ],
+     [
+      10,
+      63
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "HydraPanel",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 17,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 0.604,
+  "mount": "2× ColdShoe, 3× M5",
+  "url": "https://astera-led.com/products/hydrapanel/specs/",
+  "photometry": [
+   {
+    "mod": "Bare",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      516
+     ]
+    ]
+   },
+   {
+    "mod": "Bare",
+    "cct": 4000,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      512
+     ]
+    ]
+   },
+   {
+    "mod": "Bare",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      443
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "NYX Bulb",
+  "kind": "other",
+  "color": "rgb",
+  "watts": 10,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 0.24,
+  "mount": "E26/E27/B22",
+  "url": "https://astera-led.com/products/nyx-bulb/specs/",
+  "photometry": [
+   {
+    "mod": "Bulb",
+    "cct": 5500,
+    "beam": 155,
+    "pts": [
+     [
+      1,
+      124
+     ]
+    ]
+   },
+   {
+    "mod": "Bulb",
+    "cct": 3200,
+    "beam": 155,
+    "pts": [
+     [
+      1,
+      114
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "SolaBulb",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 15,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 0.433,
+  "mount": "E26/E27/B22, 3/8\"-16, 1/4\"-20",
+  "url": "https://astera-led.com/products/solabulb/specs/",
+  "photometry": [
+   {
+    "mod": "Zoom 15°",
+    "cct": 5500,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      5228
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 30°",
+    "cct": 5500,
+    "beam": 30,
+    "pts": [
+     [
+      1,
+      1652
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 50°",
+    "cct": 5500,
+    "beam": 50,
+    "pts": [
+     [
+      1,
+      615
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "LunaBulb",
+  "kind": "other",
+  "color": "rgb",
+  "watts": 3.3,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 0.081,
+  "mount": "E26/E27/B22",
+  "url": "https://astera-led.com/products/lunabulb/specs/",
+  "photometry": [
+   {
+    "mod": "With dome",
+    "cct": 5500,
+    "beam": 240,
+    "pts": [
+     [
+      1,
+      20
+     ]
+    ]
+   },
+   {
+    "mod": "With dome",
+    "cct": 4000,
+    "beam": 240,
+    "pts": [
+     [
+      1,
+      19
+     ]
+    ]
+   },
+   {
+    "mod": "With dome",
+    "cct": 3200,
+    "beam": 240,
+    "pts": [
+     [
+      1,
+      18
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "QuikBeam",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 20,
+  "cct": [
+   1750,
+   20000
+  ],
+  "cri": 96,
+  "tlci": 96,
+  "weight": 1.617,
+  "mount": "1/4\"-20, 3/8\"-16, yoke (AirlineTrack, 1/2\")",
+  "url": "https://astera-led.com/products/quikbeam/specs/",
+  "note": "Производитель не указывает, при каком положении зума мерили. Вес — с аккумулятором.",
+  "photometry": [
+   {
+    "mod": "Zoom 12.6°–58.5°",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      2294
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 12.6°–58.5°",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      2174
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 12.6°–58.5°",
+    "cct": 2700,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      2059
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "QuikSpot",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 38,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 3.45,
+  "mount": "AirlineTrack, 3/8\"-16, yoke (1/2\")",
+  "url": "https://astera-led.com/products/quikspot/specs/",
+  "note": "Производитель не указывает, при каком положении зума мерили.",
+  "photometry": [
+   {
+    "mod": "Zoom 13°–60°",
+    "cct": 5500,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      3010
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 13°–60°",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      2722
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 13°–60°",
+    "cct": 2700,
+    "beam": null,
+    "pts": [
+     [
+      3,
+      2483
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "QuikPunch",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 75,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 6.567,
+  "mount": "AirlineTrack, 3/8\"-16, yoke (1/2\")",
+  "url": "https://astera-led.com/products/quikpunch/specs/",
+  "photometry": [
+   {
+    "mod": "Zoom 13°",
+    "cct": 5500,
+    "beam": 13,
+    "pts": [
+     [
+      3,
+      6966
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 13°",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      3,
+      5987
+     ]
+    ]
+   },
+   {
+    "mod": "Zoom 13°",
+    "cct": 2700,
+    "beam": 13,
+    "pts": [
+     [
+      3,
+      5702
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "PlutoFresnel",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 80,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 4.637,
+  "mount": "4× AirlineTrack, 1/2\", 3/8\", BrickMount",
+  "url": "https://astera-led.com/products/plutofresnel/specs/",
+  "note": "Строки 15° и 60° — центр луча из отчётов гониофотометра в архиве IES производителя; 35° — только точка на 1 м со страницы характеристик. Вес — с линзой и шторками.",
+  "photometry": [
+   {
+    "mod": "Fresnel 15°",
+    "cct": 5500,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      38190
+     ],
+     [
+      2,
+      9548
+     ],
+     [
+      3,
+      4243
+     ],
+     [
+      4,
+      2387
+     ],
+     [
+      5,
+      1528
+     ]
+    ],
+    "src": "https://astera-led.com/wp-content/uploads/AF80_Pluto_Photometrics_IES_V1.zip"
+   },
+   {
+    "mod": "Fresnel 35°",
+    "cct": 5500,
+    "beam": 35,
+    "pts": [
+     [
+      1,
+      10028
+     ]
+    ]
+   },
+   {
+    "mod": "Fresnel 60°",
+    "cct": 5500,
+    "beam": 60,
+    "pts": [
+     [
+      1,
+      2919
+     ],
+     [
+      2,
+      730
+     ],
+     [
+      3,
+      324
+     ],
+     [
+      4,
+      182
+     ],
+     [
+      5,
+      117
+     ]
+    ],
+    "src": "https://astera-led.com/wp-content/uploads/AF80_Pluto_Photometrics_IES_V1.zip"
+   }
+  ]
+ },
+ {
+  "brand": "Astera",
+  "name": "LeoFresnel",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 250,
+  "cct": null,
+  "cri": 96,
+  "tlci": 96,
+  "weight": 13.83,
+  "mount": "AirlineTrack, yoke (2× BrickMount, 1/2\")",
+  "url": "https://astera-led.com/products/leofresnel/specs/",
+  "note": "Замеры из фотометрических отчётов производителя (архив IES). На странице характеристик для 15° на 1 м указано 57 737 лк — на 15% меньше отчёта; 35° и 60° совпадают. Вес — с линзой и шторками.",
+  "photometry": [
+   {
+    "mod": "Fresnel 15°",
+    "cct": 5500,
+    "beam": 15,
+    "pts": [
+     [
+      1,
+      67421
+     ],
+     [
+      2,
+      16855
+     ],
+     [
+      3,
+      7491
+     ],
+     [
+      5,
+      2697
+     ],
+     [
+      10,
+      674
+     ]
+    ],
+    "src": "https://astera-led.com/wp-content/uploads/AF250_Leo_Photometrics_IES_V1.zip"
+   },
+   {
+    "mod": "Fresnel 35°",
+    "cct": 5500,
+    "beam": 35,
+    "pts": [
+     [
+      3.33,
+      1635
+     ],
+     [
+      6.67,
+      409
+     ],
+     [
+      10,
+      182
+     ],
+     [
+      13.33,
+      102
+     ],
+     [
+      20,
+      45
+     ]
+    ],
+    "src": "https://astera-led.com/wp-content/uploads/AF250_Leo_Photometrics_IES_V1.zip"
+   },
+   {
+    "mod": "Fresnel 60°",
+    "cct": 5500,
+    "beam": 60,
+    "pts": [
+     [
+      3.33,
+      597
+     ],
+     [
+      6.67,
+      149
+     ],
+     [
+      10,
+      66
+     ],
+     [
+      13.33,
+      37
+     ],
+     [
+      20,
+      17
+     ]
+    ],
+    "src": "https://astera-led.com/wp-content/uploads/AF250_Leo_Photometrics_IES_V1.zip"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex2",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 160,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 5.98,
+  "mount": "4× 3/8\", 9× LNX",
+  "url": "https://creamsource.com/product/vortex2/",
+  "note": "Вес без лиры (с лирой 7,45 кг).",
+  "photometry": [
+   {
+    "mod": "Open Face",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      27500
+     ],
+     [
+      2,
+      7550
+     ],
+     [
+      3,
+      3410
+     ],
+     [
+      4,
+      1920
+     ],
+     [
+      5,
+      1240
+     ],
+     [
+      6,
+      866
+     ]
+    ]
+   },
+   {
+    "mod": "WIDE",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3690
+     ],
+     [
+      2,
+      913
+     ],
+     [
+      3,
+      409
+     ],
+     [
+      4,
+      231
+     ],
+     [
+      5,
+      147
+     ],
+     [
+      6,
+      106
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      2650
+     ],
+     [
+      2,
+      654
+     ],
+     [
+      3,
+      293
+     ],
+     [
+      4,
+      165
+     ],
+     [
+      5,
+      106
+     ],
+     [
+      6,
+      75
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face",
+    "cct": 3200,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      26300
+     ],
+     [
+      2,
+      7260
+     ],
+     [
+      3,
+      3280
+     ],
+     [
+      4,
+      1850
+     ],
+     [
+      5,
+      1190
+     ],
+     [
+      6,
+      835
+     ]
+    ]
+   },
+   {
+    "mod": "WIDE",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3500
+     ],
+     [
+      2,
+      865
+     ],
+     [
+      3,
+      389
+     ],
+     [
+      4,
+      220
+     ],
+     [
+      5,
+      140
+     ],
+     [
+      6,
+      100
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      2510
+     ],
+     [
+      2,
+      619
+     ],
+     [
+      3,
+      278
+     ],
+     [
+      4,
+      157
+     ],
+     [
+      5,
+      100
+     ],
+     [
+      6,
+      72
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex2 Soft",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 160,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 5.5,
+  "mount": "4× 3/8\", 9× LNX",
+  "url": "https://creamsource.com/product/vortex2/",
+  "note": "Вес без лиры (с лирой 6,97 кг).",
+  "photometry": [
+   {
+    "mod": "Open Face",
+    "cct": 5600,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      5520
+     ],
+     [
+      2,
+      1440
+     ],
+     [
+      3,
+      662
+     ],
+     [
+      4,
+      380
+     ],
+     [
+      5,
+      244
+     ],
+     [
+      6,
+      177
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      5700
+     ],
+     [
+      2,
+      1480
+     ],
+     [
+      3,
+      680
+     ],
+     [
+      4,
+      390
+     ],
+     [
+      5,
+      251
+     ],
+     [
+      6,
+      180
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      3930
+     ],
+     [
+      2,
+      1000
+     ],
+     [
+      3,
+      457
+     ],
+     [
+      4,
+      258
+     ],
+     [
+      5,
+      167
+     ],
+     [
+      6,
+      119
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face",
+    "cct": 3200,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      5850
+     ],
+     [
+      2,
+      1520
+     ],
+     [
+      3,
+      700
+     ],
+     [
+      4,
+      399
+     ],
+     [
+      5,
+      258
+     ],
+     [
+      6,
+      184
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      5970
+     ],
+     [
+      2,
+      1560
+     ],
+     [
+      3,
+      714
+     ],
+     [
+      4,
+      407
+     ],
+     [
+      5,
+      263
+     ],
+     [
+      6,
+      188
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      4110
+     ],
+     [
+      2,
+      1050
+     ],
+     [
+      3,
+      477
+     ],
+     [
+      4,
+      271
+     ],
+     [
+      5,
+      175
+     ],
+     [
+      6,
+      125
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex4",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 325,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 9.9,
+  "mount": "8× 3/8\"",
+  "url": "https://creamsource.com/product/vortex4/",
+  "note": "Вес без лиры (лира 1,72 кг). WIDE и XWIDE — одна точка на 5 м со страницы Vortex Intensifier.",
+  "photometry": [
+   {
+    "mod": "Native (20°)",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      53100
+     ],
+     [
+      2,
+      16300
+     ],
+     [
+      3,
+      7300
+     ],
+     [
+      4,
+      4200
+     ],
+     [
+      5,
+      2700
+     ],
+     [
+      6,
+      1900
+     ]
+    ]
+   },
+   {
+    "mod": "Native (20°)",
+    "cct": 3200,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      48500
+     ],
+     [
+      2,
+      15000
+     ],
+     [
+      3,
+      6700
+     ],
+     [
+      4,
+      3900
+     ],
+     [
+      5,
+      2500
+     ],
+     [
+      6,
+      1700
+     ]
+    ]
+   },
+   {
+    "mod": "Hard + WIDE",
+    "cct": 3200,
+    "beam": 80,
+    "pts": [
+     [
+      5,
+      255
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   },
+   {
+    "mod": "Hard + XWIDE",
+    "cct": 3200,
+    "beam": 100,
+    "pts": [
+     [
+      5,
+      192
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex4 Soft",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 325,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 8.9,
+  "mount": "8× 3/8\", 4× LNX",
+  "url": "https://creamsource.com/product/vortex4/",
+  "note": "Вес без лиры (с лирой 10,7 кг). Строка XWIDE — одна точка на 5 м со страницы Vortex Intensifier.",
+  "photometry": [
+   {
+    "mod": "Open Face",
+    "cct": 5600,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      9770
+     ],
+     [
+      2,
+      2560
+     ],
+     [
+      3,
+      1180
+     ],
+     [
+      4,
+      700
+     ],
+     [
+      5,
+      450
+     ],
+     [
+      6,
+      320
+     ],
+     [
+      10,
+      140
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      9900
+     ],
+     [
+      2,
+      2635
+     ],
+     [
+      3,
+      1220
+     ],
+     [
+      4,
+      710
+     ],
+     [
+      5,
+      470
+     ],
+     [
+      6,
+      335
+     ],
+     [
+      10,
+      135
+     ]
+    ]
+   },
+   {
+    "mod": "Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      7700
+     ],
+     [
+      2,
+      1990
+     ],
+     [
+      3,
+      915
+     ],
+     [
+      4,
+      535
+     ],
+     [
+      5,
+      355
+     ],
+     [
+      6,
+      255
+     ],
+     [
+      10,
+      105
+     ]
+    ]
+   },
+   {
+    "mod": "Dome",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      6700
+     ],
+     [
+      2,
+      1720
+     ],
+     [
+      3,
+      795
+     ],
+     [
+      4,
+      465
+     ],
+     [
+      5,
+      305
+     ],
+     [
+      6,
+      220
+     ],
+     [
+      10,
+      90
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face",
+    "cct": 3200,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      9960
+     ],
+     [
+      2,
+      2630
+     ],
+     [
+      3,
+      1210
+     ],
+     [
+      4,
+      720
+     ],
+     [
+      5,
+      460
+     ],
+     [
+      6,
+      330
+     ],
+     [
+      10,
+      140
+     ]
+    ]
+   },
+   {
+    "mod": "Soft + XWIDE",
+    "cct": 3200,
+    "beam": 110,
+    "pts": [
+     [
+      5,
+      333
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex8",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 650,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 15.9,
+  "mount": "8× 3/8\"",
+  "url": "https://creamsource.com/product/vortex8/",
+  "note": "Вес без лиры (с лирой 17,8 кг). WIDE и XWIDE — одна точка на 5 м со страницы Vortex Intensifier.",
+  "photometry": [
+   {
+    "mod": "Native (20°)",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      73500
+     ],
+     [
+      2,
+      28600
+     ],
+     [
+      3,
+      13900
+     ],
+     [
+      4,
+      8000
+     ],
+     [
+      5,
+      5200
+     ],
+     [
+      6,
+      3700
+     ]
+    ]
+   },
+   {
+    "mod": "Native (20°)",
+    "cct": 3200,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      68200
+     ],
+     [
+      2,
+      26200
+     ],
+     [
+      3,
+      12700
+     ],
+     [
+      4,
+      7400
+     ],
+     [
+      5,
+      4800
+     ],
+     [
+      6,
+      3400
+     ]
+    ]
+   },
+   {
+    "mod": "Hard + WIDE",
+    "cct": 3200,
+    "beam": 80,
+    "pts": [
+     [
+      5,
+      523
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   },
+   {
+    "mod": "Hard + XWIDE",
+    "cct": 3200,
+    "beam": 100,
+    "pts": [
+     [
+      5,
+      408
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex8 Soft",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 650,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 14.0,
+  "mount": "8× 3/8\", 4× LNX",
+  "url": "https://creamsource.com/product/vortex8/",
+  "note": "Вес без лиры (с лирой 16,0 кг). Строка XWIDE — одна точка на 5 м со страницы Vortex Intensifier. Intensifier на 10 м производитель даёт равным Open Face (270 лк).",
+  "photometry": [
+   {
+    "mod": "Open Face",
+    "cct": 5600,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      19100
+     ],
+     [
+      2,
+      5010
+     ],
+     [
+      3,
+      2340
+     ],
+     [
+      4,
+      1370
+     ],
+     [
+      5,
+      900
+     ],
+     [
+      6,
+      650
+     ],
+     [
+      10,
+      270
+     ]
+    ]
+   },
+   {
+    "mod": "Intensifier",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      19800
+     ],
+     [
+      2,
+      5270
+     ],
+     [
+      3,
+      2440
+     ],
+     [
+      4,
+      1420
+     ],
+     [
+      5,
+      940
+     ],
+     [
+      6,
+      670
+     ],
+     [
+      10,
+      270
+     ]
+    ]
+   },
+   {
+    "mod": "Diffuser",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      15400
+     ],
+     [
+      2,
+      3980
+     ],
+     [
+      3,
+      1830
+     ],
+     [
+      4,
+      1070
+     ],
+     [
+      5,
+      710
+     ],
+     [
+      6,
+      510
+     ],
+     [
+      10,
+      210
+     ]
+    ]
+   },
+   {
+    "mod": "Dome",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      13400
+     ],
+     [
+      2,
+      3440
+     ],
+     [
+      3,
+      1590
+     ],
+     [
+      4,
+      930
+     ],
+     [
+      5,
+      610
+     ],
+     [
+      6,
+      440
+     ],
+     [
+      10,
+      180
+     ]
+    ]
+   },
+   {
+    "mod": "Open Face",
+    "cct": 3200,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      19500
+     ],
+     [
+      2,
+      5140
+     ],
+     [
+      3,
+      2400
+     ],
+     [
+      4,
+      1410
+     ],
+     [
+      5,
+      920
+     ],
+     [
+      6,
+      670
+     ],
+     [
+      10,
+      280
+     ]
+    ]
+   },
+   {
+    "mod": "Soft + XWIDE",
+    "cct": 3200,
+    "beam": 110,
+    "pts": [
+     [
+      5,
+      719
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex24",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 1950,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 47.8,
+  "mount": "8× 3/8\", 4× LNX",
+  "url": "https://creamsource.com/product/vortex24/",
+  "note": "Таблица Naked/XWIDE у производителя одна на 3200 и 5600 K. На странице Vortex Intensifier (2026) для XWIDE при 3200 K на 5 м указано 1570 лк — на 11% больше таблицы. Вес без лиры (с лирой 55,3 кг).",
+  "photometry": [
+   {
+    "mod": "Naked (20°)",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      96350
+     ],
+     [
+      2,
+      48800
+     ],
+     [
+      3,
+      27560
+     ],
+     [
+      4,
+      16990
+     ],
+     [
+      5,
+      11350
+     ],
+     [
+      6,
+      8150
+     ],
+     [
+      10,
+      3150
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      26940
+     ],
+     [
+      2,
+      7960
+     ],
+     [
+      3,
+      3730
+     ],
+     [
+      4,
+      2120
+     ],
+     [
+      5,
+      1410
+     ],
+     [
+      6,
+      1010
+     ],
+     [
+      10,
+      410
+     ]
+    ]
+   },
+   {
+    "mod": "Hard + WIDE",
+    "cct": 3200,
+    "beam": 80,
+    "pts": [
+     [
+      5,
+      1770
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Vortex24 Soft",
+  "kind": "panel",
+  "color": "rgb",
+  "watts": 1950,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 41.9,
+  "mount": "8× 3/8\", 8× LNX",
+  "url": "https://creamsource.com/product/vortex24/",
+  "note": "На странице Vortex Intensifier (2026) для XWIDE при 3200 K на 5 м указано 2410 лк — на 10% больше таблицы. Вес без лиры (с лирой 49,4 кг).",
+  "photometry": [
+   {
+    "mod": "Naked (110°)",
+    "cct": 5600,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      66659
+     ],
+     [
+      2,
+      16665
+     ],
+     [
+      3,
+      7407
+     ],
+     [
+      4,
+      4166
+     ],
+     [
+      5,
+      2666
+     ],
+     [
+      6,
+      1852
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 5600,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      52386
+     ],
+     [
+      2,
+      13097
+     ],
+     [
+      3,
+      5821
+     ],
+     [
+      4,
+      3274
+     ],
+     [
+      5,
+      2095
+     ],
+     [
+      6,
+      1455
+     ]
+    ]
+   },
+   {
+    "mod": "Naked (110°)",
+    "cct": 3200,
+    "beam": 110,
+    "pts": [
+     [
+      1,
+      70395
+     ],
+     [
+      2,
+      17599
+     ],
+     [
+      3,
+      7822
+     ],
+     [
+      4,
+      4400
+     ],
+     [
+      5,
+      2816
+     ],
+     [
+      6,
+      1955
+     ]
+    ]
+   },
+   {
+    "mod": "XWIDE",
+    "cct": 3200,
+    "beam": null,
+    "pts": [
+     [
+      1,
+      54912
+     ],
+     [
+      2,
+      13728
+     ],
+     [
+      3,
+      6101
+     ],
+     [
+      4,
+      3432
+     ],
+     [
+      5,
+      2196
+     ],
+     [
+      6,
+      1525
+     ]
+    ]
+   },
+   {
+    "mod": "Soft + Intensifier (~80°)",
+    "cct": 3200,
+    "beam": 80,
+    "pts": [
+     [
+      5,
+      3180
+     ]
+    ],
+    "src": "https://creamsource.com/product/vortex-intensifier/"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "C3",
+  "kind": "fresnel",
+  "color": "rgb",
+  "watts": 3000,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 98,
+  "tlci": 98,
+  "weight": 45,
+  "mount": "Integrated cage, LNX",
+  "url": "https://creamsource.com/product/C3/",
+  "note": "Характеристики предварительные. Производитель даёт СРЕДНЮЮ освещённость в пятне на 10 м (не в центре луча) и не указывает цветовую температуру. Вес без лиры.",
+  "photometry": [
+   {
+    "mod": "Spot (18°)",
+    "cct": null,
+    "beam": 18,
+    "pts": [
+     [
+      10,
+      10000
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/uploads/2026/09/0908_C3_Cutsheet_deliver.pdf"
+   },
+   {
+    "mod": "Flood (60°)",
+    "cct": null,
+    "beam": 60,
+    "pts": [
+     [
+      10,
+      1500
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/uploads/2026/09/0908_C3_Cutsheet_deliver.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Micro Bender",
+  "kind": "point",
+  "color": "bicolor",
+  "watts": 80,
+  "cct": [
+   2700,
+   6500
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 3.2,
+  "mount": "3/8\", Kino Flo twist-on plate",
+  "url": "https://creamsource.com/product/micro-bender/",
+  "note": "Вес без лиры.",
+  "photometry": [
+   {
+    "mod": "Native (13°)",
+    "cct": 5600,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      55100
+     ],
+     [
+      2,
+      18200
+     ],
+     [
+      3,
+      8360
+     ],
+     [
+      4,
+      4720
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-micro-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "Native (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      51800
+     ],
+     [
+      2,
+      16700
+     ],
+     [
+      3,
+      7650
+     ],
+     [
+      4,
+      4390
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-micro-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Micro Colour",
+  "kind": "point",
+  "color": "rgb",
+  "watts": 80,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 3.4,
+  "mount": "3/8\", Kino Flo twist-on plate",
+  "url": "https://creamsource.com/product/micro-colour/",
+  "note": "Вес без лиры (с лирой 4,2 кг).",
+  "photometry": [
+   {
+    "mod": "Native (20°)",
+    "cct": 5600,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      12340
+     ],
+     [
+      2,
+      3010
+     ],
+     [
+      3,
+      1340
+     ],
+     [
+      4,
+      750
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-micro-colour-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "Native (20°)",
+    "cct": 3200,
+    "beam": 20,
+    "pts": [
+     [
+      1,
+      12900
+     ],
+     [
+      2,
+      3150
+     ],
+     [
+      3,
+      1400
+     ],
+     [
+      4,
+      790
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-micro-colour-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Doppio+ Daylight",
+  "kind": "panel",
+  "color": "daylight",
+  "watts": 350,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 9.4,
+  "mount": "28 mm spigot, 5/8\" socket",
+  "url": "https://creamsource.com/product/creamsource-doppio/",
+  "note": "Вес с лирой.",
+  "old": true,
+  "photometry": [
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 5600,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      100000
+     ],
+     [
+      2,
+      58600
+     ],
+     [
+      3,
+      34200
+     ],
+     [
+      4,
+      21200
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-doppio-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Doppio+ Bender",
+  "kind": "panel",
+  "color": "bicolor",
+  "watts": 350,
+  "cct": null,
+  "cri": 95,
+  "tlci": 95,
+  "weight": 9.4,
+  "mount": "28 mm spigot, 5/8\" socket",
+  "url": "https://creamsource.com/product/creamsource-doppio/",
+  "note": "Вес с лирой. Диапазон цветовой температуры производитель не указывает.",
+  "old": true,
+  "photometry": [
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 5600,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      58300
+     ],
+     [
+      2,
+      32700
+     ],
+     [
+      3,
+      19500
+     ],
+     [
+      4,
+      12200
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-doppio-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 4000,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      91200
+     ],
+     [
+      2,
+      51500
+     ],
+     [
+      3,
+      30300
+     ],
+     [
+      4,
+      19000
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-doppio-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      55200
+     ],
+     [
+      2,
+      31300
+     ],
+     [
+      3,
+      18400
+     ],
+     [
+      4,
+      11500
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-doppio-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Mini+ Daylight",
+  "kind": "panel",
+  "color": "daylight",
+  "watts": 150,
+  "cct": [
+   5600,
+   5600
+  ],
+  "cri": 95,
+  "tlci": 95,
+  "weight": 5.2,
+  "mount": "28 mm spigot, 5/8\" socket adapter",
+  "url": "https://creamsource.com/product/mini/",
+  "note": "Вес с лирой.",
+  "old": true,
+  "photometry": [
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 5600,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      80300
+     ],
+     [
+      2,
+      34500
+     ],
+     [
+      3,
+      17500
+     ],
+     [
+      4,
+      10200
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-mini-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Mini+ Bender",
+  "kind": "panel",
+  "color": "bicolor",
+  "watts": 150,
+  "cct": null,
+  "cri": 95,
+  "tlci": 95,
+  "weight": 5.2,
+  "mount": "28 mm spigot, 5/8\" socket adapter",
+  "url": "https://creamsource.com/product/mini/",
+  "note": "Вес с лирой. Диапазон цветовой температуры производитель не указывает.",
+  "old": true,
+  "photometry": [
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 5600,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      44100
+     ],
+     [
+      2,
+      18900
+     ],
+     [
+      3,
+      9730
+     ],
+     [
+      4,
+      5700
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-mini-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 4000,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      69900
+     ],
+     [
+      2,
+      29400
+     ],
+     [
+      3,
+      15000
+     ],
+     [
+      4,
+      8800
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-mini-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "SPOT Lens (13°)",
+    "cct": 3200,
+    "beam": 13,
+    "pts": [
+     [
+      1,
+      41900
+     ],
+     [
+      2,
+      17400
+     ],
+     [
+      3,
+      8830
+     ],
+     [
+      4,
+      5170
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-mini-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "Sky",
+  "kind": "other",
+  "color": "rgb",
+  "watts": 1200,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 23,
+  "mount": null,
+  "url": "https://creamsource.com/product/creamsource-sky/",
+  "note": "Вес головы; блок питания отдельно, 12 кг.",
+  "old": true,
+  "photometry": [
+   {
+    "mod": "Naked (115°)",
+    "cct": 5600,
+    "beam": 115,
+    "pts": [
+     [
+      2,
+      5031
+     ],
+     [
+      4,
+      1333
+     ],
+     [
+      6,
+      591
+     ],
+     [
+      8,
+      328
+     ],
+     [
+      10,
+      212
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-sky-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "Naked (115°)",
+    "cct": 3200,
+    "beam": 115,
+    "pts": [
+     [
+      2,
+      4727
+     ],
+     [
+      4,
+      1253
+     ],
+     [
+      6,
+      555
+     ],
+     [
+      8,
+      308
+     ],
+     [
+      10,
+      199
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-sky-cutsheet-29032019.pdf"
+   }
+  ]
+ },
+ {
+  "brand": "Creamsource",
+  "name": "SpaceX",
+  "kind": "other",
+  "color": "rgb",
+  "watts": 1200,
+  "cct": [
+   2200,
+   15000
+  ],
+  "cri": 95,
+  "tlci": null,
+  "weight": 18,
+  "mount": "3-wire points, 28 mm junior spigot yoke",
+  "url": "https://creamsource.com/product/spacex/",
+  "note": "Цифры «без оптики» в листе производителя в точности совпадают с цифрами Sky — возможно, перенесены из его листа.",
+  "photometry": [
+   {
+    "mod": "Naked (115°)",
+    "cct": 5600,
+    "beam": 115,
+    "pts": [
+     [
+      2,
+      5031
+     ],
+     [
+      4,
+      1333
+     ],
+     [
+      6,
+      591
+     ],
+     [
+      8,
+      328
+     ],
+     [
+      10,
+      212
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-spacex-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "Naked (115°)",
+    "cct": 3200,
+    "beam": 115,
+    "pts": [
+     [
+      2,
+      4727
+     ],
+     [
+      4,
+      1253
+     ],
+     [
+      6,
+      555
+     ],
+     [
+      8,
+      308
+     ],
+     [
+      10,
+      199
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-spacex-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "With Optic (50°)",
+    "cct": 5600,
+    "beam": 50,
+    "pts": [
+     [
+      2,
+      7600
+     ],
+     [
+      4,
+      2200
+     ],
+     [
+      6,
+      1070
+     ],
+     [
+      8,
+      650
+     ],
+     [
+      10,
+      428
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-spacex-cutsheet-29032019.pdf"
+   },
+   {
+    "mod": "With Optic (50°)",
+    "cct": 3200,
+    "beam": 50,
+    "pts": [
+     [
+      2,
+      7050
+     ],
+     [
+      4,
+      2020
+     ],
+     [
+      6,
+      1000
+     ],
+     [
+      8,
+      600
+     ],
+     [
+      10,
+      400
+     ]
+    ],
+    "src": "https://creamsource.com/wp-content/downloads/brochures/CS-spacex-cutsheet-29032019.pdf"
+   }
+  ]
  }
 ]
