@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v13';
+const VERSION = 'cineflow-v14';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -29,6 +29,9 @@ const LIBS = [
   // где связи нет.
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  // Сборщик PDF для печати в установленном приложении: там лист отдаётся
+  // готовым PDF, и печатают отчёт как раз на площадке, без связи.
+  'https://cdn.jsdelivr.net/npm/html2canvas-pro@1.6.7/dist/html2canvas-pro.min.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js'
