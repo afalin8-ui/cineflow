@@ -86,15 +86,17 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
     const near = hbLuxAt(pts, 0.5);                  // 40000·4
     const exact = hbLuxAt(pts, 4);
     const n = hbStop(1000, 800, 48);                 // √(1000·800/48/250) = 8,16
-    const labels = [hbStopLabel(4), hbStopLabel(4 * Math.pow(2, 1 / 6)), hbStopLabel(2.8 * Math.pow(2, 2 / 6)), hbStopLabel(0.5), hbStopLabel(200)];
+    const labels = [hbStopLabel(4), hbStopLabel(4 * Math.pow(2, 1 / 6)), hbStopLabel(2.8 * Math.pow(2, 2 / 6)), hbStopLabel(0.5), hbStopLabel(91), hbStopLabel(400)];
+    const steps = [hbStepUp(3), hbStepDown(5), hbStepUp(20), hbStepDown(20), hbStepUp(100), hbDistOfPos(hbPosOf(30)), hbDistOfPos(0), hbDistOfPos(1000)];
     const d4 = hbDistFor(pts, 4, 800, 48), back = hbStop(hbLuxAt(pts, d4), 800, 48);
-    return { mid, far, near, exact, n, labels, d4, back };
+    return { mid, far, near, exact, n, labels, d4, back, steps };
   });
   ok('между замерами — закон обратных квадратов в логарифмах', Math.abs(calc.mid - 10000) < 1, String(calc.mid));
   ok('за замерами — обратные квадраты от крайней точки', Math.abs(calc.far - 625) < 1e-6 && Math.abs(calc.near - 160000) < 1e-6, `${calc.far} / ${calc.near}`);
   ok('в точке замера — ровно замер', calc.exact === 2500);
   ok('диафрагма по экспонометру C = 250: 1000 лк, ISO 800, 1/48 → 8,16', Math.abs(calc.n - 8.165) < 0.01, String(calc.n));
-  ok('подписи диафрагмы по третям', JSON.stringify(calc.labels) === JSON.stringify(['T4', 'T4 +1/3', 'T2,8 +2/3', 'темнее T1', 'ярче T64']), JSON.stringify(calc.labels));
+  ok('подписи диафрагмы по третям', JSON.stringify(calc.labels) === JSON.stringify(['T4', 'T4 +1/3', 'T2,8 +2/3', 'темнее T1', 'T90', 'ярче T256']), JSON.stringify(calc.labels));
+  ok('шаг расстояния растёт вдали, ползунок от 0,5 до 300 м', JSON.stringify(calc.steps) === JSON.stringify([3.5, 4.5, 25, 19, 125, 30, 0.5, 300]), JSON.stringify(calc.steps));
   ok('«где получится T4» сходится с обратным счётом', Math.abs(calc.back - 4) < 0.01, `${calc.d4} м → T${calc.back}`);
 
   // ---- ПЛАНШЕТ
@@ -156,7 +158,7 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   await tap(p, '[data-cf="hb-cmp-add"]');
   await p.fill('[data-cf="hb-search"]', ''); await p.waitForTimeout(200);
   ok('сравнение: кнопка «Сравнение · 2» в списке нажимается', await tap(p, '[data-cf="hb-cmp-open"]'));
-  await p.evaluate(() => { const r = document.querySelector('[data-cf="hb-dist"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(r, '5'); r.dispatchEvent(new Event('input', { bubbles: true })); });
+  await p.evaluate(() => { const r = document.querySelector('[data-cf="hb-dist-num"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(r, '5'); r.dispatchEvent(new Event('input', { bubbles: true })); });
   await p.waitForTimeout(250);
   const cmpv = await p.evaluate(() => [...document.querySelectorAll('[data-cf="hb-cmp-row"]')].map(r => ({
     t: r.innerText.replace(/\s+/g, ' '), w: r.querySelector('[data-cf="hb-cmp-bar"]').getBoundingClientRect().width })));
@@ -166,6 +168,25 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   ok('сравнение: длина полосы пропорциональна освещённости', /1 020 лк/.test(cmpv[0].t) && Math.abs(ratio - 1020 / 12540) < 0.02, ratio.toFixed(3));
   ok('сравнение: нажатие по имени открывает прибор на той же насадке', await tap(p, '[data-cf="hb-cmp-row"] button', 2) &&
      await p.evaluate(() => /Electro Storm XT26/.test(document.querySelector('[data-cf="hb-card"] h1').innerText) && document.querySelectorAll('[data-cf="hb-mode"]')[1].classList.contains('cf-sel')));
+  // ---- ДАЛЬНЯЯ ДИСТАНЦИЯ: ARRIMAX Spot на 20 м при ISO 3200 упирался
+  // в «ярче T64» и «дальше 200 м», а ползунок кончался на 20 м
+  await p.evaluate(() => localStorage.setItem('cf_hb_cmp', '[]'));
+  await pickRow('ARRIMAX 18/12');
+  await tap(p, '[data-cf="hb-mode"]', 0);
+  await p.evaluate(() => [...document.querySelectorAll('.cf-seg button')].find(b => b.innerText === '3200').click());
+  ok('дальше 20 м: поле расстояния под пальцем', await tap(p, '[data-cf="hb-dist-num"]'));
+  await p.fill('[data-cf="hb-dist-num"]', '80'); await p.waitForTimeout(250);
+  const far = await p.evaluate(() => ({ stop: document.querySelector('[data-cf="hb-stop"]').innerText, lux: document.querySelector('[data-cf="hb-lux"]').innerText,
+    where: document.querySelector('[data-cf="hb-where"]').innerText.replace(/\s+/g, ' '), pos: +document.querySelector('[data-cf="hb-dist"]').value }));
+  ok('дальше 20 м: на 80 м считается диафрагма, а не «ярче»', /^T\d/.test(far.stop) && !/ярче/.test(far.stop), JSON.stringify(far));
+  ok('дальше 20 м: ползунок уехал за середину', far.pos > 600 && far.pos < 1000, String(far.pos));
+  ok('дальше 20 м: «где получится» называет метры, а не «дальше 200 м»', !/200 м/.test(far.where) && /T8 \d/.test(far.where), far.where);
+  await tap(p, '[data-cf="hb-stop"]');
+  const plus = await p.evaluate(() => { const b = document.querySelector('[data-cf="hb-dist"]').nextElementSibling; b.click(); return true; });
+  await p.waitForTimeout(150);
+  ok('дальше 20 м: «+» на 80 м шагает на 10', plus && await p.evaluate(() => document.querySelector('[data-cf="hb-dist-num"]').value === '90'));
+  const rowTxt = await p.evaluate(() => document.querySelector('[data-cf="hb-row"]').innerText);
+  ok('строка списка: без ватт и типа прибора', !/Вт|френель|дневной|моноблок/.test(rowTxt) && /лк/.test(rowTxt), rowTxt.replace(/\s+/g, ' '));
   ok('без ошибок на планшете', errs.length === 0, errs.join(' | '));
 
   // ---- ТЕЛЕФОН
@@ -199,6 +220,8 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   const vIdx = await pv.evaluate((n) => [...document.querySelectorAll('[data-cf="hb-row"]')].findIndex(r => r.innerText.includes(n)), target.name);
   await tap(pv, '[data-cf="hb-row"]', vIdx);
   ok('просмотр: ползунок расстояния под пальцем', await tap(pv, '[data-cf="hb-dist"]'));
+  await pv.fill('[data-cf="hb-dist-num"]', '40').catch(() => {}); await pv.waitForTimeout(200);
+  ok('просмотр: расстояние вписывается числом', await pv.evaluate(() => document.querySelector('[data-cf="hb-dist-num"]').value === '40'));
   ok('просмотр: поиск принимает ввод', await pv.evaluate(() => { const el = document.querySelector('[data-cf="hb-search"]'); const b = el.getBoundingClientRect(); const h = document.elementFromPoint(b.left + 10, b.top + b.height / 2); return h === el; }));
   ok('просмотр: сравнение доступно гостю', await tap(pv, '[data-cf="hb-cmp-add"]') && await tap(pv, '[data-cf="hb-cmp-open"]') && await pv.evaluate(() => document.querySelectorAll('[data-cf="hb-cmp-row"]').length >= 1));
   ok('без ошибок в просмотре', errs3.length === 0, errs3.join(' | '));

@@ -5355,7 +5355,21 @@
         const HB_C = 250;
         const HB_ISO = [400, 800, 1280, 1600, 3200];
         const HB_SHUT = [['1/48', 48], ['1/50', 50], ['1/60', 60], ['1/100', 100]];
-        const HB_FULL = [1, 1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22, 32, 45, 64];
+        // Шкала идёт дальше любого объектива НАМЕРЕННО: «T90» у ARRIMAX
+        // на 20 м говорит, на сколько ступеней надо гасить ND, а «ярче T64»
+        // не говорило ничего.
+        const HB_FULL = [1, 1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22, 32, 45, 64, 90, 128, 180, 256];
+        // Расстояние — ЛОГАРИФМИЧЕСКИМ ползунком: у моноблока всё решается
+        // в первых пяти метрах, у ARRIMAX замеры начинаются с пятнадцати,
+        // и на прямой шкале до 20 м одному было тесно, другому некуда.
+        const HB_DMIN = 0.5, HB_DMAX = 300, HB_DLIM = 1000;
+        const hbRoundD = (d) => d < 10 ? Math.round(d * 10) / 10 : d < 50 ? Math.round(d * 2) / 2 : Math.round(d);
+        const hbPosOf = (d) => Math.round(1000 * Math.log(Math.min(HB_DMAX, Math.max(HB_DMIN, d)) / HB_DMIN) / Math.log(HB_DMAX / HB_DMIN));
+        const hbDistOfPos = (p) => hbRoundD(HB_DMIN * Math.pow(HB_DMAX / HB_DMIN, p / 1000));
+        // Шаг «−/+» растёт с расстоянием: полметра вблизи, десятки метров вдали.
+        const hbStepD = (d) => d < 5 ? 0.5 : d < 20 ? 1 : d < 50 ? 5 : d < 100 ? 10 : 25;
+        const hbStepUp = (d) => { const s = hbStepD(d); return Math.min(HB_DLIM, (Math.floor(d / s + 1e-9) + 1) * s); };
+        const hbStepDown = (d) => { const s = hbStepD(d - 1e-9); return Math.max(HB_DMIN, (Math.ceil(d / s - 1e-9) - 1) * s); };
         const HB_TARGETS = [1.4, 2, 2.8, 4, 5.6, 8, 11];
         const HB_CMP_MAX = 6;
         // Угол насадки, если его нет в самом названии: «50° Reflector · 50°»
@@ -5399,14 +5413,14 @@
           const idx = Math.round(Math.log2(N) * 2 * 3);
           if (idx < 0) return 'темнее T1';
           const full = Math.floor(idx / 3), rem = idx % 3;
-          if (full >= HB_FULL.length - 1 && (full > HB_FULL.length - 1 || rem)) return 'ярче T64';
+          if (full >= HB_FULL.length - 1 && (full > HB_FULL.length - 1 || rem)) return 'ярче T256';
           return 'T' + String(HB_FULL[full]).replace('.', ',') + (rem ? ` +${rem}/3` : '');
         };
         // На каком расстоянии получится нужная диафрагма: освещённость
         // с расстоянием только падает, поэтому хватает деления пополам.
         const hbDistFor = (pts, N, iso, shut) => {
           const need = N * N * HB_C * shut / iso;
-          let lo = 0.1, hi = 200;
+          let lo = 0.1, hi = HB_DLIM;
           if (hbLuxAt(pts, lo) < need) return null;
           if (hbLuxAt(pts, hi) > need) return Infinity;
           for (let i = 0; i < 50; i++) {
@@ -5416,7 +5430,7 @@
           return lo;
         };
         const hbNum = (v, dig = 0) => v == null ? '—' : Number(v).toLocaleString('ru-RU', { maximumFractionDigits: dig, minimumFractionDigits: 0 });
-        const hbM = (d) => hbNum(d, d < 10 ? 1 : 0) + ' м';
+        const hbM = (d) => d >= 1000 ? hbNum(d / 1000, 1) + ' км' : hbNum(d, d < 10 ? 1 : 0) + ' м';
         // Полное имя для каталога и сквозного списка: у ARRI бывают приборы,
         // чьё имя само начинается с бренда («ARRI 150»), и «ARRI ARRI 150»
         // читалось бы опечаткой.
@@ -5446,6 +5460,9 @@
           const [selId, setSelId] = useState(() => hbLoad('cf_hb_sel', ''));
           const [rowIdx, setRowIdx] = useState(0);
           const [dist, setDist] = useState(() => hbLoad('cf_hb_dist', 3));
+          // Набираемое в поле расстояния: пока пишут «35», «3» применять
+          // можно, а «3,» — нельзя, и поле не должно затирать набранное.
+          const [distDraft, setDistDraft] = useState(null);
           const [iso, setIso] = useState(() => hbLoad('cf_hb_iso', 800));
           const [shut, setShut] = useState(() => hbLoad('cf_hb_shut', 48));
           const [unit, setUnit] = useState(() => hbLoad('cf_hb_unit', 'lx'));
@@ -5536,9 +5553,6 @@
                           <div className="truncate" style={{ fontSize: isPhone ? 'var(--fs-3)' : 'var(--fs-2)', color: on ? 'var(--text)' : 'var(--text-2)' }}>
                             {sort === 'lux' ? hbFull(x) : x.name}
                           </div>
-                          <div className="truncate" style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>
-                            {[x.watts ? `${hbNum(x.watts)} Вт` : null, HB_KIND[x.kind], HB_COLOR[x.color], sort === 'lux' && x.old ? 'снят' : null].filter(Boolean).join(' · ')}
-                          </div>
                         </div>
                         <span className="shrink-0 text-right" data-cf="hb-peak"
                               title={pk ? `Самое яркое на 3 м: ${pk.p.mod}` : ''}
@@ -5571,11 +5585,19 @@
             <React.Fragment>
                       <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
                         <span style={{ ...small, width: 84 }}>Расстояние</span>
-                        <button className="cf-chip" onClick={() => setDist(d => Math.max(0.5, Math.round((d - 0.5) * 2) / 2))} title="Ближе на полметра">−</button>
-                        <input type="range" min="0.5" max="20" step="0.1" value={dist} data-ro-ok data-cf="hb-dist"
-                               onChange={e => setDist(parseFloat(e.target.value))} style={{ flex: '1 1 160px', accentColor: 'var(--accent)', minHeight: 'var(--tap-sm)' }} />
-                        <button className="cf-chip" onClick={() => setDist(d => Math.min(20, Math.round((d + 0.5) * 2) / 2))} title="Дальше на полметра">+</button>
-                        <span style={{ ...mono, fontSize: 'var(--fs-3)', color: 'var(--text)', minWidth: 64, textAlign: 'right' }}>{hbM(dist)}</span>
+                        <button className="cf-chip" onClick={() => { setDistDraft(null); setDist(d => hbStepDown(d)); }} title="Ближе">−</button>
+                        <input type="range" min="0" max="1000" step="1" value={hbPosOf(dist)} data-ro-ok data-cf="hb-dist"
+                               onChange={e => { setDistDraft(null); setDist(hbDistOfPos(parseFloat(e.target.value))); }} style={{ flex: '1 1 160px', accentColor: 'var(--accent)', minHeight: 'var(--tap-sm)' }} />
+                        <button className="cf-chip" onClick={() => { setDistDraft(null); setDist(d => hbStepUp(d)); }} title="Дальше">+</button>
+                        <span className="flex items-baseline gap-1" style={{ ...mono, fontSize: 'var(--fs-3)', color: 'var(--text)' }}>
+                          <input type="text" inputMode="decimal" data-ro-ok data-cf="hb-dist-num" aria-label="Расстояние, м"
+                                 value={distDraft != null ? distDraft : String(dist).replace('.', ',')}
+                                 onChange={e => { const t = e.target.value; setDistDraft(t); const v = parseFloat(t.replace(',', '.')); if (v >= 0.1 && v <= HB_DLIM) setDist(v); }}
+                                 onBlur={() => setDistDraft(null)}
+                                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                                 style={{ ...mono, width: 64, textAlign: 'right', fontSize: 'var(--fs-3)', color: 'var(--text)', background: 'transparent', borderBottom: '1px dashed var(--border)', minHeight: 'var(--tap-sm)' }} />
+                          м
+                        </span>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
                         <span style={{ ...small, width: 84 }}>ISO</span>
@@ -5642,7 +5664,7 @@
                           </div>
                           <div className="flex flex-wrap gap-x-5 gap-y-1" style={{ ...mono, fontSize: 'var(--fs-2)', marginTop: 4 }}>
                             <span><span style={{ color: 'var(--muted)' }}>на {hbM(dist)}</span> <span style={{ color: 'var(--text)' }} data-cf="hb-cmp-stop">{hbStopLabel(r.N)}</span></span>
-                            <span><span style={{ color: 'var(--muted)' }}>T4</span> <span style={{ color: 'var(--text-2)' }}>{r.d4 == null ? 'не хватит' : r.d4 === Infinity ? 'дальше 200 м' : 'до ' + hbM(r.d4)}</span></span>
+                            <span><span style={{ color: 'var(--muted)' }}>T4</span> <span style={{ color: 'var(--text-2)' }}>{r.d4 == null ? 'не хватит' : r.d4 === Infinity ? 'дальше 1 км' : 'до ' + hbM(r.d4)}</span></span>
                             {r.fx.watts && <span><span style={{ color: 'var(--muted)' }}>на 100 Вт</span> <span style={{ color: 'var(--text-2)' }}>{fmtE(r.e / r.fx.watts * 100)} {unitLabel}</span></span>}
                           </div>
                         </div>
@@ -5816,7 +5838,7 @@
                             <span key={t} style={{ ...mono, fontSize: 'var(--fs-2)' }}>
                               <span style={{ color: 'var(--muted)' }}>T{String(t).replace('.', ',')}</span>{' '}
                               <span style={{ color: d == null ? 'var(--muted-2)' : 'var(--text)' }}>
-                                {d == null ? 'не хватит' : d === Infinity ? 'дальше 200 м' : hbM(d)}
+                                {d == null ? 'не хватит' : d === Infinity ? 'дальше 1 км' : hbM(d)}
                               </span>
                             </span>
                           );
