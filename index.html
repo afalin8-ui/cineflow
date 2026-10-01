@@ -1220,19 +1220,32 @@
             return [a, b];
           });
         };
-        // html — готовая страница (как для печати); onPage(i, n) — для
-        // полоски «страница 2 из 5»; alive() — не закрыли ли окно.
-        const buildPrintPdf = async (html, { dark, title, onPage, alive } = {}) => {
-          const h2c = await loadHtml2Canvas();
+        // ЛЮБОЙ ШАГ СБОРКИ ОГРАНИЧЕН ПО ВРЕМЕНИ. Первая версия ждала молча:
+        // на iPhone окно «Готовый PDF» показывало лист и так и стояло без
+        // кнопок — повисший шаг ничего не говорит, а кнопки появляются только
+        // в конце. Теперь повисший шаг становится ошибкой с ИМЕНЕМ шага,
+        // окно доходит до кнопок (страницей вместо PDF) и говорит, где встало.
+        const pdfWithin = (p, ms, what) => Promise.race([p, new Promise((_, rej) =>
+          setTimeout(() => rej(new Error(what + ' — не дождались за ' + Math.round(ms / 1000) + ' с')), ms))]);
+        // html — готовая страница (как для печати); onStep(текст) — что
+        // сейчас делаем, для строки в окне; alive() — не закрыли ли окно.
+        const buildPrintPdf = async (html, { dark, title, onStep, alive } = {}) => {
+          const step = (t) => { if (onStep) onStep(t); };
+          step('Загружаю сборщик PDF…');
+          const h2c = await pdfWithin(loadHtml2Canvas(), 25000, 'сборщик PDF не загрузился');
           const pxPt = 96 / 72;
           const cw = Math.round((PDF_W - 2 * PDF_M) * pxPt);
           const ph = Math.floor((PDF_H - 2 * PDF_M) * pxPt);
           const fr = document.createElement('iframe');
           fr.setAttribute('aria-hidden', 'true');
           fr.tabIndex = -1;
-          fr.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + cw + 'px;height:' + ph + 'px;border:0;pointer-events:none';
+          // Окошко стоит В ПРЕДЕЛАХ экрана, но невидимо и под всем: окна
+          // далеко за краем WebKit вправе притормаживать (таймеры, отрисовку),
+          // а сборщик ждёт в нём загрузки своей копии листа.
+          fr.style.cssText = 'position:fixed;left:0;top:0;width:' + cw + 'px;height:' + ph + 'px;border:0;opacity:0;pointer-events:none;z-index:-1';
           document.body.appendChild(fr);
           try {
+            step('Вёрстка листа…');
             const doc = fr.contentDocument;
             doc.open(); doc.write(html); doc.close();
             doc.body.style.margin = '0'; doc.body.style.padding = '0';
@@ -1244,26 +1257,27 @@
               Promise.all(imgs.map(i => new Promise(r => { i.onload = r; i.onerror = r; }))),
               new Promise(r => setTimeout(r, 20000))
             ]);
-            try { if (doc.fonts && doc.fonts.ready) await doc.fonts.ready; } catch (e) {}
+            try { if (doc.fonts && doc.fonts.ready) await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
             const total = Math.max(1, Math.ceil(Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight)));
             const segs = pdfCuts(doc, total, ph);
             const bgCss = dark ? '#1a1918' : '#ffffff';
             const pages = [];
             for (let i = 0; i < segs.length; i++) {
               if (alive && !alive()) return null;
-              if (onPage) onPage(i + 1, segs.length);
+              step(`Собираю · страница ${i + 1} из ${segs.length}`);
               const y = segs[i][0], h = Math.max(1, segs[i][1] - y);
               // По одной странице за раз: холст во весь документ на телефоне
               // упирается в предел размера холста и выходит ПУСТЫМ без ошибки.
-              const cv = await h2c(doc.body, {
-                scale: PDF_SCALE, backgroundColor: bgCss, useCORS: true, logging: false,
+              const cv = await pdfWithin(h2c(doc.body, {
+                scale: PDF_SCALE, backgroundColor: bgCss, useCORS: true, logging: false, imageTimeout: 15000,
                 x: 0, y, width: cw, height: h, windowWidth: cw, windowHeight: ph, scrollX: 0, scrollY: 0
-              });
-              const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
-              if (!blob) throw new Error('страница не снялась картинкой');
+              }), 40000, `страница ${i + 1} не снялась`);
+              const blob = await pdfWithin(new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85)), 15000, `страница ${i + 1} не сжалась`);
+              if (!blob) throw new Error(`страница ${i + 1} не снялась картинкой`);
               pages.push({ jpeg: new Uint8Array(await blob.arrayBuffer()), w: cv.width, h: cv.height });
               cv.width = 0; cv.height = 0;
             }
+            step('Складываю файл…');
             return { blob: pdfFromJpegs(pages, { bg: dark ? [26, 25, 24] : null, title }), pages: pages.length };
           } finally { fr.remove(); }
         };
@@ -10214,10 +10228,10 @@
             const job = ++printJob.current;
             const alive = () => printJob.current === job;
             const preview = html;
-            setPrintPdf({ stage: 'busy', name, preview, done: 0, total: 0 });
+            setPrintPdf({ stage: 'busy', name, preview, step: 'Готовлю…' });
             buildPrintPdf(html, {
               dark: printTheme === 'dark', title: name, alive,
-              onPage: (i, n) => { if (alive()) setPrintPdf(p => p && { ...p, done: i, total: n }); }
+              onStep: (t) => { if (alive()) setPrintPdf(p => p && { ...p, step: t }); }
             }).then(res => {
               if (!res || !alive()) return;
               const file = new File([res.blob], name + '.pdf', { type: 'application/pdf' });
@@ -10294,7 +10308,7 @@
           // открыться прямо здесь, до всякого await: всё, что открыто после,
           // iPad считает всплывающим и блокирует.
           const requestPrint = (mode, prep) => {
-            if (isStandalone()) { printWant.current = ++printJob.current; setPrintPdf({ stage: prep ? 'prep' : 'busy', name: '', done: 0, total: 0 }); }
+            if (isStandalone()) { printWant.current = ++printJob.current; setPrintPdf({ stage: prep ? 'prep' : 'busy', name: '', step: 'Готовлю…' }); }
             setPrintMode(mode);
             if (!prep) { setPrintRequested(true); return; }
             Promise.resolve().then(prep).then(map => { setPrintPhotos(map || {}); setPrintRequested(true); })
@@ -18324,7 +18338,7 @@
                         <h3 className="text-lg font-bold text-white leading-tight">{p.stage === 'fail' ? 'PDF не собрался' : 'Готовый PDF'}</h3>
                         <p className="text-[length:var(--fs-2)] text-zinc-400 mt-1 break-words" data-cf="print-pdf-status">
                           {p.stage === 'prep' ? 'Готовлю фотографии…'
-                            : p.stage === 'busy' ? (p.total ? `Собираю · страница ${p.done} из ${p.total}` : 'Собираю…')
+                            : p.stage === 'busy' ? p.step
                             : p.stage === 'ready' ? `${p.file.name} · ${p.pages} ${plur(p.pages, 'страница', 'страницы', 'страниц')} · ${size}`
                             : `${p.err}. Ниже — та же страница файлом: её можно сохранить, открыть и напечатать.`}
                         </p>

@@ -54,12 +54,16 @@ for (let k = 1; k <= 9; k++) {
 }
 const GUIDE_TEXT = GUIDE.join('\n');
 
-const setup = async (browser, { standalone, dark }) => {
+const setup = async (browser, { standalone, dark, hang }) => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2,
                                          isMobile: true, hasTouch: true, serviceWorkers: 'block', acceptDownloads: true });
   await ctx.route('**/*', route => {
     const u = route.request().url();
     if (/firestore|firebase|googleapis|gstatic|nominatim/.test(u)) return route.abort();
+    // «Сборщик завис»: снимок страницы не отвечает никогда — так на iPhone
+    // выглядело окно без кнопок.
+    if (hang && /html2canvas-pro/.test(u))
+      return route.fulfill({ body: 'window.html2canvas = () => new Promise(() => {});', contentType: 'application/javascript' });
     for (const [f, re] of [['react.js', /react@18\/umd\/react\.production/], ['react-dom.js', /react-dom@18/],
                            ['babel.js', /babel\.min\.js/], ['tailwind.js', /cdn\.tailwindcss/],
                            ['html2canvas-pro.js', /html2canvas-pro/]])
@@ -230,7 +234,25 @@ const ppm = (file) => {
     await ctx.close();
   }
 
-  // 3. Обычный браузер: печать как была, окна нет.
+  // 3. Сборщик завис: окно не имеет права стоять без кнопок.
+  {
+    const { ctx, page, errs } = await setup(browser, { standalone: true, hang: true });
+    await toPrintPanel(page);
+    await tap(page, () => document.querySelector('button[title^="Печать: "]'), '«Гайд» (сборщик завис)');
+    const st = () => page.evaluate(() => (document.querySelector('[data-cf="print-pdf-status"]') || {}).textContent || '');
+    await page.waitForTimeout(2500);
+    ok('пока ждём, окно говорит, какой шаг идёт', /страница 1 из/.test(await st()), await st());
+    const got = await page.waitForSelector('[data-cf="print-pdf-save"]', { timeout: 70000 }).then(() => true).catch(() => false);
+    const s2 = await st();
+    ok('повисший шаг кончается кнопками и называет себя', got && /страница 1 не снялась/.test(s2), s2);
+    await tap(page, () => document.querySelector('[data-cf="print-pdf-share"]'), '«Поделиться» (страницей)');
+    const name = await page.evaluate(() => (window.__shared || {}).name || '');
+    ok('вместо PDF отдана страница', /\.html$/.test(name), name);
+    if (errs.length) ok('без ошибок в консоли (завис)', false, errs.join(' | '));
+    await ctx.close();
+  }
+
+  // 4. Обычный браузер: печать как была, окна нет.
   {
     const { ctx, page, errs } = await setup(browser, { standalone: false, dark: false });
     await toPrintPanel(page);
