@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v14';
+const VERSION = 'cineflow-v15';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -19,10 +19,12 @@ const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg']
 // Библиотеки с CDN. Ссылки версионные и неизменяемые, поэтому кэшируем
 // их «навсегда» и отдаём из кэша не спрашивая сеть.
 const LIBS = [
-  'https://cdn.tailwindcss.com',
-  'https://unpkg.com/react@18/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone/babel.min.js',
+  // Версии закреплены: «последняя» с CDN однажды приехала бы новой
+  // мажорной и молча сломала бы приложение у всех, кто откроет его впервые.
+  'https://cdn.tailwindcss.com/3.4.17',
+  'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
+  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
+  'https://unpkg.com/@babel/standalone@7.29.9/babel.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   // Чтение PDF: сама библиотека и её рабочий поток. Обе грузятся только
   // по надобности, но в кэше нужны — PDF бросают на доску и на площадке,

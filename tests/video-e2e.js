@@ -59,7 +59,7 @@ const expect = (name, ok, info) => { log((ok ? '  ok  ' : '  FAIL') + ' ' + name
   await page.route(/gstatic\.com\/firebasejs/, r => r.abort());
   await page.route(/googleapis\.com/, r => r.abort());
   const lib = (re, file) => page.route(re, r => r.fulfill({ path: path.join(LIBS, file), contentType: 'application/javascript' }));
-  await lib(/unpkg\.com\/react@18\/umd\/react\.production/, 'react.js');
+  await lib(/unpkg\.com\/react@18[.0-9]*\/umd\/react\.production/, 'react.js');
   await lib(/unpkg\.com\/react-dom@18/, 'react-dom.js');
   await lib(/unpkg\.com\/@babel\/standalone/, 'babel.js');
   await lib(/cdn\.tailwindcss\.com/, 'tailwind.js');

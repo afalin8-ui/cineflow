@@ -46,7 +46,7 @@
         }
     </script>
 
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
           theme: {
@@ -99,8 +99,8 @@
          (на macOS/iPad это SF Pro), моно — SF Mono. JetBrains Mono остался
          в списке фолбэков для тех, у кого он стоит в системе, но по сети
          не тянется: минус три запроса и мигание текста на старте. -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
     
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
@@ -899,6 +899,22 @@
         // по умолчанию — то есть в ЧУЖОЙ проект. Теперь новый человек
         // получает свою пустую, а попасть в общую можно только по ссылке
         // с кодом (её даёт окно «Доступ»).
+        // КОД КОМНАТЫ — ЕДИНСТВЕННЫЙ ЗАМОК, поэтому он длинный и случайный
+        // по-настоящему (crypto), а не от Math.random с хвостом из времени:
+        // время подбирается, а 16 знаков из 36 — это около 80 бит, перебором
+        // не взять даже при открытой базе.
+        const CHAT_TAIL = 300;   // сколько последних сообщений чата грузить
+        const newRoomCode = () => {
+          const abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+          let s = '';
+          try {
+            const a = new Uint32Array(16); crypto.getRandomValues(a);
+            a.forEach(x => { s += abc[x % 36]; });
+          } catch (e) {
+            for (let i = 0; i < 16; i++) s += abc[Math.floor(Math.random() * 36)];
+          }
+          return 'room-' + s;
+        };
         const CF_URL_ROOM = new URLSearchParams(location.search).get('room');
         const LEGACY_ROOM = 'cineflow-room-3';
         const appId = (() => {
@@ -911,8 +927,7 @@
             // Тот, кто уже работал до появления личных комнат, остаётся
             // в общей — иначе его проект «пропал бы».
             const worked = localStorage.getItem('cf_scenes') || localStorage.getItem('cf_user_name');
-            room = worked ? LEGACY_ROOM
-                          : 'room-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+            room = worked ? LEGACY_ROOM : newRoomCode();
           }
           try { localStorage.setItem('cf_room', room); } catch (e) {}
           return room;
@@ -14018,6 +14033,113 @@
               }, err => console.warn('sync project', err));
             return () => un();
           }, [user]);
+          // ПЕРЕЕЗД ПРОЕКТА В НОВУЮ КОМНАТУ. Код комнаты — единственный
+          // замок, а у старых проектов он слабый: «cineflow-room-3» записан
+          // прямо в коде приложения, а код лежит в открытом репозитории.
+          // Сменить код поля мало — данные остались бы под старым. Поэтому
+          // переезд КОПИРУЕТ весь проект в комнату с длинным случайным кодом,
+          // сверяет копию и только потом ставит в старой метку «переехал».
+          // Старая копия стирается отдельным шагом, когда человек убедился,
+          // что в новой всё на месте.
+          // Правило хранения в силе: копируем ТОЛЬКО то, что пришло с
+          // сервера целиком (`source: 'server'`); оборвалась связь на любой
+          // коллекции — не пишем ничего.
+          const MOVE_COLLS = ['scenes', 'storyboard', 'references', 'stickies', 'docs', 'crew', 'locations',
+            'projectFiles', 'lightSchemes', 'gearTypes', 'lightGearTypes', 'boards', 'messages', 'canvas',
+            'settings', 'userPins', 'boardEls'];
+          const roomRef = (room) => db.collection('artifacts').doc(room).collection('public').doc('data');
+          const [moveJob, setMoveJob] = useState(null);   // {stage, to, done, total, err}
+          const [prevRoom, setPrevRoom] = useState(() => { try { return localStorage.getItem('cf_prev_room') || ''; } catch (e) { return ''; } });
+          const readRoom = async (room) => {
+            const all = [];
+            for (const c of MOVE_COLLS) {
+              const snap = await roomRef(room).collection(c).get({ source: 'server' });
+              if (snap.metadata && snap.metadata.fromCache) throw new Error('облако не ответило — нужна связь');
+              snap.forEach(d => all.push({ c, id: d.id, data: d.data() }));
+            }
+            return all;
+          };
+          const moveRoom = async () => {
+            if (READ_ONLY || !db || !user) return;
+            const from = appId, to = newRoomCode();
+            setMoveJob({ stage: 'read', to, done: 0, total: 0 });
+            try {
+              // Неуехавшие правки сперва в облако: копируем то, что там.
+              await Promise.race([db.waitForPendingWrites(), new Promise((_, rej) =>
+                setTimeout(() => rej(new Error('правки с этого устройства ещё не уехали в облако — нужна связь')), 30000))]);
+              const all = (await readRoom(from)).filter(d => !(d.c === 'settings' && d.id === 'moved'));
+              if (!all.length) throw new Error('облако не отдало ни одной записи проекта');
+              setMoveJob({ stage: 'write', to, done: 0, total: all.length });
+              // Пачками: не больше 400 записей и ~6 МБ на пачку (предел
+              // запроса у базы 10 МБ, а фотографии лежат в записях целиком).
+              let batch = db.batch(), n = 0, bytes = 0, done = 0;
+              const flush = async () => {
+                if (!n) return;
+                await batch.commit();
+                done += n; setMoveJob({ stage: 'write', to, done, total: all.length });
+                batch = db.batch(); n = 0; bytes = 0;
+              };
+              for (const d of all) {
+                let sz = 0; try { sz = JSON.stringify(d.data).length; } catch (e) {}
+                if (n && (n >= 400 || bytes + sz > 6e6)) await flush();
+                batch.set(roomRef(to).collection(d.c).doc(d.id), d.data);
+                n++; bytes += sz;
+              }
+              await flush();
+              // Сверка: в новой комнате обязано лежать ровно столько же.
+              setMoveJob({ stage: 'check', to, done, total: all.length });
+              const got = await readRoom(to);
+              if (got.length !== all.length) throw new Error(`в новой комнате ${got.length} записей из ${all.length}`);
+              await roomRef(from).collection('settings').doc('moved').set({ at: Date.now(), by: userName || '' });
+              try { localStorage.setItem('cf_prev_room', from); } catch (e) {}
+              setMoveJob({ stage: 'done', to, done, total: all.length });
+            } catch (e) {
+              // Наполовину заполненная новая комната никому не мешает: код
+              // её никто не знает, а старая не тронута.
+              setMoveJob({ stage: 'fail', to, err: (e && e.message) || String(e) });
+            }
+          };
+          const goToRoom = (room) => { try { localStorage.setItem('cf_room', room); } catch (e) {} window.location.href = location.pathname; };
+          // Стереть старую комнату — только после переезда, только НЕ текущую
+          // и только если в текущей проект есть (иначе стёрли бы единственную
+          // копию). Метку «переехал» оставляем: по ней оставшиеся на старом
+          // коде узнают, что правят пустоту.
+          const wipeOldRoom = async () => {
+            const old = prevRoom;
+            if (READ_ONLY || !db || !user || !old || old === appId) return;
+            setMoveJob({ stage: 'wipe', done: 0, total: 0 });
+            try {
+              const here = await readRoom(appId);
+              if (here.length < 3) throw new Error('в этой комнате почти пусто — старую копию не трогаю');
+              const all = (await readRoom(old)).filter(d => !(d.c === 'settings' && d.id === 'moved'));
+              let batch = db.batch(), n = 0, done = 0;
+              for (const d of all) {
+                batch.delete(roomRef(old).collection(d.c).doc(d.id)); n++;
+                if (n >= 400) { await batch.commit(); done += n; setMoveJob({ stage: 'wipe', done, total: all.length }); batch = db.batch(); n = 0; }
+              }
+              if (n) await batch.commit();
+              await roomRef(old).collection('settings').doc('moved').set({ at: Date.now(), by: userName || '' });
+              try { localStorage.removeItem('cf_prev_room'); } catch (e) {}
+              setPrevRoom('');
+              setMoveJob(null);
+              showToast(`Старая комната стёрта: ${all.length} ${plur(all.length, 'запись', 'записи', 'записей')}`);
+            } catch (e) {
+              setMoveJob({ stage: 'fail', err: (e && e.message) || String(e) });
+            }
+          };
+          // Метка «проект переехал» в ЭТОЙ комнате. Её видят все, кто остался
+          // на старом коде (и гости по старым ссылкам): без неё они правили бы
+          // копию, которую никто больше не смотрит, и не узнали бы об этом.
+          // Нового кода в метке НЕТ намеренно: старый код известен всем,
+          // и вместе с ним утёк бы новый.
+          const [roomMoved, setRoomMoved] = useState(null);
+          useEffect(() => {
+            if (!db || !user) return;
+            const un = roomRef(appId).collection('settings').doc('moved')
+              .onSnapshot(doc => setRoomMoved(doc.exists ? (doc.data() || {}) : null),
+                          err => console.warn('sync moved', err));
+            return () => un();
+          }, [user]);
           const [showCloudModal, setShowCloudModal] = useState(false);
           // Объяснение режима просмотра. Живёт даже когда READ_ONLY —
           // это единственное окно, которое там вообще открывается.
@@ -14689,6 +14811,14 @@
             // «удаление не работает»: окно подтвердили, схема мигнула
             // и вернулась. То же самое было с последней сценой, доской,
             // объектом, документом и референсом.
+            // ПУСТАЯ КОМНАТА С МЕТКОЙ «ПЕРЕЕХАЛ» — НЕ НОВАЯ. Её стёрли после
+            // переезда, и засей мы её тем, что лежит на устройстве, проект
+            // вернулся бы под старый (слабый) код целиком — ровно то, от
+            // чего переезжали. Метку спрашиваем один раз на все коллекции.
+            let movedQ = null;
+            const roomWasMoved = () => movedQ || (movedQ = baseRef.collection('settings').doc('moved').get()
+              .then(d => !!d.exists).catch(() => false));
+            const seedIfNew = (fn) => roomWasMoved().then(moved => { if (!moved) fn(); });
             const subList = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
               if (fresh[coll] && snap.docChanges().length === 0) return;
               const first = !fresh[coll];
@@ -14696,7 +14826,7 @@
               const list = []; snap.forEach(d => list.push(d.data()));
               if (snap.empty && first && !seededRef.current[coll]) {
                 seededRef.current[coll] = true;
-                if (seed && seed.length) { seed.forEach(item => syncDoc(coll, item.id, item)); return; }
+                if (seed && seed.length) { seedIfNew(() => seed.forEach(item => syncDoc(coll, item.id, item))); return; }
               }
               setter(list);
             }, err => console.warn('sync ' + coll, err));
@@ -14707,7 +14837,7 @@
               const obj = {}; snap.forEach(d => { obj[d.id] = d.data(); });
               if (snap.empty && first && !seededRef.current[coll]) {
                 seededRef.current[coll] = true;
-                if (seed && Object.keys(seed).length) { Object.entries(seed).forEach(([k, v]) => syncDoc(coll, k, v)); return; }
+                if (seed && Object.keys(seed).length) { seedIfNew(() => Object.entries(seed).forEach(([k, v]) => syncDoc(coll, k, v))); return; }
               }
               // Пустой каталог после первого ответа — это тоже удаление:
               // раньше сюда не доходили, и последнюю позицию было не убрать.
@@ -14729,7 +14859,10 @@
               // msgBatch считает ОТВЕТЫ облака: первый — это загрузка чата,
               // а не новые сообщения. Пустотой списка это мерить нельзя —
               // в новой комнате самое первое сообщение пришло бы молча.
-              baseRef.collection('messages').onSnapshot(snap => {
+              // Чат грузится ХВОСТОМ, а не целиком: переписка только растёт,
+              // и каждое открытие приложения после перерыва облако отдаёт
+              // заново и берёт за это деньги. Старое при этом не стирается.
+              baseRef.collection('messages').orderBy('timestamp', 'desc').limit(CHAT_TAIL).onSnapshot(snap => {
                 if (fresh.messages && snap.docChanges().length === 0) return;
                 fresh.messages = true;
                 const list = []; snap.forEach(d => list.push(d.data())); msgBatch.current++; setMessages(list.sort((a,b)=>a.timestamp-b.timestamp));
@@ -16515,6 +16648,10 @@
             wipe('projectFiles', projectFiles); wipe('lightSchemes', lightSchemes);
             wipe('locations', locations);
             wipe('messages', messages);
+            // Чат в памяти — только хвост (CHAT_TAIL), а «новый проект» обязан
+            // стереть переписку целиком: остальное спрашиваем у самого облака.
+            if (db && user && !READ_ONLY) dataRef().collection('messages').get()
+              .then(snap => snap.forEach(d => deleteNetDoc('messages', d.id))).catch(() => {});
             Object.keys(gearTypes || {}).forEach(k => deleteNetDoc('gearTypes', k));
             Object.keys(lightGearTypes || {}).forEach(k => deleteNetDoc('lightGearTypes', k));
             // Рисунок обнуляем записью, а не удалением: пустой документ гасит
@@ -18425,6 +18562,54 @@
                           className="text-[length:var(--fs-1)] font-bold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
                     {repairing ? 'Чиню...' : 'Сбой повторяется'}
                   </button>
+                </div>
+              )}
+
+              {/* ПЕРЕЕЗД ИДЁТ — окно с ходом и итогом. Закрыть посреди копирования
+                  нельзя: окно без крестика, пока идут запись и сверка. */}
+              {moveJob && (() => {
+                const j = moveJob;
+                const busy = j.stage === 'read' || j.stage === 'write' || j.stage === 'check' || j.stage === 'wipe';
+                const link = j.to ? `${location.origin}${location.pathname}?room=${encodeURIComponent(j.to)}` : '';
+                return (
+                  <Modal onClose={busy ? undefined : () => setMoveJob(null)} z={320} box="p-6 max-w-md" label="Переезд проекта">
+                    <div data-cf="room-move-box" className="space-y-4">
+                      <h3 className="text-lg font-bold text-white pr-10">
+                        {j.stage === 'done' ? 'Проект перевезён' : j.stage === 'fail' ? 'Не получилось' : j.stage === 'wipe' ? 'Стираю старую комнату' : 'Перевожу проект'}
+                      </h3>
+                      <p data-cf="room-move-status" className="text-sm text-zinc-300 leading-relaxed">
+                        {j.stage === 'read' ? 'Читаю проект из облака…'
+                          : j.stage === 'write' ? `Копирую · ${j.done} из ${j.total}`
+                          : j.stage === 'check' ? 'Сверяю копию…'
+                          : j.stage === 'wipe' ? (j.total ? `Удаляю · ${j.done} из ${j.total}` : 'Читаю старую комнату…')
+                          : j.stage === 'done' ? `Скопировано ${j.total} ${plur(j.total, 'запись', 'записи', 'записей')}, копия сверена. Перейдите в новую комнату и разошлите группе новую ссылку.`
+                          : `${j.err}. Старая комната не тронута, работать можно как раньше.`}
+                      </p>
+                      {j.stage === 'done' && (
+                        <React.Fragment>
+                          <div className="bg-[var(--scrim)] p-2 pl-3 rounded-lg border border-[var(--border)] flex items-center gap-2">
+                            <span data-cf="room-move-link" className="text-[length:var(--fs-1)] text-zinc-400 font-mono truncate select-all flex-1">{link}</span>
+                            <button onClick={() => copyText(link, 'Новая ссылка скопирована')} className="cf-chip shrink-0">Скопировать</button>
+                          </div>
+                          <button data-cf="room-move-go" onClick={() => goToRoom(j.to)}
+                                  className="w-full rounded-lg font-bold bg-indigo-600 hover:bg-indigo-500 text-white" style={{ minHeight: 'var(--tap)' }}>
+                            Перейти в новую комнату
+                          </button>
+                        </React.Fragment>
+                      )}
+                    </div>
+                  </Modal>
+                );
+              })()}
+              {/* ПРОЕКТ ПЕРЕЕХАЛ. Тот, кто остался на старом коде, правит копию,
+                  которую больше никто не смотрит, — сказать это обязаны сразу
+                  и на каждом экране. Нового кода тут нет намеренно (см. roomMoved). */}
+              {roomMoved && (
+                <div data-cf="room-moved" className="fixed top-0 left-0 right-0 z-[500] px-4 pb-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-center"
+                     style={{ paddingTop: 'calc(10px + var(--sat))', background: '#78350f', color: '#fef3c7' }}>
+                  <span className="text-xs font-bold">
+                    Проект переехал в другую комнату{roomMoved.by ? ` (перевёз ${roomMoved.by})` : ''}. Здесь старая копия: правки отсюда никто не увидит. Попросите новую ссылку и откройте её.
+                  </span>
                 </div>
               )}
 
@@ -22877,6 +23062,9 @@
                   </div>
 
                   <div className="flex-1 p-5 overflow-y-auto space-y-4 hide-scrollbar flex flex-col relative bg-[var(--scrim)]">
+                    {messages.length >= CHAT_TAIL && (
+                      <div className="text-center text-[length:var(--fs-1)] text-zinc-500">Показаны последние {CHAT_TAIL} сообщений</div>
+                    )}
                     {messages.map(msg => {
                         const isMe = msg.senderId ? msg.senderId === clientId : (msg.senderName === userName && msg.senderRole === userRole);
                         return (
@@ -23422,12 +23610,32 @@
                     </div>
                     <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">Код — это и есть замок: кто его знает, тот видит проект. Простой код вроде «cineflow-room-3» можно угадать — если делитесь приложением с посторонними, поменяйте его на что-то своё и разошлите группе новую ссылку.</p>
                     <button onClick={() => {
-                              const v = 'room-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+                              const v = newRoomCode();
                               setConfirmAction({ title: 'Начать новый проект в новой комнате?',
                                 message: `Текущий проект в комнате «${appId}» никуда не денется — вернуться в него можно, введя этот код обратно.\n\nНовая комната: ${v}`,
                                 onConfirm: () => { try { localStorage.setItem('cf_room', v); } catch (e) {} window.location.reload(); } });
                             }}
                             className="mt-2 cf-chip">+ Новая пустая комната</button>
+                    {/* Переезд — тот же проект под длинным случайным кодом.
+                        Кнопка «новая пустая комната» выше этого не делает:
+                        данные остались бы под старым кодом. */}
+                    <div className="cf-edit-only mt-4 pt-4 border-t border-[var(--line)]">
+                      <button data-cf="room-move" onClick={() => setConfirmAction({ calm: true, label: 'Переехать',
+                                title: 'Перевезти проект в новую закрытую комнату?',
+                                message: 'Весь проект — сцены, фотографии, доски, чат — скопируется в комнату с длинным случайным кодом, который нельзя угадать. Старая комната останется как есть, пока вы её не сотрёте, и в ней появится надпись «проект переехал».\n\nПосле переезда разошлите группе НОВУЮ ссылку: по старой люди попадут в старую копию.',
+                                onConfirm: moveRoom })}
+                              className="cf-chip">Перевезти проект в новую закрытую комнату</button>
+                      {prevRoom && prevRoom !== appId && (
+                        <div className="mt-3 text-[length:var(--fs-2)] text-zinc-400 leading-relaxed">
+                          Старая копия проекта лежит в комнате <span className="font-mono text-zinc-300">{prevRoom}</span>. Когда убедитесь, что здесь всё на месте, сотрите её.
+                          <button data-cf="room-wipe" onClick={() => setConfirmAction({ label: 'Стереть',
+                                    title: `Стереть старую комнату «${prevRoom}»?`,
+                                    message: 'Все записи проекта в старой комнате будут удалены из облака. Здесь, в новой комнате, ничего не изменится. Отменить это нельзя.',
+                                    onConfirm: wipeOldRoom })}
+                                  className="block mt-2 cf-chip">Стереть старую комнату</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   {/* Ссылок в этом окне ТРИ, и они делают разное. */}
                   <h4 className="text-sm font-bold text-white mb-1.5 mt-5">Позвать в этот проект</h4>
@@ -24287,7 +24495,7 @@
         return new Promise(function (res, rej) {
           if (window.Babel) return res();
           var s = document.createElement('script');
-          s.src = 'https://unpkg.com/@babel/standalone/babel.min.js';
+          s.src = 'https://unpkg.com/@babel/standalone@7.29.9/babel.min.js';
           s.onload = function () { res(); }; s.onerror = rej;
           document.head.appendChild(s);
         });

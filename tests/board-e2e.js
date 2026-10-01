@@ -34,7 +34,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
     await ctx.route('**/*', (route) => {
       const u = route.request().url();
       if (/firestore|firebase|googleapis|gstatic|nominatim/.test(u)) return route.abort();
-      for (const [f, re] of [['react.js',/react@18\/umd\/react\.production/],['react-dom.js',/react-dom@18/],['babel.js',/babel\.min\.js/],['tailwind.js',/cdn\.tailwindcss/]])
+      for (const [f, re] of [['react.js',/react@18[.0-9]*\/umd\/react\.production/],['react-dom.js',/react-dom@18/],['babel.js',/babel\.min\.js/],['tailwind.js',/cdn\.tailwindcss/]])
         if (re.test(u)) return route.fulfill({ body: fs.readFileSync(path.join(LIBS, f)), contentType: 'application/javascript' });
       route.continue();
     });

@@ -64,7 +64,7 @@ const setup = async (browser, { standalone, dark, hang }) => {
     // выглядело окно без кнопок.
     if (hang && /html2canvas-pro/.test(u))
       return route.fulfill({ body: 'window.html2canvas = () => new Promise(() => {});', contentType: 'application/javascript' });
-    for (const [f, re] of [['react.js', /react@18\/umd\/react\.production/], ['react-dom.js', /react-dom@18/],
+    for (const [f, re] of [['react.js', /react@18[.0-9]*\/umd\/react\.production/], ['react-dom.js', /react-dom@18/],
                            ['babel.js', /babel\.min\.js/], ['tailwind.js', /cdn\.tailwindcss/],
                            ['html2canvas-pro.js', /html2canvas-pro/]])
       if (re.test(u)) return route.fulfill({ body: fs.readFileSync(path.join(LIBS, f)), contentType: 'application/javascript' });

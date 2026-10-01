@@ -91,7 +91,7 @@ const readZip = (file) => JSON.parse(execSync(`python3 ${PY} ${file}`).toString(
       if (u === CLOUD_OK) return route.fulfill({ status: 200, contentType: 'image/jpeg', body: Buffer.alloc(BIG, 7) });
       if (u === CLOUD_DEAD) return route.fulfill({ status: 404, body: 'нет такого файла' });
       if (/firestore|firebase|googleapis|gstatic|nominatim|dropbox|yandex/.test(u)) return route.abort();
-      for (const [f, re] of [['react.js', /react@18\/umd\/react\.production/], ['react-dom.js', /react-dom@18/],
+      for (const [f, re] of [['react.js', /react@18[.0-9]*\/umd\/react\.production/], ['react-dom.js', /react-dom@18/],
                              ['babel.js', /babel\.min\.js/], ['tailwind.js', /cdn\.tailwindcss/]])
         if (re.test(u)) return route.fulfill({ body: fs.readFileSync(path.join(LIBS, f)), contentType: 'application/javascript' });
       route.continue();

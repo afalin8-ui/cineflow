@@ -15,7 +15,23 @@
 // и приложение её не засевает — то есть данные видны ровно те,
 // что положили здесь.
 const FAKE_CLOUD = (seed) => {
-  const store = JSON.parse(JSON.stringify(seed || {})), subs = {}, dsubs = {};
+  // КОМНАТЫ. Коллекции первой комнаты, к которой обратилось приложение,
+  // лежат под своими именами (так засеивают и читают все проверки), а
+  // любой другой комнаты — под «комната|коллекция». Нужно переезду.
+  // `sessionStorage.__cfPersist = '1'` сохраняет облако между
+  // перезагрузками страницы — иначе переход в новую комнату нечем
+  // проверить: подделка заводилась бы заново из засева.
+  const persist = (() => { try { return sessionStorage.getItem('__cfPersist') === '1'; } catch (e) { return false; } })();
+  let kept = null;
+  try { kept = persist ? JSON.parse(sessionStorage.getItem('__cfStore') || 'null') : null; } catch (e) {}
+  const store = kept ? kept.store : JSON.parse(JSON.stringify(seed || {})), subs = {}, dsubs = {};
+  let room0 = kept ? kept.room0 : null;
+  const save = () => { if (persist) try { sessionStorage.setItem('__cfStore', JSON.stringify({ store, room0 })); } catch (e) {} };
+  const keyOf = (room, name) => {
+    if (room == null) return name;
+    if (room0 == null) { room0 = room; save(); }
+    return room === room0 ? name : room + '|' + name;
+  };
   window.__cfStore = store;
   window.__cfWrites = [];
   const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -24,10 +40,16 @@ const FAKE_CLOUD = (seed) => {
   // ответ приходит «из кэша устройства» и пустой, как у только что
   // открытого без сети приложения.
   window.__cfCacheOnly = {};
-  const snapOf = (coll, filter) => {
+  // `orderBy(поле, 'desc').limit(n)` — им приложение берёт хвост чата.
+  const snapOf = (coll, filter, ord) => {
     const cacheOnly = !!window.__cfCacheOnly[coll];
     const obj = cacheOnly ? {} : (store[coll] || {});
-    const ids = Object.keys(obj).filter(id => !filter || (obj[id] && obj[id][filter.f] === filter.v));
+    let ids = Object.keys(obj).filter(id => !filter || (obj[id] && obj[id][filter.f] === filter.v));
+    if (ord && ord.f) {
+      ids = ids.filter(id => obj[id] && obj[id][ord.f] !== undefined)
+               .sort((a, b) => (obj[a][ord.f] < obj[b][ord.f] ? -1 : 1) * (ord.dir === 'desc' ? -1 : 1));
+    }
+    if (ord && ord.n) ids = ids.slice(0, ord.n);
     return {
       empty: ids.length === 0, size: ids.length,
       metadata: { fromCache: cacheOnly, hasPendingWrites: false },
@@ -43,40 +65,49 @@ const FAKE_CLOUD = (seed) => {
   const put = (coll, id, data) => {
     window.__cfWrites.push({ coll, id });
     (store[coll] = store[coll] || {})[id] = clone(data);
+    save();
     emit(coll, id);
   };
-  const docRef = (coll, id) => ({
+  const docRef = (coll, id, room) => ({
     id,
     get: () => Promise.resolve(dsnap(coll, id)),
     set: (data) => { put(coll, id, data); return Promise.resolve(); },
     update: (data) => { put(coll, id, data); return Promise.resolve(); },
-    delete: () => { window.__cfWrites.push({ coll, id, del: true }); if (store[coll]) delete store[coll][id]; emit(coll, id); return Promise.resolve(); },
+    delete: () => { window.__cfWrites.push({ coll, id, del: true }); if (store[coll]) delete store[coll][id]; save(); emit(coll, id); return Promise.resolve(); },
     onSnapshot: (cb) => {
       const m = dsubs[coll] = dsubs[coll] || {}; (m[id] = m[id] || []).push(cb);
       setTimeout(() => { try { cb(dsnap(coll, id)); } catch (e) {} }, 30);
       return () => {};
     },
-    collection: (name) => collRef(name)
+    collection: (name) => collRef(name, coll === 'artifacts' ? id : room)
   });
-  const query = (name, filter) => ({
-    get: () => Promise.resolve(snapOf(name, filter)),
+  const query = (name, filter, ord) => ({
+    get: () => Promise.resolve(snapOf(name, filter, ord)),
+    orderBy: (f, dir) => query(name, filter, { ...(ord || {}), f, dir }),
+    limit: (n) => query(name, filter, { ...(ord || {}), n }),
     onSnapshot: (cb) => {
-      const fn = () => cb(snapOf(name, filter));
+      const fn = () => cb(snapOf(name, filter, ord));
       (subs[name] = subs[name] || []).push(fn);
       setTimeout(() => { try { fn(); } catch (e) {} }, 30);
       return () => { subs[name] = (subs[name] || []).filter(x => x !== fn); };
     }
   });
-  const collRef = (name) => ({
-    doc: (id) => docRef(name, id),
-    ...query(name, null),
-    where: (f, op, v) => query(name, { f, v })
-  });
+  const collRef = (name, room) => {
+    // Служебные звенья пути (artifacts → комната → public → data) — не
+    // коллекции проекта, их имена в ключ не идут.
+    const k = (name === 'artifacts' || name === 'public') ? name : keyOf(room, name);
+    return {
+      doc: (id) => docRef(k, id, room),
+      ...query(k, null),
+      where: (f, op, v) => query(k, { f, v })
+    };
+  };
   window.__cfEmit = (coll) => emit(coll, '');
   const db = {
-    collection: collRef,
+    collection: (name) => collRef(name),
     settings: () => {},
     enablePersistence: () => Promise.resolve(),
+    waitForPendingWrites: () => Promise.resolve(),
     disableNetwork: () => Promise.resolve(),
     enableNetwork: () => Promise.resolve(),
     terminate: () => Promise.resolve(),
