@@ -51,9 +51,12 @@ const FAKE_CLOUD = (seed) => {
     set: (data) => { put(coll, id, data); return Promise.resolve(); },
     update: (data) => { put(coll, id, data); return Promise.resolve(); },
     delete: () => { window.__cfWrites.push({ coll, id, del: true }); if (store[coll]) delete store[coll][id]; emit(coll, id); return Promise.resolve(); },
+    // `__cfDocDelay[коллекция]` — медленное облако: первый ответ по
+    // документу приходит через столько миллисекунд (проверка того, что
+    // приложение его ДОЖИДАЕТСЯ, а не берёт то, что есть).
     onSnapshot: (cb) => {
       const m = dsubs[coll] = dsubs[coll] || {}; (m[id] = m[id] || []).push(cb);
-      setTimeout(() => { try { cb(dsnap(coll, id)); } catch (e) {} }, 30);
+      setTimeout(() => { try { cb(dsnap(coll, id)); } catch (e) {} }, (window.__cfDocDelay || {})[coll] || 30);
       return () => {};
     },
     collection: (name) => collRef(name)

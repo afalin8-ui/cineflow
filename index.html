@@ -4584,35 +4584,8 @@
                         </div>
                         <div className="flex gap-2">
                             <button onClick={() => {
-                                const pc = document.createElement('canvas'); pc.width = 1600; pc.height = 900;
-                                const pctx = pc.getContext('2d');
-                                pctx.fillStyle = '#242322'; pctx.fillRect(0, 0, 1600, 900);
-                                pctx.globalAlpha = 0.85; pctx.drawImage(canvasRef.current, 0, 0); pctx.globalAlpha = 1;
-                                elements.forEach(el => {
-                                    pctx.fillStyle = el.color || '#facc15';
-                                    if (el.type === 'rect') { pctx.fillRect(el.x, el.y, el.w, el.h); }
-                                    else if (el.type === 'circle') { pctx.beginPath(); pctx.ellipse(el.x + el.w/2, el.y + el.h/2, el.w/2, el.h/2, 0, 0, Math.PI*2); pctx.fill(); }
-                                    else if (el.type === 'triangle') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x, el.y + el.h); pctx.lineTo(el.x + el.w, el.y + el.h); pctx.closePath(); pctx.fill(); }
-                                    else if (el.type === 'diamond') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x + el.w, el.y + el.h/2); pctx.lineTo(el.x + el.w/2, el.y + el.h); pctx.lineTo(el.x, el.y + el.h/2); pctx.closePath(); pctx.fill(); }
-                                    else if (el.type === 'star') {
-                                        const cx = el.x + el.w/2, cy = el.y + el.h/2, oR = Math.min(el.w, el.h)/2, iR = oR * 0.45;
-                                        pctx.beginPath();
-                                        for (let i = 0; i < 10; i++) { const r = i % 2 === 0 ? oR : iR; const ang = (Math.PI/5)*i - Math.PI/2; const px = cx + r*Math.cos(ang), py = cy + r*Math.sin(ang); if (i===0) pctx.moveTo(px,py); else pctx.lineTo(px,py); }
-                                        pctx.closePath(); pctx.fill();
-                                    }
-                                    else if (el.type === 'arrow') {
-                                        const x1 = el.x, y1 = el.y + el.h, x2 = el.x + el.w, y2 = el.y;
-                                        pctx.strokeStyle = el.color || '#facc15'; pctx.lineWidth = Math.max(3, Math.min(el.w, el.h) * 0.06); pctx.lineCap = 'round';
-                                        pctx.beginPath(); pctx.moveTo(x1, y1); pctx.lineTo(x2, y2); pctx.stroke();
-                                        const ang = Math.atan2(y2-y1, x2-x1); const headLen = Math.min(el.w, el.h) * 0.25;
-                                        pctx.beginPath(); pctx.moveTo(x2, y2);
-                                        pctx.lineTo(x2 - headLen*Math.cos(ang - Math.PI/6), y2 - headLen*Math.sin(ang - Math.PI/6));
-                                        pctx.lineTo(x2 - headLen*Math.cos(ang + Math.PI/6), y2 - headLen*Math.sin(ang + Math.PI/6));
-                                        pctx.closePath(); pctx.fill();
-                                    }
-                                    else if (el.type === 'text') { pctx.font = 'bold 30px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif'; pctx.fillText(el.text || '', el.x + 8, el.y + 36); }
-                                    if (el.label) { pctx.font = '22px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
-                                });
+                                const pc = document.createElement('canvas'); pc.width = SCHEME_W; pc.height = SCHEME_H;
+                                paintOldScheme(pc.getContext('2d'), elements, canvasRef.current);
                                 onSave(scheme.id, elements, canvasRef.current.toDataURL('image/png'), pc.toDataURL('image/jpeg', 0.85));
                             }} className="cf-edit-only px-4 py-2 bg-indigo-500 text-[#1a1918] text-xs rounded-lg hover:bg-indigo-400 font-bold">Сохранить схему</button>
                             <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white text-xs rounded-lg hover:bg-white/20">Закрыть</button>
@@ -7634,6 +7607,176 @@
           return out;
         };
 
+        // --- Схема света → Excalidraw ---
+        // Старый редактор схемы — холст 1600×900: фигуры с цветом и
+        // подписью прибора (`elements`) и растровый рисунок кистью
+        // (`drawData`). Фигуры становятся родными элементами Excalidraw,
+        // подпись — текстом под фигурой одной группой с ней. Растр
+        // Excalidraw хранит только файлами, а файлов мы не храним, поэтому
+        // он остаётся в записи схемы и рисуется ПОДЛОЖКОЙ (см. `backdrop`
+        // у ExcBoard) — как карточка, выведенная из записи.
+        // id — `s~{старый id}`: перевод узнаётся на любом устройстве.
+        const SCHEME_W = 1600, SCHEME_H = 900;
+        const EXC_FROM_SCH = (id) => 's~' + id;
+        const excStarPts = (w, h) => {
+          const cx = w / 2, cy = h / 2, oR = Math.min(w, h) / 2, iR = oR * 0.45, out = [];
+          for (let i = 0; i < 10; i++) { const r = i % 2 === 0 ? oR : iR, a = Math.PI / 5 * i - Math.PI / 2; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+          out.push(out[0]);
+          return out;
+        };
+        // Замкнутая ломаная = залитый многоугольник: Excalidraw заливает
+        // линию, у которой конец совпал с началом.
+        const excPoly = (x, y, pts) => ({ type: 'line', x: x + pts[0][0], y: y + pts[0][1], points: pts.map(q => [q[0] - pts[0][0], q[1] - pts[0][1]]), roundness: null });
+        const excFromScheme = (lib, sch) => {
+          const out = [];
+          (sch.elements || []).forEach(el => {
+            const id = EXC_FROM_SCH(el.id), c = el.color || '#facc15';
+            const x = +el.x || 0, y = +el.y || 0, w = Math.max(4, +el.w || 100), h = Math.max(4, +el.h || 100);
+            const groupIds = el.label ? [id + '~g'] : [];
+            const mark = { cfc: 1, cv: 1 };
+            const fill = { strokeColor: c, backgroundColor: c, fillStyle: 'solid', strokeWidth: 2, roughness: 0, groupIds, customData: mark };
+            let sk = null;
+            if (el.type === 'rect') sk = { ...fill, type: 'rectangle', x, y, width: w, height: h, roundness: { type: 3 } };
+            else if (el.type === 'circle') sk = { ...fill, type: 'ellipse', x, y, width: w, height: h };
+            else if (el.type === 'diamond') sk = { ...fill, type: 'diamond', x, y, width: w, height: h };
+            else if (el.type === 'triangle') sk = { ...fill, ...excPoly(x, y, [[w / 2, 0], [w, h], [0, h], [w / 2, 0]]) };
+            else if (el.type === 'star') sk = { ...fill, ...excPoly(x, y, excStarPts(w, h)) };
+            else if (el.type === 'arrow') sk = { ...fill, type: 'arrow', x, y: y + h, points: [[0, 0], [w, -h]], backgroundColor: 'transparent',
+                                                 strokeWidth: 4, startArrowhead: null, endArrowhead: 'triangle', roundness: null };
+            else if (el.type === 'text') sk = { type: 'text', x: x + 8, y: y + 8, text: el.text || ' ', fontSize: 30, fontFamily: 2,
+                                                strokeColor: c, groupIds, customData: mark };
+            if (!sk) return;
+            const list = [{ ...sk, id }];
+            // Подпись прибора — по центру под фигурой (у текста по центру
+            // Excalidraw считает x опорой выравнивания, то есть серединой).
+            if (el.label) list.push({ type: 'text', id: id + '~l', x: x + w / 2, y: y + h + 8, text: el.label, fontSize: 22, fontFamily: 2,
+                                      textAlign: 'center', strokeColor: EXC_TEXT, groupIds, customData: mark });
+            try { lib.convertToExcalidrawElements(list, { regenerateIds: false }).forEach(e => out.push({ ...e, index: null })); }
+            catch (e) { console.warn('excFromScheme', el.id, e); }
+          });
+          return out;
+        };
+        // Ключи порядка по порядку списка: элементы, записанные в облако
+        // мимо холста, иначе приехали бы без ключа, и каждое устройство
+        // разложило бы их по-своему.
+        const EXC_DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+        const excKeys = (n) => {
+          const out = [];
+          for (let i = 0; i < n; i++) {
+            if (i < 61) out.push('a' + EXC_DIGITS[i + 1]);
+            else { const j = i - 61; out.push('b' + EXC_DIGITS[Math.floor(j / 62) % 62] + EXC_DIGITS[j % 62]); }
+          }
+          return out;
+        };
+        // Картинка схемы старого редактора — одна на два места: «Сохранить
+        // схему» в нём и возврат схемы с Excalidraw обратно (превью тогда
+        // обязано снова показывать прежнюю схему, а не ту, что рисовали).
+        const paintOldScheme = (pctx, elements, raster) => {
+          pctx.fillStyle = '#242322'; pctx.fillRect(0, 0, SCHEME_W, SCHEME_H);
+          if (raster) { pctx.globalAlpha = 0.85; pctx.drawImage(raster, 0, 0, SCHEME_W, SCHEME_H); pctx.globalAlpha = 1; }
+          (elements || []).forEach(el => {
+            pctx.fillStyle = el.color || '#facc15';
+            if (el.type === 'rect') { pctx.fillRect(el.x, el.y, el.w, el.h); }
+            else if (el.type === 'circle') { pctx.beginPath(); pctx.ellipse(el.x + el.w/2, el.y + el.h/2, el.w/2, el.h/2, 0, 0, Math.PI*2); pctx.fill(); }
+            else if (el.type === 'triangle') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x, el.y + el.h); pctx.lineTo(el.x + el.w, el.y + el.h); pctx.closePath(); pctx.fill(); }
+            else if (el.type === 'diamond') { pctx.beginPath(); pctx.moveTo(el.x + el.w/2, el.y); pctx.lineTo(el.x + el.w, el.y + el.h/2); pctx.lineTo(el.x + el.w/2, el.y + el.h); pctx.lineTo(el.x, el.y + el.h/2); pctx.closePath(); pctx.fill(); }
+            else if (el.type === 'star') {
+              pctx.beginPath();
+              excStarPts(el.w, el.h).forEach((q, i) => { if (i === 0) pctx.moveTo(el.x + q[0], el.y + q[1]); else pctx.lineTo(el.x + q[0], el.y + q[1]); });
+              pctx.closePath(); pctx.fill();
+            }
+            else if (el.type === 'arrow') {
+              const x1 = el.x, y1 = el.y + el.h, x2 = el.x + el.w, y2 = el.y;
+              pctx.strokeStyle = el.color || '#facc15'; pctx.lineWidth = Math.max(3, Math.min(el.w, el.h) * 0.06); pctx.lineCap = 'round';
+              pctx.beginPath(); pctx.moveTo(x1, y1); pctx.lineTo(x2, y2); pctx.stroke();
+              const ang = Math.atan2(y2-y1, x2-x1); const headLen = Math.min(el.w, el.h) * 0.25;
+              pctx.beginPath(); pctx.moveTo(x2, y2);
+              pctx.lineTo(x2 - headLen*Math.cos(ang - Math.PI/6), y2 - headLen*Math.sin(ang - Math.PI/6));
+              pctx.lineTo(x2 - headLen*Math.cos(ang + Math.PI/6), y2 - headLen*Math.sin(ang + Math.PI/6));
+              pctx.closePath(); pctx.fill();
+            }
+            else if (el.type === 'text') { pctx.font = 'bold 30px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif'; pctx.fillText(el.text || '', el.x + 8, el.y + 36); }
+            if (el.label) { pctx.font = '22px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif'; pctx.fillStyle = '#f0eee6'; pctx.textAlign = 'center'; pctx.fillText(el.label, el.x + el.w/2, el.y + el.h + 30); pctx.textAlign = 'left'; }
+          });
+        };
+        const oldSchemePreview = (sch) => new Promise(resolve => {
+          const pc = document.createElement('canvas'); pc.width = SCHEME_W; pc.height = SCHEME_H;
+          const done = (img) => { paintOldScheme(pc.getContext('2d'), sch.elements, img); resolve(pc.toDataURL('image/jpeg', 0.85)); };
+          if (!sch.drawData) return done(null);
+          const img = new Image(); img.onload = () => done(img); img.onerror = () => done(null); img.src = sch.drawData;
+        });
+
+        // --- Приборы для схемы света ---
+        // Короткий набор условных знаков вида сверху — та же мысль, что
+        // у палитры из шести цветов: из девяти знаков схема всегда читается,
+        // а библиотеку на сотню приборов никто не листает. Каждый знак —
+        // ГРУППА обычных элементов Excalidraw (корпус, конус света или
+        // обзор камеры, подпись): его можно повернуть, перекрасить,
+        // переподписать и разобрать на части, как любой рисунок. Смотрит
+        // знак вправо — поворотом его направляют, куда светит.
+        // Метка `fx` — НЕ `cf`: с `cf` элемент считался бы карточкой,
+        // а карточки в облако нарисованным не уходят.
+        const SCHEME_LIGHT = '#facc15';
+        const SCHEME_FIXTURES = [
+          { key: 'spot', label: 'Прожектор', hint: 'френель, HMI: узкий луч' },
+          { key: 'panel', label: 'LED-панель', hint: 'панель, софтбокс: мягкий широкий' },
+          { key: 'camera', label: 'Камера', hint: 'с углом обзора' },
+          { key: 'actor', label: 'Актёр', hint: 'нос показывает, куда смотрит' },
+          { key: 'flag', label: 'Флаг', hint: 'чёрный, срезает свет' },
+          { key: 'bounce', label: 'Отражатель', hint: 'белый, подсвечивает' },
+          { key: 'frame', label: 'Рама', hint: 'рассеиватель' },
+          { key: 'window', label: 'Окно', hint: 'проём, свет снаружи' },
+          { key: 'sun', label: 'Солнце', hint: 'направление солнца' }
+        ];
+        const excFixture = (key, cx, cy) => {
+          const fx = { fx: key };
+          const base = { roughness: 0, strokeWidth: 2, fillStyle: 'solid', customData: fx };
+          const label = (t, dy) => ({ type: 'text', x: cx, y: cy + dy, text: t, fontSize: 16, fontFamily: 2, textAlign: 'center', strokeColor: EXC_TEXT2, customData: fx });
+          const body = (x, y, w, h, stroke, bg) => ({ ...base, type: 'rectangle', x, y, width: w, height: h, strokeColor: stroke, backgroundColor: bg || EXC_CARD_BG, roundness: { type: 3 } });
+          const cone = (x, y, pts, col, op) => ({ ...base, ...excPoly(x, y, pts), strokeColor: col, backgroundColor: col, opacity: op });
+          if (key === 'spot') return [
+            cone(cx + 28, cy, [[0, -10], [240, -80], [240, 80], [0, 10], [0, -10]], SCHEME_LIGHT, 22),
+            body(cx - 28, cy - 18, 56, 36, SCHEME_LIGHT), label('Прожектор', 28)];
+          if (key === 'panel') return [
+            cone(cx + 8, cy, [[0, -45], [220, -150], [220, 150], [0, 45], [0, -45]], '#fde68a', 14),
+            body(cx - 8, cy - 45, 16, 90, '#fde68a'), label('LED-панель', 54)];
+          if (key === 'camera') return [
+            { ...base, type: 'line', x: cx + 36 + 240, y: cy - 97, points: [[0, 0], [-240, 97], [0, 194]], strokeColor: EXC_TEXT2, strokeStyle: 'dashed', strokeWidth: 1, opacity: 70, roundness: null },
+            body(cx - 30, cy - 20, 50, 40, EXC_TEXT), body(cx + 20, cy - 10, 16, 20, EXC_TEXT, EXC_TEXT), label('Камера A', 30)];
+          if (key === 'actor') return [
+            { ...base, type: 'ellipse', x: cx - 22, y: cy - 22, width: 44, height: 44, strokeColor: '#d97757', backgroundColor: '#d97757' },
+            cone(cx + 20, cy, [[0, -9], [14, 0], [0, 9], [0, -9]], '#d97757', 100), label('Актёр', 30)];
+          if (key === 'flag') return [body(cx - 60, cy - 6, 120, 12, EXC_DIM, '#0b0b0a'), label('Флаг', 14)];
+          if (key === 'bounce') return [body(cx - 60, cy - 6, 120, 12, EXC_TEXT, EXC_TEXT), label('Отражатель', 14)];
+          if (key === 'frame') return [{ ...body(cx - 60, cy - 6, 120, 12, EXC_TEXT, 'transparent'), strokeStyle: 'dashed' }, label('Рама · рассеиватель', 14)];
+          if (key === 'window') return [
+            body(cx - 80, cy - 7, 160, 14, '#93c5fd', EXC_BG),
+            { ...base, type: 'line', x: cx - 78, y: cy, points: [[0, 0], [156, 0]], strokeColor: '#93c5fd', strokeWidth: 1, roundness: null }, label('Окно', 16)];
+          if (key === 'sun') return [
+            { ...base, type: 'ellipse', x: cx - 84, y: cy - 20, width: 40, height: 40, strokeColor: SCHEME_LIGHT, backgroundColor: SCHEME_LIGHT },
+            { ...base, type: 'arrow', x: cx - 36, y: cy, points: [[0, 0], [130, 0]], strokeColor: SCHEME_LIGHT, strokeStyle: 'dashed', startArrowhead: null, endArrowhead: 'triangle', roundness: null },
+            label('Солнце', 28)];
+          return [];
+        };
+        // Значок прибора в списке — тот же знак в миниатюре.
+        const FixtureIcon = ({ k }) => {
+          const L = SCHEME_LIGHT, T = EXC_TEXT;
+          const g = {
+            spot: <g><path d="M9 11 L22 6 L22 18 L9 13Z" fill={L} opacity=".35"/><rect x="2" y="9" width="7" height="6" rx="1.5" fill="none" stroke={L} strokeWidth="1.6"/></g>,
+            panel: <g><path d="M6 6 L22 2 L22 22 L6 18Z" fill="#fde68a" opacity=".3"/><rect x="3" y="5" width="3" height="14" rx="1" fill="none" stroke="#fde68a" strokeWidth="1.6"/></g>,
+            camera: <g><path d="M22 4 L12 12 L22 20" fill="none" stroke={T} strokeWidth="1.2" strokeDasharray="2 2"/><rect x="2" y="8" width="8" height="8" rx="1.5" fill="none" stroke={T} strokeWidth="1.6"/><rect x="10" y="10" width="3" height="4" fill={T}/></g>,
+            actor: <g><circle cx="11" cy="12" r="6" fill="#d97757"/><path d="M17 9 L21 12 L17 15Z" fill="#d97757"/></g>,
+            flag: <rect x="3" y="10" width="18" height="4" rx="1" fill="#0b0b0a" stroke={EXC_DIM} strokeWidth="1.4"/>,
+            bounce: <rect x="3" y="10" width="18" height="4" rx="1" fill={T}/>,
+            frame: <rect x="3" y="10" width="18" height="4" rx="1" fill="none" stroke={T} strokeWidth="1.4" strokeDasharray="2 1.5"/>,
+            window: <g><rect x="2" y="9" width="20" height="6" rx="1" fill="none" stroke="#93c5fd" strokeWidth="1.4"/><path d="M3 12 H21" stroke="#93c5fd" strokeWidth="1"/></g>,
+            sun: <g><circle cx="6" cy="12" r="4" fill={L}/><path d="M11 12 H21 M18 9 L21 12 L18 15" fill="none" stroke={L} strokeWidth="1.5" strokeDasharray="2 1.5"/></g>
+          }[k];
+          return <svg width="22" height="22" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>{g}</svg>;
+        };
+        // Схема на Excalidraw карточек проекта не держит.
+        const EXC_NO_CARDS = { scenes: [], refs: [], stickies: [], docs: [], frames: [] };
+
         // Ключ порядка (fractional index) проверяем сами: элемент с кривым
         // ключом роняет загрузку сцены Excalidraw целиком («invalid order
         // key»), и доска не открывается вовсе. Сам он таких не делает, но
@@ -7798,7 +7941,7 @@
             ctx.globalAlpha = 0.9;
             live.forEach(e => {
               const cd = e.customData;
-              if (!cd || !cd.cf || e.id !== cd.id) return;
+              if (!cd || !cd.cf || e.id !== cd.id || cd.cf === 'bg') return;
               ctx.fillStyle = cd.cf === 'sticky' ? (e.backgroundColor || EXC_MINI_COL.sticky) : (EXC_MINI_COL[cd.cf] || '#a6a39a');
               ctx.fillRect(X(e.x), Y(e.y), Math.max(1.5, e.width * k), Math.max(1.5, e.height * k));
             });
@@ -7854,7 +7997,7 @@
           );
         };
 
-        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, linkMode, onLinkMode, layers, children }) => {
+        const ExcBoard = ({ boardId, readOnly, cards, projectRatio, store, act, apiRef, legacyColors, convert, linkMode, onLinkMode, layers, backdrop, onPreview, children }) => {
           const [lib, setLib] = useState(() => window.ExcalidrawLib || null);
           const [err, setErr] = useState('');
           const [api, setApi] = useState(null);
@@ -7862,7 +8005,7 @@
           // Всё живое — в ref: Excalidraw зовёт обработчики из своих
           // замыканий, и свежие записи проекта обязаны быть видны оттуда.
           const P = useRef({});
-          P.current = { cards, projectRatio, store, act, readOnly, lib, convert, linkMode, onLinkMode, layers };
+          P.current = { cards, projectRatio, store, act, readOnly, lib, convert, linkMode, onLinkMode, layers, backdrop, onPreview };
           const S = useRef(null);
           if (!S.current) {
             const loc = excReadLocal(boardId);
@@ -7976,6 +8119,21 @@
             // Карточки из списка — в его порядке; каких в нём нет (легли
             // на доску позже) — сверху, как всё новое в Excalidraw.
             groups.forEach(g => { g.k = Z.has(g.id) ? Z.get(g.id) : Z.size + g.k; });
+            // Подложка — старый рисунок кистью у схемы света. Выведена из
+            // записи, как карточка, и ЗАПЕРТА: это не элемент рисунка,
+            // а то, поверх чего рисуют. Лежит ниже всего.
+            const bd = P.current.backdrop;
+            if (bd && bd.url) {
+              const old = prev.get(bd.id), fileId = 'cf-' + excUrlKey(bd.url);
+              if (old && !old.isDeleted && old.fileId === fileId) out.push(old);
+              else {
+                const [el] = L.convertToExcalidrawElements([{ type: 'image', id: bd.id, x: bd.x, y: bd.y, width: bd.w, height: bd.h,
+                  fileId, status: 'saved', strokeColor: 'transparent', locked: true, customData: { cf: 'bg', id: bd.id, part: 'box' } }], { regenerateIds: false });
+                // 80 % — как в прежнем редакторе: кисть лежала под фигурами
+                // полупрозрачной, иначе яркий мазок спорит с приборами.
+                out.push({ ...el, locked: true, opacity: 80, index: null, seed: excSeed(bd.id), version: ((old || {}).version || 0) + 1 });
+              }
+            }
             groups.sort((a, b) => a.k - b.k).forEach(g => out.push(...g.els));
             st.cardSeq = groups.map(g => g.id);
             // Связи со сценой — только когда оба конца на этой доске.
@@ -8010,6 +8168,7 @@
             const gone = [];
             cur.forEach(e => {
               if (!isCardPart(e) || e.customData.cf === 'link' && links.some(l => l.id === e.id)) return;
+              if (e.customData.cf === 'bg' && bd && bd.url && e.id === bd.id) return;
               if (e.customData.cf !== 'link' && drawn.has(e.customData.id)) return;
               if (e.customData.cf !== 'link' && !excPartIds(e.customData.id).includes(e.id)) return;
               gone.push(e.isDeleted ? e : { ...e, isDeleted: true, version: e.version + 1 });
@@ -8059,6 +8218,9 @@
               if (have[id] || add.some(f => f.id === id)) return;
               add.push({ id, dataURL: u, mimeType: excMime(u), created: Date.now() });
             }));
+            const bd = P.current.backdrop;
+            if (bd && bd.url && !have['cf-' + excUrlKey(bd.url)] && !add.some(f => f.id === 'cf-' + excUrlKey(bd.url)))
+              add.push({ id: 'cf-' + excUrlKey(bd.url), dataURL: bd.url, mimeType: excMime(bd.url), created: Date.now() });
             if (add.length) a.addFiles(add);
           };
 
@@ -8228,7 +8390,7 @@
             const els = a.getSceneElements();
             for (let i = els.length - 1; i >= 0; i--) {
               const e = els[i], cd = e.customData;
-              if ((cd && cd.cf === 'link') || e.type === 'arrow' || e.type === 'line' || e.type === 'freedraw') continue;
+              if ((cd && (cd.cf === 'link' || cd.cf === 'bg')) || e.type === 'arrow' || e.type === 'line' || e.type === 'freedraw') continue;
               const b = excElBox(e);
               if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) continue;
               if (cd && cd.cf) return cd.id;
@@ -8343,7 +8505,7 @@
               }
               // Выделена рукопись (пусть и вперемешку с чем-то ещё) —
               // ручка «в текст» над ней. Гостю — нет: она заводит гайд.
-              if (!sel && !readOnlyNow()) {
+              if (!sel && !readOnlyNow() && P.current.act.ocr) {
                 const ink = ids.map(i => els.find(x => x.id === i)).filter(e => e && !e.isDeleted && e.type === 'freedraw');
                 if (ink.length) {
                   let x1 = -Infinity, y0 = Infinity;
@@ -8361,6 +8523,8 @@
 
           const watchCard = (e, cd) => {
             const st = S.current;
+            // Подложку схемы рисует запись, а не человек: правок у неё нет.
+            if (cd.cf === 'bg') return;
             if (cd.cf === 'link') {
               if (e.id !== 'lnk~' + cd.id) { if (!e.isDeleted && !st.seen.has(e.id)) { st.seen.add(e.id); push({ k: 'kill', ids: [e.id] }); } return; }
               const on = st.links.has(e.id);
@@ -8452,7 +8616,7 @@
               act.link(it.cf, it.id, sc.id);
             });
             const ops = st.ops; st.ops = [];
-            let reverted = false, back = false;
+            let reverted = false, back = false, drew = false;
             // Перестановка слоёв — в запись доски. Кроме той, что пришла
             // вместе с копией: Alt-копирование у Excalidraw само поднимает
             // утаскиваемое наверх, а человек просил копию, а не слой.
@@ -8526,10 +8690,12 @@
               if (!readOnly && store) {
                 if (e.isDeleted) { if (st.known.has(id)) store.del(boardId, id); }
                 else store.put(boardId, e);
+                drew = true;
               }
               st.synced.set(id, e.version);
             });
             st.dirty.clear();
+            if (drew) previewSoon();
             if (kill.size) {
               const next = a.getSceneElementsIncludingDeleted().map(e => kill.has(e.id) && !e.isDeleted ? { ...e, isDeleted: true, version: e.version + 1 } : e);
               st.applying = true;
@@ -8561,6 +8727,32 @@
             }).catch(() => P.current.act.toast('Картинку не удалось забрать'));
           };
 
+          // Картинка схемы света — та, что видна у сцены, у объекта и в
+          // печати. Собирается из самого холста после правки (не чаще раза
+          // в полторы секунды) и при уходе со схемы. Только у того, кто
+          // правил: просмотр картинку не трогает. API — СВОЙ, а не общий
+          // apiRef: после смены холста в общем лежит уже чужой.
+          const ownApi = useRef(null);
+          const makePreview = async () => {
+            const st = S.current; st.pvPending = false; clearTimeout(st.pvT);
+            const a = ownApi.current, L = P.current.lib, cb = P.current.onPreview;
+            if (!a || !L || !cb) return;
+            const els = a.getSceneElements();
+            if (!els.length) { cb(''); return; }
+            try {
+              const cv = await L.exportToCanvas({ elements: els, files: a.getFiles(), exportPadding: 32,
+                appState: { exportBackground: true, viewBackgroundColor: EXC_CARD_BG, exportWithDarkMode: false },
+                getDimensions: (w, h) => { const k = Math.min(2, 1600 / Math.max(1, w), 1000 / Math.max(1, h)); return { width: Math.round(w * k), height: Math.round(h * k), scale: k }; } });
+              cb(cv.toDataURL('image/jpeg', 0.85));
+            } catch (e) { console.warn('preview', e); }
+          };
+          const previewSoon = () => {
+            const st = S.current;
+            if (!P.current.onPreview || P.current.readOnly) return;
+            clearTimeout(st.pvT); st.pvPending = true;
+            st.pvT = setTimeout(makePreview, 1500);
+          };
+
           // Где мы на доске — помним для каждой доски: вернулся и оказался
           // там же. Им же пользуется «положить на доску» с других экранов.
           const saveViewSoon = (app) => {
@@ -8582,6 +8774,9 @@
               // Отложенная пересборка чужой доски не должна лечь на новую:
               // apiRef общий, и после смены доски в нём уже другая.
               clearTimeout(S.current.orderFixT); S.current.orderFixT = 0; clearTimeout(S.current.dimsT);
+              // Ушли со схемы, пока картинка ждала своей очереди, — собираем
+              // сейчас: иначе у сцены осталась бы прежняя.
+              if (S.current.pvPending) makePreview();
             };
           }, [api]);
 
@@ -8700,6 +8895,24 @@
               a.updateScene({ elements: a.getSceneElementsIncludingDeleted().map(e => isCardPart(e) || e.isDeleted ? e : { ...e, isDeleted: true, version: e.version + 1, versionNonce: (e.versionNonce + 1) | 0 }),
                               captureUpdate: P.current.lib.CaptureUpdateAction.IMMEDIATELY });
             },
+            // Прибор на схему: группа элементов посреди видимого, сразу
+            // выделена — его почти всегда тут же тащат на место и
+            // поворачивают. Через историю Excalidraw: «отменить» уберёт.
+            insertFixture: (key) => {
+              const a = ownApi.current, L = P.current.lib;
+              if (!a || !L || P.current.readOnly) return false;
+              const c = apiRef.current.center();
+              let els;
+              try { els = L.convertToExcalidrawElements(excFixture(key, Math.round(c.x), Math.round(c.y)), { regenerateIds: true }); }
+              catch (e) { console.warn('fixture', key, e); return false; }
+              if (!els.length) return false;
+              const gid = 'fx-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+              els = els.map(e => ({ ...e, groupIds: [gid] }));
+              a.updateScene({ elements: [...a.getSceneElementsIncludingDeleted(), ...els],
+                              appState: { selectedElementIds: Object.fromEntries(els.map(e => [e.id, true])), selectedGroupIds: { [gid]: true } },
+                              captureUpdate: L.CaptureUpdateAction.IMMEDIATELY });
+              return true;
+            },
             packFree: () => {
               const a = apiRef.current.api; if (!a) return null;
               const st = S.current;
@@ -8728,6 +8941,7 @@
               const u = k === 'refs' ? r.url : r.image; if (!u) return;
               files['cf-' + excUrlKey(u)] = { id: 'cf-' + excUrlKey(u), dataURL: u, mimeType: excMime(u), created: Date.now() };
             }));
+            if (backdrop && backdrop.url) files['cf-' + excUrlKey(backdrop.url)] = { id: 'cf-' + excUrlKey(backdrop.url), dataURL: backdrop.url, mimeType: excMime(backdrop.url), created: Date.now() };
             return {
               elements, files,
               appState: {
@@ -8801,7 +9015,7 @@
                 </div>
               ) : (
                 <X initialData={initial}
-                   excalidrawAPI={(a) => { apiRef.current.api = a; window.__cfExc = apiRef.current; setApi(a); }}
+                   excalidrawAPI={(a) => { apiRef.current.api = a; ownApi.current = a; window.__cfExc = apiRef.current; setApi(a); }}
                    onChange={onChangeTop}
                    langCode="ru-RU"
                    viewModeEnabled={!!readOnly}
@@ -9004,7 +9218,14 @@
 
           // Открыта ли сейчас доска на Excalidraw (ExcBoard выше AppCore).
           // Старые доски без поля `engine` остаются на своём движке.
-          const excActive = ((sortedBoards.find(b => b.id === activeBoardId) || {}).engine) === EXC_ENGINE;
+          // Схема света на Excalidraw открывается В ТОЙ ЖЕ полосе, что
+          // и доски, — таким же холстом, вместо доски (`schemeOpen`). Своего
+          // редактора у неё больше нет: тот же Excalidraw, те же жесты.
+          const [schemeOpen, setSchemeOpen] = useState(null);
+          const lightSchemesRef = useRef([]);
+          lightSchemesRef.current = lightSchemes;
+          const excScheme = schemeOpen && !CF_BOARD_SCOPE ? (lightSchemes.find(s => s.id === schemeOpen && s.engine === EXC_ENGINE) || null) : null;
+          const excActive = !!excScheme || ((sortedBoards.find(b => b.id === activeBoardId) || {}).engine) === EXC_ENGINE;
           const excActiveRef = useRef(false);
           excActiveRef.current = excActive;
           const excApiRef = useRef({});
@@ -11445,9 +11666,9 @@
               try {
                 const blob = excApiRef.current.exportImage ? await excApiRef.current.exportImage(fmt) : null;
                 if (!blob) { showToast('На доске пока нечего выгружать'); return; }
-                const b = sortedBoards.find(x => x.id === activeBoardId);
+                const b = excScheme || sortedBoards.find(x => x.id === activeBoardId);
                 const url = URL.createObjectURL(blob), a = document.createElement('a');
-                a.href = url; a.download = `CineFlow_доска_${((b && b.title) || 'доска').replace(/[\\/:*?"<>|]+/g, '_')}_${localDay()}.${fmt}`;
+                a.href = url; a.download = `CineFlow_${excScheme ? 'схема' : 'доска'}_${((b && b.title) || 'доска').replace(/[\\/:*?"<>|]+/g, '_')}_${localDay()}.${fmt}`;
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
                 setTimeout(() => URL.revokeObjectURL(url), 4000);
               } catch (e) { console.warn(e); showToast('Не удалось выгрузить доску'); }
@@ -13974,6 +14195,7 @@
           // доски нужно отцепиться от старого документа и подцепиться к
           // новому, иначе на новую доску прилетят чужие штрихи.
           const canvasDocId = (boardId) => boardId === DEFAULT_BOARD.id ? 'globalDraw' : `draw-${boardId}`;
+          const oldReadyRef = useRef({ board: null });
           useEffect(() => {
             // История отмены своя у каждой доски — иначе Ctrl+Z вернул бы
             // на эту доску рисунок с соседней.
@@ -14004,7 +14226,12 @@
             if (localFigs) { try { shapesRef.current = JSON.parse(localFigs) || []; } catch (err) {} }
             loadLegacy(localLegacy);
             bumpInk();
-            if (!db || !user) return () => flushInk();
+            // Пришли ли штрихи и фигуры ЭТОЙ доски с сервера: по нему
+            // перевод всех досок разом ждёт, прежде чем снимать рисунок.
+            // Ответ «из кэша» готовностью не считается — он бывает старым.
+            const R = oldReadyRef.current = { board: activeBoardId, ink: false, fig: false, err: false };
+            const ready = (k, doc) => { if (oldReadyRef.current !== R) return; if (!doc) R.err = true; else if (doc.metadata && doc.metadata.fromCache) return; R[k] = true; };
+            if (!db || !user) { R.ink = R.fig = true; return () => flushInk(); }
             const col = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('canvas');
             // Два документа: старый растровый рисунок и векторные штрихи.
             const unRaster = col.doc(canvasDocId(activeBoardId)).onSnapshot(doc => {
@@ -14020,7 +14247,7 @@
             // сохранение записало бы огрызок поверх целого — и в облако,
             // и на устройство; так однажды и пропала работа.
             let alive = true;
-            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(async doc => {
+            const readInk = async (doc) => {
               if (!doc.exists || INK_OFF || !alive) return;
               const rb = inkRollbackRef.current;
               if (rb && rb.board === activeBoardId && Date.now() - rb.at < 5000) { inkRollbackRef.current = null; return; }
@@ -14059,14 +14286,19 @@
               if (!alive || list === null) return;
               strokesRef.current = list;
               bumpInk();
-            }, err => console.warn('sync ink', err));
+            };
+            const unInk = col.doc(strokesDocId(activeBoardId)).onSnapshot(doc => { readInk(doc).finally(() => ready('ink', doc)); },
+                                                                          err => { console.warn('sync ink', err); ready('ink', null); });
             const unFig = col.doc(shapesDocId(activeBoardId)).onSnapshot(doc => {
-              if (!doc.exists) return;
-              if (doc.data().lastDrawBy === user.uid) return;
-              try { shapesRef.current = JSON.parse(doc.data().shapes || '[]') || []; } catch (err) { shapesRef.current = []; }
-              setSelShapes(sel => sel.filter(id => shapesRef.current.some(s => s.id === id)));
-              bumpInk();
-            }, err => console.warn('sync shapes', err));
+              const go = () => {
+                if (!doc.exists) return;
+                if (doc.data().lastDrawBy === user.uid) return;
+                try { shapesRef.current = JSON.parse(doc.data().shapes || '[]') || []; } catch (err) { shapesRef.current = []; }
+                setSelShapes(sel => sel.filter(id => shapesRef.current.some(s => s.id === id)));
+                bumpInk();
+              };
+              go(); ready('fig', doc);
+            }, err => { console.warn('sync shapes', err); ready('fig', null); });
             // Уходя с доски, дописываем отложенное: иначе последний штрих
             // уехал бы в облако уже под именем СЛЕДУЮЩЕЙ доски.
             return () => { alive = false; unRaster(); unInk(); unFig(); flushInk(); };
@@ -15160,6 +15392,7 @@
               // элементом, а его файлы мы не храним — после перезагрузки
               // там осталась бы пустая рамка. У нас она станет референсом.
               if (excActive) e.stopPropagation();
+              if (excScheme) { schemeNoImg(); return; }
               const c = boardVisibleCenter();
               handleMultiFileUpload(files, null, {
                 boardId: activeBoardId,
@@ -15168,7 +15401,7 @@
             };
             document.addEventListener('paste', onPaste, excActive);
             return () => document.removeEventListener('paste', onPaste, excActive);
-          }, [currentView, activeBoardId, references, excActive]);
+          }, [currentView, activeBoardId, references, excActive, excScheme && excScheme.id]);
 
           // --- Файлы проекта: КПП, сценарий в PDF, доки ---
           // Файл лежит в документе базы строкой base64, а предел документа
@@ -16316,13 +16549,13 @@
           const newSchemeHere = () => {
             if (READ_ONLY) return;
             const sc = scenes.find(x => x.id === activeSceneId);
-            const nS = { id: `lsch-${Date.now()}`, title: sc ? `Схема света · сц ${sc.number}` : 'Схема света', elements: [], drawData: '' };
-            setLightSchemes([...lightSchemes, nS]); syncDoc('lightSchemes', nS.id, nS);
+            const nS = newScheme(sc ? `Схема света · сц ${sc.number}` : 'Схема света');
             // Сразу привязываем к открытой сцене: за схемой почти всегда
             // приходят от сцены, и второй заход «выбрать её в списке»
             // человек просто не делает.
             if (sc) updateScene(sc.id, 'lightSchemeId', nS.id);
-            setDrawingSchemeId(nS.id);
+            setExcLinkMode(false); setScenePickerOpen(false);
+            setCurrentView('whiteboard'); setSchemeOpen(nS.id);
           };
 
           // Завести стикер и пустую карточку референса ПОСЕРЕДИНЕ ВИДИМОГО.
@@ -16439,7 +16672,7 @@
           // Пуста ли доска Excalidraw под шаблоны — знает только она сама
           // (нарисованное живёт в ней), сообщает через `act.blank`.
           const [excBlank, setExcBlank] = useState(false);
-          useEffect(() => { setExcLinkMode(false); }, [activeBoardId, excActive, currentView]);
+          useEffect(() => { setExcLinkMode(false); setFixMenu(false); }, [activeBoardId, excActive, currentView, schemeOpen]);
           // Новая доска скажет о себе сама на первом onChange; до тех пор
           // шаблонов не показываем — иначе они мигнули бы поверх рисунка.
           useEffect(() => { setExcBlank(false); }, [activeBoardId]);
@@ -16498,16 +16731,22 @@
                 + ' Прежняя доска не стирается: вернуть её можно в «···».',
               calm: true, label: 'Перевести',
               onConfirm: () => {
-                if (typeof flushInk === 'function') { try { flushInk(); } catch (e) {} }
                 const parts = [];
                 if (nShapes) parts.push(`${nShapes} ${plur(nShapes, 'фигура', 'фигуры', 'фигур')}`);
                 if (nInk) parts.push(`${nInk} ${plur(nInk, 'штрих', 'штриха', 'штрихов')}`);
-                setExcConvert({ boardId: b.id, ...data, say: (parts.length ? parts.join(' и ') + ' перенесены' : 'карточки на месте') + (raster ? '; старый растровый рисунок остался на прежней' : '') });
-                const nb = { ...b, engine: EXC_ENGINE, xc: 1, from: 'own' };
-                setBoards(prev => prev.map(x => x.id === nb.id ? nb : x));
-                syncDoc('boards', nb.id, nb);
+                startBoardConvert(b, data, (parts.length ? parts.join(' и ') + ' перенесены' : 'карточки на месте') + (raster ? '; старый растровый рисунок остался на прежней' : ''));
               }
             });
+          };
+          // Одна ветка перевода на все случаи: доска по «···» и все доски
+          // разом. Сам перевод делает доска Excalidraw при первом открытии
+          // (`convert`), здесь только движок и снятое с экрана.
+          const startBoardConvert = (b, data, say, quiet) => {
+            if (typeof flushInk === 'function') { try { flushInk(); } catch (e) {} }
+            setExcConvert({ boardId: b.id, ...data, say, quiet });
+            const nb = { ...b, engine: EXC_ENGINE, xc: 1, from: 'own' };
+            setBoards(prev => prev.map(x => x.id === nb.id ? nb : x));
+            syncDoc('boards', nb.id, nb);
           };
           // Обратно: движок доски — прежний. Нарисованное на Excalidraw
           // остаётся в облаке и вернётся, если перевести снова.
@@ -16526,6 +16765,85 @@
                 showToast('Прежняя доска на месте');
               }
             });
+          };
+
+          // --- ПЕРЕВЕСТИ ВСЁ НА EXCALIDRAW ---
+          // Схемы — сразу в облако (им хватает записи). Доски — ОБХОДОМ:
+          // перевод снимает фигуры и штрихи с экрана старой доски (геометрию
+          // стрелок к карточкам считает она сама), поэтому каждую надо
+          // открыть, ДОЖДАТЬСЯ её рисунка с сервера (`oldReadyRef`) и только
+          // потом переводить. Взяв недогруженную доску, перевод перенёс бы
+          // половину — ровно та беда, что однажды стёрла рисунок (CLAUDE.md,
+          // «Доски»). Не дождались — доску пропускаем и говорим об этом.
+          const [excMig, setExcMig] = useState(null);
+          const excMigStop = useRef(false);
+          const excMigDone = useRef(null);
+          const excMigNow = useRef(null);
+          // Снимается в КАЖДОЙ отрисовке: обход зовёт его спустя время,
+          // и замыкание обязано видеть ту доску, что открыта сейчас.
+          excMigNow.current = { board: activeBoardId, view: currentView, data: () => excOldData(),
+                                 boards: sortedBoards, start: startBoardConvert };
+          const oldBoardsLeft = sortedBoards.filter(b => b.engine !== EXC_ENGINE);
+          const oldSchemesLeft = lightSchemes.filter(s => s.engine !== EXC_ENGINE);
+          const migrateAllToExc = () => {
+            if (READ_ONLY || INK_OFF || excMig) return;
+            const nb = oldBoardsLeft.length, ns = oldSchemesLeft.length;
+            if (!nb && !ns) { showToast('Все доски и схемы уже на Excalidraw'); return; }
+            if (!navigator.onLine) { showToast('Нужна связь: рисунок каждой доски берётся из облака целиком'); return; }
+            const what = [nb ? `${nb} ${plur(nb, 'доску', 'доски', 'досок')}` : '', ns ? `${ns} ${plur(ns, 'схему', 'схемы', 'схем')} света` : ''].filter(Boolean).join(' и ');
+            setConfirmAction({
+              title: 'Перевести всё на Excalidraw?',
+              message: `Переведу ${what}. Карточки останутся на своих местах, фигуры, штрихи и приборы станут элементами Excalidraw. `
+                + 'Доски будут открываться по очереди — пока идёт перевод, ничего не трогайте. '
+                + 'Прежние не стираются: каждую можно вернуть в «···». Старый растровый рисунок досок (до перехода на векторы) Excalidraw показать не может — он останется на прежних.',
+              calm: true, label: 'Перевести всё',
+              onConfirm: () => runExcMigrate(oldBoardsLeft.map(b => b.id), oldSchemesLeft.map(s => s.id))
+            });
+          };
+          const excUntil = (test, ms) => new Promise(res => {
+            const t0 = Date.now();
+            const tick = () => { if (excMigStop.current) return res(false); if (test()) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(tick, 120); };
+            tick();
+          });
+          const runExcMigrate = async (boardIds, schemeIds) => {
+            excMigStop.current = false;
+            const back = activeBoardId, total = boardIds.length + schemeIds.length, failed = [];
+            let done = 0;
+            setExcMig({ done, total, what: '' });
+            for (const id of schemeIds) {
+              if (excMigStop.current) break;
+              const sch = lightSchemesRef.current.find(x => x.id === id);
+              if (!sch || sch.engine === EXC_ENGINE) continue;
+              setExcMig({ done, total, what: sch.title });
+              if (await convertScheme(sch)) done++; else failed.push(sch.title);
+              setExcMig({ done, total, what: sch.title });
+            }
+            setSchemeOpen(null); setCurrentView('whiteboard');
+            for (const id of boardIds) {
+              if (excMigStop.current) break;
+              const b = excMigNow.current.boards.find(x => x.id === id);
+              if (!b || b.engine === EXC_ENGINE) continue;
+              setExcMig({ done, total, what: b.title });
+              setActiveBoardId(id);
+              const got = await excUntil(() => { const r = oldReadyRef.current; return r.board === id && ((r.ink && r.fig) || r.err) && excMigNow.current.board === id; }, 25000);
+              if (!got || oldReadyRef.current.err) { failed.push(b.title); continue; }
+              // Ещё кадр — чтобы доска отрисовалась со своими карточками:
+              // стрелки к карточкам снимаются по ним.
+              await new Promise(r => setTimeout(r, 400));
+              if (excMigStop.current) break;
+              const M = excMigNow.current;
+              if (M.board !== id) { failed.push(b.title); continue; }
+              excMigDone.current = null;
+              M.start(M.boards.find(x => x.id === id) || b, M.data(), '', true);
+              if (await excUntil(() => excMigDone.current === id, 40000)) done++; else failed.push(b.title);
+              setExcMig({ done, total, what: b.title });
+            }
+            const stopped = excMigStop.current;
+            setActiveBoardId(back);
+            setExcMig(null);
+            showToast((stopped ? 'Перевод остановлен. ' : '') + `На Excalidraw: ${done} из ${total}.`
+              + (failed.length ? ` Не перевелись: ${failed.slice(0, 4).map(t => `«${t}»`).join(', ')}${failed.length > 4 ? '…' : ''} — откройте их и переведите в «···».` : '')
+              + (!failed.length && !stopped ? ' Прежние целы — вернуть любую можно в «···».' : ''));
           };
 
           const excAct = {
@@ -16653,10 +16971,16 @@
             converted: (boardId, n) => {
               const cv = excConvert;
               setExcConvert(null);
-              if (!cv || cv.boardId !== boardId) return;
+              excMigDone.current = boardId;
+              if (!cv || cv.boardId !== boardId || cv.quiet) return;
               showToast(`Доска на Excalidraw: ${cv.say}. Прежняя цела — вернуть её можно в «···»`);
             }
           };
+          // Схеме света карточки проекта ни к чему: картинку и рукопись она
+          // не принимает, а слоёв карточек у неё нет.
+          const schemeNoImg = () => showToast('Картинки на схему света не кладутся — положите их на доску');
+          const schemeAct = excScheme ? { ...excAct, files: schemeNoImg, drop: schemeNoImg, ocr: null,
+                                          blank: () => {}, layers: () => {}, markColors: () => {}, converted: () => {} } : null;
           // Нарисованное на доске Excalidraw — по элементу в `boardEls`.
           // Подписка — запросом по доске: ответ на запрос приходит ЦЕЛИКОМ,
           // и «половина элементов доехала» тут не бывает (урок частей
@@ -16688,6 +17012,109 @@
               }
             }).catch(err => console.warn('purge boardEls', err));
           };
+
+          // --- СХЕМЫ СВЕТА НА EXCALIDRAW ---
+          // Перевод старой схемы — сразу в облачное хранилище элементов
+          // (`boardEls` по id схемы), без открытия холста: всё нужное лежит
+          // в самой записи. Поэтому одна схема при открытии и все разом
+          // переводятся одним и тем же путём. Прежние `elements`, `drawData`
+          // и картинка не трогаются: «Вернуть прежнюю схему» возможна всегда.
+          const convertScheme = async (sch) => {
+            if (READ_ONLY || !sch || sch.engine === EXC_ENGINE) return !!sch;
+            let lib;
+            try { lib = await loadExcalidraw(); } catch (e) { showToast('Excalidraw не загрузился — нет связи? Схема откроется в прежнем редакторе'); return false; }
+            // Схему уже переводили и вернули — то, что лежит на Excalidraw
+            // с тех пор (подвинутое, перекрашенное), не перезаписываем:
+            // переводим только то, чего там нет (дорисованное в прежнем
+            // редакторе после возврата). Тот же уговор, что у досок.
+            const loc = excReadLocal(sch.id), skip = new Set(loc.els.map(e => e.id));
+            if (sch.from === 'own' && db && user) {
+              try {
+                const snap = await Promise.race([dataRef().collection('boardEls').where('b', '==', sch.id).get(),
+                                                 new Promise((_, no) => setTimeout(() => no(new Error('нет ответа')), 4000))]);
+                snap.forEach(d => { const x = d.data(); if (x && x.id) skip.add(x.id); });
+              } catch (e) {}
+            }
+            const fresh = excFromScheme(lib, sch).filter(e => !skip.has(e.id));
+            const keys = excKeys(fresh.length);
+            const els = fresh.map((e, i) => ({ ...e, index: keys[i] }));
+            // Местная копия — чтобы схема открылась и без облака; облако
+            // получает то же самое. Подтверждённых версий у новых элементов
+            // нет НАРОЧНО: не дошедшая запись иначе считалась бы дошедшей.
+            try { localStorage.setItem(excLocalKey(sch.id), JSON.stringify({ els: [...loc.els, ...els], known: loc.known || {} })); } catch (e) {}
+            els.forEach(e => excStore.put(sch.id, e));
+            const ns = { ...sch, engine: EXC_ENGINE, xc: 1, from: 'own' };
+            lightSchemesRef.current = lightSchemesRef.current.map(x => x.id === ns.id ? ns : x);
+            setLightSchemes(prev => prev.map(x => x.id === ns.id ? ns : x));
+            syncDoc('lightSchemes', ns.id, ns);
+            return true;
+          };
+          // Открыть схему: на «Досках», в той же полосе, вместо доски.
+          // Старая — переводится тут же (ничего не теряя). Где «Досок» нет
+          // (ссылка-просмотр на другие страницы) — картинка в «Экспликациях».
+          const openSchemeCanvas = async (id) => {
+            const sch = lightSchemesRef.current.find(x => x.id === id);
+            if (!sch) return;
+            if (CF_VIEWS.indexOf('whiteboard') < 0 || CF_BOARD_SCOPE) {
+              if (CF_VIEWS.indexOf('docs') >= 0) { setActiveSchemeId(id); setActiveDocId(null); setPhoneDocOpen(true); setCurrentView('docs'); }
+              return;
+            }
+            if (sch.engine !== EXC_ENGINE) {
+              // Гостю переводить нельзя — смотрит в прежнем редакторе.
+              if (READ_ONLY || !(await convertScheme(sch))) { setDrawingSchemeId(id); return; }
+              showToast('Схема теперь на Excalidraw · прежняя не стёрта, вернуть её можно в «···»');
+            }
+            setExcLinkMode(false); setScenePickerOpen(false);
+            setCurrentView('whiteboard'); setSchemeOpen(id);
+          };
+          // Обратно в прежний редактор. Картинка схемы — снова прежняя:
+          // у сцены и в печати должна стоять та схема, что откроется.
+          const revertScheme = (id) => {
+            if (READ_ONLY) return;
+            const sch = lightSchemesRef.current.find(x => x.id === id);
+            if (!sch || sch.engine !== EXC_ENGINE || sch.from !== 'own') return;
+            setConfirmAction({
+              title: 'Вернуть прежнюю схему?',
+              message: 'Схема откроется в прежнем редакторе такой, какой была до перевода. Нарисованное на Excalidraw не стирается — оно вернётся, если открыть схему на Excalidraw снова.',
+              calm: true, label: 'Вернуть',
+              onConfirm: async () => {
+                const preview = await oldSchemePreview(sch);
+                const ns = { ...sch, engine: '', preview };
+                lightSchemesRef.current = lightSchemesRef.current.map(x => x.id === ns.id ? ns : x);
+                setLightSchemes(prev => prev.map(x => x.id === ns.id ? ns : x));
+                syncDoc('lightSchemes', ns.id, ns);
+                setSchemeOpen(null); setDrawingSchemeId(id);
+              }
+            });
+          };
+          // Новая схема — сразу на Excalidraw.
+          const newScheme = (title) => {
+            const nS = { id: `lsch-${Date.now()}`, title, elements: [], drawData: '', engine: EXC_ENGINE, xc: 1 };
+            lightSchemesRef.current = [...lightSchemesRef.current, nS];
+            setLightSchemes(prev => [...prev, nS]); syncDoc('lightSchemes', nS.id, nS);
+            return nS;
+          };
+          // Картинка схемы — от холста. Пишем, только если поменялась:
+          // запись схемы тяжёлая (в ней и прежний рисунок), и гонять её
+          // в облако ради того же самого незачем.
+          const saveSchemePreview = (id, url) => {
+            if (READ_ONLY) return;
+            const sch = lightSchemesRef.current.find(x => x.id === id);
+            if (!sch || sch.preview === url) return;
+            const ns = { ...sch, preview: url };
+            lightSchemesRef.current = lightSchemesRef.current.map(x => x.id === id ? ns : x);
+            setLightSchemes(prev => prev.map(x => x.id === id ? ns : x));
+            syncDoc('lightSchemes', id, ns);
+          };
+          const schemePreviewOf = useMemo(() => excScheme ? (url) => saveSchemePreview(excScheme.id, url) : null, [excScheme && excScheme.id]);
+          const schemeBackdrop = useMemo(() => excScheme && excScheme.drawData
+            ? { id: excScheme.id + '~bg', url: excScheme.drawData, x: 0, y: 0, w: SCHEME_W, h: SCHEME_H } : null,
+            [excScheme && excScheme.id, excScheme && excScheme.drawData]);
+          // Ушли с «Досок» или выбрали доску — схема закрывается: иначе
+          // «положить на доску» с экрана сцены привело бы на схему, а не
+          // на доску, куда легла карточка.
+          useEffect(() => { if (currentView !== 'whiteboard') setSchemeOpen(null); }, [currentView]);
+          useEffect(() => { setSchemeOpen(null); }, [activeBoardId]);
 
           const [resizingDoc, setResizingDoc] = useState(null);
 
@@ -16847,6 +17274,15 @@
             document.addEventListener('pointerdown', away);
             return () => document.removeEventListener('pointerdown', away);
           }, [boardMenu]);
+          // Список приборов схемы света — то же поведение, что у «···».
+          const [fixMenu, setFixMenu] = useState(false);
+          const fixMenuRef = useRef(null);
+          useEffect(() => {
+            if (!fixMenu) return;
+            const away = (e) => { if (fixMenuRef.current && !fixMenuRef.current.contains(e.target)) setFixMenu(false); };
+            document.addEventListener('pointerdown', away);
+            return () => document.removeEventListener('pointerdown', away);
+          }, [fixMenu]);
           // Заметка объекта — такая же бумажка, как заметка сцены, только
           // привязана к месту. Отдельной сущности не заводим по той же
           // причине, по которой фото объекта — обычные референсы: иначе
@@ -17595,6 +18031,23 @@
                           className="text-[length:var(--fs-1)] font-bold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
                     {repairing ? 'Чиню...' : 'Сбой повторяется'}
                   </button>
+                </div>
+              )}
+
+              {/* Перевод всего на Excalidraw идёт ОБХОДОМ досок, и трогать
+                  их в это время нельзя: правка посреди обхода легла бы на
+                  доску, которую уже сняли с экрана. Поэтому экран закрыт
+                  полупрозрачным слоем, а сверху — что идёт и «Остановить». */}
+              {excMig && (
+                <div className="fixed inset-0 z-[390] flex items-start justify-center" data-cf="migrate-bar"
+                     style={{ background: 'rgba(26,25,24,.45)', paddingTop: 'calc(70px + var(--sat))' }}>
+                  <div className="glass-panel flex items-center gap-3 px-4 py-3" style={{ borderRadius: 14, maxWidth: 'min(92vw, 520px)' }}>
+                    <span style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', lineHeight: 1.4 }}>
+                      Перевожу на Excalidraw: {excMig.done} из {excMig.total}
+                      {excMig.what ? <span style={{ color: 'var(--muted)' }}> · «{excMig.what}»</span> : null}
+                    </span>
+                    <button onClick={() => { excMigStop.current = true; }} className="cf-hbtn shrink-0" data-cf="migrate-stop">Остановить</button>
+                  </div>
                 </div>
               )}
 
@@ -18896,7 +19349,7 @@
                                 <button onClick={() => setSceneToBoard(s.id)} className="cf-tool cf-edit-only"
                                         title={`Выложить сцену и её референсы на доску${sceneRefs.length ? ` · ${sceneRefs.length}` : ''}`}><Icons.Board /></button>
                                 {scheme && (
-                                  <button onClick={() => { setActiveSchemeId(scheme.id); setActiveDocId(null); setCurrentView('docs'); }}
+                                  <button onClick={() => openSchemeCanvas(scheme.id)}
                                           className="cf-tool" title={`Схема света · ${scheme.title || 'без названия'}`}><Icons.Lightbulb /></button>
                                 )}
                                 <span className="cf-tool-sep" style={{ width: 22 }} />
@@ -18963,7 +19416,7 @@
                                         {lightSchemes.map(sch => (<option key={sch.id} value={sch.id}>{sch.title}</option>))}
                                       </select>
                                       {scheme && (
-                                        <button onClick={() => { setActiveSchemeId(scheme.id); setActiveDocId(null); setCurrentView('docs'); }}
+                                        <button onClick={() => openSchemeCanvas(scheme.id)} data-cf="scene-scheme-open"
                                                 className="shrink-0 rounded-lg px-3 text-xs font-semibold"
                                                 style={{ minHeight: 'var(--tap)', background: 'var(--raised)', color: 'var(--text-2)' }}>Открыть</button>
                                       )}
@@ -19851,7 +20304,7 @@
                                       {lightSchemes.map(sch => (<option key={sch.id} value={sch.id}>{sch.title}</option>))}
                                     </select>
                                     {scheme && (
-                                      <button onClick={() => { setActiveSchemeId(scheme.id); setActiveDocId(null); setCurrentView('docs'); }}
+                                      <button onClick={() => openSchemeCanvas(scheme.id)}
                                               className="shrink-0 rounded-lg px-3" style={{ minHeight: 'var(--tap)', fontSize: 'var(--fs-2)', background: 'var(--raised)', color: 'var(--text-2)' }}>Открыть</button>
                                     )}
                                   </div>
@@ -19958,9 +20411,9 @@
                          style={{ background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
                       <div className="flex items-end gap-1 flex-1 min-w-0 overflow-x-auto hide-scrollbar">
                       {sortedBoards.map(b => {
-                        const on = b.id === activeBoardId;
+                        const on = b.id === activeBoardId && !excScheme;
                         return (
-                          <button key={b.id} onClick={() => setActiveBoardId(b.id)}
+                          <button key={b.id} onClick={() => { setActiveBoardId(b.id); setSchemeOpen(null); }}
                                   onDoubleClick={() => {
                                     // Правка спрятана в двойное нажатие, а не в кнопку,
                                     // поэтому cf-edit-only её не закрывает — проверяем сами.
@@ -20030,29 +20483,16 @@
                           </button>
                         );
                       })}
+                      {/* Новая доска — сразу на Excalidraw: старый движок больше
+                          не заводится (переведённую доску можно вернуть в «···»). */}
                       <button onClick={() => {
-                                const nb = { id: `board-${Date.now()}`, title: `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
+                                const nb = { id: `board-${Date.now()}`, title: `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length, engine: EXC_ENGINE, xc: 1 };
                                 setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
                               }}
                               title="Новая доска · двойной клик по вкладке — переименовать"
+                              data-cf="board-new"
                               className="cf-edit-only shrink-0 flex items-center justify-center transition-colors hover:bg-white/5"
                               style={{ width: 40, minHeight: 40, marginBottom: 2, borderRadius: 'var(--r-md)', border: '1px solid var(--border)', color: 'var(--muted)', fontSize: 'var(--fs-4)' }}>+</button>
-                      {/* ПРОБНАЯ ДОСКА НА EXCALIDRAW — отдельной кнопкой, а не
-                          заменой «+»: старые доски остаются на своём движке,
-                          и сравнивать их можно на одном проекте. */}
-                      <button onClick={() => {
-                                const n = sortedBoards.filter(x => x.engine === EXC_ENGINE).length + 1;
-                                // xc — цвета на ней НАСТОЯЩИЕ (холст не выворачивается):
-                                // переводить с прежней темы нечего.
-                                const nb = { id: `board-${Date.now()}`, title: n > 1 ? `Excalidraw ${n}` : 'Excalidraw', order: sortedBoards.length, engine: EXC_ENGINE, xc: 1 };
-                                setBoards([...boards, nb]); syncDoc('boards', nb.id, nb); setActiveBoardId(nb.id);
-                              }}
-                              title="Новая доска на Excalidraw (проба): карточки сцен и связи те же"
-                              data-cf="exc-new"
-                              className="cf-edit-only shrink-0 flex items-center gap-1 justify-center transition-colors hover:bg-white/5"
-                              style={{ minHeight: 40, marginBottom: 2, marginLeft: 4, padding: '0 10px', borderRadius: 'var(--r-md)', border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
-                        <span style={{ fontSize: 'var(--fs-3)', lineHeight: 1 }}>+</span> Excalidraw
-                      </button>
 
                       {/* СХЕМЫ СВЕТА — здесь же, вкладками рядом с досками.
                           Схема — такой же холст, как доска, и держать один
@@ -20068,17 +20508,19 @@
                       {!CF_BOARD_SCOPE && (
                       <span className="shrink-0" style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px 9px' }} />
                       )}
-                      {!CF_BOARD_SCOPE && lightSchemes.map(sch => (
-                        <button key={sch.id} onClick={() => setDrawingSchemeId(sch.id)}
+                      {!CF_BOARD_SCOPE && lightSchemes.map(sch => { const son = !!excScheme && excScheme.id === sch.id; return (
+                        <button key={sch.id} onClick={() => openSchemeCanvas(sch.id)} data-cf="scheme-tab" 
                                 onDoubleClick={() => {
                                   if (READ_ONLY) return;
                                   const t = prompt('Название схемы', sch.title);
                                   if (t && t.trim()) { const up = lightSchemes.map(x => x.id === sch.id ? { ...x, title: t.trim() } : x); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(x => x.id === sch.id)); }
                                 }}
-                                title={`${sch.title} · открыть редактор схемы. Двойной клик — переименовать`}
+                                title={son ? 'Двойной клик — переименовать' : `${sch.title} · открыть схему. Двойной клик — переименовать`}
                                 className="shrink-0 flex items-center gap-1.5 transition-colors hover:bg-white/5"
                                 style={{ padding: '9px 12px', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', minHeight: 40,
-                                         color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
+                                         background: son ? 'var(--bg)' : 'transparent',
+                                         borderBottom: son ? '2px solid var(--accent)' : '2px solid transparent',
+                                         color: son ? 'var(--text)' : 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
                           <span style={{ color: 'var(--warn)', display: 'flex' }}><Icons.Lightbulb /></span>
                           <span className="truncate" style={{ maxWidth: 160 }}>{sch.title}</span>
                           {/* Удаление здесь же: заводить схему в «Досках»,
@@ -20093,8 +20535,12 @@
                                     onConfirm: () => {
                                       setLightSchemes(lightSchemes.filter(x => x.id !== sch.id));
                                       deleteNetDoc('lightSchemes', sch.id);
+                                      // Нарисованное схемы на Excalidraw — тоже,
+                                      // даже если она сейчас на прежнем редакторе.
+                                      if (sch.engine === EXC_ENGINE || sch.from === 'own') purgeExcBoard(sch.id);
                                       if (activeSchemeId === sch.id) setActiveSchemeId(null);
                                       if (drawingSchemeId === sch.id) setDrawingSchemeId(null);
+                                      if (schemeOpen === sch.id) setSchemeOpen(null);
                                       // Ссылки на удалённую схему чистим сами:
                                       // иначе у сцены осталась бы кнопка,
                                       // открывающая пустоту.
@@ -20113,7 +20559,7 @@
                                 className="cf-edit-only shrink-0"
                                 style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-3)', lineHeight: 1, marginLeft: 2 }}>✕</span>
                         </button>
-                      ))}
+                      ); })}
                       <button onClick={newSchemeHere} title="Новая схема света"
                               className="cf-edit-only shrink-0 flex items-center gap-1 justify-center transition-colors hover:bg-white/5"
                               style={{ minHeight: 40, marginBottom: 2, padding: '0 10px', borderRadius: 'var(--r-md)', border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>
@@ -20136,7 +20582,42 @@
                             и где у каждой строки есть НАЗВАНИЕ. На планшете
                             и на столе места хватает, и там они остаются
                             под рукой. */}
-                        {!isPhone && (
+                        {/* СХЕМА СВЕТА: вместо карточек — приборы. Одна кнопка
+                            со списком знаков, а не девять значков в строке:
+                            значок «флаг» от «рамы» по виду не отличить, а у
+                            строки списка есть название. На телефоне — тоже
+                            здесь: на схеме это главное действие. */}
+                        {excScheme && (
+                          <div className="relative shrink-0" ref={fixMenuRef}>
+                            <button onClick={() => setFixMenu(v => !v)} data-cf="fixture-tool"
+                                    className={`cf-tool cf-edit-only ${fixMenu ? 'on' : ''}`} title="Прибор, камера, актёр…"
+                                    style={{ width: 'auto', padding: '0 10px', gap: 6, display: 'inline-flex', alignItems: 'center' }}>
+                              <Icons.Lightbulb/><span style={{ fontSize: 'var(--fs-2)' }}>Прибор</span>
+                            </button>
+                            {fixMenu && (
+                              <div className="cf-menu" data-cf="fixture-menu" style={{ minWidth: 230 }}>
+                                {SCHEME_FIXTURES.map(f => (
+                                  <button key={f.key} data-fx={f.key}
+                                          onClick={() => { setFixMenu(false); if (!(excApiRef.current.insertFixture && excApiRef.current.insertFixture(f.key))) showToast('Схема ещё открывается — попробуйте через секунду'); }}>
+                                    <FixtureIcon k={f.key}/>
+                                    <span className="flex flex-col items-start" style={{ lineHeight: 1.2 }}>
+                                      <span>{f.label}</span>
+                                      <span style={{ fontSize: 'var(--fs-1)', color: 'var(--muted-2)' }}>{f.hint}</span>
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {excScheme && !isPhone && (
+                          <React.Fragment>
+                            <button onClick={() => setExcLinkMode(v => !v)} data-cf="exc-link-tool"
+                                    className={`cf-tool cf-edit-only ${excLinkMode ? 'on' : ''}`} title="Связь: нажмите две фигуры"><Icons.Link/></button>
+                            <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
+                          </React.Fragment>
+                        )}
+                        {!isPhone && !excScheme && (
                         <React.Fragment>
                           {/* Единственный путь к уже загруженным референсам
                               с самой доски. */}
@@ -20166,7 +20647,7 @@
                                   className={`cf-tool ${boardMenu ? 'on' : ''}`} style={{ letterSpacing: 1 }}>···</button>
                           {boardMenu && (
                             <div className="cf-menu">
-                              {isPhone && (
+                              {isPhone && !excScheme && (
                                 <React.Fragment>
                                   <button className="cf-edit-only" onClick={() => { setBoardMenu(false); setScenePickerOpen(true); }}>
                                     <Icons.Scene/> Положить на доску…
@@ -20204,7 +20685,21 @@
                                   Перевести на Excalidraw
                                 </button>
                               )}
-                              {excActive && ((sortedBoards.find(b => b.id === activeBoardId) || {}).from === 'own') && (
+                              {(oldBoardsLeft.length > 0 || oldSchemesLeft.length > 0) && !INK_OFF && (
+                                <button className="cf-edit-only" data-cf="migrate-all" onClick={() => { setBoardMenu(false); migrateAllToExc(); }}
+                                        title="Все доски и схемы света — на Excalidraw; прежние не стираются">
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', fontWeight: 700, width: 16, textAlign: 'center' }}>Ex</span>
+                                  Перевести всё на Excalidraw · {oldBoardsLeft.length + oldSchemesLeft.length}
+                                </button>
+                              )}
+                              {excScheme && excScheme.from === 'own' && (
+                                <button className="cf-edit-only" data-cf="scheme-from-exc" onClick={() => { setBoardMenu(false); revertScheme(excScheme.id); }}
+                                        title="Открыть схему в прежнем редакторе, какой она была до перевода">
+                                  <span style={{ width: 16, textAlign: 'center' }}>↩</span>
+                                  Вернуть прежнюю схему
+                                </button>
+                              )}
+                              {excActive && !excScheme && ((sortedBoards.find(b => b.id === activeBoardId) || {}).from === 'own') && (
                                 <button className="cf-edit-only" data-cf="board-from-exc" onClick={() => { setBoardMenu(false); revertBoardFromExc(); }}
                                         title="Открыть доску такой, какой она была до перевода">
                                   <span style={{ width: 16, textAlign: 'center' }}>↩</span>
@@ -20224,7 +20719,13 @@
                     {/* Доска на Excalidraw — вместо своего холста, целиком.
                         key по доске: у каждой доски своя сцена, своя история
                         отмены и своя подписка на облако. */}
-                    {excActive ? (
+                    {excScheme ? (
+                      <ExcBoard key={excScheme.id} boardId={excScheme.id} readOnly={READ_ONLY} cards={EXC_NO_CARDS}
+                                legacyColors={false} convert={null}
+                                linkMode={excLinkMode && !READ_ONLY} onLinkMode={setExcLinkMode}
+                                backdrop={schemeBackdrop} onPreview={READ_ONLY ? null : schemePreviewOf}
+                                projectRatio={projectRatio} store={excStore} act={schemeAct} apiRef={excApiRef} />
+                    ) : excActive ? (
                       <ExcBoard key={activeBoardId} boardId={activeBoardId} readOnly={READ_ONLY} cards={excCards || {}}
                                 legacyColors={!((sortedBoards.find(b => b.id === activeBoardId) || {}).xc)} convert={excConvert}
                                 linkMode={excLinkMode && !READ_ONLY} onLinkMode={setExcLinkMode}
@@ -21777,10 +22278,10 @@
                                 {lightSchemes.map(sch => (
                                   <div key={sch.id} className="group relative mb-2">
                                     <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
-                                    <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
+                                    <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); if (sch.engine === EXC_ENGINE || sch.from === 'own') purgeExcBoard(sch.id); if (schemeOpen === sch.id) setSchemeOpen(null); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
                                   </div>
                                 ))}
-                                <button onClick={() => { const nS = { id: `lsch-${Date.now()}`, title: `Схема света`, elements: [], drawData: '' }; setLightSchemes([...lightSchemes, nS]); setActiveSchemeId(nS.id); setActiveDocId(null); setPhoneDocOpen(true); syncDoc('lightSchemes', nS.id, nS); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                                <button onClick={() => { const nS = newScheme('Схема света'); setActiveSchemeId(nS.id); setActiveDocId(null); setPhoneDocOpen(true); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
                             </div>
                           </div>
                         </div>
@@ -21885,10 +22386,10 @@
                               <div className="flex-1 glass-panel p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative">
                                   <div className="flex justify-between items-center gap-4">
                                       <input type="text" value={sch.title} onChange={(e) => { const up = lightSchemes.map(s=>s.id===sch.id?{...s,title:e.target.value}:s); setLightSchemes(up); syncDoc('lightSchemes', sch.id, up.find(s=>s.id===sch.id)); }} className="font-serif bg-transparent text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название световой схемы..." />
-                                      <button onClick={() => setDrawingSchemeId(sch.id)} className="cf-edit-only bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть графический редактор</button>
+                                      <button onClick={() => openSchemeCanvas(sch.id)} data-cf="scheme-open" className="cf-edit-only bg-amber-600/30 hover:bg-amber-500/50 text-amber-200 px-6 py-3 rounded-lg font-bold transition-colors shrink-0">Открыть схему</button>
                                   </div>
                                   <div className="w-full aspect-video bg-[var(--scrim-hi)] rounded-lg border border-[var(--border)] flex items-center justify-center overflow-hidden">
-                                      {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть графический редактор» для моделирования схемы</span></div>}
+                                      {(sch.preview || sch.drawData) ? <img src={sch.preview || sch.drawData} className="w-full h-full object-contain" /> : <div className="text-zinc-500 flex flex-col items-center"><Icons.Lightbulb/><span className="mt-2 text-xs">Нажмите «Открыть схему» — она откроется на «Досках»</span></div>}
                                   </div>
                                   <div className="pt-4 border-t border-[var(--border)]">
                                       <span className="text-xs text-zinc-400 font-bold block mb-2">Привязано к сценам:</span>
@@ -22768,7 +23269,7 @@
                         </button>
                       ))}
                       <button onClick={() => {
-                                const nb = { id: `board-${Date.now()}`, title: `Сцена ${sc.number || ''}`.trim() || `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length };
+                                const nb = { id: `board-${Date.now()}`, title: `Сцена ${sc.number || ''}`.trim() || `Доска ${sortedBoards.length + 1}`, order: sortedBoards.length, engine: EXC_ENGINE, xc: 1 };
                                 setBoards([...boards, nb]); syncDoc('boards', nb.id, nb);
                                 spreadSceneOnBoard(sceneToBoard, nb.id);
                               }}
