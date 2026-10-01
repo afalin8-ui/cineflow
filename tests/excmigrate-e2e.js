@@ -270,6 +270,118 @@ const SEED = () => ({
   ok('ноутбук: ни одной ошибки страницы', errs.length === 0, errs.join(' | '));
   await ctx.close();
 
+  // ================= ПРИБОР НА СХЕМЕ → СВЕТ СЦЕНЫ =================
+  // Сцена 1 и сцена 2 со схемой «кухни», сцена 3 — без. У сцены 1 руками
+  // вписано SkyPanel ×2. Правило «не меньше, чем на схеме»: нарисовали
+  // один — у сцены 1 так и останется 2 (это те же), у сцены 2 станет 1.
+  const seedL = () => {
+    const sd = SEED();
+    sd.lightGearTypes = { arri600: { label: 'ARRI Skypanel 600' } };
+    sd.scenes.sc1.lightGear = { arri600: 2 };
+    sd.scenes.sc2 = { id: 'sc2', number: '2', title: 'ИНТ. КУХНЯ — НОЧЬ', content: '', boardId: '', x: 0, y: 0, gear: {}, lightGear: {}, lightSchemeId: 'ls1' };
+    sd.scenes.sc3 = { id: 'sc3', number: '3', title: 'НАТ. ДВОР', content: '', boardId: '', x: 0, y: 0, gear: {}, lightGear: { arri600: 1 }, lightSchemeId: '' };
+    return sd;
+  };
+  const ctxL = await mkCtx(1440, 900, seedL());
+  const { page: L, errs: errsL } = await open(ctxL);
+  await goBoards(L); await L.waitForTimeout(500);
+  await press(L, '[data-cf="scheme-tab"]');
+  await L.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'ls1', { timeout: 60000 }).catch(() => {});
+  await L.waitForTimeout(1500);
+  const pickL = async (sel, search) => {
+    await press(L, '[data-cf="fixture-tool"]'); await L.waitForTimeout(250);
+    if (search) {
+      await L.focus('[data-cf="fixture-search"]');
+      await L.keyboard.type(search, { delay: 15 });
+      await L.waitForTimeout(250);
+    }
+    const r = await press(L, sel);
+    await L.waitForTimeout(400);
+    await L.mouse.click(700, 780); await L.waitForTimeout(1600);
+    return r;
+  };
+  const scL = async (id) => (await store(L, 'scenes'))[id];
+  const toastL = () => L.evaluate(() => (document.querySelector('[data-cf="toast"]') || {}).textContent || '');
+  const rL1 = await pickL('[data-fx="dev-arri600"]');
+  ok('в списке «Прибор» — приборы проекта, и строка нажимается', !!rL1 && rL1.hit, JSON.stringify(rL1));
+  let SL1 = await scL('sc1'), SL2 = await scL('sc2'), SL3 = await scL('sc3');
+  ok('SkyPanel на схеме: у сцены 2 появился ×1, у сцены 1 так и осталось ×2 (те же)', SL2.lightGear.arri600 === 1 && SL1.lightGear.arri600 === 2 && SL1.lightOwn.arri600 === 2
+     && SL1.schemeGear.arri600 === 1, JSON.stringify({ s1: SL1.lightGear, s2: SL2.lightGear }));
+  ok('сцена без этой схемы не тронута', JSON.stringify(SL3.lightGear) === JSON.stringify({ arri600: 1 }) && !SL3.schemeGear);
+  ok('схема помнит свои приборы', JSON.stringify((await store(L, 'lightSchemes')).ls1.gear) === JSON.stringify({ arri600: 1 }));
+  ok('полоска говорит, куда лёг прибор', /ARRI Skypanel 600 — в свете сцен #1, #2/.test(await toastL()), await toastL());
+  await pickL('[data-fx="dev-arri600"]'); await pickL('[data-fx="dev-arri600"]');
+  SL1 = await scL('sc1'); SL2 = await scL('sc2');
+  ok('три SkyPanel на схеме — у обеих сцен ×3', SL1.lightGear.arri600 === 3 && SL2.lightGear.arri600 === 3, JSON.stringify({ s1: SL1.lightGear, s2: SL2.lightGear }));
+  // Из справочника: ложится и в каталог, и в свет, знак — по виду прибора.
+  const rL2 = await pickL('[data-fx^="hb-"]', 'ls 600d pro');
+  const LT = await store(L, 'lightGearTypes');
+  SL1 = await scL('sc1');
+  ok('прибор из справочника: в каталоге, в свете сцены ×1', !!rL2 && rL2.hit && LT.aputure_ls_600d_pro && LT.aputure_ls_600d_pro.label === 'Aputure LS 600d Pro'
+     && SL1.lightGear.aputure_ls_600d_pro === 1, JSON.stringify({ hit: rL2 && rL2.hit, cat: Object.keys(LT), lg: SL1.lightGear }));
+  await pickL('[data-fx^="hb-"]', 'titan tube');
+  const signsL = await L.evaluate(() => { const out = {}; window.__cfExc.api.getSceneElements().forEach(e => { const c = e.customData; if (c && c.dev && c.main) out[c.dev] = c.fx; }); return out; });
+  ok('знак — по виду прибора: моноблок прожектором, трубка трубкой, панель панелью', signsL.aputure_ls_600d_pro === 'spot' && signsL.astera_titan_tube === 'tube' && signsL.arri600 === 'panel',
+     JSON.stringify(signsL));
+  const lblL = await L.evaluate(() => window.__cfExc.api.getSceneElements().some(e => e.type === 'text' && e.customData && e.customData.dev === 'astera_titan_tube' && (e.originalText || e.text) === 'Astera Titan Tube'));
+  ok('подпись знака — название модели', lblL);
+  await pickL('[data-fx="dev-new"]', 'Фонарь Петрович');
+  SL1 = await scL('sc1');
+  ok('своего прибора нигде нет — «+ новый прибор»: в каталоге и в свете', (await store(L, 'lightGearTypes'))['фонарь_петрович'] && SL1.lightGear['фонарь_петрович'] === 1, JSON.stringify(SL1.lightGear));
+  // Убрали один SkyPanel со схемы — у сцен стало ×2.
+  await L.evaluate(() => { const a = window.__cfExc.api;
+    const one = a.getSceneElements().find(e => e.customData && e.customData.dev === 'arri600' && e.customData.main);
+    const g = one.groupIds[0];
+    a.updateScene({ elements: a.getSceneElementsIncludingDeleted().map(e => e.groupIds && e.groupIds.includes(g) ? { ...e, isDeleted: true, version: e.version + 1, versionNonce: e.versionNonce + 1 } : e),
+                    captureUpdate: window.ExcalidrawLib.CaptureUpdateAction.IMMEDIATELY }); });
+  await L.waitForTimeout(1800);
+  SL1 = await scL('sc1'); SL2 = await scL('sc2');
+  ok('убрали SkyPanel со схемы — у сцен ×2 (у сцены 1 вписанные руками 2)', SL1.lightGear.arri600 === 2 && SL2.lightGear.arri600 === 2, JSON.stringify({ s1: SL1.lightGear, s2: SL2.lightGear }));
+
+  // --- в панели «Свет» сцены: пометка «на схеме», «−» ниже схемы не уводит ---
+  await L.evaluate(() => { const t = [...document.querySelectorAll('button')].find(x => x.title === 'Сцены' || x.textContent.trim() === 'Сцены'); t && t.click(); });
+  await L.waitForTimeout(600);
+  await L.evaluate(() => { const r = [...document.querySelectorAll('button, div[role="button"], li')].find(x => /КВАРТИРА/.test(x.textContent || '') && x.offsetParent && x.textContent.length < 80); r && r.click(); });
+  await L.waitForTimeout(500);
+  await press(L, 'button[title="Свет"]'); await L.waitForTimeout(500);
+  const marksL = await L.evaluate(() => [...document.querySelectorAll('[data-cf="gear-on-scheme"]')].filter(x => x.offsetParent).map(x => x.textContent));
+  ok('в свете сцены у приборов со схемы — «на схеме ×N»', marksL.includes('на схеме ×2') && marksL.includes('на схеме ×1'), JSON.stringify(marksL));
+  const minusL = await L.evaluate(() => { const row = [...document.querySelectorAll('input')].find(i => i.value === 'Aputure LS 600d Pro' && i.offsetParent);
+    const b = row && [...row.parentElement.querySelectorAll('button')].find(x => x.textContent.trim() === '−'); if (!b) return null;
+    const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  if (minusL) await L.mouse.click(minusL.x, minusL.y);
+  await L.waitForTimeout(500);
+  SL1 = await scL('sc1');
+  ok('«−» у прибора со схемы не уводит ниже нарисованного и говорит почему', !!minusL && SL1.lightGear.aputure_ls_600d_pro === 1 && /уберите прибор со схемы/.test(await toastL()), await toastL());
+  // Отвязали схему у сцены — её приборы ушли, вписанное руками осталось.
+  await L.evaluate(() => { const sel = [...document.querySelectorAll('select')].find(x => x.offsetParent && [...x.options].some(o => o.value === 'ls1'));
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(sel, ''); sel.dispatchEvent(new Event('change', { bubbles: true })); });
+  await L.waitForTimeout(600);
+  SL1 = await scL('sc1');
+  ok('схему у сцены сняли — в свете осталось вписанное руками', JSON.stringify(SL1.lightGear) === JSON.stringify({ arri600: 2 }), JSON.stringify(SL1.lightGear));
+  await L.evaluate(() => { const sel = [...document.querySelectorAll('select')].find(x => x.offsetParent && [...x.options].some(o => o.value === 'ls1'));
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(sel, 'ls1'); sel.dispatchEvent(new Event('change', { bubbles: true })); });
+  await L.waitForTimeout(600);
+  SL1 = await scL('sc1');
+  ok('выбрали схему снова — её приборы вернулись', SL1.lightGear.arri600 === 2 && SL1.lightGear.aputure_ls_600d_pro === 1 && SL1.lightGear.astera_titan_tube === 1 && SL1.lightGear['фонарь_петрович'] === 1,
+     JSON.stringify(SL1.lightGear));
+  ok('свет со схемы — в КПП и печати тем же списком (lightGear у записи сцены)', !!SL1.lightGear.astera_titan_tube);
+  ok('свет сцены: ни одной ошибки страницы', errsL.length === 0, errsL.join(' | '));
+  const cloudL = await L.evaluate(() => JSON.parse(JSON.stringify(window.__cfStore)));
+  await ctxL.close();
+
+  // Другое устройство открыло схему и ничего не правило — свет сцен
+  // не трогается (пересчёт только после своей правки и ответа облака).
+  const ctxL2 = await mkCtx(1440, 900, cloudL);
+  const { page: L2 } = await open(ctxL2);
+  await goBoards(L2); await L2.waitForTimeout(500);
+  await press(L2, '[data-cf="scheme-tab"]');
+  await L2.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'ls1', { timeout: 60000 }).catch(() => {});
+  await L2.waitForTimeout(2500);
+  ok('другое устройство: открыло схему — свет сцен не переписан', (await writes(L2)).filter(w => w.coll === 'scenes').length === 0,
+     JSON.stringify((await writes(L2)).filter(w => w.coll === 'scenes')));
+  await ctxL2.close();
+
   // ================= ГОСТЬ ПО ССЫЛКЕ =================
   // Схема на Excalidraw — смотреть можно, перекладывать нельзя; старая
   // схема гостем не переводится, а открывается прежним редактором.
