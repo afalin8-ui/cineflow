@@ -1074,6 +1074,200 @@
         // (так бывает с файлами из «Файлов» на iPad) — по расширению.
         const isPdfFile = (f) => !!f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
 
+        // ПЕЧАТЬ В УСТАНОВЛЕННОМ ПРИЛОЖЕНИИ — ГОТОВЫЙ PDF, А НЕ СТРАНИЦА.
+        // window.print() там не делает ничего, а отдельное окно с
+        // разметкой (так было раньше) на iPhone открывается пустой
+        // вкладкой без адреса: «Поделиться» в ней делится пустотой,
+        // «Напечатать» нет, сохранить нечего — с листом не сделать
+        // НИЧЕГО. Файл PDF, отданный через navigator.share, наоборот,
+        // открывает системный лист со всем сразу: «Напечатать»,
+        // «Сохранить в Файлы», мессенджеры, почта.
+        // Лист вёрстается теми же PRINT_PAGE_CSS в скрытом окошке,
+        // каждая страница снимается картинкой (html2canvas, по
+        // требованию — как xlsx и pdf.js), а сам PDF собираем САМИ:
+        // страницы-JPEG в файле PDF — это сотня строк, библиотека на
+        // 360 КБ ради них не нужна (та же мысль, что у ZIP).
+        // Берём html2canvas-pro, а НЕ исходный html2canvas 1.4.1: тот ставит
+        // текст на 10 точек ниже его места в вёрстке (замер стендом: строка
+        // в 3…20 рисуется в 14…28), и строку, которую режем по её низу,
+        // на листе разрезало пополам — верх на одной странице, низ на
+        // следующей. Тот же замер у -pro: 6…20, ровно по месту.
+        const H2C_URL = 'https://cdn.jsdelivr.net/npm/html2canvas-pro@1.6.7/dist/html2canvas-pro.min.js';
+        const h2cFn = () => { const g = window.html2canvas; return typeof g === 'function' ? g : (g && (g.default || g.html2canvas)) || null; };
+        let h2cLoading = null;
+        const loadHtml2Canvas = () => {
+          if (h2cFn()) return Promise.resolve(h2cFn());
+          if (!h2cLoading) h2cLoading = new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = H2C_URL;
+            s.onload = () => h2cFn() ? res(h2cFn()) : (h2cLoading = null, rej(new Error('сборщик PDF не поднялся')));
+            s.onerror = () => { h2cLoading = null; rej(new Error('не удалось загрузить сборщик PDF — нужна связь')); };
+            document.head.appendChild(s);
+          });
+          return h2cLoading;
+        };
+        // Лист A4 и поля 14 мм — как @page в PRINT_PAGE_CSS. В пунктах.
+        const PDF_W = 595.28, PDF_H = 841.89, PDF_M = 14 * 72 / 25.4;
+        // 2,5 — это ~240 точек на дюйм: текст на бумаге не мылится,
+        // а страница остаётся по силам телефону (1720 × 2600).
+        const PDF_SCALE = 2.5;
+        // Файл PDF из картинок страниц. pages: [{jpeg: Uint8Array, w, h}],
+        // каждая встаёт по ширине поля набора от верхнего поля. bg — цвет
+        // листа целиком (у тёмного листа поля тоже тёмные).
+        const pdfFromJpegs = (pages, { bg, title } = {}) => {
+          const enc = new TextEncoder();
+          const parts = []; let len = 0; const offs = [];
+          const push = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+          const obj = (n, head, stream) => {
+            offs[n] = len;
+            push(n + ' 0 obj\n' + head);
+            if (stream) { push('\nstream\n'); push(stream); push('\nendstream'); }
+            push('\nendobj\n');
+          };
+          const f = (v) => (Math.round(v * 100) / 100).toString();
+          push('%PDF-1.4\n'); push(new Uint8Array([37, 226, 227, 207, 211, 10]));
+          const n = pages.length, info = 3 + 3 * n;
+          obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+          obj(2, '<< /Type /Pages /Count ' + n + ' /Kids [' + pages.map((p, i) => (3 + 3 * i) + ' 0 R').join(' ') + '] >>');
+          const fill = bg ? bg.map(c => f(c / 255)).join(' ') + ' rg 0 0 ' + f(PDF_W) + ' ' + f(PDF_H) + ' re f\n' : '';
+          pages.forEach((p, i) => {
+            const po = 3 + 3 * i, co = po + 1, io = po + 2;
+            const dw = PDF_W - 2 * PDF_M, dh = dw * p.h / p.w;
+            const content = enc.encode(fill + 'q ' + f(dw) + ' 0 0 ' + f(dh) + ' ' + f(PDF_M) + ' ' + f(PDF_H - PDF_M - dh) + ' cm /Im0 Do Q\n');
+            obj(po, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + f(PDF_W) + ' ' + f(PDF_H) + '] /Resources << /XObject << /Im0 ' + io + ' 0 R >> >> /Contents ' + co + ' 0 R >>');
+            obj(co, '<< /Length ' + content.length + ' >>', content);
+            obj(io, '<< /Type /XObject /Subtype /Image /Width ' + p.w + ' /Height ' + p.h +
+                    ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + p.jpeg.length + ' >>', p.jpeg);
+          });
+          // Название — строкой UTF-16 с меткой порядка байт: иначе кириллица
+          // в свойствах файла становится кракозябрами.
+          const t = String(title || 'CineFlow');
+          let hex = 'FEFF';
+          for (let i = 0; i < t.length; i++) hex += t.charCodeAt(i).toString(16).padStart(4, '0').toUpperCase();
+          obj(info, '<< /Title <' + hex + '> /Producer (CineFlow) >>');
+          const xref = len;
+          let x = 'xref\n0 ' + (info + 1) + '\n0000000000 65535 f \n';
+          for (let i = 1; i <= info; i++) x += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
+          push(x + 'trailer\n<< /Size ' + (info + 1) + ' /Root 1 0 R /Info ' + info + ' 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
+          return new Blob(parts, { type: 'application/pdf' });
+        };
+        // Где резать страницы. Ножом по картинке нельзя: строка, разрезанная
+        // пополам, на бумаге нечитаема. Поэтому режем только по НИЗУ строки
+        // текста или блока, и не внутри того, что печать держит целым:
+        // картинка, пункт списка, строка таблицы, всё с page-break-inside:
+        // avoid (.print-keep, .print-scene), а заголовок — не отрывая от
+        // начала его текста (page-break-after: avoid). Те же правила,
+        // что браузер соблюдает при обычной печати, — лист выходит тем же.
+        const pdfCuts = (doc, total, ph) => {
+          const win = doc.defaultView, sy = win.scrollY || 0;
+          const cand = new Set(), tops = new Set(), bad = [], forced = [];
+          const range = doc.createRange();
+          const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+          for (let t; (t = walk.nextNode());) {
+            if (!t.nodeValue.trim()) continue;
+            range.selectNodeContents(t);
+            for (const r of range.getClientRects()) if (r.height > 0) { cand.add(Math.ceil(r.bottom + sy)); tops.add(Math.floor(r.top + sy)); }
+          }
+          doc.body.querySelectorAll('*').forEach(el => {
+            const r = el.getBoundingClientRect();
+            if (!r.height) return;
+            const top = r.top + sy, bot = r.bottom + sy;
+            cand.add(Math.ceil(bot));
+            if (/^(IMG|svg|CANVAS|HR)$/.test(el.tagName)) tops.add(Math.floor(top));
+            const cs = win.getComputedStyle(el);
+            const avoidIn = /^(IMG|svg|CANVAS|TR|LI|H1|H2|H3)$/.test(el.tagName) ||
+                            cs.pageBreakInside === 'avoid' || cs.breakInside === 'avoid';
+            if (avoidIn && bot - top < ph * 0.9) bad.push([top, bot]);
+            if ((cs.pageBreakAfter === 'avoid' || cs.breakAfter === 'avoid') && el.nextElementSibling) {
+              const nr = el.nextElementSibling.getBoundingClientRect();
+              bad.push([top, Math.min(nr.bottom, nr.top + 60) + sy]);
+            }
+            if (cs.pageBreakBefore === 'always' || cs.breakBefore === 'page') forced.push(Math.floor(top));
+          });
+          const isBad = (y) => bad.some(([a, b]) => y > a + 1 && y < b - 1);
+          const ys = [...cand].filter(y => y > 0 && y < total).sort((a, b) => a - b);
+          forced.sort((a, b) => a - b);
+          const cuts = [0];
+          let s = 0;
+          for (let guard = 0; guard < 2000; guard++) {
+            const lim = s + ph;
+            const fb = forced.find(y => y > s + 20 && y <= Math.min(lim, total - 1));
+            if (fb != null) { cuts.push(fb); s = fb; continue; }
+            if (total - s <= ph) break;
+            let best = null, loose = null;
+            for (const y of ys) {
+              if (y <= s + 20) continue;
+              if (y > lim) break;
+              loose = y;
+              if (!isBad(y)) best = y;
+            }
+            const cut = best != null ? best : (loose != null && loose > s + ph * 0.5 ? loose : lim);
+            cuts.push(cut); s = cut;
+          }
+          cuts.push(total);
+          // Страница — отрезок [начало, конец]. Начало следующей страницы
+          // подтягиваем к первому, что на ней нарисовано: отступ над
+          // заголовком раздела, оставшийся от предыдущей страницы, —
+          // это пустая полоса сверху листа (браузер при печати его тоже
+          // съедает). Но только небольшой: дальше это уже смысловой пробел.
+          const tl = [...tops].sort((a, b) => a - b);
+          return cuts.slice(0, -1).map((a, i) => {
+            const b = cuts[i + 1];
+            if (i > 0 && !forced.includes(a)) {
+              const t = tl.find(y => y >= a);
+              if (t != null && t < b && t - a <= 80) a = Math.max(a, t - 2);
+            }
+            return [a, b];
+          });
+        };
+        // html — готовая страница (как для печати); onPage(i, n) — для
+        // полоски «страница 2 из 5»; alive() — не закрыли ли окно.
+        const buildPrintPdf = async (html, { dark, title, onPage, alive } = {}) => {
+          const h2c = await loadHtml2Canvas();
+          const pxPt = 96 / 72;
+          const cw = Math.round((PDF_W - 2 * PDF_M) * pxPt);
+          const ph = Math.floor((PDF_H - 2 * PDF_M) * pxPt);
+          const fr = document.createElement('iframe');
+          fr.setAttribute('aria-hidden', 'true');
+          fr.tabIndex = -1;
+          fr.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + cw + 'px;height:' + ph + 'px;border:0;pointer-events:none';
+          document.body.appendChild(fr);
+          try {
+            const doc = fr.contentDocument;
+            doc.open(); doc.write(html); doc.close();
+            doc.body.style.margin = '0'; doc.body.style.padding = '0';
+            // Картинки и шрифты обязаны догрузиться ДО съёмки: иначе в PDF
+            // на их месте пустые прямоугольники (то же правило, что
+            // у обычной печати), но не ждём вечно.
+            const imgs = Array.from(doc.images).filter(i => !i.complete);
+            await Promise.race([
+              Promise.all(imgs.map(i => new Promise(r => { i.onload = r; i.onerror = r; }))),
+              new Promise(r => setTimeout(r, 20000))
+            ]);
+            try { if (doc.fonts && doc.fonts.ready) await doc.fonts.ready; } catch (e) {}
+            const total = Math.max(1, Math.ceil(Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight)));
+            const segs = pdfCuts(doc, total, ph);
+            const bgCss = dark ? '#1a1918' : '#ffffff';
+            const pages = [];
+            for (let i = 0; i < segs.length; i++) {
+              if (alive && !alive()) return null;
+              if (onPage) onPage(i + 1, segs.length);
+              const y = segs[i][0], h = Math.max(1, segs[i][1] - y);
+              // По одной странице за раз: холст во весь документ на телефоне
+              // упирается в предел размера холста и выходит ПУСТЫМ без ошибки.
+              const cv = await h2c(doc.body, {
+                scale: PDF_SCALE, backgroundColor: bgCss, useCORS: true, logging: false,
+                x: 0, y, width: cw, height: h, windowWidth: cw, windowHeight: ph, scrollX: 0, scrollY: 0
+              });
+              const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
+              if (!blob) throw new Error('страница не снялась картинкой');
+              pages.push({ jpeg: new Uint8Array(await blob.arrayBuffer()), w: cv.width, h: cv.height });
+              cv.width = 0; cv.height = 0;
+            }
+            return { blob: pdfFromJpegs(pages, { bg: dark ? [26, 25, 24] : null, title }), pages: pages.length };
+          } finally { fr.remove(); }
+        };
+
         const compressImage = (base64Str, maxWidth, maxHeight, callback, quality) => {
           const img = new Image();
           img.onerror = () => callback(base64Str);
@@ -9912,10 +10106,6 @@
                      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
             } catch (e) { return false; }
           };
-          // Окно под печать открываем ПРЯМО в обработчике нажатия и держим
-          // здесь: всё, что открыто позже (после таймера), браузер считает
-          // всплывающим окном и блокирует.
-          const printWin = useRef(null);
           const PRINT_PAGE_CSS = `@page { margin: 14mm; }
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
                    color: #111; background: #fff; margin: 0; padding: 18px; }
@@ -9998,39 +10188,75 @@
                        font-size: 13px; line-height: 1.5; }
             @media print { .cf-hint { display: none !important; } body { padding: 0; } }`;
 
-          // Собрать из #print-area отдельную готовую страницу. Оттуда печать
-          // работает где угодно: в Safari это «Поделиться» → «Напечатать»,
-          // там же «Сохранить в Файлы» даёт PDF.
-          const openPrintPage = () => {
+          // Готовая страница печати из #print-area: та же вёрстка, что на
+          // бумаге. hint — строка-подсказка сверху; в PDF её нет.
+          const printPageHtml = (hint) => {
             const area = document.getElementById('print-area');
             const body = area ? area.innerHTML : '';
-            if (!body.trim()) { showToast('Нечего печатать'); return; }
-            const html = '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+            if (!body.trim()) return '';
+            return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
               + '<meta name="viewport" content="width=device-width, initial-scale=1">'
               + '<title>' + (String(projectTitle || '').trim() || 'CineFlow') + ' — печать</title><style>'
               + PRINT_PAGE_CSS + '</style></head><body class="' + (printTheme === 'dark' ? 'print-dark' : '') + '">'
-              + '<div class="cf-hint">Готовая страница для печати. Кнопка «Поделиться» → «Напечатать»; '
-              + 'чтобы получить PDF — «Поделиться» → «Сохранить в Файлы».</div>'
+              + (hint ? '<div class="cf-hint">' + hint + '</div>' : '')
               + body + '</body></html>';
-            const w = printWin.current;
-            printWin.current = null;
-            if (w && !w.closed) {
-              try {
-                w.document.open(); w.document.write(html); w.document.close();
-                showToast('Открыл готовую страницу · «Поделиться» → «Напечатать»');
-                return;
-              } catch (e) { /* ниже сохраним файлом */ }
-            }
-            // Окно не дали открыть — отдаём файлом. Открывается из «Файлов»
-            // и печатается оттуда же.
+          };
+          // Окно «Готовый PDF» (установленное приложение). stage:
+          // prep — тянем фотографии, busy — снимаем страницы, ready — файл
+          // готов, fail — PDF не собрался, но страница есть (её можно
+          // отдать файлом). Окно открывается В САМОМ НАЖАТИИ, ещё до сборки:
+          // иначе пауза на фотографиях выглядела бы как «ничего не нажалось».
+          const [printPdf, setPrintPdf] = useState(null);
+          const printJob = useRef(0);
+          const printWant = useRef(0);   // какое нажатие ждёт листа; закрыли окно — уже никакое
+          const closePrintPdf = () => { printJob.current++; setPrintPdf(null); };
+          const makePrintPdf = (html, name) => {
+            const job = ++printJob.current;
+            const alive = () => printJob.current === job;
+            const preview = html;
+            setPrintPdf({ stage: 'busy', name, preview, done: 0, total: 0 });
+            buildPrintPdf(html, {
+              dark: printTheme === 'dark', title: name, alive,
+              onPage: (i, n) => { if (alive()) setPrintPdf(p => p && { ...p, done: i, total: n }); }
+            }).then(res => {
+              if (!res || !alive()) return;
+              const file = new File([res.blob], name + '.pdf', { type: 'application/pdf' });
+              setPrintPdf(p => p && { ...p, stage: 'ready', file, pages: res.pages });
+            }).catch(err => {
+              if (!alive()) return;
+              // PDF не собрался (чаще всего — нет связи при самом первом
+              // разе, сборщик ещё не в кэше). Лист всё равно отдаём:
+              // страницей, которую можно сохранить и открыть.
+              const file = new File([printPageHtml('Откройте страницу и напечатайте: «Поделиться» → «Напечатать».')],
+                                    name + '.html', { type: 'text/html' });
+              setPrintPdf(p => p && { ...p, stage: 'fail', file, err: (err && err.message) || String(err) });
+            });
+          };
+          const printFileName = () => {
+            const area = document.getElementById('print-area');
+            const t = area && area.querySelector('.print-title');
+            return zipSafeName((t && t.textContent) || projectTitle || 'CineFlow', 'CineFlow');
+          };
+          // «Поделиться» зовётся ПЕРВЫМ ЖЕ делом в нажатии, до всякого
+          // await: без жеста человека браузер лист «Поделиться» не откроет.
+          const sharePrintFile = (file) => {
+            const data = { files: [file], title: file.name };
             try {
-              const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+              if (!navigator.canShare || !navigator.canShare(data)) throw new Error('нельзя');
+              navigator.share(data).catch(e => {
+                if (e && e.name === 'AbortError') return;
+                showToast('Поделиться не вышло — сохраните файл кнопкой «Скачать»');
+              });
+            } catch (e) { showToast('Поделиться файлом здесь нельзя — сохраните его кнопкой «Скачать»'); }
+          };
+          const downloadPrintFile = (file) => {
+            try {
+              const url = URL.createObjectURL(file);
               const a = document.createElement('a');
-              a.href = url; a.download = 'CineFlow-план.html';
+              a.href = url; a.download = file.name;
               document.body.appendChild(a); a.click(); a.remove();
-              setTimeout(() => URL.revokeObjectURL(url), 4000);
-              showToast('Сохранил страницу файлом — откройте её и напечатайте');
-            } catch (e) { showToast('Не удалось подготовить печать'); }
+              setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } catch (e) { showToast('Не удалось сохранить файл'); }
           };
 
           // Печать запускаем только после того, как React перерисует
@@ -10052,7 +10278,13 @@
                 ]);
               }
               if (dead) return;
-              if (isStandalone()) openPrintPage(); else window.print();
+              if (isStandalone()) {
+                // Разметку снимаем ДО того, как #print-area опустеет.
+                const html = printPageHtml('');
+                if (printWant.current !== printJob.current) { /* окно закрыли, пока тянулись фото */ }
+                else if (html) makePrintPdf(html, printFileName());
+                else { setPrintPdf(null); showToast('Нечего печатать'); }
+              } else window.print();
               setPrintRequested(false); setPrintPhotos({});
             })();
             return () => { dead = true; };
@@ -10062,12 +10294,7 @@
           // открыться прямо здесь, до всякого await: всё, что открыто после,
           // iPad считает всплывающим и блокирует.
           const requestPrint = (mode, prep) => {
-            if (isStandalone()) {
-              try { printWin.current = window.open('', '_blank'); } catch (e) { printWin.current = null; }
-              if (prep && printWin.current) {
-                try { printWin.current.document.write('<meta charset="utf-8"><p style="font:15px -apple-system,sans-serif;padding:24px">Готовлю фотографии…</p>'); } catch (e) {}
-              }
-            }
+            if (isStandalone()) { printWant.current = ++printJob.current; setPrintPdf({ stage: prep ? 'prep' : 'busy', name: '', done: 0, total: 0 }); }
             setPrintMode(mode);
             if (!prep) { setPrintRequested(true); return; }
             Promise.resolve().then(prep).then(map => { setPrintPhotos(map || {}); setPrintRequested(true); })
@@ -18079,6 +18306,52 @@
           return (
             <div className="cf-app-root flex w-screen overflow-hidden bg-transparent">
               <ConfirmModal action={confirmAction} onCancel={() => setConfirmAction(null)} />
+              {/* ГОТОВЫЙ PDF (установленное приложение). Главное действие —
+                  «Поделиться»: это системный лист, и в нём сразу всё, что
+                  делают с отчётом, — «Напечатать», «Сохранить в Файлы»,
+                  мессенджер, почта. «Скачать» — запасной путь. Сверху лист
+                  целиком, чтобы видеть, ЧТО уйдёт, до того как отправить. */}
+              {printPdf && (() => {
+                const p = printPdf;
+                const busy = p.stage === 'prep' || p.stage === 'busy';
+                const kb = p.file ? p.file.size / 1024 : 0;
+                const size = kb > 1024 ? (kb / 1024).toFixed(1).replace('.', ',') + ' МБ' : Math.max(1, Math.round(kb)) + ' КБ';
+                const btn = 'w-full rounded-lg font-bold transition-colors flex items-center justify-center gap-2';
+                return (
+                  <Modal onClose={closePrintPdf} z={300} box="p-5 max-w-lg" label="Готовый PDF">
+                    <div data-cf="print-pdf" className="space-y-4">
+                      <div className="pr-10">
+                        <h3 className="text-lg font-bold text-white leading-tight">{p.stage === 'fail' ? 'PDF не собрался' : 'Готовый PDF'}</h3>
+                        <p className="text-[length:var(--fs-2)] text-zinc-400 mt-1 break-words" data-cf="print-pdf-status">
+                          {p.stage === 'prep' ? 'Готовлю фотографии…'
+                            : p.stage === 'busy' ? (p.total ? `Собираю · страница ${p.done} из ${p.total}` : 'Собираю…')
+                            : p.stage === 'ready' ? `${p.file.name} · ${p.pages} ${plur(p.pages, 'страница', 'страницы', 'страниц')} · ${size}`
+                            : `${p.err}. Ниже — та же страница файлом: её можно сохранить, открыть и напечатать.`}
+                        </p>
+                      </div>
+                      {p.preview && (
+                        <iframe title="Лист" srcDoc={p.preview} sandbox=""
+                                className="w-full rounded-lg border border-[var(--border)]"
+                                style={{ height: 'min(52vh, 520px)', background: printTheme === 'dark' ? '#1a1918' : '#fff' }} />
+                      )}
+                      {busy && !p.preview && <div className="h-24 flex items-center justify-center text-zinc-500 text-sm">…</div>}
+                      {!busy && p.file && (
+                        <div className="space-y-2">
+                          <button data-cf="print-pdf-share" onClick={() => sharePrintFile(p.file)}
+                                  className={`${btn} bg-indigo-600 hover:bg-indigo-500 text-white`} style={{ minHeight: 'var(--tap)' }}>
+                            Поделиться
+                          </button>
+                          <p className="text-[length:var(--fs-1)] text-zinc-500 text-center">Там же «Напечатать» и «Сохранить в Файлы»</p>
+                          <button data-cf="print-pdf-save" onClick={() => downloadPrintFile(p.file)}
+                                  className={`${btn} bg-[var(--card)] hover:bg-[var(--raised)] text-zinc-200 border border-[var(--border)]`} style={{ minHeight: 'var(--tap)' }}>
+                            Скачать {p.stage === 'ready' ? 'PDF' : 'страницу'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </Modal>
+                );
+              })()}
               {/* Имя гостя по ссылке с чатом. Тут окно НЕ заменяет собой
                   приложение (как при первом запуске), а ложится поверх:
                   за ним видна переписка, ради которой его и открыли.
