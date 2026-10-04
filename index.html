@@ -8650,6 +8650,58 @@
           );
         };
 
+        // ПЕРО ↔ ЛАСТИК одним нажатием — в нижней панели Excalidraw, рядом
+        // с «отменить». У Apple Pencil нет обратного конца, а его двойное
+        // касание (Pencil 2) и сжатие (Pencil Pro) Safari веб-странице НЕ
+        // передаёт — переключить ластик «с карандаша» нечем, и до этого
+        // за ним надо было тянуться в панель инструментов вверху экрана.
+        // Нажал — ластик, нажал ещё раз — что было в руке до него.
+        // ДЕРЖИШЬ пальцем — ластик, пока держишь, как модификатор
+        // в рисовалках: стёр пером, отпустил — снова карандаш.
+        // Рисуется, только когда на этом устройстве появилось перо
+        // (`cf_pen_seen`, та же метка, что у своей доски): у ноутбука
+        // есть клавиша E, и лишняя кнопка в покое ему ни к чему.
+        const EXC_HOLD_MS = 450;
+        const ExcPenToggle = ({ bind, init, onSet }) => {
+          const [s, setS] = useState(init);
+          const hold = useRef(null);
+          useEffect(() => { bind.current = (p) => setS(o => ({ ...o, ...p })); return () => { bind.current = null; }; }, []);
+          if (!s.seen) return null;
+          const on = s.tool === 'eraser';
+          const down = (e) => {
+            e.stopPropagation();
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+            hold.current = { t: Date.now(), was: on };
+            if (!on) onSet(true);
+          };
+          const up = () => {
+            const h = hold.current; hold.current = null;
+            if (!h) return;
+            // Был ластик — нажатие его снимает; не был — короткое нажатие
+            // его оставляет, а долгое (держали, пока стирали) снимает.
+            if (h.was || Date.now() - h.t > EXC_HOLD_MS) onSet(false);
+          };
+          return (
+            <button onPointerDown={down} onPointerUp={up} onPointerCancel={up}
+                    onClick={(e) => { if (e.detail === 0) onSet(!on); }}
+                    data-cf="exc-eraser" aria-pressed={on}
+                    title={on ? 'Ластик · нажмите, чтобы вернуть карандаш' : 'Ластик · нажмите или держите, пока стираете'}
+                    className="flex items-center shrink-0"
+                    style={{ height: 'max(36px, var(--tool))', margin: 'calc((36px - max(36px, var(--tool))) / 2) 0', padding: '0 0 0 8px',
+                             background: 'none', border: 0, touchAction: 'none',
+                             WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}>
+              {/* Видно — плашку высотой с соседние кнопки Excalidraw, нажимается —
+                  вся кнопка: 44 точки на касании, как положено цели под палец. */}
+              <span className="flex items-center gap-1.5"
+                    style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-md)', whiteSpace: 'nowrap', fontSize: 'var(--fs-2)',
+                             background: on ? 'var(--raised)' : 'var(--card)', border: '1px solid ' + (on ? '#4a4741' : 'var(--border)'),
+                             color: on ? 'var(--text)' : 'var(--text-2)' }}>
+                <Icons.Eraser/>Ластик
+              </span>
+            </button>
+          );
+        };
+
         // Полоска режима «Связь» (ниже подсказки Excalidraw под его панелью
         // инструментов — иначе ложилась поверх неё): жест, который делает
         // не то, что обычно, обязан себя называть — иначе нажатие по карточке «ничего не
@@ -9174,6 +9226,14 @@
             if (st.dirty.size || st.ops.length || st.pend.size) flushSoon(busy);
             saveViewSoon(app);
             trackSelection(els, app, busy);
+            // Что в руке — для кнопки «Ластик». Помним последний НЕ ластик:
+            // его кнопка и вернёт.
+            const tool = app.activeTool ? app.activeTool.type : '';
+            if (tool !== st.tool) {
+              st.tool = tool;
+              if (tool && tool !== 'eraser') st.prevTool = tool;
+              if (penBind.current) penBind.current({ tool });
+            }
             if (miniBind.current) miniBind.current(els, app);
             if (st.linkA && linkBar.current) linkBar.current(1, linkRect(st.linkA, els, app));
             // Пустая ли доска для шаблонов: ничего не нарисовано и в руке
@@ -9287,7 +9347,7 @@
           // чёрным по белому (как у своей доски — почерк узнаётся тем
           // лучше, чем ближе картинка к странице блокнота). Мелкое
           // увеличиваем до 2,4 раза, крупное ужимаем до 1600 точек.
-          const readInk = async (ids) => {
+          const readInk = async (ids, note) => {
             const a = apiRef.current && apiRef.current.api, L = P.current.lib;
             if (!a || !L || readOnlyNow()) return;
             const want = new Set(String(ids || '').split(','));
@@ -9305,7 +9365,53 @@
               });
             } catch (e) { P.current.act.toast('Не удалось снять рукопись с доски'); return; }
             a.updateScene({ appState: { selectedElementIds: {} }, captureUpdate: L.CaptureUpdateAction.NEVER });
-            P.current.act.ocr(cv.toDataURL('image/png'), { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+            P.current.act.ocr(cv.toDataURL('image/png'), { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, note);
+          };
+          // Кнопка «Рукопись → текст» в строке действий доски: ручка над
+          // выделенным находилась только тем, кто уже знал, что штрихи
+          // надо выделить. Выделено — читаем выделенное; нет — всё, что
+          // написано пером на ЭКРАНЕ (с доски в 4000 точек весь рисунок
+          // разом модели не нужен). Отвечает, что выбрала: приложению
+          // нужно сказать человеку, чем кончилось нажатие.
+          const readInkHere = () => {
+            const a = apiRef.current && apiRef.current.api;
+            if (!a || readOnlyNow() || !P.current.act.ocr) return 'none';
+            const app = a.getAppState(), els = a.getSceneElements(), sel = app.selectedElementIds || {};
+            let ink = els.filter(e => sel[e.id] && e.type === 'freedraw'), how = 'sel';
+            if (!ink.length) {
+              const z = app.zoom.value || 1, vx0 = -app.scrollX, vy0 = -app.scrollY, vx1 = vx0 + app.width / z, vy1 = vy0 + app.height / z;
+              ink = els.filter(e => { if (e.type !== 'freedraw') return false; const b = excElBox(e); return b.x < vx1 && b.x + b.w > vx0 && b.y < vy1 && b.y + b.h > vy0; });
+              how = 'view';
+            }
+            if (!ink.length) return 'none';
+            readInk(ink.map(e => e.id).join(','), how === 'view' ? '🔎 Читаю всё, что написано на экране · часть — выделите её рамкой' : '');
+            return how;
+          };
+          // --- Перо ↔ ластик (кнопка в нижней панели) ---
+          const penBind = useRef(null);
+          const penSeenNow = () => {
+            const st = S.current;
+            if (st.penSeen == null) { try { st.penSeen = localStorage.getItem('cf_pen_seen') === '1'; } catch (e) { st.penSeen = false; } }
+            return st.penSeen;
+          };
+          useEffect(() => {
+            if (penSeenNow()) return;
+            const on = (e) => {
+              if (e.pointerType !== 'pen' || S.current.penSeen) return;
+              S.current.penSeen = true;
+              try { localStorage.setItem('cf_pen_seen', '1'); } catch (err) {}
+              if (penBind.current) penBind.current({ seen: true });
+            };
+            window.addEventListener('pointerdown', on, true);
+            return () => window.removeEventListener('pointerdown', on, true);
+          }, []);
+          // Снимая ластик, возвращаем то, что было в руке ДО него, — у
+          // карандаша это карандаш, у стрелки стрелка. Своё (custom) не
+          // возвращаем: без его имени Excalidraw его не включит.
+          const setEraser = (on) => {
+            const a = apiRef.current && apiRef.current.api; if (!a) return;
+            const prev = S.current.prevTool;
+            a.setActiveTool({ type: on ? 'eraser' : (prev && prev !== 'eraser' && prev !== 'custom' ? prev : 'freedraw') });
           };
           const trackSelection = (els, app, busy) => {
             const st = S.current;
@@ -9733,6 +9839,7 @@
             // Прибор на схему: группа элементов посреди видимого, сразу
             // выделена — его почти всегда тут же тащат на место и
             // поворачивают. Через историю Excalidraw: «отменить» уберёт.
+            readInkHere: () => readInkHere(),
             insertFixture: (key, dev) => {
               const a = ownApi.current, L = P.current.lib;
               if (!a || !L || P.current.readOnly) return false;
@@ -9841,7 +9948,7 @@
               </div>
             </div>
           );
-          const X = lib && lib.Excalidraw, M = lib && lib.MainMenu;
+          const X = lib && lib.Excalidraw, M = lib && lib.MainMenu, F = lib && lib.Footer;
           return (
             <div ref={hostRef} className="cf-exc w-full flex-1 min-h-0 relative" data-cf="exc-board">
               {!lib || !initial ? (
@@ -9867,6 +9974,16 @@
                     <M.DefaultItems.SearchMenu />
                     <M.DefaultItems.Help />
                   </M>
+                  {/* Нижняя панель Excalidraw, рядом с «отменить»: там до
+                      кнопки достаёт палец свободной руки. В узкой раскладке
+                      Excalidraw её не рисует — там ластик и так в нижней
+                      строке инструментов. Гостю ластик ни к чему. */}
+                  {F && !readOnly && (
+                    <F>
+                      <ExcPenToggle bind={penBind} onSet={setEraser}
+                                    init={() => ({ seen: penSeenNow(), tool: S.current.tool || '' })} />
+                    </F>
+                  )}
                 </X>
               )}
               {/* Открыть — это чтение: у гостя не прячем (выделять ему, впрочем,
@@ -12719,9 +12836,9 @@
           // Картинка рукописи → текст. Одна на обе доски: своя рисует штрихи
           // сама (`inkImage`), доска Excalidraw — своим `exportToCanvas`,
           // а дальше путь общий — тот же ИИ, то же окно, тот же гайд.
-          const readInkImage = async (img, box) => {
+          const readInkImage = async (img, box, note) => {
             setOcrBusy(true);
-            showToast('🔎 Читаю рукопись...');
+            showToast(note || '🔎 Читаю рукопись...');
             const text = await callGeminiAI(OCR_PROMPT, false, { mime: 'image/png', data: img.split(',')[1] }, OCR_SYSTEM);
             setOcrBusy(false);
             if (text === null) return;   // про ключ и про сеть callGeminiAI уже сказал
@@ -17751,6 +17868,13 @@
               + (!failed.length && !stopped ? ' Прежние целы — вернуть любую можно в «···».' : ''));
           };
 
+          // «Рукопись → текст» кнопкой: выделенное или всё, что написано
+          // на экране. Нечего читать — говорим, что сделать, а не молчим.
+          const readHandHere = () => {
+            if (READ_ONLY || ocrBusy) return;
+            const r = excApiRef.current && excApiRef.current.readInkHere ? excApiRef.current.readInkHere() : 'none';
+            if (r === 'none') showToast('На экране нет рукописи · напишите текст карандашом Excalidraw и нажмите снова');
+          };
           const excAct = {
             patch: excPatch,
             link: (type, id, sceneId) => {
@@ -17869,7 +17993,7 @@
             accepts: dropHasImage,
             toast: showToast,
             // Рукопись с доски — в тот же разбор и то же окно, что у своей.
-            ocr: (img, box) => readInkImage(img, box),
+            ocr: (img, box, note) => readInkImage(img, box, note),
             blank: setExcBlank,
             // Перевод со старой доски лёг на эту — говорим, что сделано, и
             // забываем данные: второй раз их не понадобится.
@@ -21652,6 +21776,13 @@
                             <button onClick={() => setExcLinkMode(v => !v)} data-cf="exc-link-tool"
                                     className={`cf-tool cf-edit-only ${excLinkMode ? 'on' : ''}`} title="Связь: нажмите две карточки или фигуры"><Icons.Link/></button>
                           )}
+                          {/* Рукопись → текст на виду, а не только ручкой над
+                              выделенным: про ручку знал лишь тот, кто уже
+                              догадался выделить штрихи. */}
+                          {excActive && (
+                            <button onClick={readHandHere} disabled={ocrBusy} data-cf="exc-ocr-tool"
+                                    className="cf-tool cf-edit-only" title="Рукопись → текст: прочитать написанное пером (выделенное или всё на экране)"><Icons.Ocr/></button>
+                          )}
                           <span className="cf-tool-sep" style={{ width: 1, height: 20, margin: '0 3px' }} />
                         </React.Fragment>
                         )}
@@ -21680,6 +21811,11 @@
                                   {excActive && (
                                     <button className="cf-edit-only" data-cf="exc-link-row" onClick={() => { setBoardMenu(false); setExcLinkMode(true); }}>
                                       <Icons.Link/> Связать две карточки
+                                    </button>
+                                  )}
+                                  {excActive && (
+                                    <button className="cf-edit-only" data-cf="exc-ocr-row" disabled={ocrBusy} onClick={() => { setBoardMenu(false); readHandHere(); }}>
+                                      <Icons.Ocr/> Рукопись → текст
                                     </button>
                                   )}
                                   <hr />

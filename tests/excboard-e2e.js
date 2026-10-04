@@ -26,6 +26,7 @@
 //     раскадровки обрезается по рамке проекта, а не растягивается
 //   → доска, нарисованная при прежней выворачивающей теме, переводит
 //     свои цвета один раз и метит себя
+//   → «Рукопись → текст» кнопкой на панели и ластик кнопкой для Apple Pencil
 //   → телефон: доска открывается, рисовать есть чем
 //   → своя доска рядом по-прежнему на своём движке
 //
@@ -560,7 +561,80 @@ const SEED = () => ({
   E = live(await els(p));
   ok('«Новым гайдом на доску» — гайд лёг на ЭТУ доску под рукописью', Object.keys(D).length === nDocs0 + 1 && !!nd && nd.boardId === 'bx1' && nd.y > 230 && E.some(e => e.id === nd.id),
      nd ? `${nd.title} · ${nd.boardId} · ${Math.round(nd.x)},${Math.round(nd.y)}` : 'нет гайда');
+
+  // --- 11г-2. «Рукопись → текст» КНОПКОЙ в строке действий: без
+  // выделения читает всё, что написано пером на экране; нечего читать —
+  // говорит, что сделать.
+  const hitOf = (page, sel) => page.evaluate((sel) => {
+    const b = document.querySelector(sel); if (!b) return null;
+    const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
+    return { x, y, w: Math.round(r.width), h: Math.round(r.height), l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom),
+             hit: !!h && (h === b || b.contains(h)) };
+  }, sel);
+  ocrSeen = null;
+  await p.evaluate(() => { const a = window.__cfExc.api, s = a.getAppState();
+    a.updateScene({ appState: { zoom: { value: 1 }, scrollX: s.width / 2 - 1650, scrollY: s.height / 2 - 200, selectedElementIds: {} } }); });
+  await p.waitForTimeout(300);
+  const ocrB = await hitOf(p, '[data-cf="exc-ocr-tool"]');
+  if (ocrB && ocrB.hit) await p.mouse.click(ocrB.x, ocrB.y);
+  await p.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')].some(d => /Рукопись прочитана/.test(d.textContent)), { timeout: 15000 }).catch(() => {});
+  const ocrToast = await p.evaluate(() => /написано на экране/.test(document.body.innerText));
+  ok('кнопка «Рукопись → текст» на панели доски: без выделения читает написанное на экране',
+     !!ocrB && ocrB.hit && !!ocrSeen && ocrSeen.mime === 'image/png' && ocrSeen.data.length > 100 && ocrToast, JSON.stringify({ ocrB, seen: !!ocrSeen, ocrToast }));
+  await escape(p); await escape(p);
+  await p.waitForTimeout(300);
+  ocrSeen = null;
+  await p.evaluate(() => { const a = window.__cfExc.api, s = a.getAppState();
+    a.updateScene({ appState: { scrollX: s.width / 2 + 9000, scrollY: s.height / 2 + 9000, selectedElementIds: {} } }); });
+  await p.waitForTimeout(300);
+  const ocrB2 = await hitOf(p, '[data-cf="exc-ocr-tool"]');
+  if (ocrB2 && ocrB2.hit) await p.mouse.click(ocrB2.x, ocrB2.y);
+  await p.waitForTimeout(500);
+  const noInk = await p.evaluate(() => /На экране нет рукописи/.test(document.body.innerText));
+  ok('на пустом месте кнопка не молчит и не зовёт ИИ — говорит, что сделать', noInk && !ocrSeen, JSON.stringify({ noInk, seen: !!ocrSeen }));
   await p.unroute(/generativelanguage\.googleapis\.com/);
+
+  // --- 11г-3. перо ↔ ластик кнопкой в нижней панели: у Apple Pencil
+  // нет обратного конца, а двойное касание Safari странице не отдаёт.
+  await p.evaluate(() => { const a = window.__cfExc.api, s = a.getAppState();
+    a.updateScene({ appState: { zoom: { value: 1 }, scrollX: s.width / 2 - 1650, scrollY: s.height / 2 - 200, selectedElementIds: {} } }); });
+  await p.waitForTimeout(300);
+  const noPen = await p.evaluate(() => !document.querySelector('[data-cf="exc-eraser"]'));
+  await p.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'pen', bubbles: true, isPrimary: true })));
+  await p.waitForTimeout(300);
+  const eb = await hitOf(p, '[data-cf="exc-eraser"]');
+  const tool = () => p.evaluate(() => window.__cfExc.api.getAppState().activeTool.type);
+  const undoR = await p.evaluate(() => { const u = document.querySelector('.excalidraw .undo-redo-buttons, .excalidraw [aria-label="Отменить"], .excalidraw [aria-label="Undo"]');
+    if (!u) return null; const r = u.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom) }; });
+  const miniR = await p.evaluate(() => { const m = document.querySelector('[data-cf="exc-mini"]'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top) }; });
+  ok('ластика нет, пока не появилось перо; после первого пера — кнопка в нижней панели, рядом с «отменить», и она нажимается',
+     noPen && !!eb && eb.hit && eb.h >= 30 && !!undoR && Math.abs((eb.t + eb.b) / 2 - (undoR.t + undoR.b) / 2) < 12 && eb.l >= undoR.r && (!miniR || eb.r < miniR.l),
+     JSON.stringify({ noPen, eb, undoR, miniR }));
+  const pens = await p.evaluate(() => localStorage.getItem('cf_pen_seen'));
+  await p.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'freedraw' }));
+  await p.waitForTimeout(200);
+  await p.mouse.click(eb.x, eb.y); await p.waitForTimeout(250);
+  const t1 = await tool();
+  // Стираем мышью поперёк первого штриха рукописи.
+  // Ниже рукописи лежит гайд из 11г — его ластик задевать не должен.
+  const inkN = () => p.evaluate(() => { const L = window.__cfExc.api.getSceneElements(); return [L.filter(e => e.type === 'freedraw').length, L.length]; });
+  const [ink0, all0] = await inkN();
+  const ea = await scr(p, 1590, 160), ebb = await scr(p, 1590, 214);
+  await drag(p, ea, ebb); await p.waitForTimeout(300);
+  const [ink1, all1] = await inkN();
+  await p.mouse.click(eb.x, eb.y); await p.waitForTimeout(250);
+  const t2 = await tool();
+  ok('нажал — ластик и он стирает, нажал ещё раз — снова карандаш (метка пера запомнена)',
+     t1 === 'eraser' && ink1 === ink0 - 1 && all1 === all0 - 1 && t2 === 'freedraw' && pens === '1', JSON.stringify({ t1, ink0, ink1, all0, all1, t2, pens }));
+  await p.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'rectangle' }));
+  await p.waitForTimeout(200);
+  await p.mouse.move(eb.x, eb.y); await p.mouse.down(); await p.waitForTimeout(700);
+  const th = await tool();
+  await p.mouse.up(); await p.waitForTimeout(250);
+  const tu = await tool();
+  ok('держишь — ластик, пока держишь; отпустил — в руке то, что было до него (прямоугольник)', th === 'eraser' && tu === 'rectangle', JSON.stringify({ th, tu }));
+  await p.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'selection' }));
+  await p.waitForTimeout(200);
 
   // --- 11д. «Связь» в два нажатия: кнопка на панели доски, полоска
   // называет режим; гайд → овал даёт привязанную стрелку, фото → сцена —
@@ -973,6 +1047,12 @@ const SEED = () => ({
   await v.keyboard.press('Delete');
   await settle(v);
   ok('гость подвигал и нажал Delete — наружу не ушло ничего', (await writes(v)).length === vw0, JSON.stringify((await writes(v)).slice(vw0)));
+  await v.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'pen', bubbles: true, isPrimary: true })));
+  await v.waitForTimeout(300);
+  ok('гостю ни ластика, ни «Рукопись → текст»', await v.evaluate(() => {
+    const vis = (q) => { const b = document.querySelector(q); return !!b && b.offsetParent !== null; };
+    return !vis('[data-cf="exc-eraser"]') && !vis('[data-cf="exc-ocr-tool"]');
+  }));
   await ctx3.close();
 
   // ================= ТЕЛЕФОН =================
@@ -993,7 +1073,8 @@ const SEED = () => ({
     await new Promise(r => setTimeout(r, 300));
     const b = document.querySelector('[data-cf="exc-link-row"]'); if (!b) return null;
     const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
-    return { x, y, hit: !!h && (h === b || b.contains(h)) };
+    const o = document.querySelector('[data-cf="exc-ocr-row"]'), orr = o && o.getBoundingClientRect(), oh = orr && document.elementFromPoint(orr.left + orr.width / 2, orr.top + orr.height / 2);
+    return { x, y, hit: !!h && (h === b || b.contains(h)), ocr: !!oh && o.contains(oh) };
   });
   if (rowL && rowL.hit) await ph.mouse.click(rowL.x, rowL.y);
   await ph.waitForTimeout(300);
@@ -1001,6 +1082,7 @@ const SEED = () => ({
     const r = b.getBoundingClientRect(), g = [...b.querySelectorAll('button')].find(x => /Готово/.test(x.textContent)), gr = g && g.getBoundingClientRect();
     const h = gr && document.elementFromPoint(gr.left + gr.width / 2, gr.top + gr.height / 2);
     return { l: Math.round(r.left), r: Math.round(r.right), vw: window.innerWidth, done: !!h && g.contains(h) }; });
+  ok('телефон: «Рукопись → текст» строкой в «···», и она нажимается', !!rowL && rowL.ocr, JSON.stringify(rowL));
   ok('телефон: «Связать две карточки» в «···», полоска режима в ширину экрана и «Готово» нажимается',
      !!rowL && rowL.hit && !!barP && barP.l >= 0 && barP.r <= barP.vw && barP.done, JSON.stringify({ rowL, barP }));
   await ph.evaluate(() => { const g = [...document.querySelectorAll('[data-cf="exc-linkbar"] button')].find(x => /Готово/.test(x.textContent)); if (g) g.click(); });
