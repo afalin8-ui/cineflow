@@ -636,6 +636,46 @@ const SEED = () => ({
   await p.evaluate(() => window.__cfExc.api.setActiveTool({ type: 'selection' }));
   await p.waitForTimeout(200);
 
+  // --- 11г-4. «Проверка карандаша» в «Проекте»: показывает всё, что
+  // приходит от пера и клавиш (и когда фокус у Excalidraw — он гасит
+  // всплытие клавиш), рисовать не мешает и выключается крестиком.
+  const pb = await p.evaluate(async () => {
+    const hb = [...document.querySelectorAll('header button')].find(b => b.textContent.trim() === '···');
+    if (hb) hb.click(); await new Promise(r => setTimeout(r, 300));
+    const pr = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Проект'); if (pr) pr.click();
+    await new Promise(r => setTimeout(r, 500));
+    const cb = document.querySelector('[data-cf="pen-probe-toggle"]'); if (!cb) return null;
+    const r = cb.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, hit: !!h && (h === cb || h.closest('label') === cb.closest('label')) };
+  });
+  if (pb && pb.hit) await p.mouse.click(pb.x, pb.y);
+  await p.waitForTimeout(300);
+  await escape(p); await escape(p);
+  await p.waitForTimeout(300);
+  const probeOn = await p.evaluate(() => !!document.querySelector('[data-cf="pen-probe"]') && localStorage.getItem('cf_pen_probe') === '1');
+  // Очистить — и сразу «перо» и клавиша в фокусе Excalidraw.
+  await p.evaluate(() => { const b = [...document.querySelectorAll('[data-cf="pen-probe"] button')].find(x => /Очистить/.test(x.textContent)); if (b) b.click(); });
+  await p.waitForTimeout(700);
+  const cv = await p.evaluate(() => { const c = document.querySelector('.excalidraw canvas.interactive') || document.querySelector('.excalidraw canvas'); return !!c; });
+  await p.evaluate(() => {
+    const c = document.querySelector('.excalidraw canvas.interactive') || document.querySelector('.excalidraw canvas');
+    c.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'pen', bubbles: true, buttons: 0, pressure: 0 }));
+    c.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'pen', bubbles: true, buttons: 32, pressure: 0 }));
+    document.querySelector('.excalidraw').focus();
+  });
+  await p.keyboard.press('KeyQ');
+  await p.waitForTimeout(400);
+  const probe = await p.evaluate(() => {
+    const el = document.querySelector('[data-cf="pen-probe"]'), txt = el ? el.innerText : '';
+    const r = el.getBoundingClientRect(), mid = document.elementFromPoint(r.left + 40, r.bottom - 12);
+    return { txt, through: !!mid && !el.contains(mid) };
+  });
+  ok('«Проверка карандаша» включается галочкой в «Проекте», ловит кнопку пера и клавишу в фокусе доски и не мешает рисовать',
+     !!pb && pb.hit && probeOn && cv && /кнопки 0 → 32/.test(probe.txt) && /keydown «q»/.test(probe.txt) && probe.through, JSON.stringify({ pb, probeOn, probe: probe.txt.slice(0, 300), through: probe.through }));
+  await p.evaluate(() => { const b = document.querySelector('[data-cf="pen-probe"] [aria-label="Закрыть проверку"]'); if (b) b.click(); });
+  await p.waitForTimeout(300);
+  ok('крестик выключает проверку и это запоминается', await p.evaluate(() => !document.querySelector('[data-cf="pen-probe"]') && localStorage.getItem('cf_pen_probe') === '0'));
+
   // --- 11д. «Связь» в два нажатия: кнопка на панели доски, полоска
   // называет режим; гайд → овал даёт привязанную стрелку, фото → сцена —
   // привязку к сцене (правило доски), Escape выходит из режима.

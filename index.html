@@ -9997,6 +9997,103 @@
           );
         };
 
+        // ПРОВЕРКА КАРАНДАША — прибор для замера на СВОЁМ iPad, как счётчик
+        // плавности. Доходит ли до страницы двойное касание или сжатие
+        // Apple Pencil, по документации и чужому опыту не решить: по ним —
+        // не доходит никак, а на устройстве у человека бывает иначе.
+        // Поэтому слушаем ВСЁ: каждое событие, у которого есть обработчик
+        // `on…` у окна, документа и элемента, плюс заведомо нужные. Пришло
+        // от карандаша что-то, чего мы не ждём, — оно будет в списке,
+        // и к нему можно привязать ластик. Слушаем в ПЕРЕХВАТЕ на окне:
+        // Excalidraw гасит всплытие клавиш, а перехват на окне идёт
+        // раньше всех. Движение не пишем строками (их сотни в секунду),
+        // только смену нажатых кнопок пера — так выглядела бы кнопка на
+        // корпусе. Рисуем не чаще десяти раз в секунду.
+        const PROBE_SKIP = new Set(['mousemove', 'pointermove', 'pointerrawupdate', 'touchmove', 'scroll', 'scrollend',
+          'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave',
+          'gotpointercapture', 'lostpointercapture', 'deviceorientation', 'deviceorientationabsolute', 'devicemotion',
+          'transitionrun', 'transitionstart', 'transitionend', 'transitioncancel', 'animationstart', 'animationend',
+          'animationiteration', 'animationcancel', 'load', 'error', 'loadstart', 'loadend', 'progress', 'timeupdate',
+          'durationchange', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'suspend', 'emptied', 'stalled',
+          'waiting', 'playing', 'play', 'pause', 'seeking', 'seeked', 'ratechange', 'volumechange', 'message', 'messageerror',
+          'selectionchange', 'selectstart', 'beforetoggle', 'toggle', 'securitypolicyviolation', 'storage', 'slotchange',
+          'contentvisibilityautostatechange', 'webkitanimationstart', 'webkitanimationend', 'webkitanimationiteration',
+          'webkittransitionend', 'mousewheel', 'drag', 'dragover']);
+        const probeTypes = () => {
+          const s = new Set(['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'touchcancel',
+            'keydown', 'keyup', 'click', 'dblclick', 'contextmenu', 'auxclick', 'wheel', 'gesturestart', 'gesturechange',
+            'gestureend', 'focus', 'blur', 'visibilitychange', 'touchforcechange', 'webkitmouseforcedown', 'paste', 'copy']);
+          [window, document, document.documentElement].forEach(o => { try { for (const k in o) if (k.startsWith('on')) s.add(k.slice(2)); } catch (e) {} });
+          return [...s].filter(t => t && !PROBE_SKIP.has(t));
+        };
+        const probeLine = (e) => {
+          const t = e.type, n = (v, d = 2) => (+v || 0).toFixed(d);
+          if (t.startsWith('pointer')) return `${t} ${e.pointerType || '?'} кн${e.button} кн-всё${e.buttons} нажим ${n(e.pressure)}${e.tiltX || e.tiltY ? ` наклон ${e.tiltX}/${e.tiltY}` : ''}${e.twist ? ` поворот ${e.twist}` : ''}`;
+          if (t.startsWith('touch')) { const c = e.changedTouches && e.changedTouches[0]; return `${t} ${(c && c.touchType) || ''} пальцев ${e.touches ? e.touches.length : 0}${c && c.force ? ` сила ${n(c.force)}` : ''}`; }
+          if (t.startsWith('key')) return `${t} «${e.key}» ${e.code || ''}${e.metaKey ? ' ⌘' : ''}${e.ctrlKey ? ' ⌃' : ''}${e.altKey ? ' ⌥' : ''}${e.shiftKey ? ' ⇧' : ''}`;
+          if (t === 'wheel') return `wheel ${Math.round(e.deltaX)}/${Math.round(e.deltaY)}${e.ctrlKey ? ' ctrl' : ''}`;
+          if (t.startsWith('gesture')) return `${t} ×${n(e.scale)}`;
+          const g = e.target, tag = g === window ? 'окно' : g === document ? 'документ' : (g && g.tagName ? g.tagName.toLowerCase() : '');
+          return `${t}${tag ? ' · ' + tag : ''}${typeof e.detail === 'number' && e.detail ? ' · ' + e.detail : ''}`;
+        };
+        const PenProbe = ({ onClose }) => {
+          const log = useRef([]), live = useRef(null), quiet = useRef(0), [, setTick] = useState(0);
+          useEffect(() => {
+            let due = 0, penBtn = -1;
+            const redraw = () => { if (due) return; due = setTimeout(() => { due = 0; setTick(x => x + 1); }, 100); };
+            const add = (txt, pen) => {
+              if (Date.now() < quiet.current) return;
+              const d = new Date(), ts = d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0').slice(0, 1);
+              log.current = [{ ts, txt, pen }, ...log.current].slice(0, 40);
+              redraw();
+            };
+            const on = (e) => {
+              const pen = e.pointerType === 'pen' || !!(e.changedTouches && e.changedTouches[0] && e.changedTouches[0].touchType === 'stylus');
+              add(probeLine(e), pen);
+            };
+            const move = (e) => {
+              if (e.pointerType !== 'pen') return;
+              live.current = { b: e.buttons, p: e.pressure, hover: e.buttons === 0 };
+              if (e.buttons !== penBtn) { if (penBtn >= 0) add(`перо: кнопки ${penBtn} → ${e.buttons}`, true); penBtn = e.buttons; }
+              redraw();
+            };
+            const types = probeTypes();
+            types.forEach(t => window.addEventListener(t, on, { capture: true, passive: true }));
+            window.addEventListener('pointermove', move, { capture: true, passive: true });
+            return () => {
+              types.forEach(t => window.removeEventListener(t, on, { capture: true }));
+              window.removeEventListener('pointermove', move, { capture: true });
+              clearTimeout(due);
+            };
+          }, []);
+          const btn = { minHeight: 'var(--tap-sm)', padding: '0 10px', pointerEvents: 'auto' };
+          const L = live.current;
+          return (
+            <div data-cf="pen-probe" className="fixed pointer-events-none"
+                 style={{ right: 12, top: 'calc(var(--header-h) + var(--sat) + 8px)', zIndex: 600, width: 'min(380px, calc(100vw - 24px))',
+                          background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '8px 10px',
+                          fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', color: 'var(--text-2)' }}>
+              <div className="flex items-center gap-1" style={{ fontFamily: 'var(--font-ui)', fontSize: 'var(--fs-2)', color: 'var(--text)' }}>
+                <span className="flex-1 min-w-0">Проверка карандаша</span>
+                <button className="cf-hbtn" style={btn} onClick={() => { log.current = []; quiet.current = Date.now() + 500; setTick(x => x + 1); }}>Очистить</button>
+                <button className="cf-hbtn" style={btn} onClick={onClose} aria-label="Закрыть проверку">✕</button>
+              </div>
+              <div style={{ fontFamily: 'var(--font-ui)', color: 'var(--muted)', margin: '4px 0 6px' }}>
+                Нажмите «Очистить», потом дважды коснитесь карандашом В ВОЗДУХЕ, не трогая экран. Появилась строка — сделайте снимок экрана.
+              </div>
+              <div style={{ color: L ? 'var(--accent)' : 'var(--muted-2)', marginBottom: 4 }}>
+                {L ? `перо ${L.hover ? 'над экраном' : 'касается'} · кнопки ${L.b} · нажим ${(+L.p || 0).toFixed(2)}` : 'перо ещё не появлялось'}
+              </div>
+              {log.current.slice(0, 14).map((r, i) => (
+                <div key={log.current.length - i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: r.pen ? 'var(--accent)' : undefined }}>
+                  <span style={{ color: 'var(--muted-2)' }}>{r.ts}</span> {r.txt}
+                </div>
+              ))}
+              {!log.current.length ? <div style={{ color: 'var(--muted-2)' }}>пусто — ничего не приходило</div> : null}
+            </div>
+          );
+        };
+
         function AppCore() {
           const [user, setUser] = useState(null);
           const [userName, setUserName] = useState('');
@@ -18790,6 +18887,14 @@
           // адресной строки, и параметр туда просто не набрать.
           const [fpsOn, setFpsOn] = useState(() =>
             localStorage.getItem('cf_fps') === '1' || new URLSearchParams(location.search).has('fps'));
+          // Проверка карандаша — тот же приём: галочкой в «Проекте» или ?penprobe=1.
+          const [penProbeOn, setPenProbeOn] = useState(() => {
+            try { return localStorage.getItem('cf_pen_probe') === '1' || new URLSearchParams(location.search).has('penprobe'); } catch (e) { return false; }
+          });
+          const togglePenProbe = () => setPenProbeOn(v => {
+            try { localStorage.setItem('cf_pen_probe', v ? '0' : '1'); } catch (e) {}
+            return !v;
+          });
           const toggleFps = () => setFpsOn(v => {
             const n = !v;
             try { localStorage.setItem('cf_fps', n ? '1' : '0'); } catch (e) {}
@@ -19147,6 +19252,7 @@
                     setCurrentView(view);
                   }} />
               )}
+              {penProbeOn && <PenProbe onClose={togglePenProbe} />}
               {fpsNow && (
                 <div className="fixed pointer-events-none" style={{ left: '50%', transform: 'translateX(-50%)', bottom: 8, zIndex: 500, whiteSpace: 'nowrap', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '5px 9px', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: fpsNow.now >= 50 ? '#10b981' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
                   {/* «кадры» в приложении — это раскадровка, поэтому здесь
@@ -24521,6 +24627,18 @@
                         </span>
                       </span>
                       <input type="checkbox" checked={fpsOn} onChange={toggleFps}
+                             className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
+                    </label>
+                    <label className="flex items-center justify-between gap-3 rounded-lg px-4 py-3 cursor-pointer mb-2"
+                           style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-zinc-200">Проверка карандаша</span>
+                        <span className="block text-[length:var(--fs-1)] text-zinc-500 leading-relaxed mt-0.5">
+                          Окошко справа сверху: всё, что iPad передаёт странице от карандаша, пальцев и клавиш.
+                          Покажет, доходит ли двойное касание карандашом.
+                        </span>
+                      </span>
+                      <input type="checkbox" checked={penProbeOn} onChange={togglePenProbe} data-cf="pen-probe-toggle"
                              className="shrink-0 w-5 h-5 accent-indigo-500 cursor-pointer" />
                     </label>
 
