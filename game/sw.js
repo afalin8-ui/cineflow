@@ -1,9 +1,19 @@
 /* Service worker игры. Область — папка /game/, поэтому он не пересекается
    с service worker'ом CineFlow, который живёт в корне репозитория.
    Задача простая: игра целиком лежит рядом (three.js вшит в vendor/),
-   так что после первого запуска она работает без интернета. */
+   так что после первого запуска она работает без интернета.
 
-const VERSION = 'capella-v27';
+   ОБНОВЛЕНИЯ (C121). Все свои файлы — страница, модули, модели —
+   берутся «сначала сеть» с cache: 'no-cache': браузер спрашивает
+   сервер «не поменялось ли» (ответ 304 стоит копейки), а не отдаёт
+   копию из своего кэша, которую GitHub Pages разрешает держать
+   10 минут. Поэтому выкладка доходит при следующем открытии игры,
+   и VERSION поднимать для этого не обязательно. VERSION нужен для
+   другого: он перезаливает офлайн-набор SHELL и чистит старый кэш.
+   Чего это НЕ лечит: в уже открытой вкладке браузер держит модули
+   в памяти — новое приезжает после перезагрузки страницы. */
+
+const VERSION = 'capella-v28';
 const CACHE = VERSION;
 
 const SHELL = [
@@ -35,6 +45,22 @@ const SHELL = [
   './js/space.js',
   './js/ground.js',
   './js/galaxy.js',
+  './js/hangar.js',
+  './vendor/DRACOLoader.js',
+  './vendor/meshopt_decoder.module.js',
+  // Внешние модели и сканы обшивки и грунта: без них офлайн корабли
+  // и земля собирались бы на заглушках
+  './models/manifest.json',
+  './models/troyden_cruiser.glb',
+  './models/troyden_corvette.glb',
+  './planets/manifest.json',
+  './textures/hull_diff.jpg', './textures/hull_nor.jpg',
+  './textures/grass_diff.jpg', './textures/grass_nor.jpg',
+  './textures/dirt_diff.jpg', './textures/dirt_nor.jpg',
+  './textures/cliff_diff.jpg', './textures/cliff_nor.jpg',
+  './textures/rock_diff.jpg', './textures/rock_nor.jpg',
+  './textures/sand_diff.jpg', './textures/sand_nor.jpg',
+  './textures/snow_diff.jpg', './textures/snow_nor.jpg',
 ];
 
 self.addEventListener('install', event => {
@@ -42,7 +68,9 @@ self.addEventListener('install', event => {
     const cache = await caches.open(CACHE);
     await Promise.allSettled(SHELL.map(async url => {
       try {
-        const res = await fetch(url, { cache: 'reload' });
+        // no-cache, а не reload: файл, только что скачанный страницей,
+        // перепроверяется ответом 304, а не качается второй раз
+        const res = await fetch(url, { cache: 'no-cache' });
         if (res && res.ok) await cache.put(url, res);
       } catch (e) { /* доберём во время работы */ }
     }));
