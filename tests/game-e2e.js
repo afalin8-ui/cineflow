@@ -2,8 +2,9 @@
 //
 // Запуск:  node tests/game-e2e.js                 — всё (около двух с половиной минут)
 //          node tests/game-e2e.js --only space    — только бой на орбите
-//                                   (и shell | ground | campaign)
-// Порт сервера — переменная CF_PORT (по умолчанию 8300).
+//                                   (и shell | ground | campaign | update)
+// Порт сервера — переменная CF_PORT (по умолчанию 8300); раздел update
+// поднимает второй сервер на CF_PORT + 1.
 //
 // Гоняется после КАЖДОЙ правки игры. Проверяет не код, а то, что видит
 // игрок: кнопки нажимаются настоящей мышью, и перед нажатием проверяется
@@ -30,11 +31,17 @@
 //             ошибок; сбой → «В меню».
 //  campaign — новая кампания открывает карту, не дожидаясь моделей
 //             кораблей; «Конец хода» проходит.
+//  update   — выкладка доходит по F5 (C121): копия game/ на сервере
+//             «как GitHub Pages» (max-age=600 + ETag), service worker
+//             ВКЛЮЧЁН; правка main.js, модуля глубже и стилей приходит
+//             с первого F5, без связи открывается уже новое.
 //
 // Модели (.glb) стенд держит «в пути», пока сам не отпустит (gate), —
 // а не фиксированные секунды: иначе на медленной машине они доезжали
 // бы раньше нажатия, и проверка падала бы без поломки в игре.
 const { execSync, spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 let playwright;
 try { playwright = require('playwright'); } catch (e) { playwright = require(execSync('npm root -g').toString().trim() + '/playwright'); }
@@ -45,8 +52,8 @@ const BASE = `http://127.0.0.1:${PORT}/game/`;
 const arg = process.argv.slice(2).join(' ');
 const ONLY = (/--only[= ]+(\w+)/.exec(arg) || [])[1] || null;
 const want = g => !ONLY || ONLY === g;
-if (ONLY && !['shell', 'space', 'ground', 'campaign'].includes(ONLY)) {
-  console.error('--only: shell | space | ground | campaign'); process.exit(2);
+if (ONLY && !['shell', 'space', 'ground', 'campaign', 'update'].includes(ONLY)) {
+  console.error('--only: shell | space | ground | campaign | update'); process.exit(2);
 }
 
 let bad = 0;
@@ -57,6 +64,35 @@ const T0 = Date.now();
 const secs = () => ((Date.now() - T0) / 1000).toFixed(0) + ' с';
 
 const server = spawn('python3', ['-m', 'http.server', PORT, '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
+
+/* Сервер «как GitHub Pages» для раздела update: max-age=600 (столько
+   Pages разрешает браузеру держать файл, не спрашивая), ETag и ответ
+   304 на условный запрос. Обычный http.server заголовка max-age не
+   шлёт, и беда C121 на нём не воспроизводится вовсе. В журнал пишется
+   каждый запрос: по нему видно, дошёл ли F5 до сервера. */
+const PAGES_PY = `
+import http.server, os, sys
+ROOT, LOG = sys.argv[2], open(sys.argv[3], 'a')
+def tag(p):
+    st = os.stat(p)
+    return '"%x-%x"' % (int(st.st_mtime), st.st_size)
+class H(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *a, **k): super().__init__(*a, directory=ROOT, **k)
+    def end_headers(self):
+        self.send_header('Cache-Control', 'max-age=600')
+        p = self.translate_path(self.path)
+        if os.path.isfile(p): self.send_header('ETag', tag(p))
+        super().end_headers()
+    def send_head(self):
+        p = self.translate_path(self.path)
+        if os.path.isfile(p) and self.headers.get('If-None-Match') == tag(p):
+            self.send_response(304); self.end_headers(); return None
+        return super().send_head()
+    def log_message(self, fmt, *a): pass
+    def log_request(self, code='-', size='-'):
+        LOG.write('%s %s %s\\n' % (self.command, self.path, code)); LOG.flush()
+http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
+`;
 
 // В странице до всех скриптов: счётчик кадров цикла и метка «видели
 // экран подготовки» — он живёт доли секунды, и поймать его можно только
@@ -649,7 +685,86 @@ const SCAN = () => {
     await clean('кампания');
   };
 
-  for (const [g, fn] of [['shell', shell], ['space', space], ['ground', ground], ['campaign', campaign]]) {
+  // ─────────────────────────── ОБНОВЛЕНИЯ ПО F5 (C121)
+  /* Игрок, у которого игра открыта, после выкладки жмёт F5 — и обязан
+     получить новое. Раньше Chromium брал модули и стили из кэша ПАМЯТИ
+     вкладки, не спрашивая service worker вовсе, пока копия «свежая» по
+     заголовку max-age=600: F5, второй F5 и переход через about:blank
+     давали старый main.js десять минут. Здесь service worker ВКЛЮЧЁН —
+     проверяется именно он, на копии game/ во временной папке. */
+  const update = async () => {
+    console.log('\nОбновления по F5 (service worker включён)  [' + secs() + ']');
+    await page.goto('about:blank');   // две игры разом не рисуют
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'capella-e2e-'));
+    const www = path.join(dir, 'www');
+    fs.cpSync(path.join(ROOT, 'game'), path.join(www, 'game'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pages.py'), PAGES_PY);
+    const log = path.join(dir, 'server.log');
+    const port = String(+PORT + 1);
+    const srv = spawn('python3', [path.join(dir, 'pages.py'), port, www, log], { stdio: 'ignore' });
+    const URL5 = `http://127.0.0.1:${port}/game/`;
+    let c5 = null;
+    try {
+      let up = false;
+      for (let i = 0; i < 60 && !up; i++) {
+        up = await fetch(URL5).then(r => r.ok, () => false);
+        if (!up) await new Promise(r => setTimeout(r, 100));
+      }
+      if (!up) { ok('сервер «как GitHub Pages» поднялся на порту ' + port, false); return; }
+      c5 = await browser.newContext({ viewport: { width: 1366, height: 768 } });   // service worker разрешён
+      const p = await c5.newPage();
+      const errs = [];
+      p.on('pageerror', e => errs.push(String(e.message)));
+      const label = async () => {
+        await p.waitForSelector('[data-a="skirmish"]', { state: 'visible', timeout: 60000 });
+        return p.evaluate(() => document.querySelector('[data-a="skirmish"]').textContent.trim());
+      };
+      await p.goto(URL5);
+      await label();
+      const ctl = await p.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 }).then(() => true, () => false);
+      ok('service worker игры взял страницу', ctl);
+      await p.reload();   // теперь и модули идут через service worker
+      const before = await label();
+
+      // «Выкладка»: сам main.js, модуль глубже по графу и стили. Время
+      // файла сдвигаем вперёд — так меняется и ETag, и Last-Modified.
+      const edit = (rel, fn) => {
+        const f = path.join(www, rel);
+        fs.writeFileSync(f, fn(fs.readFileSync(f, 'utf8')));
+        const t = Date.now() / 1000 + 120;
+        fs.utimesSync(f, t, t);
+      };
+      edit('game/js/main.js', x => x.replace('data-a="skirmish">Быстрый бой</button>', 'data-a="skirmish">Быстрый бой · НОВОЕ</button>'));
+      edit('game/js/engine.js', x => x + "\nglobalThis.__e2eFresh = 'engine';\n");
+      edit('game/style.css', x => x + '\nbody { outline-color: rgb(1, 2, 3); }\n');
+      fs.appendFileSync(log, '--- выкладка ---\n');
+
+      await p.reload();   // F5
+      const after = await label();
+      const fresh = await p.evaluate(() => ({
+        engine: globalThis.__e2eFresh === 'engine',
+        css: getComputedStyle(document.body).outlineColor === 'rgb(1, 2, 3)',
+      }));
+      const asked = fs.readFileSync(log, 'utf8').split('--- выкладка ---')[1].split('\n').filter(l => /\/js\/main\.js/.test(l)).length;
+      ok('F5 после выкладки привозит новый main.js', !/НОВОЕ/.test(before) && /НОВОЕ/.test(after),
+        `на кнопке «${after}», запросов main.js к серверу после выкладки: ${asked}`);
+      ok('…и новый модуль глубже по графу, и новые стили', fresh.engine && fresh.css,
+        `engine.js новый: ${fresh.engine}, style.css новый: ${fresh.css}`);
+
+      await c5.setOffline(true);
+      await p.reload();
+      const off = await label().catch(() => '');
+      ok('без связи открывается уже новая версия', /НОВОЕ/.test(off), off || 'меню без связи не открылось');
+      await c5.setOffline(false);
+      ok('обновления: без ошибок страницы', !errs.length, errs.slice(0, 3).join(' | '));
+    } finally {
+      if (c5) await c5.close().catch(() => {});
+      srv.kill();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  for (const [g, fn] of [['shell', shell], ['space', space], ['ground', ground], ['campaign', campaign], ['update', update]]) {
     if (!want(g)) continue;
     try { await fn(); } catch (e) {
       ok(`раздел «${g}» дошёл до конца`, false, String(e.message || e).split('\n')[0].slice(0, 200));

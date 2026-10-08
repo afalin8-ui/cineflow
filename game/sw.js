@@ -7,14 +7,32 @@
    берутся «сначала сеть» с cache: 'no-cache': браузер спрашивает
    сервер «не поменялось ли» (ответ 304 стоит копейки), а не отдаёт
    копию из своего кэша, которую GitHub Pages разрешает держать
-   10 минут. Поэтому выкладка доходит при следующем открытии игры,
-   и VERSION поднимать для этого не обязательно. VERSION нужен для
-   другого: он перезаливает офлайн-набор SHELL и чистит старый кэш.
-   Чего это НЕ лечит: в уже открытой вкладке браузер держит модули
-   в памяти — новое приезжает после перезагрузки страницы. */
+   10 минут.
+   Этого МАЛО, и ответ странице уходит с заголовком Cache-Control:
+   no-cache (revalidating). Chromium держит модули и стили в кэше
+   ПАМЯТИ вкладки и на F5 берёт их оттуда, не спрашивая service
+   worker вовсе, пока копия «свежая» по её заголовку — а он у GitHub
+   Pages max-age=600. Замер: после выкладки F5, второй F5 и переход
+   через about:blank давали СТАРЫЙ main.js, в журнале сервера его
+   запросов не было ни одного; новое приходило только в новой вкладке
+   или через десять минут. С заголовком no-cache правка приходит на
+   первом же F5.
+   VERSION поднимать всё равно надо: он перезаливает офлайн-набор
+   SHELL и чистит старый кэш, а смена самого service worker'а заодно
+   сбрасывает кэш памяти, накопленный при прежнем. */
 
-const VERSION = 'capella-v29';
+const VERSION = 'capella-v30';
 const CACHE = VERSION;
+
+/* Ответ странице — с перепроверкой (см. шапку). Ответ после
+   перенаправления не трогаем: у модуля по адресу ответа считаются его
+   import'ы, а у собранного заново ответа адреса нет вовсе. */
+function revalidating(res) {
+  if (!res || !res.ok || res.type !== 'basic' || res.redirected) return res;
+  const h = new Headers(res.headers);
+  h.set('Cache-Control', 'no-cache');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
 
 const SHELL = [
   './',
@@ -71,7 +89,7 @@ self.addEventListener('install', event => {
         // no-cache, а не reload: файл, только что скачанный страницей,
         // перепроверяется ответом 304, а не качается второй раз
         const res = await fetch(url, { cache: 'no-cache' });
-        if (res && res.ok) await cache.put(url, res);
+        if (res && res.ok) await cache.put(url, revalidating(res));
       } catch (e) { /* доберём во время работы */ }
     }));
     await self.skipWaiting();
@@ -97,8 +115,8 @@ self.addEventListener('fetch', event => {
   // без связи — из кэша.
   event.respondWith((async () => {
     try {
-      const fresh = await fetch(req, { cache: 'no-cache' });
-      if (fresh && fresh.ok) {
+      const fresh = revalidating(await fetch(req, { cache: 'no-cache' }));
+      if (fresh && fresh.ok && !fresh.redirected) {
         const cache = await caches.open(CACHE);
         cache.put(req, fresh.clone());
       }
