@@ -49,7 +49,10 @@ function mat(color, opts = {}) {
       flatShading: opts.flat !== false,
       map: skin ? skin.map : null,
       normalMap: skin ? skin.nor : null,
-      normalScale: skin ? new THREE.Vector2(0.8, 0.8) : undefined,
+      // Ключ без скана не передаём вовсе: `undefined` three.js встречает
+      // предупреждением на каждый материал, и шум в консоли прятал
+      // настоящие ошибки (C129)
+      ...(skin ? { normalScale: new THREE.Vector2(0.8, 0.8) } : {}),
     });
     m.userData.shared = true;
     matCache.set(key, m);

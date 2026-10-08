@@ -238,6 +238,8 @@ export class TacticalCamera {
 //   onOrder(worldPoint, entity, opts)— ПКМ на мыши (на планшете приказы
 //                                      идут через onTap с флагом order)
 //   pickMeshes()                     — что можно ткнуть
+//   canPick(entity)                  — можно ли его выбрать сейчас
+//                                      (скрытый противник — нельзя)
 //   planeY()                         — высота плоскости для приказов
 //   hasSelection()                   — есть ли выделение (решает,
 //                                      касание — это приказ или выбор)
@@ -245,6 +247,12 @@ export class TacticalCamera {
 
 const LONG_PRESS_MS = 420;
 const TAP_SLOP = 12;
+
+// Виден ли объект на самом деле: спрятан он сам или кто-то из предков
+function shownInScene(o) {
+  for (let p = o; p; p = p.parent) if (p.visible === false) return false;
+  return true;
+}
 
 export class Controls {
   constructor(dom, tcam, handlers = {}) {
@@ -300,9 +308,16 @@ export class Controls {
     this.ray.params.Points.threshold = 6;
     const hits = this.ray.intersectObjects(meshes, true);
     for (const hit of hits) {
+      /* Луч three.js НЕ смотрит на `visible` (C18): невидимый корабль
+         Рииза ловился кликом и выдавал себя панелью с прочностью.
+         Скрытое — у самого меша или у любого предка — не выбирается. */
+      if (!shownInScene(hit.object)) continue;
       let o = hit.object;
       while (o && !o.userData.entity) o = o.parent;
-      if (o && o.userData.entity && !o.userData.entity.dead) return o.userData.entity;
+      const ent = o && o.userData.entity;
+      if (!ent || ent.dead) continue;
+      if (this.h.canPick && !this.h.canPick(ent)) continue;
+      return ent;
     }
     return null;
   }
@@ -315,6 +330,7 @@ export class Controls {
     let best = null, bd = radiusPx * radiusPx;
     for (const e of list) {
       if (e.dead) continue;
+      if (this.h.canPick && !this.h.canPick(e)) continue;
       const p = screenOf(e.pos, camera, w, h);
       if (p.z > 1) continue;
       const d = (p.x - px) ** 2 + (p.y - py) ** 2;
@@ -642,6 +658,8 @@ export class Fx {
     this.camera = null;
     this.maxBeams = budget.beams || (IS_TOUCH ? 90 : 160);
     this.maxSprites = budget.sprites || (IS_TOUCH ? 160 : 300);
+    this.maxRings = budget.rings || (IS_TOUCH ? 14 : 26);
+    this.busy = 0;           // доля занятых спрайтов, считается в update
     this.group = new THREE.Group();
     this.group.frustumCulled = false;
     scene.add(this.group);
@@ -654,9 +672,50 @@ export class Fx {
 
   delay(after, fn) { this.timers.push({ t: after, fn }); }
 
+  /* ── ПУЛ ПЕРЕПОЛНЕН (C44).
+     Раньше при переполнении отдавался СЛУЧАЙНЫЙ живой эффект: взрыв
+     обрывался на середине, луч гас раньше времени, искра прыгала через
+     экран. Теперь отдаём тот, что ближе всех к концу своей жизни (он и
+     так почти погас), — разница на глаз не видна. Поиск свободного и
+     самого старого — один проход по пулу. */
+  _oldest(list) {
+    let worst = null, wk = -1;
+    for (const x of list) {
+      if (!x.live) return x;
+      const k = x.t / x.life;
+      if (k > wk) { wk = k; worst = x; }
+    }
+    return list.length >= this._cap(list) ? worst : null;
+  }
+  _cap(list) {
+    return list === this.beams ? this.maxBeams : list === this.sprites ? this.maxSprites : this.maxRings;
+  }
+
+  /* Можно ли сейчас тратить спрайты на след (дым ракеты, инверсия
+     истребителя, дым обломка). Следы — главные пожиратели пула, а
+     вспышкам и взрывам место нужнее: при пуле, занятом больше чем на
+     70%, и вдали от камеры, где клуб в пару пикселей всё равно не
+     виден, след не кладём. */
+  trailOk(pos, far = 2400) {
+    if (this.busy > 0.7) return false;
+    return !this.camera || !pos || this.camera.position.distanceToSquared(pos) < far * far;
+  }
+
+  /* Сколько частиц класть на самом деле. В большом бою пул спрайтов
+     занят ВЕСЬ бой: замер — четыре выдачи из пяти отбирали живой
+     эффект. Поэтому при занятом пуле искр, обломков и дыма меньше (при
+     полном — около трети), а вдали от камеры вдвое меньше: там искра
+     мельче пикселя. Лишняя частица всё равно отобрала бы место у
+     вспышки, которая сейчас на виду. */
+  _n(count, pos) {
+    let k = this.busy > 0.6 ? Math.max(0.35, 1 - (this.busy - 0.6) * 1.6) : 1;
+    if (this.camera && pos && this.camera.position.distanceToSquared(pos) > 2400 * 2400) k *= 0.5;
+    return count * k;
+  }
+
   _beam() {
-    for (const b of this.beams) if (!b.live) return b;
-    if (this.beams.length >= this.maxBeams) return this.beams[(Math.random() * this.beams.length) | 0];
+    const old = this._oldest(this.beams);
+    if (old) return old;
     const m = new THREE.Mesh(BEAM_GEO, new THREE.MeshBasicMaterial({
       map: BEAM_TEX, color: 0xffffff, transparent: true, opacity: 1,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
@@ -671,11 +730,11 @@ export class Fx {
   }
 
   _sprite() {
-    const reset = s => { s.vel = null; s.grav = 0; s.fadeIn = false; s.mesh.material.opacity = 1; return s; };
-    for (const s of this.sprites) if (!s.live) return reset(s);
-    if (this.sprites.length >= this.maxSprites) {
-      return reset(this.sprites[(Math.random() * this.sprites.length) | 0]);
-    }
+    /* smokeEvery сбрасывать обязательно: иначе бывший обломок, ставший
+       клубом дыма, сам начинал дымить — след плодил след */
+    const reset = s => { s.vel = null; s.grav = 0; s.fadeIn = false; s.smokeEvery = 0; s.mesh.material.opacity = 1; return s; };
+    const old = this._oldest(this.sprites);
+    if (old) return reset(old);
     const m = new THREE.Sprite(new THREE.SpriteMaterial({
       map: GLOW_TEX, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, toneMapped: false,
@@ -772,7 +831,7 @@ export class Fx {
      искр тем, что летят дальше, гаснут медленнее и тянут за собой
      дым — из-за них взрыв выглядит разрушением, а не вспышкой. */
   debris(pos, count = 6, color = 0x6a5a48, speed = 30, gravity = -42) {
-    const n = clamp(Math.round(count * (IS_TOUCH ? 0.5 : 1)), 1, 16);
+    const n = clamp(Math.round(this._n(count, pos) * (IS_TOUCH ? 0.5 : 1)), 1, 16);
     for (let i = 0; i < n; i++) {
       const s = this._sprite();
       s.live = true; s.t = 0; s.life = rnd(0.7, 1.5);
@@ -843,8 +902,8 @@ export class Fx {
 
   _ringObj() {
     if (!this.rings) this.rings = [];
-    for (const r of this.rings) if (!r.live) return r;
-    if (this.rings.length >= (IS_TOUCH ? 14 : 26)) return this.rings[0];
+    const old = this._oldest(this.rings);
+    if (old) return old;
     const m = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({
       map: RING_TEX, color: 0xffffff, transparent: true, opacity: 1, side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
@@ -874,7 +933,7 @@ export class Fx {
      что-то произошло», а искры показывают, куда ударило и с какой
      силой. Живут в том же пуле спрайтов, поэтому бесплатны. */
   sparks(pos, count = 10, color = 0xffd08a, speed = 26, gravity = true) {
-    const n = clamp(Math.round(count * (IS_TOUCH ? 0.55 : 1)), 2, 26);
+    const n = clamp(Math.round(this._n(count, pos) * (IS_TOUCH ? 0.55 : 1)), 2, 26);
     for (let i = 0; i < n; i++) {
       const s = this._sprite();
       s.live = true; s.t = 0; s.life = rnd(0.25, 0.7);
@@ -891,7 +950,7 @@ export class Fx {
   /* Дым: несколько клубов, которые всплывают и разбухают. Без него
      после взрыва не остаётся ничего — как будто ничего и не было. */
   smoke(pos, size = 6, color = 0x4a4238, count = 4) {
-    const n = clamp(Math.round(count * (IS_TOUCH ? 0.6 : 1)), 1, 8);
+    const n = clamp(Math.round(this._n(count, pos) * (IS_TOUCH ? 0.6 : 1)), 1, 8);
     for (let i = 0; i < n; i++) {
       const s = this._sprite();
       s.live = true; s.t = 0; s.life = rnd(1.1, 2.2);
@@ -938,7 +997,7 @@ export class Fx {
         });
       }
     }
-    const n = clamp(Math.round(size * (IS_TOUCH ? 0.6 : 0.9)), 3, 14);
+    const n = clamp(Math.round(this._n(size, pos) * (IS_TOUCH ? 0.6 : 0.9)), 2, 14);
     for (let i = 0; i < n; i++) {
       const s = this._sprite();
       s.live = true; s.t = 0; s.life = rnd(0.4, 1.0);
@@ -968,7 +1027,7 @@ export class Fx {
           b.trail.at -= dt;
           if (b.trail.at <= 0) {
             b.trail.at = b.trail.every;
-            this.puff(b.mesh.position, 1.1, 0x9a9186, 0.5);
+            if (this.trailOk(b.mesh.position)) this.puff(b.mesh.position, 1.1, 0x9a9186, 0.5);
           }
         }
         continue;
@@ -977,11 +1036,13 @@ export class Fx {
       b.mesh.scale.x = b.w * 2 * (0.35 + k * 0.65);
       this._faceBeam(b);
     }
+    let liveSprites = 0;
     for (const s of this.sprites) {
       if (!s.live) continue;
       s.t += dt;
       const k = s.t / s.life;
       if (k >= 1) { s.live = false; s.mesh.visible = false; continue; }
+      liveSprites++;
       s.mesh.scale.setScalar(lerp(s.r0, s.r1, k));
       s.mesh.material.opacity = 1 - k * k;
       if (s.vel) {
@@ -994,13 +1055,14 @@ export class Fx {
           s.smokeAt -= dt;
           if (s.smokeAt <= 0) {
             s.smokeAt = s.smokeEvery;
-            this.puff(s.mesh.position, 0.9, 0x51483c, 0.45);
+            if (this.trailOk(s.mesh.position)) this.puff(s.mesh.position, 0.9, 0x51483c, 0.45);
           }
         }
       }
       // дым не выпрыгивает из ниоткуда, а наплывает
       if (s.fadeIn) s.mesh.material.opacity *= Math.min(1, k * 6);
     }
+    this.busy = liveSprites / this.maxSprites;
     for (const r of this.rings || []) {
       if (!r.live) continue;
       r.t += dt;
