@@ -25,7 +25,9 @@
 //             и ждёт модели; корабли есть; выделение кликом и рамкой;
 //             приказ правой кнопкой; «мёртвые» кнопки HUD на 1920×1080
 //             и 1366×768; сбой в кадре не замораживает игру (отрисовка
-//             идёт, «Продолжить»); бой доходит до итога и в меню.
+//             идёт, «Продолжить»); медленный клик по кнопке действия
+//             (C30); ПКМ по вражескому звену — урон конечен, флот
+//             стреляет (C14); бой доходит до итога и в меню.
 //  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
 //             второй бой сквозь неё не начать; операция стартует без
 //             ошибок; сбой → «В меню».
@@ -155,13 +157,21 @@ async function hookRender(page) {
     const E = await import('/game/js/engine.js');
     const o = E.Viewport.prototype.render;
     window.__renders = 0;
+    // __frames — кадры игры вообще, и с заглушённой отрисовкой тоже
+    window.__frames = 0;
     E.Viewport.prototype.render = function (s, c) {
+      window.__frames++;
       if (window.__noRender) return;
       window.__renders++;
       return o.call(this, s, c);
     };
     window.__renderHooked = true;
   });
+}
+// Дождаться N кадров игры (не секунд: под программным рендером кадр долгий)
+async function waitFrames(page, n) {
+  const f0 = await page.evaluate(() => window.__frames);
+  await page.waitForFunction(([a, k]) => window.__frames >= a + k, [f0, n], { timeout: 120000, polling: 50 });
 }
 async function mute(page, on) {
   await hookRender(page);
@@ -556,6 +566,117 @@ const SCAN = () => {
     const goes = await page.waitForFunction(t0 => !document.querySelector('.crash') && __sp.time > t0 + 0.05, b.time, { timeout: 30000 }).then(() => true, () => false);
     ok('после «Продолжить» окно закрыто, бой идёт', goes);
     crashLogs.length = 0;
+
+    /* C30: медленный клик. Панель выделенного обновляется раз в треть
+       секунды, и раньше она при этом пересоздавала кнопки: нажатие,
+       пришедшееся на пересборку, терялось. Держим кнопку 150 мс и
+       дожидаемся 9 кадров (9 × 0,05 с > 0,34 с) — пересборка за время
+       нажатия была бы наверняка. */
+    await tap(page, '[data-speed="0"]');
+    r = await tap(page, '[data-q="carrier"]');
+    ok('«Авианосцы» нажимается', r.ok, r.why);
+    await waitFrames(page, 2);
+    const launch = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('#hud button.act')].find(x => /Перехватчик/.test(x.textContent));
+      if (!b) return null;
+      b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const q = b.getBoundingClientRect(), x = q.left + q.width / 2, y = q.top + q.height / 2;
+      const h = document.elementFromPoint(x, y);
+      window.__launchBtn = b;
+      return { x, y, hit: !!h && (h === b || b.contains(h)), disabled: b.disabled,
+        n: __sp.squads.filter(s => !s.dead && s.side === __sp.playerSide).length };
+    });
+    ok('кнопка «Перехватчик» есть и под мышью', !!launch && launch.hit && !launch.disabled, JSON.stringify(launch));
+    if (launch) {
+      await page.mouse.move(launch.x, launch.y);
+      await page.mouse.down();
+      await page.waitForTimeout(150);
+      await waitFrames(page, 9);
+      await page.mouse.up();
+      await waitFrames(page, 1);
+      const after = await page.evaluate(() => ({
+        n: __sp.squads.filter(s => !s.dead && s.side === __sp.playerSide).length,
+        same: window.__launchBtn.isConnected,
+      }));
+      ok('медленный клик (150 мс) по «Перехватчик» срабатывает', after.n === launch.n + 1,
+        `звеньев ${launch.n} → ${after.n}, кнопка та же: ${after.same}`);
+    }
+
+    /* C14: приказ атаковать вражеское ЗВЕНО. У звена нет прочности —
+       раньше урон по нему уходил в NaN, звено становилось бессмертным,
+       а весь флот стрелял главным калибром в пустоту. Звено ставим
+       в чистое место поля, бьём настоящей ПКМ по его подписи и смотрим,
+       что урон конечен, а флот стреляет по кораблям. */
+    await page.evaluate(() => {
+      __sp.closeInTest(320);
+      for (const s of __sp.ships) { s.forced = null; s.target = null; }
+    });
+    await mute(page, true);
+    await tap(page, '[data-speed="4"]');
+    const foeSq = await page.waitForFunction(() => __sp.squads.some(s => !s.dead && s.side !== __sp.playerSide && s.craft.length >= 3),
+      null, { timeout: 180000, polling: 200 }).then(() => true, () => false);
+    await tap(page, '[data-speed="0"]');
+    await mute(page, false);
+    ok('противник поднял звено', foeSq);
+    if (foeSq) {
+      const spot = await page.evaluate(async () => {
+        const P = __sp.playerSide;
+        const sq = __sp.squads.find(s => !s.dead && s.side !== P && s.craft.length >= 3);
+        window.__foeSq = sq;
+        __sp.selection = [...__sp.ships.filter(s => !s.dead && s.side === P && !s.station),
+          ...__sp.squads.filter(s => !s.dead && s.side === P)];
+        const view = document.getElementById('view');
+        for (const [x, z] of [[420, 0], [-420, 0], [600, 40], [-600, 40], [300, -60]]) {
+          for (const [i, c] of sq.craft.entries()) c.pos.set(x + (i % 3) * 3, 0, z + Math.floor(i / 3) * 3);
+          sq.pos.set(x + 3, 0, z + 1.5);
+          __sp.camTest(x * 0.5, 0, 0, 900);
+          await new Promise(r => { const f = window.__frames; const iv = setInterval(() => { if (window.__frames > f + 1) { clearInterval(iv); r(); } }, 30); });
+          const p = __sp.screenTest(sq);
+          if (p.z > 1 || p.x < 60 || p.y < 60 || p.x > innerWidth - 60 || p.y > innerHeight - 60) continue;
+          if (document.elementFromPoint(p.x, p.y) !== view) continue;
+          const gap = Math.min(...__sp.ships.filter(s => !s.dead).map(s => { const q = __sp.screenTest(s); return Math.hypot(q.x - p.x, q.y - p.y); }));
+          if (gap < 60) continue;
+          return { x: p.x, y: p.y, gap: Math.round(gap), name: sq.def.name };
+        }
+        return null;
+      });
+      ok('звено противника стоит отдельно на экране', !!spot, spot ? `${spot.name}, до кораблей ${spot.gap} точек` : 'не нашлось места');
+      if (spot) {
+        await page.mouse.click(spot.x, spot.y, { button: 'right' });
+        await waitFrames(page, 1);
+        const took = await page.evaluate(() => {
+          const P = __sp.playerSide, sq = window.__foeSq;
+          const mine = __sp.ships.filter(s => !s.dead && s.side === P && !s.station);
+          return {
+            forced: mine.filter(s => s.forced === sq).length,
+            squads: __sp.squads.filter(s => !s.dead && s.side === P && s.target === sq).length,
+            badTarget: __sp.ships.filter(s => s.target && s.target.kind === 'squad').length,
+            hp: __sp.ships.filter(s => !s.dead && s.side !== P).reduce((a, s) => a + s.hp, 0),
+          };
+        });
+        ok('ПКМ по звену — приказ принят, цель кораблей — машины, а не звено', (took.forced > 0 || took.squads > 0) && took.badTarget === 0,
+          `на звено: кораблей ${took.forced}, своих звеньев ${took.squads}; кораблей с целью «звено» ${took.badTarget}`);
+        await mute(page, true);
+        await tap(page, '[data-speed="4"]');
+        const t0 = await page.evaluate(() => __sp.time);
+        await page.waitForFunction(t => __sp.time >= t + 8, t0, { timeout: 180000, polling: 200 }).catch(() => {});
+        await tap(page, '[data-speed="0"]');
+        await mute(page, false);
+        const res = await page.evaluate(() => {
+          const P = __sp.playerSide;
+          const all = [...__sp.ships, ...__sp.craft, ...__sp.squads, window.__foeSq, ...window.__foeSq.craft];
+          return {
+            nan: all.filter(e => e.hp !== undefined && !Number.isFinite(e.hp)).length,
+            hp: __sp.ships.filter(s => !s.dead && s.side !== P).reduce((a, s) => a + s.hp, 0),
+            dt: __sp.time,
+          };
+        });
+        ok('урон по звену конечен: ни у кого прочность не NaN', res.nan === 0, `NaN у ${res.nan}`);
+        ok('после приказа на звено флот стреляет по кораблям', res.hp < took.hp - 1,
+          `прочность противника ${Math.round(took.hp)} → ${Math.round(res.hp)} за ${(res.dt - t0).toFixed(1)} игровых с`);
+      }
+    }
+    await clean('медленный клик и приказ на звено');
 
     // До итога: флоты в упор, противник на последнем издыхании, 4×, без отрисовки
     r = await tap(page, '[data-speed="4"]');

@@ -102,6 +102,14 @@ export function mergeFleets(a, b) {
   return [...map.entries()].map(([id, count]) => ({ id, count }));
 }
 
+// Флот минус ушедшие из него корабли; ниже нуля не уходит
+export function subtractFleet(a, b) {
+  const map = new Map();
+  for (const f of a || []) map.set(f.id, (map.get(f.id) || 0) + f.count);
+  for (const f of b || []) map.set(f.id, (map.get(f.id) || 0) - f.count);
+  return [...map.entries()].filter(([, n]) => n > 0).map(([id, count]) => ({ id, count }));
+}
+
 /* Полк набирается на планете — значит, её характер решает и цену.
    На мире с мобилизационным округом пехота дешевле и в кампании,
    не только в наземном бою. */
@@ -200,13 +208,15 @@ export function hopsFrom(startId, limit = 3) {
 /* Флот, который можно дёрнуть дальним гипером к месту боя: свои
    системы в пределах трёх прыжков, у которых есть что послать.
    Врата обязательны там же, где и обычно, — лёгкие корабли без них
-   никуда не уйдут, поэтому шлём только то, что реально долетит. */
-export function farReserveFor(camp, faction, atId) {
+   никуда не уйдут, поэтому шлём только то, что реально долетит.
+   Систему, ИЗ КОТОРОЙ идёт атака, не предлагаем (C16): её флот уже
+   в бою, и «подмога» оттуда была копией тех же кораблей. */
+export function farReserveFor(camp, faction, atId, fromId) {
   const dist = hopsFrom(atId, HYPER.farMaxHops);
   const out = [];
   for (const def of GALAXY_MAP.systems) {
     const hops = dist[def.id];
-    if (!hops || def.id === atId) continue;
+    if (!hops || def.id === atId || def.id === fromId) continue;
     const st = camp.systems[def.id];
     if (st.owner !== faction || !fleetSize(st.fleet)) continue;
     const check = jumpCheck(camp, def.id, faction);
@@ -896,6 +906,13 @@ export function createGalaxy(ctx, camp) {
     };
 
     const apply = res => {
+      /* Корабли дальнего гипера, дошедшие до боя, ушли из своих систем:
+         дальше они живут в общем исходе боя. Без вычета подмога
+         оставалась и дома, и в бою (C16). */
+      for (const f of res.far || []) {
+        const src = camp.systems[f.id];
+        if (src) src.fleet = subtractFleet(src.fleet, f.ships);
+      }
       if (res.result === 'victory' || res.result === 'attacker') {
         from.fleet = [];
         to.fleet = res.attacker || [];
@@ -914,10 +931,14 @@ export function createGalaxy(ctx, camp) {
           m.querySelector('[data-a="ok"]').onclick = () => { m.remove(); refreshAll(); };
         }
       } else if (res.result === 'retreat') {
+        /* Домой возвращаются только успевшие уйти в гипер и резерв,
+           который так и не вызвали. Ноль уцелевших — это ноль, а не
+           прежний флот целиком (C17). */
         logLine(`${toDef.name}: флот отошёл, не приняв бой до конца.`);
-        from.fleet = res.attacker && res.attacker.length ? res.attacker : from.fleet;
+        from.fleet = res.attacker || [];
       } else {
-        from.fleet = [];
+        // Разбит на поле — но невызванный резерв и ушедшие в гипер целы
+        from.fleet = res.attacker || [];
         to.fleet = res.defender || to.fleet;
         logLine(`${toDef.name}: наш флот разбит.`);
       }
@@ -936,7 +957,7 @@ export function createGalaxy(ctx, camp) {
           reserve: mergeFleets(attacker.reserve || [], split.rest),
         },
         // Флот из своих систем в трёх прыжках: долетит не сразу
-        farReserve: farReserveFor(camp, camp.playerFaction, toId),
+        farReserve: farReserveFor(camp, camp.playerFaction, toId, fromId),
         defender, playerSide: 'attacker', biome: toDef.biome,
         difficulty: camp.difficulty, rings: !!toDef.rings,
         system: toDef.id,

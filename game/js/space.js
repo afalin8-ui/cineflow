@@ -237,7 +237,8 @@ export function createSpaceBattle(ctx, config) {
        прыжках. Каждый вызов летит своё время и приходит
        отдельно — их может быть несколько в воздухе разом. */
     far: (config.farReserve || []).map(x => ({ ...x, called: 0 })),
-    conceded: null,
+    conceded: null,     // чей носитель ушёл в гипер — та сторона бой проиграла
+    retreat: { attacker: false, defender: false },   // кто отходит всем флотом
     gun: null,          // противоорбитальное орудие защитника, см. ниже
     blindUntil: 0,      // до какого времени флот игрока ослеплён помехами снизу
   };
@@ -349,8 +350,11 @@ export function createSpaceBattle(ctx, config) {
     if (carrier.sabotageUntil && state.time < carrier.sabotageUntil) return false;
     carrier.hangar.free--;
     const def = STRIKE[carrier.faction.id][role];
+    /* У звена есть класс, но НЕТ прочности: прочность у машин. Класс
+       нужен, чтобы таблица урона знала, что главный калибр по звену
+       не наводится (C14), — без него множитель выходил единицей. */
     const squad = {
-      uid: uid++, kind: 'squad', side: carrier.side, faction: carrier.faction,
+      uid: uid++, kind: 'squad', cls: 'strike', side: carrier.side, faction: carrier.faction,
       role, def, home: carrier, craft: [], dead: false, recall: false,
       target: null, pos: new THREE.Vector3().copy(carrier.pos), moveTo: null,
     };
@@ -383,12 +387,31 @@ export function createSpaceBattle(ctx, config) {
     return true;
   }
 
-  function killSquad(squad) {
+  /* Звено выбито — место в ангаре вернётся через 26 с (машины строят
+     заново). Звено СЕЛО — место уже вернула посадка, и второго таймера
+     быть не должно: иначе через 26 с звеньев в воздухе больше, чем
+     ангаров (C99). */
+  function killSquad(squad, landed) {
     if (squad.dead) return;
     squad.dead = true;
     const carrier = squad.home;
-    if (carrier && !carrier.dead && carrier.hangar) carrier.hangar.rebuild.push(state.time + 26);
+    if (!landed && carrier && !carrier.dead && carrier.hangar) carrier.hangar.rebuild.push(state.time + 26);
     state.selection = state.selection.filter(s => s !== squad);
+  }
+
+  /* Звено без носителя (тот погиб или ушёл в гипер) ищет другой свой
+     носитель, на который можно сесть. Нет такого — звено остаётся
+     без дома, и об этом говорится ОДИН раз (C8). */
+  function rehome(squad) {
+    let best = null, bd = Infinity;
+    for (const s of state.ships) {
+      if (s.dead || s.hyper || s.side !== squad.side || !s.hangar) continue;
+      const d = s.pos.distanceToSquared(squad.pos);
+      if (d < bd) { bd = d; best = s; }
+    }
+    if (best) best.hangar.launched.push(squad);
+    squad.home = best;
+    return best;
   }
 
   /* Пуск ракеты авиацией. Ракета летит физически: её можно сбить
@@ -447,7 +470,10 @@ export function createSpaceBattle(ctx, config) {
         });
       }
       if (e.dome) {
-        e.dome.visible = e.ecm.power > 0.02;
+        /* Купол скрытого противника не рисуется: висящий над пустотой
+           цилиндр выдавал невидимый флот Рииза (C67). Глушит он при
+           этом по-прежнему — помехи от невидимки и есть его сила. */
+        e.dome.visible = e.ecm.power > 0.02 && !(e.side !== state.playerSide && hidden(e));
         // Блин лежит в плоскости боя, а не крутится вместе с корпусом
         const emit = e.obj.userData.emitter;
         const ey = emit ? emit.y * 1.25 : -e.radius;
@@ -551,12 +577,46 @@ export function createSpaceBattle(ctx, config) {
     fx.flash(e.pos, e.radius * 4, 0xdfefff, 0.5);
     fx.sparks(e.pos, 10, 0xcfe6ff, e.radius * 6, false);
     scene.remove(e.obj);
+    removeDome(e);
     state.jumped[e.side].push(e.def.id);
     state.selection = state.selection.filter(x => x !== e);
-    // Уход носителя = флот остался без авиации: бой считается проигранным
+    /* Уход носителя = флот остался без авиации: бой проигран, и за
+       носителем уходит весь флот. Уходит ЧЕСТНО — накачкой гипера,
+       под огнём; бой кончится, когда уйдут или погибнут все (C17). */
     if (e.cls === 'carrier' && !state.conceded) {
       state.conceded = e.side;
+      orderRetreat(e.side);
+      toast(e.side === state.playerSide ? 'Носитель ушёл в гипер — флот отходит следом'
+                                        : 'Носитель противника ушёл — его флот отходит');
     }
+  }
+
+  /* ── ОТХОД.
+     Раньше «Отход» кончал бой сразу, и домой возвращались все живые —
+     проигрышный бой ничего не стоил. Теперь это гипер всего флота:
+     каждый корабль копит переход и всё это время беззащитен. Спасены
+     только успевшие уйти. Резерв, что ещё не вышел, в бой уже не идёт
+     и целым возвращается домой. */
+  function orderRetreat(side) {
+    if (state.retreat[side]) return 0;
+    state.retreat[side] = true;
+    state.reinforceAt[side] = 0;
+    let n = 0;
+    for (const s of state.ships) if (!s.dead && s.side === side && beginJump(s)) n++;
+    return n;
+  }
+  function cancelRetreat(side) {
+    if (!state.retreat[side] || state.conceded === side) return;
+    state.retreat[side] = false;
+    for (const s of state.ships) if (!s.dead && s.side === side && s.hyper) s.hyper = null;
+  }
+
+  // Купол РЭБ — отдельный объект сцены: уходит вместе с кораблём (C66)
+  function removeDome(e) {
+    if (!e.dome) return;
+    scene.remove(e.dome);
+    disposeScene(e.dome);
+    e.dome = null;
   }
 
   function updateHyper(e, dt) {
@@ -590,7 +650,7 @@ export function createSpaceBattle(ctx, config) {
 
   function callReinforcements(side) {
     if (!state.reserve[side] || !state.reserve[side].length) return false;
-    if (state.reinforceAt[side]) return false;
+    if (state.reinforceAt[side] || state.retreat[side]) return false;
     state.reinforceAt[side] = state.time + HYPER.reinforceDelay;
     return true;
   }
@@ -602,6 +662,7 @@ export function createSpaceBattle(ctx, config) {
      Поэтому и время полёта честное: сорок пять секунд за прыжок. */
   function callFar(entry) {
     if (entry.called) return false;
+    if (state.retreat[state.playerSide]) { toast('Флот отходит — подмогу не зовём'); return false; }
     entry.called = state.time + entry.delay;
     toast(`${entry.name}: флот идёт на помощь, ${Math.round(entry.delay)} с`);
     refreshFar();
@@ -611,6 +672,8 @@ export function createSpaceBattle(ctx, config) {
   function updateFar() {
     for (const e of state.far) {
       if (!e.called || e.called > state.time || e.done) continue;
+      // Флот уже отходит: подмога разворачивается и остаётся дома
+      if (state.retreat[state.playerSide]) continue;
       e.done = true;
       dropIn(state.playerSide, e.ships);
       toast(`${e.name}: подмога вышла из гипера`);
@@ -661,7 +724,11 @@ export function createSpaceBattle(ctx, config) {
   // ── УРОН ─────────────────────────────────────────────────
 
   function damage(target, amount, weapon) {
-    if (!target || target.dead) return;
+    /* Цель без собственной прочности (звено целиком — у него прочность
+       у машин) урона не принимает: раньше это давало hp = NaN, звено
+       становилось бессмертным, а флот стрелял в пустоту (C14) */
+    if (!target || target.dead || typeof target.hp !== 'number') return;
+    if (!(amount > 0)) return;
     const mult = dmgMult(SPACE_DMG, weapon, target.cls);
     if (mult <= 0) return;
     target.hp -= amount * mult * (1 - (target.armor || 0));
@@ -687,6 +754,7 @@ export function createSpaceBattle(ctx, config) {
           e.radius, 0xff8040, 0.8);
       }
       if (e.hangar) for (const sq of e.hangar.launched) if (!sq.dead) sq.home = null;
+      removeDome(e);
     }
     scene.remove(e.obj);
     if (e.kind === 'craft' && e.squad) {
@@ -697,6 +765,31 @@ export function createSpaceBattle(ctx, config) {
   }
 
   // ── ПОИСК ЦЕЛЕЙ ──────────────────────────────────────────
+
+  // Скрыт ли от глаз противника: корабль, машина или звено целиком
+  function unseen(e) {
+    if (!e) return false;
+    if (e.kind === 'ship') return hidden(e);
+    if (e.kind === 'craft') return craftHidden(e);
+    if (e.kind === 'squad') return !e.craft.some(c => !c.dead && !craftHidden(c));
+    return false;
+  }
+
+  /* Цель, по которой можно стрелять. Приказ «атаковать звено» — это
+     приказ бить его МАШИНЫ (C14): у звена нет прочности, и урон по
+     нему раньше уходил в NaN. Берём ближайшую живую видимую машину;
+     скрытое не берём вовсе — приказ не переживает маскировку (C18). */
+  function liveTarget(from, t) {
+    if (!t || t.dead) return null;
+    if (t.kind !== 'squad') return unseen(t) ? null : t;
+    let best = null, bd = Infinity;
+    for (const c of t.craft) {
+      if (c.dead || craftHidden(c)) continue;
+      const d = c.pos.distanceToSquared(from.pos);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
 
   function nearest(from, list, maxDist, filter) {
     let best = null, bd = maxDist * maxDist;
@@ -801,10 +894,11 @@ export function createSpaceBattle(ctx, config) {
       return;
     }
     e.retarget -= dt;
-    if (e.target && e.target.dead) e.target = null;
-    if (e.forced && e.forced.dead) e.forced = null;
+    // Цель ушла в маскировку — стрелять не по чему, приказ снят (C18)
+    if (e.target && (e.target.dead || unseen(e.target))) e.target = null;
+    if (e.forced && (e.forced.dead || unseen(e.forced))) e.forced = null;
     if (!e.target || e.retarget <= 0) {
-      e.target = e.forced || shipAcquire(e);
+      e.target = liveTarget(e, e.forced) || shipAcquire(e);
       e.retarget = rnd(0.8, 1.6);
     }
 
@@ -1001,9 +1095,8 @@ export function createSpaceBattle(ctx, config) {
     fx.delay(0.06, () => fx.beam(from, t.pos, { color, width: w * 0.7, life: 0.45 }));
     fx.sparks(t.pos, 8, 0xfff0c0, 34, false);
     _v.subVectors(from, t.pos).normalize();
-    for (let i = 0; i < 4; i++) {
-      fx.debris(_v2.copy(t.pos).addScaledVector(_v, 2), 1, 0x8a7a66, 26, 0);
-    }
+    // Одним вызовом, а не четырьмя по одной: так пул может их проредить
+    fx.debris(_v2.copy(t.pos).addScaledVector(_v, 2), 4, 0x8a7a66, 26, 0);
     fx.shake = Math.min(1, fx.shake + 0.14);
     damage(t, g.def.dmg * aiMul(e.side), g.def.type);
   }
@@ -1022,9 +1115,25 @@ export function createSpaceBattle(ctx, config) {
     integrate(c, dt);
   }
 
+  /* Машина без ракет и без носителя уходит к своему краю поля и там
+     пропадает из боя: висеть пустой над схваткой ей незачем, а мельтешить
+     в ростере — тем более. Предел по времени — чтобы не застряла. */
+  function leaveField(c, dt) {
+    c.leaveT = (c.leaveT || 0) + dt;
+    const sign = sides[c.side].sign;
+    flyToward(c, _v3.set(c.pos.x, c.pos.y, sign * (FIELD + 400)), dt, 1);
+    if (Math.abs(c.pos.z) < FIELD - 40 && c.leaveT < 25) return;
+    c.dead = true;
+    scene.remove(c.obj);
+    const squad = c.squad;
+    if (!squad) return;
+    squad.craft = squad.craft.filter(x => x !== c);
+    if (!squad.craft.length) killSquad(squad, true);
+  }
+
   function updateCraft(c, dt) {
     const squad = c.squad;
-    if (c.target && c.target.dead) c.target = null;
+    if (c.target && (c.target.dead || unseen(c.target))) c.target = null;
 
     /* Инверсионный след. На референсах именно эти тонкие дуги
        превращают точки истребителей в живой рой: без следа звено
@@ -1038,11 +1147,17 @@ export function createSpaceBattle(ctx, config) {
       c.trailAt = (c.trailAt || 0) - dt;
       if (c.trailAt <= 0) {
         c.trailAt = 0.16;
-        const back = _v.copy(c.pos).addScaledVector(c.dir, -3.2);
-        const warm = c.side === state.playerSide ? 0x8fc8ef : 0xdfae7e;
-        fx.puff(back, 0.85, warm, 0.34);
+        // пул занят или машина далеко от камеры — след не кладём (C44)
+        if (fx.trailOk(c.pos)) {
+          const back = _v.copy(c.pos).addScaledVector(c.dir, -3.2);
+          const warm = c.side === state.playerSide ? 0x8fc8ef : 0xdfae7e;
+          fx.puff(back, 0.85, warm, 0.34);
+        }
       }
     }
+
+    // Пустая машина без носителя уходит из боя к своему краю поля
+    if (c.leaving) { leaveField(c, dt); return; }
 
     // ── боезапас: пусто → перезарядка прямо в космосе, пока есть запас
     if (c.def.weaponKind === 'missile') {
@@ -1069,7 +1184,11 @@ export function createSpaceBattle(ctx, config) {
         // запас кончился — только на носитель
         if (squad && !squad.recall) {
           squad.recall = true;
-          if (squad.side === state.playerSide) {
+          /* Сказать ОДИН раз на звено. Раньше у звена без носителя флаг
+             возврата каждый кадр ставился и тут же снимался, и с ним
+             каждый кадр — новое сообщение: сотни в секунду (C8). */
+          if (squad.side === state.playerSide && !squad.toldEmpty) {
+            squad.toldEmpty = true;
             toast(`${c.def.name}: ракеты кончились, звено уходит на носитель`);
           }
         }
@@ -1077,15 +1196,16 @@ export function createSpaceBattle(ctx, config) {
     }
 
     if (squad && squad.recall) {
-      const home = squad.home;
-      if (home && !home.dead) {
+      let home = squad.home;
+      if (!home || home.dead) home = rehome(squad);
+      if (home) {
         if (c.pos.distanceTo(home.pos) < home.radius * 2.4) {
           c.dead = true;
           scene.remove(c.obj);
           squad.craft = squad.craft.filter(x => x !== c);
           if (!squad.craft.length) {
             home.hangar.free = Math.min(home.hangar.bays, home.hangar.free + 1);
-            killSquad(squad);
+            killSquad(squad, true);
             if (squad.side === state.playerSide) toast('Звено село, ангар свободен');
           }
           return;
@@ -1093,10 +1213,24 @@ export function createSpaceBattle(ctx, config) {
         flyToward(c, home.pos, dt, 1);
         return;
       }
+      // Садиться некуда: носителей у этой стороны не осталось
       squad.recall = false;
+      const empty = c.def.weaponKind === 'missile' && c.ammo <= 0 && !(c.reloads > 0);
+      if (empty) {
+        c.leaving = true;
+        if (squad.side === state.playerSide && !squad.toldLeave) {
+          squad.toldLeave = true;
+          toast(`${c.def.name}: ракет нет, садиться некуда — машины выходят из боя`);
+        }
+        return;
+      }
+      if (squad.side === state.playerSide && !squad.toldNoHome) {
+        squad.toldNoHome = true;
+        toast(`${c.def.name}: садиться некуда — носителей не осталось`);
+      }
     }
 
-    if (!c.target) c.target = (squad && squad.target && !squad.target.dead) ? squad.target : craftAcquire(c);
+    if (!c.target) c.target = liveTarget(c, squad && squad.target) || craftAcquire(c);
 
     if (!c.target) {
       if (squad && squad.moveTo) { flyToward(c, squad.moveTo, dt, 0.9); return; }
@@ -1185,9 +1319,14 @@ export function createSpaceBattle(ctx, config) {
     p.trailAt = (p.trailAt || 0) - dt;
     if (p.trailAt <= 0) {
       p.trailAt = 0.035;
-      const back = _v.copy(p.pos).addScaledVector(p.dir, -3);
-      fx.puff(back, p.weapon === 'torp' ? 2.2 : 1.4, 0x8d8479, 0.5);
-      fx.flash(back, p.weapon === 'torp' ? 2.6 : 1.7, 0xffb060, 0.12);
+      /* След ракеты — около восемнадцати спрайтов на ракету, главный
+         пожиратель пула. При занятом пуле и вдали от камеры его нет,
+         зато взрывы и лучи не обрываются (C44) */
+      if (fx.trailOk(p.pos)) {
+        const back = _v.copy(p.pos).addScaledVector(p.dir, -3);
+        fx.puff(back, p.weapon === 'torp' ? 2.2 : 1.4, 0x8d8479, 0.5);
+        fx.flash(back, p.weapon === 'torp' ? 2.6 : 1.7, 0xffb060, 0.12);
+      }
     }
     if (p.wobble !== undefined) {
       p.wobble += dt * 9;
@@ -1207,8 +1346,11 @@ export function createSpaceBattle(ctx, config) {
     if (ai.next > 0) return;
     ai.next = rnd(4, 7) * DIFF.tempo;
     const mine = state.ships.filter(s => !s.dead && s.side === ai.side);
-    const foes = state.ships.filter(s => !s.dead && s.side !== ai.side);
-    if (!foes.length || !mine.length) return;
+    /* ИИ видит только то, что видно: скрытые корабли Рииза для него
+       не существуют, пока не выстрелят или не подойдут вплотную.
+       Раньше он прицельно добивал невидимый носитель игрока (C18). */
+    const foes = state.ships.filter(s => !s.dead && s.side !== ai.side && !hidden(s));
+    if (!mine.length || state.retreat[ai.side]) return;
 
     // РЭБ: если нас глушат — переключаем свои корабли на прикрытие
     const myEcm = mine.filter(s => s.ecm);
@@ -1217,7 +1359,7 @@ export function createSpaceBattle(ctx, config) {
       for (const s of myEcm) s.ecm.mode = underJam ? 'shield' : 'jam';
     }
 
-    const enemyCraft = state.craft.filter(c => c.side !== ai.side).length;
+    const enemyCraft = state.craft.filter(c => c.side !== ai.side && !craftHidden(c)).length;
     const myCraft = state.craft.filter(c => c.side === ai.side).length;
     for (const s of mine) {
       if (!s.hangar || s.hangar.free <= 0) continue;
@@ -1226,6 +1368,7 @@ export function createSpaceBattle(ctx, config) {
       else if (foes.some(f => f.cls !== 'escort')) role = 'bomber';
       launchSquadron(s, role);
     }
+    if (!foes.length) return;     // никого не видно — держим строй
 
     const centerFoe = new THREE.Vector3();
     for (const f of foes) centerFoe.add(f.pos);
@@ -1240,7 +1383,8 @@ export function createSpaceBattle(ctx, config) {
       }
     }
     const juicy = foes.find(f => f.cls === 'carrier') || foes.find(f => f.cls === 'capital');
-    if (juicy) for (const s of mine) if (Math.random() < 0.45) s.forced = juicy;
+    // Безоружным (носитель, РЭБ) приказ «атаковать» — это путь в упор (C100)
+    if (juicy) for (const s of mine) if (s.guns.length && Math.random() < 0.45) s.forced = juicy;
   }
 
   // ── HUD ──────────────────────────────────────────────────
@@ -1297,13 +1441,32 @@ export function createSpaceBattle(ctx, config) {
   const toastBox = document.createElement('div');
   toastBox.className = 'toasts';
   hud.appendChild(toastBox);
+  /* Одинаковые сообщения склеиваются в одно с числом («×3»), а на экране
+     их не больше четырёх: лавина плашек с размытием фона роняла кадры
+     до слайд-шоу и закрывала бой (C8). */
+  const TOAST_MAX = 4;
   function toast(text) {
+    for (const d of toastBox.children) {
+      if (d._text !== text || d.classList.contains('out')) continue;
+      d._n++;
+      d.textContent = `${text} ×${d._n}`;
+      clearTimeout(d._t1); clearTimeout(d._t2);
+      d._t1 = setTimeout(() => d.classList.add('out'), 2600);
+      d._t2 = setTimeout(() => d.remove(), 3400);
+      return;
+    }
     const d = document.createElement('div');
     d.className = 'toast';
     d.textContent = text;
+    d._text = text; d._n = 1;
     toastBox.appendChild(d);
-    setTimeout(() => d.classList.add('out'), 2600);
-    setTimeout(() => d.remove(), 3400);
+    d._t1 = setTimeout(() => d.classList.add('out'), 2600);
+    d._t2 = setTimeout(() => d.remove(), 3400);
+    while (toastBox.children.length > TOAST_MAX) {
+      const old = toastBox.firstChild;
+      clearTimeout(old._t1); clearTimeout(old._t2);
+      old.remove();
+    }
   }
 
   /* Панель дальнего гипера: список своих систем в пределах трёх
@@ -1398,23 +1561,46 @@ export function createSpaceBattle(ctx, config) {
              : 'Гасители инерции включены');
   };
 
-  $('retreat').onclick = () => finish(state.playerSide === 'attacker' ? 'retreat' : 'defeat');
+  /* «Отход» — гипер ВСЕГО флота с накачкой, а не мгновенный выход из
+     боя (C17). Второе нажатие отменяет отход, пока носитель не ушёл. */
+  const retreatBtn = $('retreat');
+  retreatBtn.onclick = () => {
+    if (ended) return;
+    const P = state.playerSide;
+    if (state.retreat[P]) {
+      if (state.conceded === P) { toast('Носитель ушёл — отход уже не отменить'); return; }
+      cancelRetreat(P);
+      toast('Отход отменён — флот остаётся в бою');
+    } else {
+      const n = orderRetreat(P);
+      const t = Math.max(0, ...state.ships.filter(s => !s.dead && s.side === P && s.hyper).map(s => s.hyper.left));
+      toast(n ? `Отход: флот копит гипер, ${Math.ceil(t)} с — всё это время беззащитен`
+              : 'Отход: уходить некому');
+    }
+    refreshRetreat();
+    refreshSel();
+  };
+  function refreshRetreat() {
+    const on = !!state.retreat[state.playerSide];
+    const txt = on ? (state.conceded === state.playerSide ? 'Отходим…' : 'Отменить отход') : 'Отход';
+    if (retreatBtn.textContent !== txt) retreatBtn.textContent = txt;
+    retreatBtn.classList.toggle('on', on);
+  }
 
   const reinfBtn = $('reinforce');
   const myReserve = () => state.reserve[state.playerSide];
   function refreshReinforce() {
     const n = (myReserve() || []).reduce((a, x) => a + x.count, 0);
     const pending = state.reinforceAt[state.playerSide];
-    if (pending) {
-      reinfBtn.disabled = true;
-      reinfBtn.textContent = `Гипер ${Math.max(0, Math.ceil(pending - state.time))} с`;
-    } else if (!n) {
-      reinfBtn.disabled = true;
-      reinfBtn.textContent = 'Резерва нет';
-    } else {
-      reinfBtn.disabled = false;
-      reinfBtn.textContent = `Подкрепление (${n})`;
-    }
+    let txt, off = true;
+    // флот отходит: резерв в бой уже не идёт и вернётся домой целым
+    if (state.retreat[state.playerSide]) txt = n ? `Резерв дома (${n})` : 'Резерва нет';
+    else if (pending) txt = `Гипер ${Math.max(0, Math.ceil(pending - state.time))} с`;
+    else if (!n) txt = 'Резерва нет';
+    else { txt = `Подкрепление (${n})`; off = false; }
+    // кнопка обновляется каждый кадр — трогаем DOM, только если что-то поменялось
+    if (reinfBtn.textContent !== txt) reinfBtn.textContent = txt;
+    if (reinfBtn.disabled !== off) reinfBtn.disabled = off;
   }
   reinfBtn.onclick = () => {
     if (callReinforcements(state.playerSide)) {
@@ -1676,10 +1862,14 @@ export function createSpaceBattle(ctx, config) {
   }
 
   // ── управление ──────────────────────────────────────────
+  /* Скрытого противника не выбрать и не атаковать кликом (C18): ни
+     лучом по модели, ни запасным поиском «ближайшего к точке экрана».
+     Раньше клик наугад вскрывал невидимок Рииза. */
+  const canPick = e => !e.dead && (e.side === state.playerSide || !unseen(e));
   function pickMeshes() {
     const m = [];
-    for (const s of state.ships) if (!s.dead) m.push(s.obj);
-    for (const c of state.craft) if (!c.dead) m.push(c.obj);
+    for (const s of state.ships) if (canPick(s)) m.push(s.obj);
+    for (const c of state.craft) if (canPick(c)) m.push(c.obj);
     return m;
   }
 
@@ -1687,7 +1877,7 @@ export function createSpaceBattle(ctx, config) {
     let ent = controls.pick(x, y);
     if (!ent) {
       // палец промахивается мимо мелких моделей — ловим по экрану
-      const cands = [...state.ships.filter(s => !s.dead), ...state.squads.filter(s => !s.dead)];
+      const cands = [...state.ships.filter(canPick), ...state.squads.filter(canPick)];
       ent = controls.pickNear(x, y, cands, tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 46 : 22);
     }
     if (ent && ent.kind === 'craft') ent = ent.squad;
@@ -1705,18 +1895,51 @@ export function createSpaceBattle(ctx, config) {
     refreshSel();
   }
 
+  // Достаёт ли это оружие авиацию (у звена прочность у машин, класс strike)
+  const hitsStrike = s => (s.kind === 'ship'
+    ? s.guns.some(g => dmgMult(SPACE_DMG, g.def.type, 'strike') > 0)
+    : dmgMult(SPACE_DMG, s.def.weapon, 'strike') > 0);
+
   function issueOrder(ent, world) {
     const mine = state.selection.filter(s => s.side === state.playerSide && !s.dead);
     if (!mine.length) return false;
     if (ent && ent.side !== state.playerSide) {
+      const air = ent.kind === 'squad';
+      const goers = [];
+      let held = 0, deaf = 0;
       for (const s of mine) {
-        if (s.kind === 'ship') { s.forced = ent; s.target = ent; s.moveTo = null; }
-        else { s.target = ent; s.recall = false; s.moveTo = null; for (const c of s.craft) c.target = ent; }
+        if (s.kind === 'ship') {
+          if (s.station) { if (!air) { s.forced = ent; s.target = ent; } continue; }
+          /* Носитель и РЭБ безоружны: по приказу «атаковать» они шли
+             в упор и гибли первыми (C100). Теперь держатся, где стоят. */
+          if (!s.guns.length) { held++; continue; }
+          /* Главный калибр по авиации не наводится: раньше приказ на звено
+             разворачивал весь флот стрелять в пустоту (C14). Такие корабли
+             идут туда, где звено, — там по нему работает ПВО. */
+          if (air && !hitsStrike(s)) { goers.push(s); continue; }
+          s.forced = ent; s.target = liveTarget(s, ent); s.moveTo = null;
+        } else {
+          if (air && !hitsStrike(s)) { deaf++; continue; }   // бомбардировщик по авиации не бьёт
+          s.target = ent; s.recall = false; s.moveTo = null;
+          // каждая машина сама выберет ближайшую из звена-цели
+          for (const c of s.craft) c.target = null;
+        }
       }
+      if (goers.length) moveGroup(goers, ent.pos.clone());
       fx.flash(ent.pos, (ent.radius || 6) * 1.6, 0xff6b5a, 0.5);
+      if (goers.length) toast('Главный калибр по авиации не наводится — корабли идут к звену, бьёт ПВО');
+      if (held) toast('Носитель и РЭБ безоружны — держатся позади');
+      if (deaf) toast('Бомбардировщики по авиации не стреляют');
       return true;
     }
     if (!world) return false;
+    moveGroup(mine, world);
+    fx.flash(world, 16, 0x8fffc8, 0.6);
+    return true;
+  }
+
+  // Приказ идти: строй квадратом вокруг точки
+  function moveGroup(mine, world) {
     const n = mine.length, cols = Math.ceil(Math.sqrt(n));
     mine.forEach((s, i) => {
       const col = i % cols, row = Math.floor(i / cols);
@@ -1730,12 +1953,11 @@ export function createSpaceBattle(ctx, config) {
       if (s.kind === 'ship') s.forced = null;
       else { s.recall = false; for (const c of s.craft) c.target = null; }
     });
-    fx.flash(world, 16, 0x8fffc8, 0.6);
-    return true;
   }
 
   const controls = new Controls(viewport.canvas, tcam, {
     pickMeshes,
+    canPick,
     planeY: () => 0,
     onBoxModeChange: on => boxBtn.classList.toggle('on', on),
     onTap({ x, y, shift, touch }) {
@@ -1797,12 +2019,23 @@ export function createSpaceBattle(ctx, config) {
     return 'держит позицию';
   }
 
+  /* ── ПАНЕЛЬ ВЫДЕЛЕННОГО.
+     Кнопки действий НЕ пересоздаются на каждом обновлении (C30). Раньше
+     панель собиралась заново раз в треть секунды, и если пересборка
+     приходилась на время нажатия, клик терялся: кнопка, на которой
+     нажали, к отпусканию уже была выброшена. Теперь набор кнопок
+     описывается списком, и разметка пересобирается, только когда
+     сменился ключ — состав выделения или набор действий. Подписи,
+     «недоступна» и обработчик обновляются на месте. */
+  let actsKey = '';
+  let actsEls = [];
+  function setHtml(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
   function refreshSel() {
     const sel = $('sel'), acts = $('acts');
     const list = state.selection.filter(s => !s.dead);
     if (!list.length) {
-      sel.innerHTML = '<div class="sel-empty">Ничего не выбрано</div>';
-      acts.innerHTML = '';
+      setHtml(sel, '<div class="sel-empty">Ничего не выбрано</div>');
+      if (actsKey !== '') { actsKey = ''; actsEls = []; acts.innerHTML = ''; }
       return;
     }
     if (list.length === 1) {
@@ -1814,18 +2047,18 @@ export function createSpaceBattle(ctx, config) {
         const rl = e.craft.reduce((a, c) => a + (c.reloads || 0), 0);
         const ammoTxt = e.def.weaponKind === 'missile'
           ? ` · ракет ${ammo} · запасных комплектов ${rl}` : ' · пушки';
-        sel.innerHTML = `<div class="sel-title">${e.def.name}</div>
+        setHtml(sel, `<div class="sel-title">${e.def.name}</div>
           <div class="sel-sub">${role.label} · ${e.craft.length}/${size} машин${ammoTxt}</div>
           <div class="sel-doing">${doingOf(e)}</div>
-          <div class="sel-desc">${role.hint}</div>`;
+          <div class="sel-desc">${role.hint}</div>`);
       } else {
         const spd = Math.round(e.vel.length());
         const foreign = e.side !== state.playerSide ? '<span class="tag foe">противник</span>' : '';
-        sel.innerHTML = `<div class="sel-title">${e.def.name} ${foreign}</div>
+        setHtml(sel, `<div class="sel-title">${e.def.name} ${foreign}</div>
           <div class="sel-sub">${e.def.role || ''} · скорость ${spd} · прочность ${Math.max(0, Math.round(e.hp))}/${e.maxHp}</div>
           <div class="sel-hpbar"><i style="width:${clamp(e.hp / e.maxHp, 0, 1) * 100}%"></i></div>
           <div class="sel-doing">${doingOf(e)}</div>
-          <div class="sel-desc">${e.def.desc || ''}</div>`;
+          <div class="sel-desc">${e.def.desc || ''}</div>`);
       }
     } else {
       const by = {};
@@ -1833,56 +2066,47 @@ export function createSpaceBattle(ctx, config) {
         const n = e.kind === 'squad' ? STRIKE_ROLES[e.role].label : e.def.name;
         by[n] = (by[n] || 0) + 1;
       }
-      sel.innerHTML = `<div class="sel-title">Выделено: ${list.length}</div>
+      setHtml(sel, `<div class="sel-title">Выделено: ${list.length}</div>
         <div class="sel-sub">${Object.entries(by).map(([n, c]) => `${n} ×${c}`).join(' · ')}</div>
-        <div class="sel-doing">${doingOf(list[0])}</div>`;
+        <div class="sel-doing">${doingOf(list[0])}</div>`);
     }
 
-    acts.innerHTML = '';
-    const addBtn = (label, hint, fn, disabled) => {
-      const b = document.createElement('button');
-      b.className = 'act';
-      b.innerHTML = `<b>${label}</b>${hint ? `<small>${hint}</small>` : ''}`;
-      b.disabled = !!disabled;
-      b.onclick = fn;
-      acts.appendChild(b);
-      return b;
-    };
+    // Описание кнопок: id задаёт место в ключе, остальное обновляется на месте
+    const items = [];
+    const addBtn = (id, label, hint, fn, disabled) => items.push({ id, label, hint, fn, disabled: !!disabled });
+    const addNote = (id, text) => items.push({ id, note: text });
 
     const carriers = list.filter(e => e.kind === 'ship' && e.hangar && e.side === state.playerSide);
     if (carriers.length) {
       const free = carriers.reduce((a, c) => a + c.hangar.free, 0);
       for (const role of ['interceptor', 'fighter', 'bomber']) {
         const r = STRIKE_ROLES[role];
-        addBtn(r.label, r.hint, () => {
-          const c = carriers.find(x => x.hangar.free > 0);
+        addBtn('launch-' + role, r.label, r.hint, () => {
+          const c = carriers.find(x => !x.dead && x.hangar.free > 0);
           if (c) { launchSquadron(c, role); refreshSel(); }
         }, free <= 0);
       }
-      const note = document.createElement('div');
-      note.className = 'act-note';
-      note.textContent = `Мест в ангаре: ${free}`;
-      acts.appendChild(note);
+      addNote('bays', `Мест в ангаре: ${free}`);
     }
     const squads = list.filter(e => e.kind === 'squad' && e.side === state.playerSide);
-    if (squads.length) addBtn('На посадку', 'Вернуть звено, освободить ангар', () => { for (const s of squads) s.recall = true; });
+    if (squads.length) addBtn('land', 'На посадку', 'Вернуть звено, освободить ангар', () => { for (const s of squads) s.recall = true; });
 
     const ecms = list.filter(e => e.ecm && e.side === state.playerSide);
     if (ecms.length) {
       const cur = ecms[0].ecm.mode;
-      addBtn((cur === 'jam' ? '⦿ ' : '') + 'Глушение',
+      addBtn('ecm-jam', (cur === 'jam' ? '⦿ ' : '') + 'Глушение',
         'Ломает чужое наведение в куполе', () => {
           for (const e of ecms) e.ecm.mode = 'jam';
           toast('Купол помех развёрнут');
           refreshSel();
         });
-      addBtn((cur === 'shield' ? '⦿ ' : '') + 'Прикрытие',
+      addBtn('ecm-shield', (cur === 'shield' ? '⦿ ' : '') + 'Прикрытие',
         'Снимает чужие помехи со своих', () => {
           for (const e of ecms) e.ecm.mode = 'shield';
           toast('Купол переключён на защиту');
           refreshSel();
         });
-      addBtn((cur === 'off' ? '⦿ ' : '') + 'Молчать',
+      addBtn('ecm-off', (cur === 'off' ? '⦿ ' : '') + 'Молчать',
         'Выключить излучение', () => { for (const e of ecms) e.ecm.mode = 'off'; refreshSel(); });
     }
 
@@ -1890,28 +2114,73 @@ export function createSpaceBattle(ctx, config) {
     if (ships.length) {
       const jumping = ships.filter(s => s.hyper);
       if (jumping.length) {
-        addBtn('Отменить гипер', 'Вернуться в бой', () => {
-          for (const s of jumping) s.hyper = null;
-          refreshSel();
-        });
+        // Носитель ушёл — бой проигран, отход уже не отменить
+        if (state.conceded !== state.playerSide) {
+          addBtn('unjump', 'Отменить гипер', 'Вернуться в бой', () => {
+            for (const s of jumping) s.hyper = null;
+            if (!state.ships.some(s => !s.dead && s.side === state.playerSide && s.hyper)) {
+              state.retreat[state.playerSide] = false;
+              refreshRetreat();
+            }
+            refreshSel();
+          });
+        }
       } else {
         const carrier = ships.some(s => s.cls === 'carrier');
-        addBtn('Уйти в гипер', carrier
-          ? 'Носитель уходит — бой засчитан проигранным'
+        addBtn('jump', 'Уйти в гипер', carrier
+          ? 'Носитель уходит — за ним отходит весь флот, бой проигран'
           : 'Копит переход, всё это время беззащитен', () => {
           for (const s of ships) beginJump(s);
           refreshSel();
         });
       }
-      addBtn('Стоп', 'Погасить скорость', () => { for (const s of ships) { s.moveTo = null; s.target = null; s.forced = null; } });
-      addBtn('Выше', 'Поднять на 120', () => { for (const s of ships) s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); });
-      addBtn('Ниже', 'Опустить на 120', () => { for (const s of ships) s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); });
+      addBtn('stop', 'Стоп', 'Погасить скорость', () => { for (const s of ships) { s.moveTo = null; s.target = null; s.forced = null; } });
+      addBtn('up', 'Выше', 'Поднять на 120', () => { for (const s of ships) s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); });
+      addBtn('down', 'Ниже', 'Опустить на 120', () => { for (const s of ships) s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); });
     }
+
+    const key = list.map(e => e.uid).join(',') + '|' + items.map(i => i.id).join(',');
+    if (key !== actsKey) {
+      actsKey = key;
+      acts.innerHTML = '';
+      actsEls = items.map(it => {
+        if (it.note !== undefined) {
+          const d = document.createElement('div');
+          d.className = 'act-note';
+          acts.appendChild(d);
+          return { d };
+        }
+        const b = document.createElement('button');
+        b.className = 'act';
+        b.dataset.act = it.id;
+        const lb = document.createElement('b');
+        const sm = document.createElement('small');
+        b.append(lb, sm);
+        acts.appendChild(b);
+        return { b, lb, sm };
+      });
+    }
+    items.forEach((it, i) => {
+      const el = actsEls[i];
+      if (it.note !== undefined) {
+        if (el.d.textContent !== it.note) el.d.textContent = it.note;
+        return;
+      }
+      if (el.lb.textContent !== it.label) el.lb.textContent = it.label;
+      const hint = it.hint || '';
+      if (el.sm.textContent !== hint) el.sm.textContent = hint;
+      el.sm.hidden = !hint;
+      if (el.b.disabled !== it.disabled) el.b.disabled = it.disabled;
+      el.b.onclick = it.fn;
+    });
   }
   refreshSel();
 
   function onKey(e) {
     if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+    /* После итоговой карточки бой окончен: Пробел снимал паузу, и под
+       карточкой корабли продолжали гибнуть (C65) */
+    if (ended) return;
     if (e.code === 'Space') { e.preventDefault(); hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); }
     if (e.code === 'Escape') { state.selection = []; refreshSel(); }
   }
@@ -1926,14 +2195,42 @@ export function createSpaceBattle(ctx, config) {
     }
     // ушедшие в гипер тоже уцелели — они вернутся в кампанию
     for (const id of state.jumped[side]) out[id] = (out[id] || 0) + 1;
+    /* Второй эшелон, который так и не вызвали (или он ещё в пути), —
+       тоже часть флота. Раньше он пропадал после боя бесследно (C15) */
+    for (const x of state.reserve[side] || []) out[x.id] = (out[x.id] || 0) + x.count;
     return Object.entries(out).map(([id, count]) => ({ id, count }));
   }
 
+  /* Сторона больше не держит орбиту: живых кораблей нет. Станция уйти
+     не может — при отходе её бросают, и она в счёт не идёт. */
+  function sideOut(side) {
+    const live = state.ships.filter(s => !s.dead && s.side === side);
+    return !live.length || (state.retreat[side] && live.every(s => s.station));
+  }
+
   let ended = false;
+  let outcome = null;
   function finish(result) {
     if (ended) return;
     ended = true;
     state.paused = true;
+    /* Выживших снимаем В МОМЕНТ ИТОГА, а не по «Продолжить»: под
+       карточкой бой стоит, но и снимок должен быть тем, что видел игрок
+       (C65). Плюс корабли дальнего гипера, дошедшие до боя: кампания
+       вычтет их из родных систем (C16). */
+    outcome = {
+      result, attacker: survivors('attacker'), defender: survivors('defender'),
+      far: state.far.filter(e => e.done).map(e => ({ id: e.id, ships: e.ships.map(x => ({ ...x })) })),
+    };
+    const P = state.playerSide;
+    const saved = state.jumped[P].length;
+    const lost = state.ships.filter(s => s.dead && !s.fled && s.side === P && !s.station).length;
+    const spare = (state.reserve[P] || []).reduce((a, x) => a + x.count, 0);
+    const tally = [
+      saved ? `Ушли в гипер: ${saved}` : '',
+      lost ? `потеряно: ${lost}` : '',
+      spare ? `резерв в бой не вступал: ${spare}` : '',
+    ].filter(Boolean).join(' · ');
     const win = result === 'victory';
     const card = $('end');
     card.style.display = 'flex';
@@ -1942,26 +2239,27 @@ export function createSpaceBattle(ctx, config) {
       <p>${win
         ? 'Противник в этой системе больше не контролирует пространство. Можно высаживать десант.'
         : result === 'retreat'
-          ? 'Флот вышел из боя. Уцелевшие корабли возвращаются в точку старта.'
+          ? 'Флот вышел из боя. Домой вернутся только те, кто успел уйти в гипер.'
           : 'Корабли потеряны. Система остаётся за противником.'}</p>
+      ${tally ? `<p class="end-tally">${tally[0].toUpperCase() + tally.slice(1)}.</p>` : ''}
       <button class="btn primary" data-role="cont">Продолжить</button></div>`;
+    state.outcome = outcome;     // для автотестов: что уйдёт в кампанию
     card.querySelector('[data-role="cont"]').onclick = () => {
-      config.onEnd && config.onEnd({ result, attacker: survivors('attacker'), defender: survivors('defender') });
+      config.onEnd && config.onEnd(outcome);
     };
   }
 
+  /* Бой кончается, когда одна из сторон ушла с орбиты: погибла или
+     ушла в гипер вся. Отход — это не кнопка «конец боя», а накачка
+     гипера под огнём; уход носителя отправляет в отход весь его флот
+     (C17). */
   function checkEnd() {
     if (ended) return;
-    if (state.conceded) {
-      const side = state.conceded;
-      finish(side === state.playerSide ? 'retreat' : 'victory');
-      return;
-    }
-    const a = state.ships.some(s => !s.dead && s.side === 'attacker');
-    const d = state.ships.some(s => !s.dead && s.side === 'defender');
-    if (!a && !d) finish('defeat');
-    else if (!a) finish(state.playerSide === 'attacker' ? 'defeat' : 'victory');
-    else if (!d) finish(state.playerSide === 'defender' ? 'defeat' : 'victory');
+    const P = state.playerSide, E = enemyOf(P);
+    const pOut = sideOut(P), eOut = sideOut(E);
+    if (!pOut && !eOut) return;
+    if (pOut) finish(state.jumped[P].length ? 'retreat' : 'defeat');
+    else finish('victory');
   }
 
   // ── ЦИКЛ ─────────────────────────────────────────────────
@@ -1969,7 +2267,8 @@ export function createSpaceBattle(ctx, config) {
     tcam.update(rawDt);
     // Миникарта рисуется и на паузе: на ней как раз и планируют
     drawMinimap(rawDt);
-    const dt = state.paused ? 0 : Math.min(rawDt, 0.05) * state.speed;
+    // После итога бой стоит насовсем, что бы ни нажали (C65)
+    const dt = (state.paused || ended) ? 0 : Math.min(rawDt, 0.05) * state.speed;
     if (dt > 0) {
       state.time += dt;
       updateEcm(dt);
@@ -2008,7 +2307,7 @@ export function createSpaceBattle(ctx, config) {
         sq.pos.set(0, 0, 0);
         for (const c of sq.craft) sq.pos.add(c.pos);
         sq.pos.divideScalar(sq.craft.length);
-        if (sq.target && sq.target.dead) sq.target = null;
+        if (sq.target && (sq.target.dead || unseen(sq.target))) sq.target = null;
       }
       state.squads = state.squads.filter(s => !s.dead);
       checkEnd();
@@ -2018,6 +2317,7 @@ export function createSpaceBattle(ctx, config) {
     planet.rotation.y += rawDt * 0.004;
     if (planet.userData.clouds) planet.userData.clouds.rotation.y += rawDt * 0.0022;
     refreshReinforce();
+    refreshRetreat();
     if (fx.shake > 0.001) {
       const s = fx.shake * 3.2;
       tcam.cam.position.x += rnd(-s, s);
@@ -2057,15 +2357,18 @@ export function createSpaceBattle(ctx, config) {
       el.classList.toggle('warn', left <= state.gun.def.warn);
     }
 
-    if (state.selection.some(s => s.dead)) {
-      state.selection = state.selection.filter(s => !s.dead);
+    /* Выделенный противник ушёл в маскировку — снимаем выделение:
+       иначе панель продолжала бы показывать его прочность (C18) */
+    if (state.selection.some(s => s.dead || (s.side !== state.playerSide && unseen(s)))) {
+      state.selection = state.selection.filter(s => !s.dead && (s.side === state.playerSide || !unseen(s)));
       refreshSel();
     }
   }
 
   function dispose() {
-    for (const e of state.ships) if (e.dome) scene.remove(e.dome);
-    for (const v of vortexes) scene.remove(v.obj);
+    /* Купола и воронки НЕ снимаем со сцены до disposeScene: снятые, они
+       не попадали в обход, и их геометрия с материалами не освобождалась
+       (C66) */
     removeEventListener('keydown', onKey);
     tcam.dispose();
     controls.dispose();
@@ -2115,6 +2418,13 @@ export function createSpaceBattle(ctx, config) {
     };
     // Мир в точке экрана — куда должен лечь приказ правой кнопкой
     state.worldTest = (x, y) => controls.worldAt(x, y);
+    // Приказ выделенным — тот же, что даёт ПКМ (цель или точка мира)
+    state.orderTest = (ent, world) => issueOrder(ent, world || null);
+    // Уничтожить корабль сразу — проверять, что остаётся после гибели
+    state.killTest = e => destroy(e);
+    state.retreatTest = side => orderRetreat(side || state.playerSide);
+    // Пул эффектов: сколько занято (busy) — мерить, не переполнен ли
+    state.fxTest = () => fx;
   }
   return { scene, camera: tcam.cam, update, dispose, state };
 }

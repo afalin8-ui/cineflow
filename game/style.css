@@ -488,6 +488,8 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 }
 .end-inner h2 { margin: 0 0 10px; font-size: 30px; }
 .end-inner p { font-size: 14px; color: var(--text-2); line-height: 1.6; margin: 0 0 20px; }
+/* Счёт отхода: сколько ушло, сколько потеряно — мельче основного текста */
+.end-inner p.end-tally { font-size: 13px; color: var(--muted); margin-top: -8px; }
 
 /* ─────────── узкие экраны ─────────── */
 
