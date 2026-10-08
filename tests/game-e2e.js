@@ -1,6 +1,6 @@
 // Игра «Капелла» (папка game/): сквозная проверка в браузере.
 //
-// Запуск:  node tests/game-e2e.js                 — всё (около двух минут)
+// Запуск:  node tests/game-e2e.js                 — всё (около двух с половиной минут)
 //          node tests/game-e2e.js --only space    — только бой на орбите
 //                                   (и shell | ground | campaign)
 // Порт сервера — переменная CF_PORT (по умолчанию 8300).
@@ -18,14 +18,22 @@
 //  shell    — меню без ошибок и сразу; «Ангар» только с ?dev=1;
 //             справка закрывается кнопкой, Escape и щелчком по фону;
 //             счётчик кадров (F3 и галочка); без WebGL — слова, а не
-//             чёрный экран.
-//  space    — «Быстрый бой» → «Бой на орбите»: «Подготовка боя» видна,
-//             корабли есть; выделение кликом и рамкой; приказ правой
-//             кнопкой; «мёртвые» кнопки HUD на 1920×1080 и 1366×768;
-//             сбой в кадре не замораживает игру («Продолжить»);
-//             бой доходит до итоговой карточки и возвращает в меню.
-//  ground   — наземная операция стартует без ошибок; сбой → «В меню».
-//  campaign — новая кампания открывает карту, «Конец хода» проходит.
+//             чёрный экран; ошибки расширений браузера не прячут игру
+//             и не открывают окно сбоя.
+//  space    — «Быстрый бой» → «Бой на орбите»: «Подготовка боя» видна
+//             и ждёт модели; корабли есть; выделение кликом и рамкой;
+//             приказ правой кнопкой; «мёртвые» кнопки HUD на 1920×1080
+//             и 1366×768; сбой в кадре не замораживает игру (отрисовка
+//             идёт, «Продолжить»); бой доходит до итога и в меню.
+//  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
+//             второй бой сквозь неё не начать; операция стартует без
+//             ошибок; сбой → «В меню».
+//  campaign — новая кампания открывает карту, не дожидаясь моделей
+//             кораблей; «Конец хода» проходит.
+//
+// Модели (.glb) стенд держит «в пути», пока сам не отпустит (gate), —
+// а не фиксированные секунды: иначе на медленной машине они доезжали
+// бы раньше нажатия, и проверка падала бы без поломки в игре.
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 let playwright;
@@ -54,16 +62,34 @@ const server = spawn('python3', ['-m', 'http.server', PORT, '--bind', '127.0.0.1
 // экран подготовки» — он живёт доли секунды, и поймать его можно только
 // наблюдателем, а не опросом.
 const INIT = () => {
-  window.__t = { raf: 0, prep: 0, prepText: [] };
-  const raf = window.requestAnimationFrame.bind(window);
-  window.requestAnimationFrame = fn => raf(t => { window.__t.raf++; fn(t); });
+  window.__t = { prep: 0, prepText: [], bootFail: 0 };
   new MutationObserver(list => {
     for (const m of list) {
-      if (m.target.classList && m.target.classList.contains('prep-sub')) window.__t.prepText.push(m.target.textContent);
+      const c = m.target.classList;
+      if (m.type === 'attributes') { if (m.target.id === 'boot' && c.contains('fail')) window.__t.bootFail++; continue; }
+      if (c && (c.contains('prep-sub') || m.target.dataset.role === 'sub')) window.__t.prepText.push(m.target.textContent);
       for (const n of m.addedNodes) if (n.classList && n.classList.contains('prep')) window.__t.prep++;
     }
-  }).observe(document, { childList: true, subtree: true });
+  }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
 };
+
+// Модели «в пути», пока стенд их не отпустит. Запасной предел — чтобы
+// забытый gate не держал страницу вечно; упавший раздел отпускает свои
+// gate в общем цикле (openGates), иначе следующий ждал бы модели минуту.
+const openGates = new Set();
+function holdModels(page) {
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const handler = async route => {
+    await Promise.race([gate, new Promise(r => setTimeout(r, 60000))]);
+    route.continue().catch(() => {});
+  };
+  const g = {
+    on: () => { openGates.add(g); return page.route('**/models/*.glb', handler); },
+    off: async () => { openGates.delete(g); release(); await page.unroute('**/models/*.glb', handler).catch(() => {}); },
+  };
+  return g;
+}
 
 // Нажатие туда, куда нажал бы человек: центр видимого элемента, и
 // проверка, что в этой точке лежит именно он.
@@ -80,19 +106,30 @@ async function tap(page, sel, idx = 0) {
   return { ok: r.hit, why: r.hit ? '' : 'в точке нажатия ' + r.what };
 }
 
-// Отрисовку можно заглушить: ожидание итога боя под программным
-// рендером иначе тянется минутами. Подменяем метод того же модуля,
-// которым пользуется игра (карта модулей одна на страницу).
+// Отрисовка под присмотром: счётчик НАСТОЯЩИХ отрисовок (__renders) и
+// выключатель (__noRender) — ожидание итога боя под программным рендером
+// иначе тянется минутами. Подменяем метод того же модуля, которым
+// пользуется игра (карта модулей одна на страницу). Считать надо именно
+// отрисовки, а не вызовы requestAnimationFrame: опрос waitForFunction
+// у Playwright сам зовёт rAF страницы, и счётчик rAF рос бы и при
+// мёртвом цикле игры.
+async function hookRender(page) {
+  await page.evaluate(async () => {
+    if (window.__renderHooked) return;
+    const E = await import('/game/js/engine.js');
+    const o = E.Viewport.prototype.render;
+    window.__renders = 0;
+    E.Viewport.prototype.render = function (s, c) {
+      if (window.__noRender) return;
+      window.__renders++;
+      return o.call(this, s, c);
+    };
+    window.__renderHooked = true;
+  });
+}
 async function mute(page, on) {
-  await page.evaluate(async on => {
-    if (!window.__muteHooked) {
-      const E = await import('/game/js/engine.js');
-      const o = E.Viewport.prototype.render;
-      E.Viewport.prototype.render = function (s, c) { if (window.__noRender) return; return o.call(this, s, c); };
-      window.__muteHooked = true;
-    }
-    window.__noRender = on;
-  }, on);
+  await hookRender(page);
+  await page.evaluate(on => { window.__noRender = on; }, on);
 }
 
 // Сканер «мёртвых» кнопок: центр каждой видимой кнопки HUD обязан
@@ -231,7 +268,14 @@ const SCAN = () => {
     await page.goto(BASE + '?dev=1');
     await page.waitForSelector('[data-a="skirmish"]', { state: 'visible', timeout: 60000 });
     ok('с ?dev=1 «Ангар» в меню есть', await page.evaluate(() => !!document.querySelector('[data-a="hangar"]')));
+    r = await tap(page, '[data-a="hangar"]');
+    ok('«Ангар» открывается', r.ok && await page.waitForSelector('.hud-hangar', { state: 'visible', timeout: 60000 }).then(() => true, () => false), r.why);
+    await clean('ангар');
 
+    /* Дальше — отдельные страницы. Меню на основной глушим: две игры,
+       рисующие программным рендером разом, отнимают друг у друга
+       процессор так, что соседняя страница не догружается и за 30 с. */
+    await page.goto('about:blank');
     // Без WebGL: отдельная страница, где видеокарта «отказала»
     const c2 = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' });
     await c2.addInitScript(() => {
@@ -250,15 +294,77 @@ const SCAN = () => {
     ok('без WebGL — объяснение словами, а не чёрный экран', /WebGL/.test(t2) && /Аппаратное ускорение/.test(t2), t2.slice(0, 80));
     ok('без WebGL — без ошибок страницы', !e2.length, e2.join(' | '));
     await c2.close();
+
+    /* Расширение браузера бросает ошибки в мире страницы: до запуска
+       игры, сразу после и уже в меню, плюс отказ обещания. Имя файла у
+       таких ошибок — адрес самой игры (…/game/). Раньше они навсегда
+       прятали игру за «не загрузилась» и открывали окно сбоя над меню. */
+    const c3 = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' });
+    await c3.addInitScript(INIT);
+    await c3.addInitScript(() => {
+      window.__ext = 0;
+      const inject = code => {
+        const root = document.head || document.documentElement;
+        if (!root) { setTimeout(() => inject(code), 5); return; }
+        const s = document.createElement('script'); s.textContent = code; root.appendChild(s);
+      };
+      const boom = 'window.__ext++; throw new Error("расширение: cannot read x")';
+      inject(`setTimeout(function(){ ${boom} }, 0)`);
+      document.addEventListener('DOMContentLoaded', () => inject(`setTimeout(function(){ ${boom} }, 30)`));
+      setTimeout(() => inject(`setTimeout(function(){ ${boom} }, 30); window.__ext++; Promise.reject('нечто'); window.__ext++; Promise.reject(new Error('расширение: обещание'))`), 200);
+    });
+    const p3 = await c3.newPage();
+    const e3 = [];
+    p3.on('pageerror', e => e3.push(String(e.message)));
+    await p3.goto(BASE);
+    const menu3 = await p3.waitForSelector('[data-a="skirmish"]', { state: 'visible', timeout: 60000 }).then(() => true, () => false);
+    // и ещё одна — уже в меню
+    await p3.evaluate(() => { const s = document.createElement('script'); s.textContent = 'setTimeout(function(){ window.__ext++; throw new Error("расширение: в меню") }, 10)'; document.body.appendChild(s); });
+    await p3.waitForFunction(() => window.__ext >= 6, null, { timeout: 10000 }).catch(() => {});
+    await p3.waitForTimeout(700);
+    const st3 = await p3.evaluate(() => {
+      const b = document.querySelector('[data-a="skirmish"]').getBoundingClientRect();
+      const h = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return { ext: window.__ext, bootFail: window.__t.bootFail, crash: !!document.querySelector('.crash'),
+        hit: !!h && !!h.closest('[data-a="skirmish"]'), what: h ? h.tagName + '#' + h.id + '.' + h.className : 'null' };
+    });
+    ok('ошибки расширения браузера не прячут игру: меню нажимается', menu3 && st3.hit && st3.ext >= 6 && !st3.bootFail,
+      `ошибок расширения ${st3.ext}, заставка «не загрузилась»: ${st3.bootFail}, под кнопкой ${st3.what}`);
+    ok('ошибки расширения не открывают окно сбоя', !st3.crash);
+    await c3.close();
+
+    /* «Не загрузилась» не окончательно: если игра всё-таки поднялась,
+       заставка уходит (окончательно только «нет WebGL»). */
+    const c4 = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' });
+    // Тревога ДО запуска игры: как только index.html завёл __bootFail
+    await c4.addInitScript(() => {
+      const iv = setInterval(() => {
+        if (!window.__bootFail) return;
+        clearInterval(iv);
+        window.__bootFail('load', 'ПРОВЕРКА: ложная тревога');
+        window.__failedEarly = !window.__capellaUp && document.getElementById('boot').classList.contains('fail');
+      }, 1);
+    });
+    const p4 = await c4.newPage();
+    await p4.goto(BASE);
+    const up4 = await p4.waitForFunction(() => {
+      const b = document.querySelector('[data-a="skirmish"]'); if (!b) return false;
+      const r = b.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!h && !!h.closest('[data-a="skirmish"]');
+    }, null, { timeout: 60000, polling: 250 }).then(() => true, () => false);
+    ok('«не загрузилась» снимается, когда игра всё-таки поднялась', up4 && await p4.evaluate(() => window.__failedEarly === true),
+      up4 ? '' : await p4.evaluate(() => document.getElementById('boot').innerText.slice(0, 80)));
+    await c4.close();
   };
 
   // ─────────────────────────── БОЙ НА ОРБИТЕ
   const space = async () => {
     console.log('\nБой на орбите  [' + secs() + ']');
-    /* Модели «едут» медленно: бой обязан их дождаться под заставкой
-       с подписью, а не собраться на процедурных (C40). */
-    const slow = async route => { await new Promise(r => setTimeout(r, 6000)); route.continue().catch(() => {}); };
-    await page.route('**/models/*.glb', slow);
+    /* Модели «в пути», пока стенд не увидит, что заставка об этом
+       сказала: бой обязан их дождаться, а не собраться на процедурных
+       (C40). */
+    const glb = holdModels(page);
+    await glb.on();
     await toMenu();
     await page.evaluate(() => { window.__t.prep = 0; window.__t.prepText = []; });
     let r = await tap(page, '[data-a="skirmish"]');
@@ -267,12 +373,13 @@ const SCAN = () => {
     r = await tap(page, '[data-a="space"]');
     ok('«Бой на орбите» нажимается', r.ok, r.why);
     const t = Date.now();
-    await page.waitForFunction(() => window.__sp && window.__sp.time > 0, null, { timeout: 150000 });
-    ok('перед боем показан экран «Подготовка боя»', await page.evaluate(() => window.__t.prep > 0));
-    await settled();
-    await page.unroute('**/models/*.glb', slow);
-    const waited = await page.evaluate(() => window.__t.prepText.find(x => /Загружаю модели/.test(x)) || '');
+    const waited = await page.waitForFunction(() => window.__t.prepText.find(x => /Загружаю модели/.test(x)),
+      null, { timeout: 30000, polling: 100 }).then(h => h.jsonValue(), () => '');
     ok('пока модели едут, заставка говорит об этом', !!waited, waited);
+    ok('перед боем показан экран «Подготовка боя»', await page.evaluate(() => window.__t.prep > 0));
+    await glb.off();
+    await page.waitForFunction(() => window.__sp && window.__sp.time > 0, null, { timeout: 150000 });
+    await settled();
     const custom = await page.evaluate(() => {
       const c = __sp.ships.find(s => s.faction.id === 'troyden' && s.def.id === 'cruiser');
       return c ? !!c.obj.userData.custom : null;
@@ -285,6 +392,8 @@ const SCAN = () => {
     ok('бой стартовал, корабли обеих сторон на месте', fleet.mine > 0 && fleet.foe > 0,
       `${fleet.mine} против ${fleet.foe}, сборка ${((Date.now() - t) / 1000).toFixed(1)} с`);
     await clean('старт боя');
+
+    await hookRender(page);
 
     // Пауза — кнопкой, как человек; дальше корабли стоят, и клики честные
     r = await tap(page, '[data-speed="0"]');
@@ -401,10 +510,10 @@ const SCAN = () => {
     const shown = await page.waitForSelector('.crash', { timeout: 30000 }).then(() => true, () => false);
     const crashText = await page.evaluate(() => (document.querySelector('.crash pre') || {}).textContent || '');
     ok('сбой в кадре: окно с текстом ошибки', shown && /ПРОВЕРКА/.test(crashText), crashText.split('\n')[0]);
-    const a = await page.evaluate(() => ({ raf: window.__t.raf, time: __sp.time }));
-    const going = await page.waitForFunction(n => window.__t.raf >= n, a.raf + 4, { timeout: 30000 }).then(() => true, () => false);
-    const b = await page.evaluate(() => ({ raf: window.__t.raf, time: __sp.time }));
-    ok('сбой в кадре: цикл кадров идёт дальше', going, `кадров с открытым окном: ${b.raf - a.raf}`);
+    const a = await page.evaluate(() => ({ n: window.__renders, time: __sp.time }));
+    const going = await page.waitForFunction(n => window.__renders >= n, a.n + 3, { timeout: 30000, polling: 250 }).then(() => true, () => false);
+    const b = await page.evaluate(() => ({ n: window.__renders, time: __sp.time }));
+    ok('сбой в кадре: отрисовка идёт дальше', going, `отрисовок с открытым окном: ${b.n - a.n}`);
     ok('пока окно открыто, бой стоит', b.time === a.time, `игровое время ${a.time.toFixed(2)} → ${b.time.toFixed(2)}`);
     r = await tap(page, '.crash [data-a="go"]');
     ok('«Продолжить» нажимается', r.ok, r.why);
@@ -438,13 +547,53 @@ const SCAN = () => {
   // ─────────────────────────── ЗЕМЛЯ
   const ground = async () => {
     console.log('\nНаземная операция  [' + secs() + ']');
+    /* Высадка, пока модели в пути: нырок обязан закрыть экран целиком и
+       ловить указатель, а подпись — читаться. Раньше облака уезжали за
+       1,6 с, тёмная подпись лежала на тёмном меню, а меню под ней
+       нажималось: можно было начать бой на орбите поверх ожидания. */
+    const glb = holdModels(page);
+    await glb.on();
     await toMenu();
+    const btn = await page.evaluate(() => {
+      const b = document.querySelector('[data-a="skirmish"]').getBoundingClientRect();
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    });
     await tap(page, '[data-a="skirmish"]');
     await page.waitForSelector('[data-a="ground"]', { state: 'visible' });
     const r = await tap(page, '[data-a="ground"]');
     ok('«Наземная операция» нажимается', r.ok, r.why);
+    const waiting = await page.waitForFunction(() => {
+      const d = document.querySelector('.dive');
+      return d && /Загружаю модели/.test(d.textContent);
+    }, null, { timeout: 30000, polling: 100 }).then(() => true, () => false);
+    ok('высадка ждёт модели и говорит об этом', waiting,
+      await page.evaluate(() => (document.querySelector('.dive') || {}).textContent || 'нет нырка'));
+    await page.waitForTimeout(2500);   // облака успели бы уехать — не должны
+    const cover = await page.evaluate(({ x, y }) => {
+      const inDive = (px, py) => { const h = document.elementFromPoint(px, py); return { ok: !!h && !!h.closest('.dive'), what: h ? h.tagName + '.' + h.className : 'null' }; };
+      // Читаемость: контраст подписи и её плашки (WCAG), плашка почти непрозрачна
+      const rgb = c => (c.match(/[\d.]+/g) || []).map(Number);
+      const lum = ([r, g, b]) => { const f = v => (v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+      const lab = document.querySelector('.dive .dive-label');
+      const fg = lab && lab.querySelector('span') ? rgb(getComputedStyle(lab.querySelector('span')).color) : [0, 0, 0];
+      const bg = lab ? rgb(getComputedStyle(lab).backgroundColor) : [0, 0, 0, 0];
+      const L1 = lum(fg), L2 = lum(bg.slice(0, 3));
+      return { btn: inDive(x, y), mid: inDive(innerWidth / 2, innerHeight / 2), corner: inDive(30, 30),
+        contrast: (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05), alpha: bg.length > 3 ? bg[3] : 1,
+        frozen: [...document.querySelectorAll('.dive > i')].filter(i => getComputedStyle(i).animationPlayState === 'paused').length === 3 };
+    }, btn);
+    ok('пока высадка ждёт, прежний экран закрыт и не нажимается', cover.btn.ok && cover.mid.ok && cover.corner.ok,
+      `под «Быстрым боем»: ${cover.btn.what}, в центре: ${cover.mid.what}, в углу: ${cover.corner.what}`);
+    ok('облака замерли в плотной точке', cover.frozen);
+    ok('подпись ожидания читается', cover.contrast >= 7 && cover.alpha >= 0.85,
+      `контраст ${cover.contrast.toFixed(1)}, плашка непрозрачна на ${cover.alpha}`);
+    await page.mouse.click(btn.x, btn.y);   // как человек, который заждался
+    await page.waitForTimeout(600);
+    ok('нажатие сквозь ожидание не открывает меню боя', await page.evaluate(() => !document.querySelector('[data-a="space"]')));
+    await glb.off();
     const started = await page.waitForFunction(() => window.__gr && window.__gr.time > 0 && window.__gr.units && window.__gr.units.length > 0,
       null, { timeout: 150000 }).then(() => true, () => false);
+    ok('после ожидания собран ровно один бой — наземный', started && await page.evaluate(() => !window.__sp));
     ok('наземная операция стартовала, юниты есть', started,
       started ? await page.evaluate(() => `юнитов ${__gr.units.length}, построек ${(__gr.buildings || []).length}`) : '');
     await clean('наземная операция');
@@ -472,8 +621,11 @@ const SCAN = () => {
   // ─────────────────────────── КАМПАНИЯ
   const campaign = async () => {
     console.log('\nКампания  [' + secs() + ']');
+    // Карте модели кораблей не нужны: она не ждёт их, даже если они в пути
+    const glb = holdModels(page);
+    await glb.on();
     await toMenu();
-    await page.evaluate(() => localStorage.removeItem('capella_save_v1'));
+    await page.evaluate(() => { localStorage.removeItem('capella_save_v1'); window.__t.prepText = []; });
     let r = await tap(page, '[data-a="new"]');
     ok('«Новая кампания» нажимается', r.ok, r.why);
     await page.waitForSelector('.fcard', { state: 'visible' });
@@ -482,6 +634,9 @@ const SCAN = () => {
     const open = await page.waitForFunction(() => window.__gal && document.querySelector('[data-role="endturn"]'),
       null, { timeout: 120000 }).then(() => true, () => false);
     ok('карта системы открылась', open);
+    const sub = await page.evaluate(() => [...new Set(window.__t.prepText.filter(Boolean))].slice(0, 2).join(' | ').slice(0, 160));
+    ok('карта открылась, не дожидаясь моделей кораблей (они ещё в пути)', open && !/модел/i.test(sub), sub);
+    await glb.off();
     if (!open) return;
     await settled();
     const turn0 = await page.evaluate(() => +document.querySelector('[data-role="turn"]').textContent);
@@ -499,11 +654,12 @@ const SCAN = () => {
     try { await fn(); } catch (e) {
       ok(`раздел «${g}» дошёл до конца`, false, String(e.message || e).split('\n')[0].slice(0, 200));
       await page.setViewportSize({ width: 1920, height: 1080 }).catch(() => {});
+      for (const gate of [...openGates]) await gate.off();
     }
   }
 
   await browser.close();
   server.kill();
   console.log(bad ? `\n${bad} FAIL  [${secs()}]` : `\nвсё ок  [${secs()}]`);
-  process.exit(bad ? 1 : 0);
+  process.exit(Math.min(bad, 100));
 })().catch(e => { console.error(e); server.kill(); process.exit(1); });

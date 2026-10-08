@@ -51,8 +51,9 @@
       };
       // Сообщение вместо игры. Первое сказанное не перебивается следующими ошибками.
       window.__bootFail = function (kind, detail) {
-        if (window.__bootFailed) return;
-        window.__bootFailed = true;
+        // Игра уже идёт — поздняя ошибка загрузки её не прячет, ей занимается окно сбоя
+        if (window.__bootFailed || (window.__capellaUp && kind !== 'webgl')) return;
+        window.__bootFailed = kind || 'load';
         boot.classList.add('fail');
         boot.style.display = '';
         msg.innerHTML = TEXT[kind] || TEXT.load;
@@ -63,8 +64,13 @@
           msg.appendChild(d);
         }
       };
+      /* Игра всё-таки поднялась — снимаем заставку, даже если до этого
+         успели сказать «не загрузилась»: ошибка была не смертельной.
+         Окончательно только «нет WebGL» — без него рисовать нечем. */
       window.__bootDone = function () {
-        if (window.__bootFailed) return;
+        if (window.__bootFailed === 'webgl') return;
+        window.__bootFailed = false;
+        boot.classList.remove('fail');
         boot.classList.add('gone');
         setTimeout(function () { boot.style.display = 'none'; }, 450);
       };
@@ -79,9 +85,15 @@
         var lose = gl.getExtension('WEBGL_lose_context');
         if (lose) lose.loseContext();   // пробный контекст сразу отпускаем
       }
-      // Ошибка до запуска игры (сломанный или не доехавший модуль)
+      /* Ошибка до запуска игры (сломанный или не доехавший модуль).
+         Только из НАШИХ файлов: расширение браузера, бросившее ошибку
+         на загрузке, раньше навсегда прятало игру за «не загрузилась»
+         (имя файла у его скрипта — адрес самой страницы). */
+      var OWN = /\/game\/(js|vendor)\//;
       addEventListener('error', function (e) {
-        if (!window.__capellaUp && e.message && !/^Script error/i.test(e.message)) window.__bootFail('load', e.message);
+        if (window.__capellaUp || !e.message || /^Script error/i.test(e.message)) return;
+        if (!OWN.test(e.filename || '') && !OWN.test(String((e.error && e.error.stack) || ''))) return;
+        window.__bootFail('load', e.message);
       });
       setTimeout(function () {
         if (!window.__capellaUp && !window.__bootFailed) msg.textContent = 'Загрузка идёт дольше обычного…';

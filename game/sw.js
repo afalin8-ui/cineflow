@@ -13,7 +13,7 @@
    Чего это НЕ лечит: в уже открытой вкладке браузер держит модули
    в памяти — новое приезжает после перезагрузки страницы. */
 
-const VERSION = 'capella-v28';
+const VERSION = 'capella-v29';
 const CACHE = VERSION;
 
 const SHELL = [

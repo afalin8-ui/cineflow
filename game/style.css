@@ -728,14 +728,26 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 /* НЫРОК СКВОЗЬ ОБЛАКА.
    Три слоя едут вниз с разной скоростью — параллакс и читается как
    падение. Слой закрывает экран целиком в самой плотной точке:
-   под ним меняется сцена, и смены не видно. */
+   под ним меняется сцена, и смены не видно.
+   Указатель он ЛОВИТ с первого кадра: иначе сквозь облака нажимается
+   прежний экран и можно начать второй бой поверх первого. */
 .dive {
-  position: absolute; inset: -20%; pointer-events: none; z-index: 90;
+  position: absolute; inset: -20%; pointer-events: auto; z-index: 90;
   opacity: 0; transition: opacity .55s ease-in;
 }
 .dive.in { opacity: 1; }
-.dive.out { opacity: 0; transition: opacity .85s ease-out; }
-.dive i {
+.dive.out { opacity: 0; transition: opacity .85s ease-out; pointer-events: none; }
+/* hold — облака замерли в плотной точке, пока собирается сцена;
+   wait — модели ещё едут: экран темнеет, посередине плашка с ходом
+   загрузки. Затемнение — отдельным слоем с opacity: такой переход
+   браузер ведёт и при занятом главном потоке */
+.dive.hold > i { animation-play-state: paused; }
+.dive::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: rgba(4, 6, 11, .9); opacity: 0; transition: opacity .4s;
+}
+.dive.wait::after { opacity: 1; }
+.dive > i {
   position: absolute; inset: -30% -10%; display: block;
   background-repeat: repeat;
   will-change: transform;
@@ -807,8 +819,18 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
 .prep-sub { margin-top: 8px; font-size: 13px; color: var(--muted); min-height: 1.3em; }
 .dive-label {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  font-size: 18px; font-weight: 600; color: #1d2a3a; letter-spacing: .04em;
+  z-index: 2; text-align: center; color: #1d2a3a;
 }
+.dive-label b { display: block; font-size: 18px; font-weight: 600; letter-spacing: .04em; }
+.dive-label span, .dive-label .prep-bar { display: none; }
+/* Пока ждём модели — светлым по тёмной плашке: тёмная подпись
+   на облаках читалась, а на тёмном меню под ними — нет */
+.dive.wait .dive-label {
+  width: min(420px, 82vw); padding: 18px 24px; color: var(--text);
+  background: rgba(4, 6, 11, .94); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.dive.wait .dive-label span { display: block; margin-top: 8px; font-size: 13px; color: var(--text-2); min-height: 1.3em; }
+.dive.wait .dive-label .prep-bar { display: block; }
 
 /* Окно сбоя (C19): игра не замерла, а сказала, что случилось */
 .crash {

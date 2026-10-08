@@ -94,12 +94,54 @@ function setMode(factory) {
    ОТРИСОВАТЬСЯ (два requestAnimationFrame), и только потом начинаем
    тяжёлую работу. Полоска анимируется через transform — такие
    анимации браузер крутит сам и при занятом главном потоке.
-   Если модели ещё едут по сети — ждём их здесь же, с подписью. */
+
+   Ждём только ТО, что нужно этому экрану (need): бою на орбите —
+   модели и картинки планет, высадке и Ангару — модели, карте — одни
+   планеты. Раньше карта ждала модели кораблей, которых на ней нет:
+   на медленной связи — 25 секунд заставки ни за что. */
 const PREP_WAIT_MAX = 40000;
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+/* Один флаг на заставку и на нырок: пока один экран собирается, второй
+   не начинается. Без общего флага нажатие сквозь ожидание высадки
+   запускало бой на орбите, и игра собирала две сцены подряд. */
 let prepBusy = false;
+// Что ждёт каждый экран: карте корабли не нужны, только планеты
+const NEED_SPACE = { models: true, planets: true };
+const NEED_MAP = { planets: true };
 
-function prepThen(title, work) {
+// Что из нужного экрану ещё в пути: 'models' | 'planets' | null
+function waitingFor(need) {
+  if (need.models && !modelsReady) return 'models';
+  if (need.planets && !planetsReady) return 'planets';
+  return null;
+}
+
+/* Ждать нужное, показывая в label, что именно едет. Без нужды — сразу.
+   Долгое ожидание без объяснения читается как зависание, поэтому
+   после 8 секунд дописываем, что будет, если не доедет. */
+function waitAssets(need, label) {
+  const list = [];
+  if (need.models && !modelsReady) list.push(modelsPromise);
+  if (need.planets && !planetsReady) list.push(planetsPromise);
+  if (!list.length) return Promise.resolve();
+  const t0 = performance.now();
+  const show = () => {
+    const what = waitingFor(need);
+    if (!what) return;
+    const waited = (performance.now() - t0) / 1000;
+    label.textContent = (what === 'models'
+      ? (assetProgress.total ? `Загружаю модели · ${assetProgress.done} из ${assetProgress.total}` : 'Загружаю модели…')
+      : 'Загружаю картинки планет…') +
+      (waited > 8 ? ` · связь медленная, ${Math.round(waited)} с. Не доедут — начнём ${
+        what === 'models' ? 'на простых моделях' : 'с нарисованными игрой планетами'}` : '');
+  };
+  show();
+  const tick = setInterval(show, 250);
+  return Promise.race([Promise.all(list), new Promise(r => setTimeout(r, PREP_WAIT_MAX))])
+    .then(() => { clearInterval(tick); label.textContent = ''; });
+}
+
+function prepThen(title, work, need = {}) {
   if (prepBusy) return;            // второй клик по «В бой» — не второй бой
   prepBusy = true;
   const el = document.createElement('div');
@@ -108,22 +150,7 @@ function prepThen(title, work) {
     <div class="prep-sub" data-role="sub"></div><div class="prep-bar"><i></i></div></div>`;
   el.querySelector('.prep-title').textContent = title;
   stage.appendChild(el);
-  const sub = el.querySelector('[data-role="sub"]');
-  const t0 = performance.now();
-  const showProgress = () => {
-    const waited = (performance.now() - t0) / 1000;
-    sub.textContent = (assetProgress.total
-      ? `Загружаю модели кораблей · ${assetProgress.done} из ${assetProgress.total}`
-      : 'Загружаю модели кораблей…') +
-      // Долгое ожидание без объяснения читается как зависание
-      (waited > 8 ? ` · связь медленная, ${Math.round(waited)} с. Не доедут — начнём на простых моделях` : '');
-  };
-  const waitAssets = assetsReady ? Promise.resolve()
-    : (showProgress(), Promise.race([assetsPromise, new Promise(r => setTimeout(r, PREP_WAIT_MAX))]));
-  const tick = setInterval(() => { if (!assetsReady) showProgress(); }, 250);
-  waitAssets.then(async () => {
-    clearInterval(tick);
-    sub.textContent = '';
+  waitAssets(need, el.querySelector('[data-role="sub"]')).then(async () => {
     await nextPaint();
     try { work(); } finally {
       prepBusy = false;
@@ -147,14 +174,14 @@ const ctx = {
     prepThen('Подготовка боя…', () => setMode(() => createSpaceBattle(ctx, {
       ...cfg,
       onEnd: res => { cfg.onEnd && cfg.onEnd(res); backToGalaxy(); },
-    })));
+    })), NEED_SPACE);
   },
   startGroundBattle(cfg) {
     /* Высадка идёт «нырком» сквозь облака, а не сменой экрана.
        Смысл приёма в том, что густой туман закрывает не переход,
        а ЗАГРУЗКУ: пока экран заволочён, собирается наземная сцена —
        рельеф, вода, тысячи травинок. Игрок видит спуск, а не
-       ожидание. */
+       ожидание. Модели нырок дожидается сам, под облаками. */
     dive(() => setMode(() => createGroundBattle(ctx, {
       ...cfg,
       onEnd: res => { cfg.onEnd && cfg.onEnd(res); backToGalaxy(); },
@@ -187,29 +214,43 @@ const ctx = {
    увидеть её нельзя.
 
    Слои разной скорости важнее их вида: параллакс и есть то, что
-   читается как движение вниз. */
+   читается как движение вниз.
+
+   С первого кадра нырок ЛОВИТ указатель, а в плотной точке облака
+   замирают (hold), пока под ними собирается сцена: анимация transform
+   идёт и при занятом главном потоке, и раньше облака успевали уехать
+   вниз, открыв застывший прежний экран. Если модели ещё в пути, экран
+   под облаками темнеет (wait), а посередине — плашка «Загружаю
+   модели · N из M». Раньше в это время облака уходили, подпись
+   тёмным по тёмному меню не читалась, а меню под ней нажималось —
+   и можно было запустить второй бой поверх ожидания первого. */
 function dive(swap) {
+  if (prepBusy) return;
+  prepBusy = true;
   const el = document.createElement('div');
   el.className = 'dive';
-  el.innerHTML = '<i class="c1"></i><i class="c2"></i><i class="c3"></i><b class="dive-label">Высадка…</b>';
+  el.innerHTML = `<i class="c1"></i><i class="c2"></i><i class="c3"></i>
+    <div class="dive-label"><b data-role="title">Высадка…</b><span data-role="sub"></span><div class="prep-bar"><i></i></div></div>`;
   hudRoot.appendChild(el);
   requestAnimationFrame(() => el.classList.add('in'));
 
   setTimeout(async () => {
+    el.classList.add('hold');
     /* Модели ещё едут — ждём под облаками, а не собираем бой на
        процедурных, чтобы через минуту увидеть другие корабли. */
-    if (!assetsReady) {
-      const label = el.querySelector('.dive-label');
-      label.textContent = 'Загружаю модели…';
-      await Promise.race([assetsPromise, new Promise(r => setTimeout(r, PREP_WAIT_MAX))]);
-      label.textContent = 'Высадка…';
-      await nextPaint();
+    if (waitingFor({ models: true })) {
+      el.classList.add('wait');
+      await waitAssets({ models: true }, el.querySelector('[data-role="sub"]'));
     }
-    swap();
-    // setMode вычищает HUD целиком, поэтому слой возвращаем поверх
-    hudRoot.appendChild(el);
-    el.classList.add('out');
-    setTimeout(() => el.remove(), 900);
+    await nextPaint();
+    try { swap(); } finally {
+      prepBusy = false;
+      // setMode вычищает HUD целиком, поэтому слой возвращаем поверх
+      hudRoot.appendChild(el);
+      el.classList.remove('hold');
+      el.classList.add('out');
+      setTimeout(() => el.remove(), 900);
+    }
   }, 760);
 }
 
@@ -301,9 +342,9 @@ function showMenu() {
     el.querySelector('[data-a="neuro"]').onclick = () => showNeuro();
     el.querySelector('[data-a="fps"]').onchange = e => setFps(e.target.checked);
     const hangar = el.querySelector('[data-a="hangar"]');
-    if (hangar) hangar.onclick = () => prepThen('Открываю ангар…', () => setMode(() => createHangar(ctx)));
+    if (hangar) hangar.onclick = () => prepThen('Открываю ангар…', () => setMode(() => createHangar(ctx)), { models: true });
     const cont = el.querySelector('[data-a="continue"]');
-    if (cont) cont.onclick = () => prepThen('Открываю карту системы…', () => { campaign = loadSave(); backToGalaxy(); });
+    if (cont) cont.onclick = () => prepThen('Открываю карту системы…', () => { campaign = loadSave(); backToGalaxy(); }, NEED_MAP);
 
     return {
       scene: bd.scene, camera: bd.camera,
@@ -358,7 +399,7 @@ function showFactionPick() {
       dropSave();
       save();
       el.remove();
-      prepThen('Открываю карту системы…', backToGalaxy);
+      prepThen('Открываю карту системы…', backToGalaxy, NEED_MAP);
     };
   });
 }
@@ -432,7 +473,7 @@ function showSkirmish() {
       // можно увидеть только в кампании, построив орудие
       groundGun: foe,
       onEnd: () => showMenu(),
-    })));
+    })), NEED_SPACE);
   };
   el.querySelector('[data-a="ground"]').onclick = () => {
     const mine = sel('mine'), foe = sel('foe'), size = sel('size');
@@ -660,14 +701,25 @@ function showCrash(err) {
   crash.el = el;
 }
 
+/* Своей считаем только ошибку из НАШИХ файлов — game/js/ и
+   game/vendor/ — по имени файла или по стеку. Расширения браузера
+   (переводчики, кошельки, проверка орфографии) вставляют скрипты
+   прямо в страницу, и у их ошибок имя файла — адрес самой игры
+   (…/game/), а в стеке «<anonymous>». Раньше фильтр «/game/» их
+   пропускал: окно сбоя открывалось над меню и ставило бой на паузу
+   из-за чужой поломки. Отказ обещания без стека — тоже не наш:
+   только строка в консоли. */
+const OWN_CODE = /\/game\/(js|vendor)\//;
+const ownError = (file, err) => OWN_CODE.test(file || '') || OWN_CODE.test(String((err && err.stack) || ''));
 addEventListener('error', e => {
-  // Чужие скрипты (расширения браузера) приходят без имени файла
-  // и как «Script error.» — это не наша поломка, окно не показываем.
-  if (e.filename && !/\/game\//.test(e.filename)) return;
   if (!e.error && /^Script error/i.test(e.message || '')) return;
+  if (!ownError(e.filename, e.error)) { console.warn('Ошибка чужого скрипта (расширение браузера?), игра её пропускает:', e.message); return; }
   showCrash(e.error || e.message);
 });
-addEventListener('unhandledrejection', e => showCrash(e.reason));
+addEventListener('unhandledrejection', e => {
+  if (!ownError('', e.reason)) { console.warn('Отказ обещания не из кода игры, пропускаю:', e.reason); return; }
+  showCrash(e.reason);
+});
 
 /* ── СЧЁТЧИК КАДРОВ (часть C52).
    Цифры со стенда разработчика ничего не говорят о компьютере
@@ -767,15 +819,19 @@ document.addEventListener('touchmove', e => {
    доехали — бой идёт на процедурных моделях, а приехавшая позже
    модель достанется следующему бою. */
 const assetProgress = { total: 0, done: 0 };
-let assetsReady = false;
-const assetsPromise = viewport
-  ? Promise.all([loadModelLibrary(assetProgress), loadPlanetTextures()])
-    .then(([m, p]) => {
-      if (m) console.info(`Загружено внешних моделей: ${m} из ${modelCount()}`);
-      if (p) console.info(`Загружено текстур планет: ${p} из ${planetCount()}`);
-    })
+// Модели и картинки планет — отдельно: разным экранам нужно разное
+let modelsReady = !viewport, planetsReady = !viewport;
+const modelsPromise = viewport
+  ? loadModelLibrary(assetProgress)
+    .then(m => { if (m) console.info(`Загружено внешних моделей: ${m} из ${modelCount()}`); })
     .catch(e => console.warn('Внешние модели не загрузились:', e))
-    .finally(() => { assetsReady = true; })
+    .finally(() => { modelsReady = true; })
+  : Promise.resolve();
+const planetsPromise = viewport
+  ? loadPlanetTextures()
+    .then(p => { if (p) console.info(`Загружено текстур планет: ${p} из ${planetCount()}`); })
+    .catch(e => console.warn('Картинки планет не загрузились:', e))
+    .finally(() => { planetsReady = true; })
   : Promise.resolve();
 
 if (viewport) {
