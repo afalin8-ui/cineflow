@@ -26,6 +26,7 @@ import { MeshoptDecoder } from '../vendor/meshopt_decoder.module.js';
 
 const BASE = new URL('../models/', import.meta.url);
 const library = new Map();     // ключ → подготовленная THREE.Group
+const warnedBig = new Set();   // файлы, про чьи огромные текстуры уже сказали
 let manifest = null;
 
 // Ключи, которые понимает игра:
@@ -35,9 +36,21 @@ let manifest = null;
 //   building:<клан>:<hq|barracks|factory|airfield|turret|sam>
 // Вместо клана можно написать any — модель пойдёт всем трём кланам.
 
-export async function loadModelLibrary() {
+/* Пределы времени (C40). Без них зависший запрос держал меню чёрным
+   навсегда: загрузка моделей стояла ДО показа меню, а у fetch своего
+   тайм-аута нет. Теперь не уложилась модель — бой идёт на процедурной.
+   Сама загрузка при этом НЕ отменяется: доехавшая позже модель
+   ложится в библиотеку и достаётся следующему бою. */
+const MANIFEST_TIMEOUT = 8000;
+const MODEL_TIMEOUT = 25000;
+const within = (p, ms, what) => Promise.race([
+  p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: нет ответа за ${ms / 1000} с`)), ms)),
+]);
+
+// progress — {total, done}: main.js показывает его под «Подготовкой боя»
+export async function loadModelLibrary(progress = {}) {
   try {
-    const res = await fetch(new URL('manifest.json', BASE), { cache: 'no-cache' });
+    const res = await within(fetch(new URL('manifest.json', BASE), { cache: 'no-cache' }), MANIFEST_TIMEOUT, 'manifest.json');
     if (!res.ok) return 0;
     manifest = await res.json();
   } catch (e) {
@@ -52,23 +65,31 @@ export async function loadModelLibrary() {
   draco.setDecoderPath(new URL('../vendor/draco/', import.meta.url).href);
   loader.setDRACOLoader(draco);
   let ok = 0;
+  progress.total = entries.length;
+  progress.done = 0;
   await Promise.all(entries.map(async ([key, spec]) => {
     const cfg = typeof spec === 'string' ? { file: spec } : spec;
-    if (!cfg || !cfg.file) return;
+    if (!cfg || !cfg.file) { progress.done++; return; }
+    const load = loader.loadAsync(new URL(cfg.file, BASE).href)
+      .then(gltf => { library.set(key, prepare(gltf.scene, cfg)); return true; });
     try {
-      const gltf = await loader.loadAsync(new URL(cfg.file, BASE).href);
-      library.set(key, prepare(gltf.scene, cfg));
+      await within(load, MODEL_TIMEOUT, cfg.file);
       ok++;
     } catch (e) {
       /* Сообщение важнее самой ошибки: чаще всего это либо не тот
          формат, либо текстуры лежат отдельным файлом рядом, а не
          внутри .glb. */
-      const hint = /basisu|ktx/i.test(e.message || '')
-        ? 'текстуры сжаты в KTX2 — пересохрани модель с обычными PNG/JPG'
-        : /Unexpected|JSON|magic/i.test(e.message || '')
-          ? 'файл не похож на .glb — проверь, что это именно glTF binary'
-          : 'проверь, что файл лежит в game/models/ и путь в манифесте верный';
+      const hint = /нет ответа/.test(e.message || '')
+        ? 'медленная связь — бой пойдёт на процедурной модели, а эта подхватится к следующему'
+        : /basisu|ktx/i.test(e.message || '')
+          ? 'текстуры сжаты в KTX2 — пересохрани модель с обычными PNG/JPG'
+          : /Unexpected|JSON|magic/i.test(e.message || '')
+            ? 'файл не похож на .glb — проверь, что это именно glTF binary'
+            : 'проверь, что файл лежит в game/models/ и путь в манифесте верный';
       console.warn(`Модель «${key}» не загрузилась (${cfg.file}): ${e.message}. ${hint}`);
+      load.catch(() => {});   // поздний отказ после тайм-аута — уже сказали
+    } finally {
+      progress.done++;
     }
   }));
   return ok;
@@ -132,6 +153,18 @@ function prepare(root, cfg) {
            хрома. Правим только там, где значения заданы числом, — если
            у материала есть карта шероховатости, автор знал, что делал,
            и трогать её нельзя. */
+        /* Текстура больше 2048 — это сотни мегабайт видеопамяти на одну
+           модель (у крейсера была 8192: около полугигабайта) и рывок
+           при первом показе. Сжимать на лету дорого — предупреждаем,
+           а файл ужимают заранее (C41, см. models/README.md). */
+        for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) {
+          const img = m[k] && m[k].image;
+          const side = img ? Math.max(img.width || 0, img.height || 0) : 0;
+          if (side > 2048 && !warnedBig.has(cfg.file)) {
+            warnedBig.add(cfg.file);
+            console.warn(`Модель ${cfg.file}: текстура ${side}×${side} — больше 2048. Ужми картинки внутри .glb до 2048, иначе на слабой видеокарте будут рывки.`);
+          }
+        }
         if (m.isMeshStandardMaterial) {
           if (!m.roughnessMap && m.roughness < 0.25) m.roughness = 0.42;
           if (!m.metalnessMap && m.metalness > 0.85) m.metalness = 0.7;
@@ -183,7 +216,7 @@ const planetLib = new Map();
 export async function loadPlanetTextures() {
   let manifest;
   try {
-    const res = await fetch(new URL('manifest.json', PLANET_BASE), { cache: 'no-cache' });
+    const res = await within(fetch(new URL('manifest.json', PLANET_BASE), { cache: 'no-cache' }), MANIFEST_TIMEOUT, 'planets/manifest.json');
     if (!res.ok) return 0;
     manifest = await res.json();
   } catch (e) { return 0; }
@@ -193,6 +226,8 @@ export async function loadPlanetTextures() {
   const loader = new THREE.TextureLoader();
 
   const load = (file, srgb) => new Promise(resolve => {
+    // предел времени тот же, что у моделей: не дождались — процедурная планета
+    setTimeout(() => resolve(null), MODEL_TIMEOUT);
     loader.load(new URL(file, PLANET_BASE).href, t => {
       if (srgb) t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = THREE.RepeatWrapping;

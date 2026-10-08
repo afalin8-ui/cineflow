@@ -21,9 +21,73 @@
     <div id="hud"></div>
   </div>
 
+  <!-- Экран загрузки (C40) — простой HTML, виден с первой отрисовки,
+       ещё до того, как приедут модули. Его же текстом говорим, если
+       игре нечем рисовать (нет WebGL) или модули не загрузились:
+       раньше в обоих случаях был просто чёрный экран. -->
+  <div id="boot" class="boot" role="status" aria-live="polite">
+    <div class="boot-inner">
+      <div class="boot-eyebrow">Система Капелла</div>
+      <div class="boot-title">Галактический фронт</div>
+      <div class="boot-msg" id="boot-msg">Загрузка…</div>
+      <div class="boot-bar"><i></i></div>
+    </div>
+  </div>
+
   <noscript>
     <div class="noscript">Для игры нужен включённый JavaScript.</div>
   </noscript>
+
+  <script>
+    (function () {
+      var boot = document.getElementById('boot');
+      var msg = document.getElementById('boot-msg');
+      var TEXT = {
+        webgl: '<b>Видеокарта не дала игре картинку.</b> Браузер не открыл WebGL — без него трёхмерную сцену рисовать нечем.' +
+          '<br><br>Что попробовать: обновить браузер (Chrome, Edge или Firefox); в его настройках включить ' +
+          '«Аппаратное ускорение» и перезапустить браузер; обновить драйвер видеокарты.',
+        load: '<b>Игра не загрузилась.</b> Обновите страницу (Ctrl+F5). Если не помогает — проверьте связь ' +
+          'или откройте игру в другом браузере.'
+      };
+      // Сообщение вместо игры. Первое сказанное не перебивается следующими ошибками.
+      window.__bootFail = function (kind, detail) {
+        if (window.__bootFailed) return;
+        window.__bootFailed = true;
+        boot.classList.add('fail');
+        boot.style.display = '';
+        msg.innerHTML = TEXT[kind] || TEXT.load;
+        if (detail) {
+          var d = document.createElement('div');
+          d.className = 'boot-detail';
+          d.textContent = String(detail).slice(0, 300);
+          msg.appendChild(d);
+        }
+      };
+      window.__bootDone = function () {
+        if (window.__bootFailed) return;
+        boot.classList.add('gone');
+        setTimeout(function () { boot.style.display = 'none'; }, 450);
+      };
+      // Есть ли чем рисовать — проверяем ДО модулей
+      var gl = null;
+      try {
+        var c = document.createElement('canvas');
+        gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+      } catch (e) { gl = null; }
+      if (!gl) { window.__noWebGL = true; window.__bootFail('webgl'); }
+      else {
+        var lose = gl.getExtension('WEBGL_lose_context');
+        if (lose) lose.loseContext();   // пробный контекст сразу отпускаем
+      }
+      // Ошибка до запуска игры (сломанный или не доехавший модуль)
+      addEventListener('error', function (e) {
+        if (!window.__capellaUp && e.message && !/^Script error/i.test(e.message)) window.__bootFail('load', e.message);
+      });
+      setTimeout(function () {
+        if (!window.__capellaUp && !window.__bootFailed) msg.textContent = 'Загрузка идёт дольше обычного…';
+      }, 15000);
+    })();
+  </script>
 
   <script>
     // Свой service worker с областью /game/: держит игру офлайн и не
@@ -35,6 +99,7 @@
       });
     }
   </script>
-  <script type="module" src="./js/main.js"></script>
+  <!-- onerror: модуль или его зависимость не доехали (404, обрыв связи) -->
+  <script type="module" src="./js/main.js" onerror="window.__bootFail && window.__bootFail('load', 'не загрузился ' + this.src)"></script>
 </body>
 </html>
