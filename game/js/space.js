@@ -2107,6 +2107,14 @@ export function createSpaceBattle(ctx, config) {
       if (s) beginJump(s);
       return s ? s.def.name : null;
     };
+    // Где корабль на экране — автотест кликает по нему настоящей мышью
+    state.screenTest = e => {
+      const r = viewport.canvas.getBoundingClientRect();
+      const p = screenOf(e.pos, tcam.cam, viewport.w, viewport.h);
+      return { x: r.left + p.x, y: r.top + p.y, z: p.z };
+    };
+    // Мир в точке экрана — куда должен лечь приказ правой кнопкой
+    state.worldTest = (x, y) => controls.worldAt(x, y);
   }
   return { scene, camera: tcam.cam, update, dispose, state };
 }
