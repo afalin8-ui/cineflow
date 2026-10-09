@@ -1620,19 +1620,27 @@ export function createSpaceBattle(ctx, config) {
      Начало отхода — через подтверждение (C34): кнопка стоит в одной
      полосе с кнопками скорости, и промах мимо «4×» проигрывал бой.
      Защитнику сказано прямо, что орбита останется за противником. */
+  /* Вопрос ставит бой на паузу, пока висит: окно гасит все клавиши,
+     Пробел в том числе, и без паузы флот гиб бы, пока игрок читает
+     три предложения. После ответа скорость та же, что была. */
+  function ask(opts, fn) {
+    if (!ctx.confirm) { fn(); return; }
+    const was = state.paused;
+    state.paused = true;
+    ctx.confirm({ ...opts, onClose: () => { state.paused = was; } }, fn);
+  }
   const retreatBtn = $('retreat');
-  retreatBtn.onclick = () => {
+  function askRetreat() {
     if (ended) return;
     const P = state.playerSide;
-    if (state.retreat[P]) {
-      if (state.conceded === P) { toast('Носитель ушёл — отход уже не отменить'); return; }
-      cancelRetreat(P);
-      toast('Отход отменён — флот остаётся в бою');
-      refreshRetreat();
-      refreshSel();
-      return;
-    }
-    const doIt = () => {
+    if (state.retreat[P]) { toast('Флот уже отходит'); return; }
+    ask({
+      title: P === 'defender' ? 'Отход — сдать орбиту?' : 'Отход из боя?',
+      text: 'Весь флот копит гипер и всё это время беззащитен. Домой вернутся только те, кто успеет уйти' +
+        (P === 'defender' ? '; орбита останется за противником.' : '; бой будет проигран.') +
+        ' Пока носитель не ушёл, отход можно отменить той же кнопкой.',
+      yes: 'Отходить', no: 'Остаться в бою',
+    }, () => {
       if (ended || state.retreat[P]) return;
       const n = orderRetreat(P);
       const t = Math.max(0, ...state.ships.filter(s => !s.dead && s.side === P && s.hyper).map(s => s.hyper.left));
@@ -1640,15 +1648,17 @@ export function createSpaceBattle(ctx, config) {
               : 'Отход: уходить некому');
       refreshRetreat();
       refreshSel();
-    };
-    if (!ctx.confirm) { doIt(); return; }
-    ctx.confirm({
-      title: P === 'defender' ? 'Отход — сдать орбиту?' : 'Отход из боя?',
-      text: 'Весь флот копит гипер и всё это время беззащитен. Домой вернутся только те, кто успеет уйти' +
-        (P === 'defender' ? '; орбита останется за противником.' : '; бой будет проигран.') +
-        ' Пока носитель не ушёл, отход можно отменить той же кнопкой.',
-      yes: 'Отходить', no: 'Остаться в бою',
-    }, doIt);
+    });
+  }
+  retreatBtn.onclick = () => {
+    if (ended) return;
+    const P = state.playerSide;
+    if (!state.retreat[P]) { askRetreat(); return; }
+    if (state.conceded === P) { toast('Носитель ушёл — отход уже не отменить'); return; }
+    cancelRetreat(P);
+    toast('Отход отменён — флот остаётся в бою');
+    refreshRetreat();
+    refreshSel();
   };
   function refreshRetreat() {
     const on = !!state.retreat[state.playerSide];
@@ -1876,7 +1886,10 @@ export function createSpaceBattle(ctx, config) {
       if (!cell) {
         cell = document.createElement('button');
         cell.className = 'rcell';
-        cell.innerHTML = '<b></b><span class="rbar"><i></i></span><em class="rgrp"></em>';
+        cell.innerHTML = '<span class="rtop"><b></b><em class="rgrp"></em></span><span class="rbar"><i></i></span>';
+        cell._name = cell.querySelector('b');
+        cell._bar = cell.querySelector('.rbar i');
+        cell._grp = cell.querySelector('.rgrp');
         cell.onclick = () => {
           state.selection = [e];
           const p = e.kind === 'squad'
@@ -1892,17 +1905,17 @@ export function createSpaceBattle(ctx, config) {
       const hp = isSquad
         ? live.reduce((a, c) => a + c.hp / c.maxHp, 0) / Math.max(1, live.length)
         : e.hp / e.maxHp;
-      cell.firstChild.textContent = isSquad
+      cell._name.textContent = isSquad
         ? `${STRIKE_ROLES[e.role].short || STRIKE_ROLES[e.role].label} ${live.length}`
         : short(e.def.name);
-      const bar = cell.children[1].firstChild;
+      const bar = cell._bar;
       bar.style.width = (clamp(hp, 0, 1) * 100) + '%';
       bar.style.background = hp > 0.55 ? '#8fffc8' : hp > 0.25 ? '#e0a94e' : '#e05555';
       cell.classList.toggle('on', state.selection.includes(e));
       cell.classList.toggle('air', isSquad);
-      // В каких отрядах корабль — цифрой в углу ячейки
+      // В каких отрядах корабль — цифрами справа от имени
       const g = Object.keys(groups).filter(n => groups[n].includes(e)).join('');
-      const em = cell.lastChild;
+      const em = cell._grp;
       if (em.textContent !== g) em.textContent = g;
     }
     for (const [uid, cell] of rosterCells) {
@@ -2351,12 +2364,32 @@ export function createSpaceBattle(ctx, config) {
           });
         }
       } else {
+        /* С носителем «Уйти в гипер» — это «Отход» всего флота: за
+           ушедшим носителем уходят все, бой проигран. Поэтому тот же
+           вопрос, что у «Отхода», и с кнопки, и с G (C34): буква стоит
+           между F и H, и промах мимо «держать» молча проигрывал бой.
+           Без носителя — сразу, но полоской: G ещё раз отменит. */
         const carrier = ships.some(s => s.cls === 'carrier');
+        const go = () => {
+          if (ended) return;
+          const live = ships.filter(s => beginJump(s));
+          if (!live.length) return;
+          const t = Math.ceil(Math.max(...live.map(s => s.hyper.left)));
+          toast(carrier ? `Авианосец копит гипер, ${t} с — за ним уйдёт весь флот · G — отменить`
+                        : `Гипер через ${t} с, всё это время беззащитны · G — отменить`);
+          refreshSel();
+        };
         addBtn('jump', 'Уйти в гипер', carrier
           ? 'Носитель уходит — за ним отходит весь флот, бой проигран'
           : 'Копит переход, всё это время беззащитен', () => {
-          for (const s of ships) beginJump(s);
-          refreshSel();
+          if (!carrier) { go(); return; }
+          ask({
+            title: 'Авианосец уходит — это отход',
+            text: 'За ушедшим авианосцем в гипер уходит весь флот, и бой будет проигран: ' +
+              'домой вернутся только те, кто успеет уйти. Пока авианосец копит переход, ' +
+              'уход можно отменить — G или «Отменить гипер».',
+            yes: 'Уйти в гипер', no: 'Остаться в бою',
+          }, go);
         });
       }
       addBtn('stop', 'Стоп', 'Снять все приказы, погасить ход', () => {
@@ -2472,9 +2505,15 @@ export function createSpaceBattle(ctx, config) {
     pending = null;
     ctx.pause({
       restart: !config.inCampaign && ctx.restartBattle ? () => ctx.restartBattle() : null,
-      exitText: config.inCampaign
-        ? 'Бой не будет засчитан: кампания продолжится с последнего сохранения.'
-        : 'Бой не будет засчитан.',
+      exitText: 'Бой не будет засчитан.',
+      /* В кампании выйти посреди боя нельзя: она уже сохранена со
+         следующим ходом, и выход был бы переигровкой (а оборона —
+         пропавшей атакой ИИ). Выход — тот же «Отход» с вопросом. */
+      leave: config.inCampaign ? {
+        label: state.retreat[state.playerSide] ? 'Флот уже отходит' : 'Отход из боя…',
+        note: 'Бой кампании доигрывается до конца: выйти можно отходом, и он засчитается. В главное меню — с карты системы.',
+        fn: askRetreat,
+      } : null,
       onClose: () => { pauseOpen = false; state.paused = was; },
     });
   }

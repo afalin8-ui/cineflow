@@ -284,17 +284,22 @@ function showAutoResult(title, text, cb) {
 
 /* Пробел и Enter по кнопке ПОД окном (её мог оставить в фокусе Tab)
    нажали бы её: снять паузу под меню, сдаться под вопросом. Кнопки
-   самого окна с клавиатуры нажимаются как обычно. */
+   самого окна с клавиатуры нажимаются как обычно. Когда в фокусе
+   ничего (body), действие по умолчанию не трогаем: им Пробел и PgDn
+   листают справку. */
 function blockOutside(e, box) {
   if (e.code !== 'Space' && e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
   const a = document.activeElement;
-  if (!a || !box.contains(a)) e.preventDefault();
+  if (a && a !== document.body && !box.contains(a)) e.preventDefault();
 }
 
 /* ── ПОДТВЕРЖДЕНИЕ (C34). Для действий, которые одним промахом
    проигрывают бой: «Отход», «Сдаться», выход посреди боя. Escape —
    «нет»; пока окно открыто, клавиши игры молчат (Пробел не снимает
-   паузу под ним). opts: {title, text, yes, no, danger} */
+   паузу под ним). Бой на это время ставит на паузу САМ экран и
+   снимает её в onClose: окно гасит все клавиши, Пробел в том числе,
+   и без паузы флот гиб бы, пока игрок читает вопрос.
+   opts: {title, text, yes, no, danger, onClose} */
 function confirmBox(opts, onYes) {
   const m = document.createElement('div');
   m.className = 'modal confirm';
@@ -307,7 +312,14 @@ function confirmBox(opts, onYes) {
   m.querySelector('p').textContent = opts.text || '';
   m.querySelector('[data-a="yes"]').textContent = opts.yes || 'Да';
   m.querySelector('[data-a="no"]').textContent = opts.no || 'Отмена';
-  const close = () => { m.remove(); removeEventListener('keydown', onKey, true); };
+  let done = false;
+  const close = () => {
+    if (done) return;
+    done = true;
+    m.remove();
+    removeEventListener('keydown', onKey, true);
+    if (opts.onClose) opts.onClose();
+  };
   const onKey = e => {
     if (!m.isConnected) { removeEventListener('keydown', onKey, true); return; }
     if (e.code === 'F3' || e.code === 'F11') return;
@@ -330,7 +342,11 @@ function confirmBox(opts, onYes) {
    заново, в главное меню. Сам экран ставит бой на паузу и снимает
    её в onClose. Пока меню открыто, клавиши игры до экрана не доходят
    (иначе Пробел снял бы паузу под меню, а стрелки двигали камеру).
-   opts: {restart, exitText, onExit, onClose} */
+   В бою КАМПАНИИ вместо «В главное меню» — `leave` (отход, сдаться):
+   кампания к этому моменту уже сохранена со СЛЕДУЮЩИМ ходом, и выход
+   посреди боя был бы переигровкой, а атака ИИ на игрока просто
+   пропадала бы. Бой кампании кончается так, как сыгран.
+   opts: {restart, exitText, onExit, onClose, leave: {label, note, fn}} */
 function showPause(opts = {}) {
   if (hudRoot.querySelector('.screen.pause')) return;
   const el = document.createElement('div');
@@ -342,8 +358,10 @@ function showPause(opts = {}) {
         <button class="btn big" data-a="help">Управление</button>
         <button class="btn big" data-a="settings">Настройки</button>
         ${opts.restart ? '<button class="btn big" data-a="restart">Начать бой заново</button>' : ''}
-        <button class="btn ghost big" data-a="menu">В главное меню</button>
+        ${opts.leave ? '<button class="btn ghost big" data-a="leave"></button>'
+                     : '<button class="btn ghost big" data-a="menu">В главное меню</button>'}
       </div>
+      ${opts.leave ? '<p class="pause-note" data-role="leave-note"></p>' : ''}
       <div class="pause-settings" data-role="settings" hidden>
         <label class="opt"><input type="checkbox" data-a="edge"${prefs.edge ? ' checked' : ''}>
           Прокрутка карты, когда курсор у края экрана</label>
@@ -362,9 +380,17 @@ function showPause(opts = {}) {
   };
   const onKey = e => {
     if (!el.isConnected) { removeEventListener('keydown', onKey, true); return; }
-    // Поверх меню открыта справка или подтверждение — Escape их
-    if (document.querySelector('.screen.neuro, .modal.confirm')) return;
     if (e.code === 'F3' || e.code === 'F11') return;
+    /* Поверх меню открыта справка или подтверждение — Escape их.
+       Остальные клавиши игре не отдаём и тогда: справка свои глушит
+       сама, но правило «пока меню открыто, бой их не слышит» обязано
+       держаться здесь — раньше отсюда был `return`, и Пробел, которым
+       листают справку, снимал паузу под меню, а PgDn уводил корабли. */
+    const top = document.querySelector('.modal.confirm') || document.querySelector('.screen.neuro');
+    if (top) {
+      if (e.code !== 'Escape') { e.stopImmediatePropagation(); blockOutside(e, top); }
+      return;
+    }
     e.stopImmediatePropagation();
     if (e.code === 'Escape') { e.preventDefault(); close(); }
     else blockOutside(e, el);
@@ -382,7 +408,12 @@ function showPause(opts = {}) {
   el.querySelector('[data-a="full"]').onclick = () => toggleFullscreen();
   const restart = el.querySelector('[data-a="restart"]');
   if (restart) restart.onclick = () => { done = true; removeEventListener('keydown', onKey, true); el.remove(); opts.restart(); };
-  el.querySelector('[data-a="menu"]').onclick = () => {
+  if (opts.leave) {
+    const lb = el.querySelector('[data-a="leave"]');
+    lb.textContent = opts.leave.label;
+    el.querySelector('[data-role="leave-note"]').textContent = opts.leave.note || '';
+    lb.onclick = () => { close(); opts.leave.fn(); };
+  } else el.querySelector('[data-a="menu"]').onclick = () => {
     const go = () => {
       done = true;
       removeEventListener('keydown', onKey, true);
@@ -399,8 +430,13 @@ function showPause(opts = {}) {
    Ctrl+1…8 (переключение вкладок), и отряды Ctrl+цифрой не записать —
    поэтому они пишутся и Shift+цифрой. В полноэкранном режиме
    Keyboard Lock (Chrome, Edge) отдаёт цифры игре, и Ctrl работает
-   тоже. Escape не запираем: он по-прежнему выводит из полного экрана. */
-const LOCK_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
+   тоже. Escape запираем ТОЖЕ: в полном экране через Fullscreen API
+   браузер забирает Esc себе, и каждый Esc — а это главная клавиша
+   отмены в бою (атака с ходу, рамка, выбор) — выбрасывал из полного
+   экрана, снимая заодно и замок с Ctrl+цифр. Запертый Esc короткий
+   отдаётся игре, а из полного экрана выводит его УДЕРЖАНИЕ (браузер
+   сам об этом пишет), F11 и «☰ → Настройки → Полный экран». */
+const LOCK_KEYS = ['Escape', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 async function toggleFullscreen() {
   try {
     if (document.fullscreenElement) {
@@ -701,10 +737,14 @@ function showNeuro(start = 0) {
   const onKey = e => {
     // экран сменился, а справку унесло вместе с HUD — слушатель больше не нужен
     if (!el.isConnected) { removeEventListener('keydown', onKey, true); return; }
-    if (e.code !== 'Escape') return;
-    e.preventDefault();
+    if (e.code === 'F3' || e.code === 'F11') return;
+    /* Пока справка открыта, игра клавиш не слышит: её листают Пробелом
+       и PgDn, а Пробел под ней снимал паузу (бой шёл без игрока), PgDn
+       уводил выделенные корабли «Ниже», G — в гипер. Действие по
+       умолчанию не гасим — им справка и листается. */
     e.stopImmediatePropagation();
-    close();
+    if (e.code === 'Escape') { e.preventDefault(); close(); }
+    else blockOutside(e, el);
   };
   addEventListener('keydown', onKey, true);
   el.querySelector('[data-a="close"]').onclick = close;
@@ -784,7 +824,7 @@ function showNeuro(start = 0) {
           ['H', 'держать позицию: стоять и бить только тех, до кого достаёт оружие'],
           ['Z / X / C', 'поднять перехватчиков / истребителей / бомбардировщиков'],
           ['V', 'звено на посадку'],
-          ['G', 'уйти в гипер или отменить'],
+          ['G', 'уйти в гипер или отменить; с авианосцем спросит — за ним отходит весь флот'],
           ['D', 'дрифт'],
           ['B', 'подкрепление'],
           ['J / K / L', 'купол РЭБ: глушение / прикрытие / молчать'],
@@ -807,7 +847,7 @@ function showNeuro(start = 0) {
         ])}</section>
         <section><h3>Общее</h3>${rows([
           ['Esc', 'меню паузы: управление, настройки, начать заново, выход'],
-          ['F11', 'полный экран'],
+          ['F11', 'полный экран; выйти — F11 или удержать Esc'],
           ['F3', 'счётчик кадров'],
         ])}</section>
         <section><h3>Планшет</h3><p>

@@ -26,6 +26,11 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* Атрибут hidden обязан прятать ВСЕГДА. Правило браузера для него слабое,
+   и любой класс с `display: flex` его перебивает: «Настройки» в меню
+   паузы были раскрыты всегда (кнопка ничего не делала), а пустая плашка
+   часов «Давления Земли» висела в шапке каждого боя без орудия. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0; padding: 0; height: 100%; width: 100%;
@@ -922,6 +927,11 @@ button.act kbd.hk { position: absolute; top: 6px; right: 7px; }
 .screen.pause { z-index: 60; background: rgba(4, 6, 11, .8); backdrop-filter: blur(3px); }
 .screen.neuro { z-index: 70; }
 .modal.confirm { z-index: 80; }
+/* Панель подтверждения ловит указатель ЦЕЛИКОМ — та же ловушка, что
+   C2 у справки: `.modal-inner` прозрачен, щелчок по тексту вопроса
+   проваливался в фон, и окно закрывалось, как по «Нет». Игрок щёлкал
+   по окну, чтобы дочитать «Отход из боя?», — и вопрос пропадал. */
+.modal.confirm .modal-inner { pointer-events: auto; }
 .pause-inner {
   pointer-events: auto; width: min(360px, 92vw);
   background: var(--panel-solid); border: 1px solid var(--line);
@@ -930,6 +940,8 @@ button.act kbd.hk { position: absolute; top: 6px; right: 7px; }
 .pause-inner h2 { margin: 0 0 14px; font-size: 22px; }
 .pause-actions { display: flex; flex-direction: column; gap: 9px; }
 .pause-actions button { pointer-events: auto; }
+/* В бою кампании — почему нет «В главное меню» */
+.pause-note { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 .pause-settings {
   margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft);
   display: flex; flex-direction: column; gap: 12px;
@@ -962,10 +974,12 @@ table.keys td:first-child {
    промах мимо «4×» не должен попадать в кнопку, проигрывающую бой. */
 .speedctl .danger-gap { margin-left: 18px; }
 
-/* В каких отрядах корабль — цифрой в углу ячейки ростера */
-.rcell { position: relative; }
+/* В каких отрядах корабль — цифрами справа от имени, В СТРОКЕ.
+   Стояли поверх угла ячейки, а имя не переносится и места под них
+   не оставляло: на 1366 «123» ложилось на конец каждого имени. */
+.rcell .rtop { display: flex; align-items: baseline; gap: 6px; }
 .rcell .rgrp {
-  position: absolute; top: 3px; right: 5px; font-style: normal;
+  margin-left: auto; font-style: normal; white-space: nowrap;
   font-family: var(--mono); font-size: 9.5px; color: var(--accent);
 }
 .rcell .rgrp:empty { display: none; }

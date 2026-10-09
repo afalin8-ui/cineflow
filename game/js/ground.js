@@ -1656,15 +1656,20 @@ export function createGroundBattle(ctx, config) {
   });
   /* «Сдаться» — через подтверждение (C34): кнопка стоит в полосе
      скорости, и промах мимо «4×» раньше сразу проигрывал бой. */
-  $('retreat').onclick = () => {
+  function askSurrender() {
     if (ended) return;
     if (!ctx.confirm) { finish('defeat'); return; }
+    // Пока висит вопрос, бой стоит: окно гасит и Пробел
+    const was = state.paused;
+    state.paused = true;
     ctx.confirm({
       title: 'Сдаться?',
       text: 'Бой будет проигран: плацдарм потерян, планета остаётся за противником.',
       yes: 'Сдаться', no: 'Продолжить бой',
+      onClose: () => { if (!ended) state.paused = was; },
     }, () => finish('defeat'));
-  };
+  }
+  $('retreat').onclick = askSurrender;
   $('menu').onclick = () => openPause();
 
   hud.querySelectorAll('[data-q]').forEach(b => {
@@ -2272,9 +2277,13 @@ export function createGroundBattle(ctx, config) {
     const was = state.paused;
     state.paused = true;
     ctx.pause({
-      exitText: config.inCampaign
-        ? 'Бой не будет засчитан: кампания продолжится с последнего сохранения.'
-        : 'Бой не будет засчитан.',
+      exitText: 'Бой не будет засчитан.',
+      // В кампании выход посреди боя был бы переигровкой — только «Сдаться»
+      leave: config.inCampaign ? {
+        label: 'Сдаться…',
+        note: 'Бой кампании доигрывается до конца: выйти можно, сдавшись, и это засчитается. В главное меню — с карты системы.',
+        fn: askSurrender,
+      } : null,
       onClose: () => { pauseOpen = false; state.paused = was; },
     });
   }

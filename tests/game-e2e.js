@@ -31,6 +31,10 @@
 //             звеньев, чем ангаров (C99); скрытая машина не рисуется
 //             (C18); ПКМ по вражескому звену — урон конечен, флот
 //             стреляет (C14); бой доходит до итога и в меню.
+//             Мышь и клавиатура (P2): камера, отряды, A/S/H, меню паузы,
+//             справка из него не пропускает клавиши в бой, G с авианосцем
+//             и «Отход» спрашивают и на это время ставят бой на паузу,
+//             номер отряда в ростере не лежит на имени.
 //  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
 //             второй бой сквозь неё не начать; операция стартует без
 //             ошибок; сбой → «В меню».
@@ -38,7 +42,8 @@
 //             кораблей; «Конец хода» проходит; два настоящих боя
 //             с «Отходом» мышью (C17): в атаке потери противника
 //             остаются за ним, в обороне ушедшие в гипер возвращаются,
-//             а флот противника уходит к себе.
+//             а флот противника уходит к себе (отход — из меню паузы:
+//             «В главное меню» у боя кампании нет).
 //  update   — выкладка доходит по F5 (C121): копия game/ на сервере
 //             «как GitHub Pages» (max-age=600 + ETag), service worker
 //             ВКЛЮЧЁН; правка main.js, модуля глубже и стилей приходит
@@ -59,6 +64,8 @@ const PORT = process.env.CF_PORT || '8300';
 const BASE = `http://127.0.0.1:${PORT}/game/`;
 const arg = process.argv.slice(2).join(' ');
 const ONLY = (/--only[= ]+(\w+)/.exec(arg) || [])[1] || null;
+// CF_SHOTS=<папка> — сложить туда снимки для глаза (ростер и т. п.)
+const SHOTS = process.env.CF_SHOTS || null;
 const want = g => !ONLY || ONLY === g;
 if (ONLY && !['shell', 'space', 'ground', 'campaign', 'update'].includes(ONLY)) {
   console.error('--only: shell | space | ground | campaign | update'); process.exit(2);
@@ -327,6 +334,22 @@ const SCAN = () => {
     ok('галочка выключает и запоминает', await page.evaluate(() => localStorage.getItem('capella_fps') === '0' && document.querySelector('.fpsmeter').hidden));
     await clean('справка и счётчик');
 
+    /* F11 — свой полный экран, и Keyboard Lock запирает Escape вместе
+       с цифрами: иначе в полном экране браузер забирает Esc себе, и
+       каждая отмена в бою выбрасывала из полного экрана. Сам Chrome
+       (выход по удержанию Esc) стенд проверить не может — только что
+       игра просит запереть; замок и полный экран здесь подменены. */
+    await page.evaluate(() => {
+      window.__lock = null;
+      Object.defineProperty(navigator, 'keyboard', { configurable: true,
+        value: { lock: k => { window.__lock = k; return Promise.resolve(); }, unlock() {} } });
+      document.documentElement.requestFullscreen = () => Promise.resolve();
+    });
+    await page.keyboard.press('F11');
+    const locked = await page.waitForFunction(() => window.__lock, null, { timeout: 5000 }).then(h => h.jsonValue(), () => null);
+    ok('F11: полный экран запирает Escape и цифры (Keyboard Lock)', !!locked && locked.includes('Escape') && locked.includes('Digit1'),
+      JSON.stringify(locked));
+
     // С ?dev=1 «Ангар» есть
     await page.goto(BASE + '?dev=1');
     await page.waitForSelector('[data-a="skirmish"]', { state: 'visible', timeout: 60000 });
@@ -455,6 +478,10 @@ const SCAN = () => {
     ok('бой стартовал, корабли обеих сторон на месте', fleet.mine > 0 && fleet.foe > 0,
       `${fleet.mine} против ${fleet.foe}, сборка ${((Date.now() - t) / 1000).toFixed(1)} с`);
     await clean('старт боя');
+    // Часы «Давления Земли» в шапке — только когда на планете есть орудие
+    const gun = await page.evaluate(() => ({ gun: !!__sp.gun,
+      shown: getComputedStyle(document.querySelector('[data-role="gunclock"]')).display !== 'none' }));
+    ok('часы «Давления Земли» в шапке — только при орудии на планете', gun.gun === gun.shown, JSON.stringify(gun));
 
     await hookRender(page);
 
@@ -760,6 +787,22 @@ const SCAN = () => {
     ok('Esc открывает меню паузы, и бой стоит', pauseShown && pt1 === pt0, `меню: ${pauseShown}, время ${pt0.toFixed(2)} → ${pt1.toFixed(2)}`);
     await page.keyboard.press('Space');        // клавиши игры под меню молчат
     ok('Пробел под меню паузы бой не трогает', await page.evaluate(() => __sp.paused && !!document.querySelector('.screen.pause')));
+    /* «Настройки» раскрываются по кнопке, а не висят всегда: правило
+       класса `display: flex` перебивало атрибут hidden, и кнопка не
+       делала ничего. Галочка прокрутки у края нажимается и помнится. */
+    const setShown = () => page.evaluate(() => getComputedStyle(document.querySelector('.screen.pause [data-role="settings"]')).display !== 'none');
+    const sh0 = await setShown();
+    const sq = await tap(page, '.screen.pause [data-a="settings"]');
+    const sh1 = await setShown();
+    const eq = await tap(page, '.screen.pause [data-a="edge"]');
+    const edgeOff = await page.evaluate(() => localStorage.getItem('capella_edge'));
+    await tap(page, '.screen.pause [data-a="edge"]');
+    const edgeOn = await page.evaluate(() => localStorage.getItem('capella_edge'));
+    await tap(page, '.screen.pause [data-a="settings"]');
+    const sh2 = await setShown();
+    ok('«Настройки» в меню паузы раскрываются и прячутся, галочка «у края» нажимается',
+      !sh0 && sq.ok && sh1 && eq.ok && edgeOff === '0' && edgeOn === '1' && !sh2,
+      sq.why || eq.why || `видны до ${sh0}, после ${sh1}, после второго нажатия ${sh2}; у края: ${edgeOff} → ${edgeOn}`);
     r = await tap(page, '.screen.pause [data-a="resume"]');
     const resumed = await page.waitForFunction(t => !document.querySelector('.screen.pause') && __sp.time > t + 0.05, pt1, { timeout: 30000 }).then(() => true, () => false);
     ok('«Продолжить» закрывает меню, бой идёт', r.ok && resumed, r.why);
@@ -767,17 +810,119 @@ const SCAN = () => {
     const viaBtn = await page.waitForSelector('.screen.pause', { timeout: 5000 }).then(() => true, () => false);
     await page.keyboard.press('Escape');
     ok('«☰» открывает меню, Escape закрывает', r.ok && viaBtn && await page.evaluate(() => !document.querySelector('.screen.pause')), r.why);
+
+    /* Справка из меню паузы не пропускает клавиши в бой. Её листают
+       Пробелом и PgDn, а под ней Пробел снимал паузу (бой шёл без
+       игрока), PgDn уводил выделенные корабли «Ниже», G — в гипер,
+       стрелки двигали камеру. Выделение есть, меню — кнопкой «☰». */
+    await tap(page, '[data-q="all"]');
+    await tap(page, '[data-role="menu"]');
+    await page.waitForSelector('.screen.pause', { timeout: 5000 });
+    const hq = await tap(page, '.screen.pause [data-a="help"]');
+    const helpOpen = await page.waitForSelector('.screen.neuro', { timeout: 5000 }).then(() => true, () => false);
+    const busy = () => page.evaluate(() => ({ t: __sp.time, paused: __sp.paused, c: __sp.camInfo(),
+      mv: __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && (s.moveTo || s.hyper)).length,
+      help: !!document.querySelector('.screen.neuro'), menu: !!document.querySelector('.screen.pause') }));
+    const h0 = await busy();
+    for (const k of ['Space', 'PageDown', 'KeyG', 'KeyS', 'ArrowLeft', 'Digit1']) await page.keyboard.press(k);
+    await waitFrames(page, 6);
+    const h1 = await busy();
+    ok('справка из меню паузы: Пробел, PgDn, G, S, стрелки и цифры до боя не доходят',
+      hq.ok && helpOpen && h1.paused && h1.t === h0.t && h1.mv === h0.mv && h1.c.x === h0.c.x && h1.c.z === h0.c.z && h1.help && h1.menu,
+      hq.why || `пауза ${h1.paused}, время ${h0.t.toFixed(2)} → ${h1.t.toFixed(2)}, с приказом/гипером ${h0.mv} → ${h1.mv}, ` +
+        `камера сдвинулась на ${Math.hypot(h1.c.x - h0.c.x, h1.c.z - h0.c.z).toFixed(1)}, справка ${h1.help}, меню ${h1.menu}`);
+    await page.keyboard.press('Escape');
+    const helpGone = await page.evaluate(() => !document.querySelector('.screen.neuro') && !!document.querySelector('.screen.pause'));
+    await page.keyboard.press('Escape');
+    ok('Escape закрывает справку, второй — меню, и бой идёт дальше', helpGone &&
+      await page.waitForFunction(t => !document.querySelector('.screen.pause') && __sp.time > t, h1.t, { timeout: 30000 }).then(() => true, () => false));
+
+    /* G с авианосцем — это отход всего флота: спрашивает, как «Отход»
+       (C34), и пока висит вопрос, бой стоит. Без авианосца — сразу,
+       с полоской, и G ещё раз отменяет. */
+    const myHyper = () => page.evaluate(() => __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && s.hyper).length);
+    await tap(page, '[data-q="carrier"]');
+    if (await page.evaluate(() => __sp.selection.some(s => s.cls === 'carrier'))) {
+      await page.keyboard.press('KeyG');
+      const gAsk = await page.waitForSelector('.modal.confirm', { timeout: 5000 }).then(() => true, () => false);
+      const g0 = await page.evaluate(() => ({ t: __sp.time, paused: __sp.paused }));
+      await waitFrames(page, 6);
+      const g1 = await page.evaluate(() => __sp.time);
+      const gh = await myHyper();
+      ok('G с авианосцем спрашивает подтверждение, бой на это время стоит', gAsk && gh === 0 && g0.paused && g1 === g0.t,
+        `окно ${gAsk}, в гипере ${gh}, пауза ${g0.paused}, время ${g0.t.toFixed(2)} → ${g1.toFixed(2)}`);
+      // Щелчок по тексту вопроса — не «Нет» (та же ловушка, что C2 у справки)
+      const pAt = await page.evaluate(() => {
+        const p = document.querySelector('.modal.confirm p');
+        if (!p) return { x: 0, y: 0, hit: false, what: 'окна нет' };
+        const b = p.getBoundingClientRect();
+        const x = b.left + b.width / 2, y = b.top + b.height / 2, h = document.elementFromPoint(x, y);
+        return { x, y, hit: h === p, what: h ? h.tagName + '.' + h.className : 'null' };
+      });
+      if (pAt.hit) await page.mouse.click(pAt.x, pAt.y);
+      await page.waitForTimeout(300);
+      ok('щелчок по тексту вопроса окно не закрывает', pAt.hit && await page.evaluate(() => !!document.querySelector('.modal.confirm')),
+        `в точке щелчка ${pAt.what}`);
+      r = await tap(page, '.modal.confirm [data-a="no"]');
+      if (!gAsk) await page.evaluate(() => __sp.ships.forEach(s => { s.hyper = null; }));   // откат: G молча увёл флот
+      await page.waitForTimeout(200);
+      const gNo = await page.evaluate(() => ({ modal: !!document.querySelector('.modal.confirm'), paused: __sp.paused }));
+      ok('«Остаться в бою»: гипера нет, бой снова идёт', r.ok && !gNo.modal && !gNo.paused && await myHyper() === 0, r.why || JSON.stringify(gNo));
+    } else info('G с авианосцем', 'авианосца в своём флоте нет — пропущено');
+    await tap(page, '[data-q="escort"]');
+    await page.keyboard.press('KeyG');
+    const e1 = await page.evaluate(() => ({ modal: !!document.querySelector('.modal.confirm'), n: __sp.selection.length,
+      hyper: __sp.selection.filter(s => s.hyper).length, toast: [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ') }));
+    await page.keyboard.press('KeyG');
+    const e2 = await myHyper();
+    ok('G без авианосца — гипер сразу и полоска «G — отменить»; G ещё раз — отмена',
+      !e1.modal && e1.n > 0 && e1.hyper === e1.n && /G — отменить/.test(e1.toast) && e2 === 0,
+      `окно ${e1.modal}, в гипере ${e1.hyper} из ${e1.n}, после второго G ${e2}; полоски: ${e1.toast.slice(0, 120)}`);
+
+    /* «Отход?» тоже ставит бой на паузу, пока висит: окно гасит все
+       клавиши, Пробел в том числе, и бой шёл без игрока */
+    r = await tap(page, '[data-role="retreat"]');
+    const rAsk = await page.waitForSelector('.modal.confirm', { timeout: 5000 }).then(() => true, () => false);
+    const rt0 = await page.evaluate(() => ({ t: __sp.time, paused: __sp.paused }));
+    await waitFrames(page, 6);
+    const rt1 = await page.evaluate(() => __sp.time);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    const rBack = await page.evaluate(() => ({ modal: !!document.querySelector('.modal.confirm'), paused: __sp.paused, ret: __sp.retreat[__sp.playerSide] }));
+    ok('«Отход?» ставит бой на паузу, Escape — «нет», скорость прежняя', r.ok && rAsk && rt0.paused && rt1 === rt0.t && !rBack.modal && !rBack.paused && !rBack.ret,
+      r.why || `пауза под вопросом ${rt0.paused}, время ${rt0.t.toFixed(2)} → ${rt1.toFixed(2)}, после: ${JSON.stringify(rBack)}`);
     await tap(page, '[data-speed="0"]');
 
     // «Мёртвые» кнопки HUD: всё выделено — панель действий полна
     r = await tap(page, '[data-q="all"]');
     ok('«Весь флот» нажимается', r.ok, r.why);
+    // Третий отряд — у части ячеек ростера будет «123»
+    await page.keyboard.press('Shift+Digit3');
     await page.waitForTimeout(600);
     for (const [w, h] of [[1920, 1080], [1366, 768]]) {
       if (w !== 1920) { await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(800); }
       const s = await page.evaluate(SCAN);
       ok(`HUD ${w}×${h}: все видимые кнопки под мышью (${s.total} шт.)`, s.total > 10 && !s.dead.length, s.dead.join('; '));
       if (s.scrolled || s.off.length) info(`HUD ${w}×${h}`, `в прокрутке ${s.scrolled}, за краем экрана ${s.off.length}${s.off.length ? ': ' + s.off.join('; ') : ''}`);
+      // Номер отряда в ячейке ростера не лежит на имени корабля
+      const rg = await page.evaluate(() => {
+        const out = { n: 0, long: 0, bad: [] };
+        for (const c of document.querySelectorAll('.rcell')) {
+          const g = c.querySelector('.rgrp');
+          if (!g || !g.textContent) continue;
+          out.n++;
+          if (g.textContent.length >= 3) out.long++;
+          const a = c.querySelector('b').getBoundingClientRect(), b = g.getBoundingClientRect(), cr = c.getBoundingClientRect();
+          if (a.right > b.left + 0.5 || b.right > cr.right + 0.5 || b.top < cr.top) out.bad.push(c.querySelector('b').textContent + '+' + g.textContent);
+        }
+        return out;
+      });
+      ok(`ростер ${w}×${h}: номер отряда не лежит на имени корабля`, rg.n > 0 && rg.long > 0 && !rg.bad.length,
+        `ячеек с отрядом ${rg.n}, из них «123» ${rg.long}; наложений: ${rg.bad.join(', ') || 'нет'}`);
+      if (SHOTS) {
+        const box = await page.evaluate(() => { const b = document.querySelector('.roster').getBoundingClientRect(); return { x: b.left, y: b.top - 4, width: Math.min(b.width, 900), height: b.height + 8 }; });
+        await page.screenshot({ path: path.join(SHOTS, `roster-${w}.png`), clip: box });
+      }
     }
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.waitForTimeout(500);
@@ -1101,13 +1246,30 @@ const SCAN = () => {
       await page.keyboard.press('Escape');
       const gback = await page.evaluate(() => !document.querySelector('.screen.pause') && !__gr.paused);
       ok('земля: Esc — меню паузы, бой стоит; Esc ещё раз — дальше', gp && gpaused && gback, `меню ${gp}, пауза ${gpaused}, вернулись ${gback}`);
+      // Справка из меню: Пробел ею листают, бой под ней стоит
+      await hookRender(page);
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.screen.pause', { timeout: 5000 });
+      const gh = await tap(page, '.screen.pause [data-a="help"]');
+      await page.waitForSelector('.screen.neuro', { timeout: 5000 }).catch(() => {});
+      const gt0 = await page.evaluate(() => __gr.time);
+      await page.keyboard.press('Space');
+      await page.keyboard.press('PageDown');
+      await waitFrames(page, 4);
+      const gst = await page.evaluate(() => ({ t: __gr.time, paused: __gr.paused, help: !!document.querySelector('.screen.neuro') }));
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+      ok('земля: справка из меню — Пробел и PgDn бой не трогают', gh.ok && gst.paused && gst.t === gt0 && gst.help,
+        gh.why || `пауза ${gst.paused}, время ${gt0.toFixed(2)} → ${gst.t.toFixed(2)}, справка ${gst.help}`);
       const q = await tap(page, '[data-role="retreat"]');
       const asked = await page.waitForSelector('.modal.confirm', { timeout: 5000 }).then(() => true, () => false);
+      const askPaused = await page.evaluate(() => __gr.paused);
       const q2 = await tap(page, '.modal.confirm [data-a="no"]');
       await page.waitForTimeout(300);
-      const still = await page.evaluate(() => !document.querySelector('.modal.confirm') &&
+      const still = await page.evaluate(() => !document.querySelector('.modal.confirm') && !__gr.paused &&
         getComputedStyle(document.querySelector('.endcard')).display === 'none');
-      ok('земля: «Сдаться» спрашивает, «Продолжить бой» — бой идёт', q.ok && asked && q2.ok && still, q.why || q2.why);
+      ok('земля: «Сдаться» спрашивает (бой на это время стоит), «Продолжить бой» — бой идёт', q.ok && asked && askPaused && q2.ok && still,
+        q.why || q2.why || `пауза под вопросом ${askPaused}`);
     }
 
     // Сбой при отрисовке → «В меню»
@@ -1213,7 +1375,7 @@ const SCAN = () => {
     const n = f => (f || []).reduce((a, x) => a + x.count, 0);
     // Состав флота строкой: не только сколько, но и КТО — счёт совпадает и у чужого флота
     const key = f => (f || []).filter(x => x.count > 0).map(x => x.id + '×' + x.count).sort().join(' ');
-    const fight = async (what, kill) => {
+    const fight = async (what, kill, viaMenu) => {
       await page.waitForSelector('.modal [data-a="fight"]', { state: 'visible', timeout: 15000 });
       let q = await tap(page, '.modal [data-a="fight"]');
       ok(`${what}: «${what === 'оборона' ? 'Принять бой' : 'В бой'}» нажимается`, q.ok, q.why);
@@ -1225,7 +1387,26 @@ const SCAN = () => {
         for (const s of foes.slice(0, k)) __sp.killTest(s);
         return Math.min(k, foes.length);
       }, kill);
-      q = await tap(page, '[data-role="retreat"]');
+      if (viaMenu) {
+        /* В бою кампании «В главное меню» нет: кампания уже сохранена
+           со следующим ходом, и выход посреди боя был бы переигровкой.
+           Выход — отходом из меню паузы, и он засчитывается. */
+        q = await tap(page, '[data-role="menu"]');
+        await page.waitForSelector('.screen.pause', { timeout: 5000 }).catch(() => {});
+        const pm = await page.evaluate(() => ({
+          menu: !!document.querySelector('.screen.pause [data-a="menu"]'),
+          restart: !!document.querySelector('.screen.pause [data-a="restart"]'),
+          leave: !!document.querySelector('.screen.pause [data-a="leave"]'),
+          note: (document.querySelector('.screen.pause [data-role="leave-note"]') || {}).textContent || '' }));
+        ok(`${what}: в меню паузы боя кампании нет «В главное меню» и «Начать заново» — выход отходом`,
+          q.ok && !pm.menu && !pm.restart && pm.leave && /отход/.test(pm.note), q.why || JSON.stringify(pm));
+        if (SHOTS) { await page.waitForTimeout(600); await page.screenshot({ path: path.join(SHOTS, 'pause-campaign.png') }); }
+        q = await tap(page, '.screen.pause [data-a="leave"]');
+        if (SHOTS) {
+          await page.waitForSelector('.modal.confirm', { timeout: 5000 }).catch(() => {});
+          await page.screenshot({ path: path.join(SHOTS, 'retreat-ask.png') });
+        }
+      } else q = await tap(page, '[data-role="retreat"]');
       // C34: отход — только через подтверждение
       const asked = await page.waitForSelector('.modal.confirm [data-a="yes"]', { state: 'visible', timeout: 5000 }).then(() => true, () => false);
       const early = await page.evaluate(() => __sp.retreat[__sp.playerSide]);
@@ -1287,7 +1468,7 @@ const SCAN = () => {
       __gal.refreshAll();
       __gal.defenceTest(ai, src, home);
     }, [atk.home, atk.to, atk.ai]);
-    const d = await fight('оборона', 1);
+    const d = await fight('оборона', 1, true);
     const dMap = await page.evaluate(([h, s]) => ({
       owner: __gal.camp.systems[h].owner, my: __gal.camp.playerFaction,
       home: __gal.camp.systems[h].fleet, src: __gal.camp.systems[s].fleet,
