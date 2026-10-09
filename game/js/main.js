@@ -283,6 +283,17 @@ function showAutoResult(title, text, cb) {
   m.querySelector('[data-a="ok"]').onclick = () => { m.remove(); cb(); };
 }
 
+/* Щелчок по фону закрывает окно — только если и НАЖАЛИ на фоне (P5).
+   Выделение текста, начатое в панели и отпущенное над фоном, присылает
+   click общему предку, то есть самому фону, и справка закрывалась
+   посреди чтения; то же — протяжка полосы прокрутки с отпусканием
+   за панелью */
+function bgClose(el, close) {
+  let down = false;
+  el.addEventListener('pointerdown', e => { down = e.target === el; });
+  el.addEventListener('click', e => { if (down && e.target === el) close(); down = false; });
+}
+
 /* Пробел и Enter по кнопке ПОД окном (её мог оставить в фокусе Tab)
    нажали бы её: снять паузу под меню, сдаться под вопросом. Кнопки
    самого окна с клавиатуры нажимаются как обычно. Когда в фокусе
@@ -331,7 +342,7 @@ function confirmBox(opts, onYes) {
   addEventListener('keydown', onKey, true);
   m.querySelector('[data-a="no"]').onclick = close;
   m.querySelector('[data-a="yes"]').onclick = () => { close(); onYes(); };
-  m.addEventListener('click', e => { if (e.target === m) close(); });
+  bgClose(m, close);
   hudRoot.appendChild(m);
   return m;
 }
@@ -403,7 +414,7 @@ function showPause(opts = {}) {
     else blockOutside(e, el);
   };
   addEventListener('keydown', onKey, true);
-  el.addEventListener('click', e => { if (e.target === el) close(); });
+  bgClose(el, close);
   el.querySelector('[data-a="resume"]').onclick = close;
   el.querySelector('[data-a="help"]').onclick = () => showNeuro(NEURO_CONTROLS);
   el.querySelector('[data-a="settings"]').onclick = e => {
@@ -764,7 +775,7 @@ function showNeuro(start = 0) {
   };
   addEventListener('keydown', onKey, true);
   el.querySelector('[data-a="close"]').onclick = close;
-  el.addEventListener('click', e => { if (e.target === el) close(); });
+  bgClose(el, close);
 
   const body = el.querySelector('[data-role="body"]');
   const render = i => {
@@ -1099,6 +1110,13 @@ function frame(now) {
 document.addEventListener('gesturestart', e => e.preventDefault());
 document.addEventListener('touchmove', e => {
   if (e.target === canvas) e.preventDefault();
+}, { passive: false });
+/* Щипок тачпада и Ctrl+колесо приходят колесом с Ctrl — и над панелями
+   HUD браузер увеличивал всю страницу: интерфейс разъезжался, вернуть
+   можно было только Ctrl+0 (P5). Над полем щипок ловит камера
+   (engine.js), здесь — всё остальное. Поля ввода не трогаем */
+document.addEventListener('wheel', e => {
+  if ((e.ctrlKey || e.metaKey) && !(e.target && /input|textarea|select/i.test(e.target.tagName))) e.preventDefault();
 }, { passive: false });
 
 /* ── ЗАПУСК (C40).
