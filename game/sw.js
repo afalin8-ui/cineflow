@@ -21,7 +21,7 @@
    SHELL и чистит старый кэш, а смена самого service worker'а заодно
    сбрасывает кэш памяти, накопленный при прежнем. */
 
-const VERSION = 'capella-v32';
+const VERSION = 'capella-v33';
 const CACHE = VERSION;
 
 /* Ответ странице — с перепроверкой (см. шапку). Ответ после

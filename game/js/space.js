@@ -53,6 +53,9 @@ export function createSpaceBattle(ctx, config) {
     // Ближе к бою: с полутора тысяч единиц флот читался россыпью точек
     dist: 780, maxDist: 3400, minDist: 45, pitch: 0.52, yaw: 0,
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
+    // Буквы здесь — приказы (A — атака с ходу, S — стоп): камера на
+    // стрелках, у края экрана и на средней кнопке (C50)
+    wasd: false, edge: true,
   });
 
   /* Свет по референсам: холодный сине-фиолетовый объём и тёплый
@@ -820,7 +823,11 @@ export function createSpaceBattle(ctx, config) {
     return best;
   }
 
-  function shipAcquire(e) {
+  /* reach — во сколько дальностей главного калибра искать цель. Обычно
+     1,8: корабль замечает врага загодя и идёт на сближение. «Держать
+     позицию» (H) берёт только то, до чего орудие достаёт с места (1,0),
+     иначе удержания не выйдет: найденную вдали цель он бы догонял. */
+  function shipAcquire(e, reach = 1.8) {
     const foe = enemyOf(e.side);
     const gun = e.guns[0];
     if (!gun) return null;
@@ -829,7 +836,7 @@ export function createSpaceBattle(ctx, config) {
     for (const s of state.ships) {
       if (s.dead || s.side !== foe || hidden(s)) continue;
       const d = s.pos.distanceTo(e.pos);
-      if (d > range * 1.8) continue;
+      if (d > range * reach) continue;
       const m = dmgMult(SPACE_DMG, gun.def.type, s.cls);
       if (m <= 0) continue;
       const score = m * 1000 - d + (1 - s.hp / s.maxHp) * 400 + (s.cls === 'carrier' ? 250 : 0);
@@ -915,7 +922,7 @@ export function createSpaceBattle(ctx, config) {
     if (e.target && (e.target.dead || unseen(e.target))) e.target = null;
     if (e.forced && (e.forced.dead || unseen(e.forced))) e.forced = null;
     if (!e.target || e.retarget <= 0) {
-      e.target = liveTarget(e, e.forced) || shipAcquire(e);
+      e.target = liveTarget(e, e.forced) || shipAcquire(e, e.hold ? 1.0 : 1.8);
       e.retarget = rnd(0.8, 1.6);
     }
 
@@ -924,17 +931,29 @@ export function createSpaceBattle(ctx, config) {
     if (!e.station) {
       // ── куда хотим лететь
       let desiredVel = null;
-      if (e.moveTo) {
-        _v.subVectors(e.moveTo, e.pos);
+      const range0 = e.guns[0] ? e.guns[0].def.range : 300;
+      /* Атака с ходу (A): идёт к точке, но встречного в 1,3 дальности
+         не пропускает — останавливается и бьёт, а кончился враг —
+         идёт дальше. Обычный приказ «идти» стреляет на ходу и не
+         задерживается. */
+      const fighting = e.amove && e.target && !e.target.dead &&
+        e.pos.distanceTo(e.target.pos) < range0 * 1.3;
+      const goal = e.moveTo || (e.amove && !fighting ? e.amove : null);
+      if (goal) {
+        _v.subVectors(goal, e.pos);
         const d = _v.length();
         if (d < 45) {
-          e.moveTo = null;
+          if (e.moveTo) e.moveTo = null; else e.amove = null;
           desiredVel = ZERO;
         } else {
           // тормозной путь: v²/2a. Подходя к точке, гасим скорость заранее
           const brake = Math.sqrt(Math.max(0, 2 * def.thrust * Math.max(0, d - 40)));
           desiredVel = _v.divideScalar(d).multiplyScalar(Math.min(def.maxSpeed, brake)).clone();
         }
+      } else if (e.target && e.hold && e.forced !== e.target) {
+        /* «Держать позицию» (H): не преследует, только доворачивает
+           корпус на цель — стрельба ниже, как всегда */
+        desiredVel = ZERO;
       } else if (e.target) {
         /* Подход к цели. Раньше корабль болтало: чуть далеко — полный
            вперёд, чуть близко — полный назад, между ними — облёт
@@ -1410,6 +1429,7 @@ export function createSpaceBattle(ctx, config) {
   hud.className = 'hud hud-space';
   hud.innerHTML = `
     <div class="topbar">
+      <button class="menu-btn" data-role="menu" title="Меню · Esc" aria-label="Меню">☰</button>
       <div class="strength">
         <div class="ss-row"><i class="dot" data-side="attacker"></i><b data-role="atk-name"></b>
           <span class="bar"><i data-role="atk-bar"></i></span><em data-role="atk-num"></em></div>
@@ -1420,20 +1440,20 @@ export function createSpaceBattle(ctx, config) {
       <div class="gunclock" data-role="gunclock" hidden>
         <b data-role="gun-name"></b><span data-role="gun-time"></span></div>
       <div class="speedctl">
-        <button data-speed="0" aria-label="Пауза">❚❚</button>
-        <button data-speed="1" class="on">1×</button>
-        <button data-speed="2">2×</button>
-        <button data-speed="4">4×</button>
-        <button data-role="drift">Дрифт</button>
-        <button data-role="reinforce">Подкрепление</button>
-        <button data-role="retreat" class="danger">Отход</button>
+        <button data-speed="0" aria-label="Пауза" title="Пауза · Пробел">❚❚</button>
+        <button data-speed="1" class="on" title="Обычная скорость">1×</button>
+        <button data-speed="2" title="Вдвое быстрее">2×</button>
+        <button data-speed="4" title="Вчетверо быстрее">4×</button>
+        <button data-role="drift" title="Гасители инерции у выделенных: корабль скользит по вектору, корпус свободно наводится · D"><span data-role="drift-t">Дрифт</span><kbd class="hk">D</kbd></button>
+        <button data-role="reinforce" title="Вызвать второй эшелон из гипера · B"><span data-role="reinf-t"></span><kbd class="hk">B</kbd></button>
+        <button data-role="retreat" class="danger danger-gap" title="Весь флот копит гипер и уходит — спросит подтверждение">Отход</button>
       </div>
     </div>
 
     <div class="markers" data-role="markers"></div>
 
     <div class="sidebar">
-      <button data-q="all">Весь<br>флот</button>
+      <button data-q="all" title="Весь флот · F2">Весь<br>флот</button>
       <button data-q="capital">Линкоры</button>
       <button data-q="carrier">Авиа-<br>носцы</button>
       <button data-q="escort">Эскорт</button>
@@ -1454,6 +1474,11 @@ export function createSpaceBattle(ctx, config) {
   hudRoot.appendChild(hud);
   const $ = r => hud.querySelector(`[data-role="${r}"]`);
   const markers = $('markers');
+  /* Состояние ввода — здесь, ДО первой отрисовки панелей: ростер
+     читает отряды уже при сборке (const не всплывает). */
+  const groups = {};        // отряды 1…9: цифра → список кораблей и звеньев
+  let hoverEnt = null;      // что под курсором (C74)
+  let pending = null;       // 'amove' — нажата A, ждём щелчка (C50)
 
   // Короткие сообщения по центру: гипер, подкрепления, критические попадания
   const toastBox = document.createElement('div');
@@ -1494,12 +1519,19 @@ export function createSpaceBattle(ctx, config) {
      тысяч единиц в сторону — без схемы половина флота оказывается
      за экраном и о ней просто забываешь. Скрытые корабли Рииза
      на неё не попадают: маскировка должна работать и здесь. */
-  const minimap = createMinimap(hud, FIELD);
-  minimap.el.addEventListener('pointerdown', ev => {
-    const r = minimap.el.getBoundingClientRect();
-    const x = ((ev.clientX - r.left) / r.width - 0.5) * 2 * FIELD;
-    const z = ((ev.clientY - r.top) / r.height - 0.5) * 2 * FIELD;
-    tcam.focus(new THREE.Vector3(x, 0, z));
+  /* ЛКМ и протяжка — камера туда, ПКМ — приказ в точку (C73): так
+     флот отправляют на другой край поля, не листая к нему камеру. */
+  const minimap = createMinimap(hud, FIELD, {
+    onGo(x, z) {
+      tcam.focus(new THREE.Vector3(x, tcam.target.y, z));
+      tcam.clampTarget();
+      tcam.apply(0, true);
+    },
+    onOrder(x, z) {
+      const w = new THREE.Vector3(x, 0, z);
+      if (pending === 'amove') { pending = null; amoveSelected(w); return; }
+      if (issueOrder(null, w)) toast('Приказ по миникарте: флот идёт в точку');
+    },
   });
 
   function drawMinimap(dt) {
@@ -1519,7 +1551,9 @@ export function createSpaceBattle(ctx, config) {
       dots.push({ x: sq.pos.x, z: sq.pos.z, r: 2,
         color: sq.side === state.playerSide ? '#5ce0a0' : '#e05a4a' });
     }
-    minimap.draw(dt, dots, { x: tcam.target.x, z: tcam.target.z, r: tcam.dist * 0.5 });
+    // Рамка обзора — трапеция углов экрана, а не квадрат: камера
+    // наклонена и повёрнута, и квадрат после облёта врал (C73)
+    minimap.draw(dt, dots, () => ({ pts: controls.viewQuad(0, FIELD * 3) }));
   }
 
   const farBox = document.createElement('div');
@@ -1556,7 +1590,7 @@ export function createSpaceBattle(ctx, config) {
   }
   $('hint').innerHTML = IS_TOUCH
     ? 'Касание по своему кораблю — выбрать · по врагу — атаковать · по пустоте — идти · тянуть — двигать карту · щипок — приближение · долгое нажатие — рамка'
-    : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · Alt+ЛКМ или средняя кнопка — облёт · WASD — карта · R/F — выше/ниже';
+    : 'ПКМ — приказ · средняя кнопка — карта · A — атака с ходу · S — стоп · H — держать · Esc — меню';
 
   hud.querySelectorAll('[data-speed]').forEach(b => {
     b.onclick = () => {
@@ -1566,9 +1600,8 @@ export function createSpaceBattle(ctx, config) {
       hud.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', +x.dataset.speed === v));
     };
   });
-  /* Дрифт включается на выделенные корабли. Кнопка, а не горячая
-     клавиша: планшет — основное устройство, клавиатуры там нет. */
-  $('drift').onclick = () => {
+  /* Дрифт включается на выделенные корабли — кнопкой и клавишей D */
+  function toggleDrift() {
     const mine = state.selection.filter(e => !e.dead && e.side === state.playerSide && !e.station);
     if (!mine.length) { toast('Сначала выбери корабли'); return; }
     const on = !mine.every(e => e.drift);
@@ -1579,10 +1612,14 @@ export function createSpaceBattle(ctx, config) {
     $('drift').classList.toggle('on', on);
     toast(on ? 'Гасители инерции отключены: корабль скользит по вектору'
              : 'Гасители инерции включены');
-  };
+  }
+  $('drift').onclick = toggleDrift;
 
   /* «Отход» — гипер ВСЕГО флота с накачкой, а не мгновенный выход из
-     боя (C17). Второе нажатие отменяет отход, пока носитель не ушёл. */
+     боя (C17). Второе нажатие отменяет отход, пока носитель не ушёл.
+     Начало отхода — через подтверждение (C34): кнопка стоит в одной
+     полосе с кнопками скорости, и промах мимо «4×» проигрывал бой.
+     Защитнику сказано прямо, что орбита останется за противником. */
   const retreatBtn = $('retreat');
   retreatBtn.onclick = () => {
     if (ended) return;
@@ -1591,14 +1628,27 @@ export function createSpaceBattle(ctx, config) {
       if (state.conceded === P) { toast('Носитель ушёл — отход уже не отменить'); return; }
       cancelRetreat(P);
       toast('Отход отменён — флот остаётся в бою');
-    } else {
+      refreshRetreat();
+      refreshSel();
+      return;
+    }
+    const doIt = () => {
+      if (ended || state.retreat[P]) return;
       const n = orderRetreat(P);
       const t = Math.max(0, ...state.ships.filter(s => !s.dead && s.side === P && s.hyper).map(s => s.hyper.left));
       toast(n ? `Отход: флот копит гипер, ${Math.ceil(t)} с — всё это время беззащитен`
               : 'Отход: уходить некому');
-    }
-    refreshRetreat();
-    refreshSel();
+      refreshRetreat();
+      refreshSel();
+    };
+    if (!ctx.confirm) { doIt(); return; }
+    ctx.confirm({
+      title: P === 'defender' ? 'Отход — сдать орбиту?' : 'Отход из боя?',
+      text: 'Весь флот копит гипер и всё это время беззащитен. Домой вернутся только те, кто успеет уйти' +
+        (P === 'defender' ? '; орбита останется за противником.' : '; бой будет проигран.') +
+        ' Пока носитель не ушёл, отход можно отменить той же кнопкой.',
+      yes: 'Отходить', no: 'Остаться в бою',
+    }, doIt);
   };
   function refreshRetreat() {
     const on = !!state.retreat[state.playerSide];
@@ -1608,6 +1658,7 @@ export function createSpaceBattle(ctx, config) {
   }
 
   const reinfBtn = $('reinforce');
+  const reinfTxt = $('reinf-t');
   const myReserve = () => state.reserve[state.playerSide];
   function refreshReinforce() {
     const n = (myReserve() || []).reduce((a, x) => a + x.count, 0);
@@ -1619,16 +1670,19 @@ export function createSpaceBattle(ctx, config) {
     else if (!n) txt = 'Резерва нет';
     else { txt = `Подкрепление (${n})`; off = false; }
     // кнопка обновляется каждый кадр — трогаем DOM, только если что-то поменялось
-    if (reinfBtn.textContent !== txt) reinfBtn.textContent = txt;
+    if (reinfTxt.textContent !== txt) reinfTxt.textContent = txt;
     if (reinfBtn.disabled !== off) reinfBtn.disabled = off;
   }
   reinfBtn.onclick = () => {
+    if (reinfBtn.disabled) return;
     if (callReinforcements(state.playerSide)) {
       toast('Резерв вызван — выход из гипера через полминуты');
       refreshReinforce();
     }
   };
   refreshReinforce();
+
+  $('menu').onclick = () => openPause();
 
   hud.querySelectorAll('[data-q]').forEach(b => {
     b.onclick = () => {
@@ -1655,9 +1709,15 @@ export function createSpaceBattle(ctx, config) {
 
   // маркеры кораблей поверх канваса
   const markerPool = [];
+  /* Где на экране стоят подписи (C29). Сами метки прозрачны для
+     указателя — иначе они заслоняли бы поле, — поэтому попадание по
+     подписи считаем здесь: игрок целится в название врага, а раньше
+     такой ПКМ уходил мимо модели и отправлял флот в упор к противнику. */
+  const labelHits = [];
   function updateMarkers() {
     const w = viewport.w, h = viewport.h;
     let i = 0;
+    labelHits.length = 0;
     for (const s of state.ships) {
       if (s.dead) continue;
       let d = markerPool[i];
@@ -1679,6 +1739,9 @@ export function createSpaceBattle(ctx, config) {
       d.classList.toggle('cloak', cloak);
       d.classList.toggle('jump', !!s.hyper);
       d.style.transform = `translate(${(p.x - 48) | 0}px,${(p.y - 44) | 0}px)`;
+      labelHits.push({ ent: s, x: p.x, y: p.y - 44 });
+      d.classList.toggle('hover', hoverEnt === s);
+      d.classList.toggle('foe-hover', hoverEnt === s && s.side !== state.playerSide);
       const hp = clamp(s.hp / s.maxHp, 0, 1);
       const bar = d.lastChild.firstChild;
       bar.style.width = (hp * 100) + '%';
@@ -1719,6 +1782,9 @@ export function createSpaceBattle(ctx, config) {
       d.style.display = 'block';
       d.classList.remove('cloak', 'jump');
       d.style.transform = `translate(${(p.x - 48) | 0}px,${(p.y - 40) | 0}px)`;
+      labelHits.push({ ent: sq, x: p.x, y: p.y - 40 });
+      d.classList.toggle('hover', hoverEnt === sq);
+      d.classList.toggle('foe-hover', hoverEnt === sq && sq.side !== state.playerSide);
       d.firstChild.textContent = `${STRIKE_ROLES[sq.role].label} ×${live.length}`;
       const bar = d.lastChild.firstChild;
       const hp = live.reduce((a, c) => a + c.hp / c.maxHp, 0) / live.length;
@@ -1761,7 +1827,8 @@ export function createSpaceBattle(ctx, config) {
     };
     for (const e of state.selection) {
       if (e.dead) continue;
-      const dest = e.moveTo;
+      // Атака с ходу — оранжевым: точка та же, но по пути будет бой
+      const dest = e.moveTo || e.amove;
       if (dest) {
         if (!orderMarks[m]) {
           const r = ringMesh(1, 0x8fffc8, 0.8, 0.08);
@@ -1769,11 +1836,13 @@ export function createSpaceBattle(ctx, config) {
           scene.add(r);
           orderMarks[m] = r;
         }
+        const col = e.moveTo ? 0x8fffc8 : 0xffa860;
         const r = orderMarks[m++];
         r.visible = true;
+        r.material.color.set(col);
         r.position.copy(dest);
         r.scale.setScalar(26 + Math.sin(state.time * 3) * 4);
-        line(e.pos, dest, 0x8fffc8);
+        line(e.pos, dest, col);
       }
       const t = e.forced && !e.forced.dead ? e.forced : null;
       if (t) line(e.pos, t.pos, 0xff7a5a);
@@ -1807,7 +1876,7 @@ export function createSpaceBattle(ctx, config) {
       if (!cell) {
         cell = document.createElement('button');
         cell.className = 'rcell';
-        cell.innerHTML = '<b></b><span class="rbar"><i></i></span>';
+        cell.innerHTML = '<b></b><span class="rbar"><i></i></span><em class="rgrp"></em>';
         cell.onclick = () => {
           state.selection = [e];
           const p = e.kind === 'squad'
@@ -1826,11 +1895,15 @@ export function createSpaceBattle(ctx, config) {
       cell.firstChild.textContent = isSquad
         ? `${STRIKE_ROLES[e.role].short || STRIKE_ROLES[e.role].label} ${live.length}`
         : short(e.def.name);
-      const bar = cell.lastChild.firstChild;
+      const bar = cell.children[1].firstChild;
       bar.style.width = (clamp(hp, 0, 1) * 100) + '%';
       bar.style.background = hp > 0.55 ? '#8fffc8' : hp > 0.25 ? '#e0a94e' : '#e05555';
       cell.classList.toggle('on', state.selection.includes(e));
       cell.classList.toggle('air', isSquad);
+      // В каких отрядах корабль — цифрой в углу ячейки
+      const g = Object.keys(groups).filter(n => groups[n].includes(e)).join('');
+      const em = cell.lastChild;
+      if (em.textContent !== g) em.textContent = g;
     }
     for (const [uid, cell] of rosterCells) {
       if (!seen.has(uid)) { cell.remove(); rosterCells.delete(uid); }
@@ -1885,7 +1958,22 @@ export function createSpaceBattle(ctx, config) {
     }
     for (; i < selRings.length; i++) selRings[i].visible = false;
     for (; j < velLines.length; j++) velLines[j].visible = false;
+
+    /* Кольцо под курсором (C74): тусклое, зелёное у своего, красное
+       у врага. Выделенному оно не нужно — у него своё кольцо. */
+    const he = hoverEnt && !hoverEnt.dead && !state.selection.includes(hoverEnt) ? hoverEnt : null;
+    hoverRing.visible = !!he;
+    if (he) {
+      const at = he.kind === 'squad' ? he.pos : he.pos;
+      hoverRing.position.copy(at);
+      hoverRing.scale.setScalar(he.kind === 'squad' ? 16 : he.radius * 3.3);
+      hoverRing.material.color.set(he.side === state.playerSide ? 0x8fffc8 : 0xff6b5a);
+    }
   }
+  const hoverRing = ringMesh(1, 0x8fffc8, 0.45, 0.07);
+  hoverRing.renderOrder = 5;
+  hoverRing.visible = false;
+  scene.add(hoverRing);
 
   // ── управление ──────────────────────────────────────────
   /* Скрытого противника не выбрать и не атаковать кликом (C18): ни
@@ -1901,13 +1989,30 @@ export function createSpaceBattle(ctx, config) {
 
   function entityAt(x, y) {
     let ent = controls.pick(x, y);
+    if (!ent) ent = labelAt(x, y);
     if (!ent) {
-      // палец промахивается мимо мелких моделей — ловим по экрану
+      /* Мелкую модель луч пропускает — ловим ближайшую по экрану.
+         На мыши 30 точек (было 22, C29): курсор «на корабле» глазом —
+         это скорее его силуэт с подписью, чем точка центра. */
       const cands = [...state.ships.filter(canPick), ...state.squads.filter(canPick)];
-      ent = controls.pickNear(x, y, cands, tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 46 : 22);
+      ent = controls.pickNear(x, y, cands, tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 46 : 30);
     }
     if (ent && ent.kind === 'craft') ent = ent.squad;
     return ent;
+  }
+
+  // Подпись под курсором — та, чья середина ближе (подписи соседей перекрываются)
+  function labelAt(cx, cy) {
+    const r = viewport.canvas.getBoundingClientRect();
+    const x = cx - r.left, y = cy - r.top;
+    let best = null, bd = Infinity;
+    for (const hl of labelHits) {
+      if (hl.ent.dead || !canPick(hl.ent)) continue;
+      if (x < hl.x - 48 || x > hl.x + 48 || y < hl.y - 3 || y > hl.y + 24) continue;
+      const d = Math.abs(x - hl.x) + Math.abs(y - (hl.y + 10)) * 2;
+      if (d < bd) { bd = d; best = hl.ent; }
+    }
+    return best;
   }
 
   function selectEntity(ent, additive) {
@@ -1921,13 +2026,32 @@ export function createSpaceBattle(ctx, config) {
     refreshSel();
   }
 
+  /* Двойной щелчок по своему кораблю — все такие же на экране (C50):
+     того же типа у кораблей, той же роли у звеньев. */
+  function selectSameType(ent, additive) {
+    const w = viewport.w, h = viewport.h;
+    const onScreen = e => {
+      const p = screenOf(e.pos, tcam.cam, w, h);
+      return p.z < 1 && p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h;
+    };
+    const P = state.playerSide;
+    const list = ent.kind === 'squad'
+      ? state.squads.filter(q => !q.dead && q.side === P && q.role === ent.role && q.craft.length && onScreen(q))
+      : state.ships.filter(s => !s.dead && s.side === P && !s.station && s.def.id === ent.def.id && onScreen(s));
+    if (!list.includes(ent)) list.push(ent);
+    state.selection = additive ? [...new Set([...state.selection, ...list])] : list;
+    refreshSel();
+  }
+
   // Достаёт ли это оружие авиацию (у звена прочность у машин, класс strike)
   const hitsStrike = s => (s.kind === 'ship'
     ? s.guns.some(g => dmgMult(SPACE_DMG, g.def.type, 'strike') > 0)
     : dmgMult(SPACE_DMG, s.def.weapon, 'strike') > 0);
 
+  const mineSelected = () => state.selection.filter(s => s.side === state.playerSide && !s.dead);
+
   function issueOrder(ent, world) {
-    const mine = state.selection.filter(s => s.side === state.playerSide && !s.dead);
+    const mine = mineSelected();
     if (!mine.length) return false;
     if (ent && ent.side !== state.playerSide) {
       const air = ent.kind === 'squad';
@@ -1943,7 +2067,8 @@ export function createSpaceBattle(ctx, config) {
              разворачивал весь флот стрелять в пустоту (C14). Такие корабли
              идут туда, где звено, — там по нему работает ПВО. */
           if (air && !hitsStrike(s)) { goers.push(s); continue; }
-          s.forced = ent; s.target = liveTarget(s, ent); s.moveTo = null;
+          // Приказ атаковать сильнее «держать» и «с ходу»: идём добивать
+          s.forced = ent; s.target = liveTarget(s, ent); s.moveTo = null; s.amove = null; s.hold = false;
         } else {
           if (air && !hitsStrike(s)) { deaf++; continue; }   // бомбардировщик по авиации не бьёт
           s.target = ent; s.recall = false; s.moveTo = null;
@@ -1964,15 +2089,19 @@ export function createSpaceBattle(ctx, config) {
     return true;
   }
 
-  // Приказ идти: строй квадратом вокруг точки
-  function moveGroup(mine, world) {
+  /* Приказ идти: строй квадратом вокруг точки. attack — атака с ходу
+     (A): корабли идут к той же точке, но останавливаются на каждого
+     встречного (см. updateShip); звенья и так бьют всё на пути. */
+  function moveGroup(mine, world, attack) {
     const n = mine.length, cols = Math.ceil(Math.sqrt(n));
     mine.forEach((s, i) => {
       const col = i % cols, row = Math.floor(i / cols);
       const dest = world.clone().add(_v.set((col - (cols - 1) / 2) * 90, 0, (row - (cols - 1) / 2) * 90));
       dest.y = s.kind === 'ship' ? s.pos.y : world.y;
-      s.moveTo = dest;
+      if (attack && s.kind === 'ship') { s.amove = dest; s.moveTo = null; }
+      else { s.moveTo = dest; s.amove = null; }
       s.target = null;
+      s.hold = false;
       /* Приказ идти сам включает гасители: иначе корабль продолжит
          скользить мимо точки, и приказ будет выглядеть как баг. */
       s.drift = false;
@@ -1981,17 +2110,51 @@ export function createSpaceBattle(ctx, config) {
     });
   }
 
+  function amoveSelected(world) {
+    const mine = mineSelected();
+    if (!mine.length || !world) return false;
+    moveGroup(mine, world, true);
+    fx.flash(world, 16, 0xffa860, 0.6);
+    return true;
+  }
+
+  /* ПКМ мимо врага, но рядом с ним — это приказ «идти», и флот уйдёт
+     в упор к противнику (C29). Молча так делать нельзя: скажем, как
+     атаковать. Не чаще раза в шесть секунд. */
+  let nearMissAt = -99;
+  function nearFoe(x, y, px) {
+    const r = viewport.canvas.getBoundingClientRect();
+    const P = state.playerSide;
+    return state.ships.some(s => {
+      if (s.dead || s.side === P || !canPick(s)) return false;
+      const q = screenOf(s.pos, tcam.cam, viewport.w, viewport.h);
+      return q.z < 1 && Math.hypot(q.x + r.left - x, q.y + r.top - y) < px;
+    });
+  }
+
   const controls = new Controls(viewport.canvas, tcam, {
     pickMeshes,
     canPick,
     planeY: () => 0,
     onBoxModeChange: on => boxBtn.classList.toggle('on', on),
-    onTap({ x, y, shift, touch }) {
+    onTap({ x, y, shift, touch, double }) {
       const ent = entityAt(x, y);
       const world = controls.worldAt(x, y);
+      // Нажата A: этот щелчок — точка или цель атаки с ходу
+      if (pending === 'amove') {
+        pending = null;
+        if (ent && ent.side !== state.playerSide) issueOrder(ent, world);
+        else amoveSelected(world);
+        updateHover();
+        return;
+      }
       // На мыши касание — всегда выбор (приказы на ПКМ).
       // На пальце: свой корабль — выбор, всё прочее — приказ.
-      if (!touch) { selectEntity(ent, shift); return; }
+      if (!touch) {
+        if (double && ent && ent.side === state.playerSide) { selectSameType(ent, shift); return; }
+        selectEntity(ent, shift);
+        return;
+      }
       if (ent && ent.side === state.playerSide) { selectEntity(ent, shift); return; }
       if (state.selection.some(s => s.side === state.playerSide && !s.dead)) {
         if (issueOrder(ent, world)) return;
@@ -1999,10 +2162,16 @@ export function createSpaceBattle(ctx, config) {
       selectEntity(ent, shift);
     },
     onOrder({ x, y }) {
+      pending = null;          // ПКМ во время «A» — обычный приказ
       const ent = entityAt(x, y);
+      if (!ent && mineSelected().length && state.time - nearMissAt > 6 && nearFoe(x, y, 80)) {
+        nearMissAt = state.time;
+        toast('Мимо цели — флот идёт в точку. Атаковать: правой кнопкой по кораблю или его подписи');
+      }
       issueOrder(ent, controls.worldAt(x, y));
     },
     onBox(rect, additive) {
+      pending = null;
       const w = viewport.w, h = viewport.h;
       const found = [];
       for (const s of state.ships) {
@@ -2019,6 +2188,23 @@ export function createSpaceBattle(ctx, config) {
       refreshSel();
     },
   });
+
+  /* ── НАВЕДЕНИЕ (C74). Что под курсором — десять раз в секунду, а не
+     на каждое движение мыши: луч по моделям не бесплатен, а корабли
+     уезжают из-под неподвижного курсора и сами. Курсор говорит, что
+     сделает щелчок: рука — выбрать, прицел — атаковать, метка — идти. */
+  let hoverTick = 0;
+  function updateHover() {
+    const hv = controls.hover;
+    const P = state.playerSide;
+    hoverEnt = hv.in && !controls.pointers.size && !ended ? entityAt(hv.x, hv.y) : null;
+    const own = state.selection.some(s => s.side === P && !s.dead);
+    let cur = null;
+    if (pending === 'amove') cur = 'cur-attack';
+    else if (hoverEnt) cur = hoverEnt.side !== P && own ? 'cur-attack' : 'cur-pick';
+    else if (own && hv.in && !ended) cur = 'cur-move';
+    controls.setCursor(cur);
+  }
 
   // ── панель выделения ────────────────────────────────────
   /* Чем корабль занят прямо сейчас. Без этой строки панель отвечала
@@ -2040,9 +2226,15 @@ export function createSpaceBattle(ctx, config) {
       const d = Math.round(e.pos.distanceTo(e.moveTo));
       return `идёт к точке · ${d}`;
     }
+    if (e.amove) {
+      const d = Math.round(e.pos.distanceTo(e.amove));
+      const t = e.target && !e.target.dead && e.target.def ? ` · бьёт «${short(e.target.def.name)}»` : '';
+      return `идёт с боем · ${d}${t}`;
+    }
     if (e.forced && !e.forced.dead) return `атакует «${short(e.forced.def.name)}»`;
-    if (e.target && !e.target.dead) return `бьёт по «${short(e.target.def.name)}»`;
-    return 'держит позицию';
+    const hold = e.hold ? 'держит позицию · ' : '';
+    if (e.target && !e.target.dead) return `${hold}бьёт по «${short(e.target.def.name)}»`;
+    return e.hold ? 'держит позицию — не преследует' : 'ждёт приказа';
   }
 
   /* ── ПАНЕЛЬ ВЫДЕЛЕННОГО.
@@ -2062,6 +2254,7 @@ export function createSpaceBattle(ctx, config) {
     if (!list.length) {
       setHtml(sel, '<div class="sel-empty">Ничего не выбрано</div>');
       if (actsKey !== '') { actsKey = ''; actsEls = []; acts.innerHTML = ''; }
+      actsItems = [];
       return;
     }
     if (list.length === 1) {
@@ -2097,9 +2290,15 @@ export function createSpaceBattle(ctx, config) {
         <div class="sel-doing">${doingOf(list[0])}</div>`);
     }
 
-    // Описание кнопок: id задаёт место в ключе, остальное обновляется на месте
+    /* Описание кнопок: id задаёт место в ключе, остальное обновляется на
+       месте. key — клавиша (e.code), её буква стоит в углу кнопки (C50). */
     const items = [];
-    const addBtn = (id, label, hint, fn, disabled) => items.push({ id, label, hint, fn, disabled: !!disabled });
+    const KEYS = {
+      'launch-interceptor': 'KeyZ', 'launch-fighter': 'KeyX', 'launch-bomber': 'KeyC',
+      land: 'KeyV', 'ecm-jam': 'KeyJ', 'ecm-shield': 'KeyK', 'ecm-off': 'KeyL',
+      jump: 'KeyG', unjump: 'KeyG', stop: 'KeyS', hold: 'KeyH', up: 'PageUp', down: 'PageDown',
+    };
+    const addBtn = (id, label, hint, fn, disabled) => items.push({ id, label, hint, fn, disabled: !!disabled, key: KEYS[id] });
     const addNote = (id, text) => items.push({ id, note: text });
 
     const carriers = list.filter(e => e.kind === 'ship' && e.hangar && e.side === state.playerSide);
@@ -2160,9 +2359,25 @@ export function createSpaceBattle(ctx, config) {
           refreshSel();
         });
       }
-      addBtn('stop', 'Стоп', 'Погасить скорость', () => { for (const s of ships) { s.moveTo = null; s.target = null; s.forced = null; } });
-      addBtn('up', 'Выше', 'Поднять на 120', () => { for (const s of ships) s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); });
-      addBtn('down', 'Ниже', 'Опустить на 120', () => { for (const s of ships) s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); });
+      addBtn('stop', 'Стоп', 'Снять все приказы, погасить ход', () => {
+        for (const s of ships) { s.moveTo = null; s.amove = null; s.target = null; s.forced = null; s.hold = false; }
+        refreshSel();
+      });
+      /* «Держать позицию» (H): стоять и бить только то, до чего орудие
+         достаёт с места. Без неё «Стоп» держал корабль секунду — дальше
+         он сам находил цель и шёл на сближение (C26). */
+      const allHold = ships.every(s => s.hold);
+      addBtn('hold', (allHold ? '⦿ ' : '') + 'Держать', 'Стоять на месте, не преследовать', () => {
+        const on = !ships.every(s => s.hold);
+        for (const s of ships) {
+          s.hold = on;
+          if (on) { s.moveTo = null; s.amove = null; s.forced = null; s.target = null; }
+        }
+        toast(on ? 'Держать позицию: стоят и бьют только тех, до кого достают' : 'Корабли снова сами идут на сближение');
+        refreshSel();
+      });
+      addBtn('up', 'Выше', 'Поднять на 120', () => { for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); s.amove = null; s.hold = false; } });
+      addBtn('down', 'Ниже', 'Опустить на 120', () => { for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); s.amove = null; s.hold = false; } });
     }
 
     const key = list.map(e => e.uid).join(',') + '|' + items.map(i => i.id).join(',');
@@ -2182,6 +2397,12 @@ export function createSpaceBattle(ctx, config) {
         const lb = document.createElement('b');
         const sm = document.createElement('small');
         b.append(lb, sm);
+        if (it.key) {
+          const k = document.createElement('kbd');
+          k.className = 'hk';
+          k.textContent = keyName(it.key);
+          b.appendChild(k);
+        }
         acts.appendChild(b);
         return { b, lb, sm };
       });
@@ -2197,18 +2418,112 @@ export function createSpaceBattle(ctx, config) {
       if (el.sm.textContent !== hint) el.sm.textContent = hint;
       el.sm.hidden = !hint;
       if (el.b.disabled !== it.disabled) el.b.disabled = it.disabled;
+      const title = hint + (it.key ? ` · ${keyName(it.key)}` : '');
+      if (el.b.title !== title) el.b.title = title;
       el.b.onclick = it.fn;
     });
+    actsItems = items;
   }
+  let actsItems = [];
+  const keyName = code => code === 'PageUp' ? 'PgUp' : code === 'PageDown' ? 'PgDn' : code.replace(/^Key|^Digit/, '');
   refreshSel();
 
+  /* ── ОТРЯДЫ 1…9 (C50). Ctrl+цифра или Shift+цифра — записать
+     выбранное, цифра — выбрать, дважды подряд — камера к отряду.
+     Shift — потому что в обычной вкладке Ctrl+1…8 браузер забирает
+     себе (переключение вкладок) и до игры они не доходят; в полном
+     экране (F11) их отдаёт игре Keyboard Lock. */
+  let lastGroup = { n: null, t: 0 };
+  function saveGroup(n) {
+    const list = state.selection.filter(e => !e.dead && e.side === state.playerSide);
+    if (!list.length) { toast(`Отряд ${n}: сначала выдели корабли, потом Ctrl или Shift + ${n}`); return; }
+    groups[n] = list.slice();
+    toast(`Отряд ${n}: ${list.length} · записан`);
+    refreshRoster();
+  }
+  function recallGroup(n) {
+    const list = (groups[n] || []).filter(e => !e.dead);
+    groups[n] = list;
+    if (!list.length) { toast(`Отряд ${n} пуст — выдели корабли и нажми Ctrl или Shift + ${n}`); return; }
+    const now = performance.now();
+    const again = lastGroup.n === n && now - lastGroup.t < 450;
+    lastGroup = { n, t: now };
+    state.selection = list.slice();
+    if (again) focusOn(list);
+    refreshSel();
+  }
+
+  function startAmove() {
+    if (!mineSelected().length) { toast('Атака с ходу: сначала выбери свои корабли'); return; }
+    pending = 'amove';
+    toast('Атака с ходу: щёлкни точку или цель · Esc — отмена');
+    updateHover();
+  }
+
+  /* ── МЕНЮ ПАУЗЫ (C35). Бой стоит, пока меню открыто, и после
+     «Продолжить» скорость та же, что была. «Начать бой заново» — только
+     в быстром бою: в кампании это был бы второй бросок кубика. */
+  let pauseOpen = false;
+  function openPause() {
+    if (ended || pauseOpen || !ctx.pause) return;
+    pauseOpen = true;
+    const was = state.paused;
+    state.paused = true;
+    pending = null;
+    ctx.pause({
+      restart: !config.inCampaign && ctx.restartBattle ? () => ctx.restartBattle() : null,
+      exitText: config.inCampaign
+        ? 'Бой не будет засчитан: кампания продолжится с последнего сохранения.'
+        : 'Бой не будет засчитан.',
+      onClose: () => { pauseOpen = false; state.paused = was; },
+    });
+  }
+
+  /* ── КЛАВИАТУРА (C50). Один обработчик на весь бой: Пробел — пауза,
+     Esc — отменить по очереди (атаку с ходу, рамку, выбор), а когда
+     отменять нечего — меню паузы; A/S/H — приказы; цифры — отряды;
+     буквы действий выделенного — те, что написаны на кнопках. */
   function onKey(e) {
-    if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
     /* После итоговой карточки бой окончен: Пробел снимал паузу, и под
        карточкой корабли продолжали гибнуть (C65) */
     if (ended) return;
-    if (e.code === 'Space') { e.preventDefault(); hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); }
-    if (e.code === 'Escape') { state.selection = []; refreshSel(); }
+    const code = e.code, mod = e.ctrlKey || e.metaKey;
+    if (code === 'Space') {
+      e.preventDefault();
+      if (!e.repeat) hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click();
+      return;
+    }
+    if (code === 'Escape') {
+      e.preventDefault();
+      if (pending) { pending = null; updateHover(); toast('Атака с ходу отменена'); return; }
+      if (controls.boxMode) { controls.setBoxMode(false); return; }
+      if (state.selection.length) { state.selection = []; refreshSel(); updateHover(); return; }
+      openPause();
+      return;
+    }
+    if (e.repeat) return;
+    const dm = /^(?:Digit|Numpad)([1-9])$/.exec(code);
+    if (dm) {
+      e.preventDefault();
+      if (mod || e.shiftKey) saveGroup(dm[1]); else recallGroup(dm[1]);
+      return;
+    }
+    if (mod || e.altKey) return;        // Ctrl+буква — браузеру
+    if (code === 'F2') { e.preventDefault(); hud.querySelector('[data-q="all"]').click(); return; }
+    if (code === 'KeyA') { startAmove(); return; }
+    if (code === 'KeyD') { toggleDrift(); return; }
+    if (code === 'KeyB') { reinfBtn.click(); return; }
+    const it = actsItems.find(x => x.key === code && x.fn);
+    if (it) {
+      e.preventDefault();
+      if (it.disabled) toast(`${it.label.replace(/^⦿ /, '')}: сейчас недоступно`);
+      else it.fn();
+      return;
+    }
+    if ((code === 'KeyS' || code === 'KeyH') && !mineSelected().some(s => s.kind === 'ship')) {
+      toast('Сначала выбери свои корабли');
+    }
   }
   addEventListener('keydown', onKey);
 
@@ -2240,6 +2555,9 @@ export function createSpaceBattle(ctx, config) {
     if (ended) return;
     ended = true;
     state.paused = true;
+    pending = null;
+    hoverEnt = null;
+    controls.setCursor(null);
     /* Выживших снимаем В МОМЕНТ ИТОГА, а не по «Продолжить»: под
        карточкой бой стоит, но и снимок должен быть тем, что видел игрок
        (C65). Плюс корабли дальнего гипера, дошедшие до боя: кампания
@@ -2362,6 +2680,8 @@ export function createSpaceBattle(ctx, config) {
 
     updateVortexes(dt || rawDt * 0.001, state.time);
     headlight.position.copy(tcam.cam.position);
+    hoverTick -= rawDt;
+    if (hoverTick <= 0) { hoverTick = 0.1; updateHover(); }
     updateMarkers();
     updateSelVisuals();
     updateOrders();
@@ -2461,6 +2781,17 @@ export function createSpaceBattle(ctx, config) {
     };
     // Мир в точке экрана — куда должен лечь приказ правой кнопкой
     state.worldTest = (x, y) => controls.worldAt(x, y);
+    // Камера: куда смотрит и где стоит — проверять протяжку, край, колесо
+    state.camInfo = () => ({
+      x: tcam.target.x, y: tcam.target.y, z: tcam.target.z, dist: tcam.dist,
+      sdist: tcam.sdist, yaw: tcam.yaw, pitch: tcam.pitch,
+      sx: tcam.smooth.x, sz: tcam.smooth.z,
+    });
+    // Что под курсором и какой курсор (C74), ждёт ли «A» щелчка
+    state.inputTest = () => ({
+      hover: hoverEnt ? hoverEnt.uid : null, cursor: controls._cur, pending,
+      groups: Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, v.map(e => e.uid)])),
+    });
     // Приказ выделенным — тот же, что даёт ПКМ (цель или точка мира)
     state.orderTest = (ent, world) => issueOrder(ent, world || null);
     // Уничтожить корабль сразу — проверять, что остаётся после гибели

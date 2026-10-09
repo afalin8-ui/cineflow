@@ -250,7 +250,7 @@ export function createGalaxy(ctx, camp) {
 
   const tcam = new TacticalCamera({
     dist: 210, minDist: 70, maxDist: 420, pitch: 0.75, yaw: 0.15,
-    bounds: { x: 130, z: 130 }, far: 4000,
+    bounds: { x: 130, z: 130 }, far: 4000, edge: true,
   });
 
   // Карта должна читаться целиком: заливка + мягкий ключ сверху,
@@ -333,6 +333,7 @@ export function createGalaxy(ctx, camp) {
   hud.className = 'hud hud-galaxy';
   hud.innerHTML = `
     <div class="topbar">
+      <button class="menu-btn" data-role="menu" title="Меню · Esc" aria-label="Меню">☰</button>
       <div class="res">
         <span class="credits" data-role="credits">0</span><small data-role="income"></small>
       </div>
@@ -351,7 +352,7 @@ export function createGalaxy(ctx, camp) {
     <div class="galaxy-panel" data-role="panel"></div>
     <div class="hint">${IS_TOUCH
       ? 'Касание по миру — выбрать · тянуть — вращать карту · щипок — приближение'
-      : 'ЛКМ — выбрать мир · тянуть — рамка/облёт (Alt) · колесо — приближение · WASD — карта'}</div>
+      : 'ЛКМ — выбрать мир · ПКМ по соседнему — отправить флот · Esc — снять выбор · средняя кнопка или WASD — карта · колесо — приближение'}</div>
     <div class="endcard" data-role="end" style="display:none"></div>
   `;
   hudRoot.appendChild(hud);
@@ -359,6 +360,36 @@ export function createGalaxy(ctx, camp) {
 
   $('endturn').onclick = () => endTurn();
   $('neuro').onclick = () => ctx.showNeuro && ctx.showNeuro();
+  $('menu').onclick = () => openPause();
+
+  /* Меню паузы на карте (C35): ход тут не идёт, ставить на паузу нечего.
+     Перед выходом сохраняем — карта и есть то состояние, которое ждут
+     увидеть в «Продолжить кампанию». */
+  function openPause() {
+    if (!ctx.pause) return;
+    ctx.pause({ onExit: () => ctx.save && ctx.save() });
+  }
+
+  /* Снять выбор (C38): блок технологий виден только без выбранного
+     мира, и раньше, однажды выбрав мир, вернуть его было нечем. */
+  function deselect() {
+    if (!state.selected) return false;
+    state.selected = null;
+    refreshAll();
+    return true;
+  }
+
+  /* Клавиатура карты: Escape — снять выбор, а если нечего — меню.
+     Пока открыто окно хода (атака, тревога, итог), Escape его не
+     трогает: такие окна закрываются только своим решением. */
+  function onKey(e) {
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    if (e.code !== 'Escape') return;
+    if (hudRoot.querySelector('.modal, .screen') || $('end').style.display === 'flex') return;
+    e.preventDefault();
+    if (!deselect()) openPause();
+  }
+  addEventListener('keydown', onKey);
 
   // ── маркеры названий
   const markers = $('markers');
@@ -1321,16 +1352,18 @@ export function createGalaxy(ctx, camp) {
   const controls = new Controls(viewport.canvas, tcam, {
     pickMeshes: () => Object.values(nodes).map(n => n.obj),
     planeY: () => 0,
-    onTap({ x, y }) {
+    onTap({ x, y, touch }) {
       if (state.busy) return;
-      let ent = controls.pick(x, y);
-      if (!ent) {
-        ent = controls.pickNear(x, y, Object.values(nodes), tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 52 : 30);
-      }
-      if (!ent) return;
+      const ent = systemAt(x, y);
+      // Щелчок в пустоту снимает выбор — снова видны технологии (C38)
+      if (!ent) { if (!touch) deselect(); return; }
       const id = ent.def.id;
       const sel = state.selected;
-      if (sel && sel !== id) {
+      /* ЛКМ на мыши — только «посмотреть» (C27): раньше щелчок по
+         соседу отправлял туда флот, и посмотреть соседний мир значило
+         потерять ход флота. Приказ — правой кнопкой. На пальце правой
+         кнопки нет, там касание соседа по-прежнему — перелёт. */
+      if (touch && sel && sel !== id) {
         const st = camp.systems[sel];
         if (st.owner === camp.playerFaction && !st.moved && fleetSize(st.fleet) && neighborsOf(sel).includes(id)) {
           tryMoveFleet(sel, id);
@@ -1342,16 +1375,49 @@ export function createGalaxy(ctx, camp) {
       refreshAll();
     },
     onOrder({ x, y }) {
-      const ent = controls.pick(x, y);
-      if (ent && state.selected) tryMoveFleet(state.selected, ent.def.id);
+      if (state.busy) return;
+      const ent = systemAt(x, y);
+      if (!ent) return;
+      if (!state.selected) { toast('Сначала выбери свой мир с флотом левой кнопкой'); return; }
+      const from = state.selected, to = ent.def.id, st = camp.systems[from];
+      if (to === from) return;
+      // tryMoveFleet в таких случаях молчит — а правая кнопка без ответа читается как поломка
+      if (st.owner !== camp.playerFaction) { toast('Флот отправляют из своего мира — выбери его левой кнопкой'); return; }
+      if (!fleetSize(st.fleet)) { toast('В выбранном мире нет флота'); return; }
+      if (st.moved) { toast('Флот этого мира уже ходил в этот ход'); return; }
+      if (!neighborsOf(from).includes(to)) { toast('За ход — только к соседнему миру, по линии маршрута'); return; }
+      tryMoveFleet(from, to);
     },
   });
+
+  function systemAt(x, y) {
+    return controls.pick(x, y) ||
+      controls.pickNear(x, y, Object.values(nodes), tcam.cam, viewport.w, viewport.h, IS_TOUCH ? 52 : 30);
+  }
+
+  /* Курсор (C74): над миром — рука, над соседом, куда может уйти флот
+     выбранного мира, — метка «лететь». Десять раз в секунду. */
+  let hoverTick = 0;
+  function updateHover() {
+    const hv = controls.hover;
+    const ent = hv.in && !controls.pointers.size ? systemAt(hv.x, hv.y) : null;
+    let cur = null;
+    if (ent) {
+      const sel = state.selected, st = sel && camp.systems[sel];
+      const can = st && sel !== ent.def.id && st.owner === camp.playerFaction && !st.moved &&
+        fleetSize(st.fleet) > 0 && neighborsOf(sel).includes(ent.def.id);
+      cur = can ? 'cur-move' : 'cur-pick';
+    }
+    controls.setCursor(cur);
+  }
 
   refreshAll();
 
   function update(dt) {
     tcam.update(dt);
     fx.update(dt);
+    hoverTick -= dt;
+    if (hoverTick <= 0) { hoverTick = 0.1; updateHover(); }
     const t = performance.now() * 0.001;
     for (const id in nodes) {
       const n = nodes[id];
@@ -1363,6 +1429,7 @@ export function createGalaxy(ctx, camp) {
   }
 
   function dispose() {
+    removeEventListener('keydown', onKey);
     tcam.dispose();
     controls.dispose();
     hud.remove();
@@ -1375,6 +1442,12 @@ export function createGalaxy(ctx, camp) {
     window.__gal = {
       state, camp, refreshAll,
       selectTest: id => { state.selected = id; refreshAll(); },
+      // Где мир на экране — стенд щёлкает по нему настоящей мышью (C27)
+      screenTest: id => {
+        const r = viewport.canvas.getBoundingClientRect();
+        const p = screenOf(nodes[id].pos, tcam.cam, viewport.w, viewport.h);
+        return { x: r.left + p.x, y: r.top + p.y, z: p.z };
+      },
       moveTest: (a, b) => tryMoveFleet(a, b),
       // Нападение ИИ на мир игрока — окно «Тревога», как в конце хода
       defenceTest: (ai, a, b) => queueDefence(ai, a, b),

@@ -546,6 +546,229 @@ const SCAN = () => {
       ok('точка движения — там, куда щёлкнули', res.miss !== undefined && res.miss < 200, `промах центра строя ${res.miss}`);
     }
 
+    /* ── УПРАВЛЕНИЕ МЫШЬЮ И КЛАВИАТУРОЙ (пакет P2). Всё настоящей мышью
+       и клавишами; камера проверяется по состоянию (camInfo), а не на
+       глаз. Бой на паузе: камера и ввод работают и так. */
+    const cam = () => page.evaluate(() => __sp.camInfo());
+    const settle = async () => {   // сглаживание камеры дошло до цели
+      await mute(page, true);
+      await page.waitForFunction(() => { const c = __sp.camInfo(); return Math.abs(c.sdist - c.dist) < 1 && Math.hypot(c.sx - c.x, c.sz - c.z) < 1; },
+        null, { timeout: 60000, polling: 50 }).catch(() => {});
+      await mute(page, false);
+    };
+    const freeAt = (fx, fy) => page.evaluate(([fx, fy]) => {
+      const c = document.getElementById('view');
+      const x = Math.round(innerWidth * fx), y = Math.round(innerHeight * fy);
+      return document.elementFromPoint(x, y) === c ? { x, y } : null;
+    }, [fx, fy]);
+
+    // ПКМ с протяжкой — поворот камеры, а не приказ
+    await page.evaluate(() => { for (const s of __sp.selection) { s.moveTo = null; s.amove = null; } });
+    let pt = await freeAt(0.5, 0.45) || await freeAt(0.42, 0.4);
+    if (pt) {
+      const c0 = await cam();
+      await page.mouse.move(pt.x, pt.y);
+      await page.mouse.down({ button: 'right' });
+      for (let i = 1; i <= 8; i++) await page.mouse.move(pt.x + i * 15, pt.y + i * 2);
+      await page.mouse.up({ button: 'right' });
+      await waitFrames(page, 2);
+      const st = await page.evaluate(() => ({ n: __sp.selection.length, ordered: __sp.selection.filter(s => s.moveTo || s.amove).length }));
+      const c1 = await cam();
+      ok('ПКМ, отпущенная после протяжки, приказ не отдаёт, а поворачивает камеру', st.n > 0 && st.ordered === 0 && Math.abs(c1.yaw - c0.yaw) > 0.2,
+        `с приказом ${st.ordered} из ${st.n}, поворот ${(c1.yaw - c0.yaw).toFixed(2)} рад`);
+    } else ok('для протяжки ПКМ нашлась точка поля', false);
+
+    // Средняя кнопка — «схватить мир»: точка под курсором едет за ним
+    pt = await freeAt(0.5, 0.42) || await freeAt(0.45, 0.35);
+    if (pt) {
+      await settle();
+      const c0 = await cam();
+      const w0 = await page.evaluate(([x, y]) => __sp.worldTest(x, y), [pt.x, pt.y]);
+      await page.mouse.move(pt.x, pt.y);
+      await page.mouse.down({ button: 'middle' });
+      for (let i = 1; i <= 8; i++) await page.mouse.move(pt.x - i * 35, pt.y + i * 5);
+      await page.mouse.up({ button: 'middle' });
+      await settle();
+      const c1 = await cam();
+      const w1 = await page.evaluate(([x, y]) => __sp.worldTest(x, y), [pt.x - 280, pt.y + 40]);
+      const moved = Math.hypot(c1.x - c0.x, c1.z - c0.z);
+      const slip = w0 && w1 ? Math.hypot(w1.x - w0.x, w1.z - w0.z) : 1e9;
+      ok('протяжка средней кнопкой сдвигает камеру, точка мира остаётся под курсором', moved > 50 && slip < 40,
+        `камера сдвинулась на ${Math.round(moved)}, точка под курсором уехала на ${Math.round(slip)}`);
+    } else ok('для протяжки средней кнопкой нашлась точка поля', false);
+
+    // Колесо приближает к точке под курсором, а не к середине экрана (C131)
+    pt = await freeAt(0.3, 0.45) || await freeAt(0.32, 0.38);
+    if (pt) {
+      await settle();
+      const c0 = await cam();
+      const w0 = await page.evaluate(([x, y]) => __sp.worldTest(x, y), [pt.x, pt.y]);
+      await page.mouse.move(pt.x, pt.y);
+      await page.mouse.wheel(0, -600);
+      await settle();
+      const c1 = await cam();
+      const w1 = await page.evaluate(([x, y]) => __sp.worldTest(x, y), [pt.x, pt.y]);
+      const slip = w0 && w1 ? Math.hypot(w1.x - w0.x, w1.z - w0.z) : 1e9;
+      const centerShift = Math.hypot(c1.x - c0.x, c1.z - c0.z);
+      ok('колесо приближает к точке под курсором', c1.dist < c0.dist * 0.8 && slip < 25 && centerShift > 40,
+        `расстояние ${Math.round(c0.dist)} → ${Math.round(c1.dist)}, точка под курсором уехала на ${Math.round(slip)}, середина сдвинулась на ${Math.round(centerShift)}`);
+      await page.mouse.wheel(0, 600);       // отъехать обратно
+      await settle();
+    } else ok('для колеса нашлась точка поля', false);
+
+    // Курсор у края экрана двигает камеру; у середины — нет; над кнопкой у края — нет
+    const edge = await page.evaluate(() => {
+      const c = document.getElementById('view'), x = innerWidth - 3, y = Math.round(innerHeight * 0.3);
+      return document.elementFromPoint(x, y) === c ? { x, y } : null;
+    });
+    if (edge) {
+      await settle();
+      const c0 = await cam();
+      await page.mouse.move(edge.x - 40, edge.y);
+      await page.mouse.move(edge.x, edge.y);
+      await mute(page, true);
+      await waitFrames(page, 20);
+      await mute(page, false);
+      const c1 = await cam();
+      await page.mouse.move(960, 400);
+      await waitFrames(page, 4);
+      const c2 = await cam();
+      await waitFrames(page, 10);
+      const c3 = await cam();
+      // вправо по экрану при yaw — это (cos yaw, −sin yaw)
+      const along = (c1.x - c0.x) * Math.cos(c0.yaw) - (c1.z - c0.z) * Math.sin(c0.yaw);
+      ok('курсор у края экрана двигает камеру в ту сторону', along > 30, `сдвиг вправо ${Math.round(along)}`);
+      ok('курсор ушёл от края — камера стоит', Math.hypot(c3.x - c2.x, c3.z - c2.z) < 2, `за 10 кадров ${Math.hypot(c3.x - c2.x, c3.z - c2.z).toFixed(1)}`);
+      // Кнопка скорости у верхнего края: под ней прокрутки нет
+      const btn = await page.evaluate(() => {
+        const b = document.querySelector('[data-speed="2"]').getBoundingClientRect();
+        const x = Math.round(b.left + b.width / 2), y = Math.round(b.top + 1);
+        const h = document.elementFromPoint(x, y);
+        return { x, y, inEdge: y < 10, hit: !!h && !!h.closest('[data-speed="2"]') };
+      });
+      await page.mouse.move(btn.x, btn.y);
+      const c4 = await cam();
+      await waitFrames(page, 10);
+      const c5 = await cam();
+      ok('над кнопкой у края экрана карта не едет', btn.inEdge && btn.hit && Math.hypot(c5.x - c4.x, c5.z - c4.z) < 2,
+        `кнопка в полосе края: ${btn.inEdge}, под курсором кнопка: ${btn.hit}, сдвиг ${Math.hypot(c5.x - c4.x, c5.z - c4.z).toFixed(1)}`);
+      await page.mouse.move(960, 500);
+    } else ok('у правого края экрана есть поле', false);
+
+    // Отряды: Ctrl+1 и Shift+2 записывают, 1 и 2 возвращают выделение
+    await tap(page, '[data-q="all"]');
+    const gA = await page.evaluate(() => __sp.selection.map(e => e.uid).sort().join(','));
+    await page.keyboard.press('Control+Digit1');
+    await tap(page, '[data-q="escort"]');
+    const gB = await page.evaluate(() => __sp.selection.map(e => e.uid).sort().join(','));
+    await page.keyboard.press('Shift+Digit2');
+    await page.keyboard.press('Escape');
+    const emptied = await page.evaluate(() => __sp.selection.length === 0 && !document.querySelector('.screen.pause'));
+    await page.keyboard.press('Digit1');
+    const r1 = await page.evaluate(() => __sp.selection.map(e => e.uid).sort().join(','));
+    await page.keyboard.press('Digit2');
+    const r2 = await page.evaluate(() => __sp.selection.map(e => e.uid).sort().join(','));
+    ok('Ctrl+1 и Shift+2 записывают отряды, 1 и 2 возвращают выделение', emptied && gA && gB && gA !== gB && r1 === gA && r2 === gB,
+      `отряд 1: [${gA}] → [${r1}]; отряд 2: [${gB}] → [${r2}]`);
+    // Камеру уводим от отряда: «Эскорт» выше сам навёл её на эти корабли
+    await page.evaluate(() => __sp.camTest(-900, 0, 900, 1100));
+    await settle();
+    const before2 = await cam();
+    await page.keyboard.press('Digit2');
+    await page.keyboard.press('Digit2');      // дважды подряд, в пределах 0,45 с
+    await settle();
+    const after2 = await cam();
+    const gc = await page.evaluate(() => { const l = __sp.selection; return { x: l.reduce((a, e) => a + e.pos.x, 0) / l.length, z: l.reduce((a, e) => a + e.pos.z, 0) / l.length }; });
+    ok('цифра отряда дважды подряд — камера к отряду', Math.hypot(after2.x - gc.x, after2.z - gc.z) < 5,
+      `камера была в ${Math.round(Math.hypot(before2.x - gc.x, before2.z - gc.z))} от отряда, стала в ${Math.round(Math.hypot(after2.x - gc.x, after2.z - gc.z))}`);
+
+    // Наведение: над врагом при выделенных — прицел; ПКМ по ПОДПИСИ врага — атака (C29, C74)
+    await tap(page, '[data-q="all"]');
+    await page.evaluate(() => {
+      const f = __sp.ships.filter(s => !s.dead && s.side !== __sp.playerSide && !s.station);
+      const c = f.reduce((a, s) => ({ x: a.x + s.pos.x / f.length, z: a.z + s.pos.z / f.length }), { x: 0, z: 0 });
+      __sp.camTest(c.x, 0, c.z, 700);
+    });
+    await waitFrames(page, 3);
+    const foeAt = await page.evaluate(() => {
+      const c = document.getElementById('view');
+      const all = __sp.ships.filter(s => !s.dead).map(s => ({ s, p: __sp.screenTest(s) })).filter(o => o.p.z < 1);
+      let best = null;
+      for (const { s, p } of all) {
+        if (s.side === __sp.playerSide || s.station) continue;
+        if (p.x < 80 || p.x > innerWidth - 80 || p.y < 120 || p.y > innerHeight - 260) continue;
+        const ly = p.y - 34;            // середина подписи над кораблём
+        if (document.elementFromPoint(p.x, p.y) !== c || document.elementFromPoint(p.x, ly) !== c) continue;
+        // подпись не должна лежать на чужой: соседей рядом нет
+        const gap = Math.min(...all.filter(o => o.s !== s).map(o => Math.hypot((o.p.x - p.x) / 2, o.p.y - p.y)));
+        if (!best || gap > best.gap) best = { uid: s.uid, x: p.x, y: p.y, ly, gap: Math.round(gap) };
+      }
+      return best && best.gap > 30 ? best : null;
+    });
+    if (foeAt) {
+      await page.mouse.move(foeAt.x, foeAt.y);
+      await waitFrames(page, 4);
+      const hv = await page.evaluate(() => __sp.inputTest());
+      ok('над врагом при выделенных курсор — прицел, враг подсвечен', hv.cursor === 'cur-attack' && hv.hover === foeAt.uid,
+        `курсор ${hv.cursor}, под курсором ${hv.hover}, ждали ${foeAt.uid}`);
+      await page.mouse.click(foeAt.x, foeAt.ly, { button: 'right' });
+      await waitFrames(page, 1);
+      const forced = await page.evaluate(uid => __sp.selection.filter(s => s.kind === 'ship' && s.forced && s.forced.uid === uid).length, foeAt.uid);
+      ok('ПКМ по подписи врага — приказ атаковать его (C29)', forced > 0, `атакуют: ${forced}`);
+    } else info('наведение и подпись', 'нет врага на экране вне панелей — пропущено');
+
+    // A, затем щелчок — атака с ходу; S — стоп; H — держать.
+    // Щёлкаем по пустому полю: щелчок по врагу после A — это атака его
+    pt = await page.evaluate(() => {
+      const c = document.getElementById('view');
+      const pts = __sp.ships.filter(s => !s.dead).map(s => __sp.screenTest(s)).filter(p => p.z < 1);
+      for (const [fx, fy] of [[0.5, 0.4], [0.3, 0.35], [0.7, 0.35], [0.4, 0.6], [0.6, 0.6], [0.25, 0.55]]) {
+        const x = Math.round(innerWidth * fx), y = Math.round(innerHeight * fy);
+        if (document.elementFromPoint(x, y) !== c) continue;
+        if (pts.every(p => Math.hypot(p.x - x, p.y - y) > 110)) return { x, y };
+      }
+      return null;
+    });
+    if (!pt) ok('для атаки с ходу нашлась пустая точка поля', false);
+    if (pt) {
+      await page.mouse.move(pt.x, pt.y);
+      await page.keyboard.press('KeyA');
+      await waitFrames(page, 2);
+      const curA = await page.evaluate(() => __sp.inputTest().cursor);
+      await page.mouse.click(pt.x, pt.y);
+      await waitFrames(page, 1);
+      const am = await page.evaluate(() => ({ n: __sp.selection.filter(s => s.kind === 'ship' && !s.station).length,
+        a: __sp.selection.filter(s => s.amove).length, sel: __sp.selection.length }));
+      ok('A, затем щелчок — атака с ходу у выделенных, выделение не сбито', curA === 'cur-attack' && am.a === am.n && am.n > 0,
+        `курсор после A: ${curA}, с атакой с ходу ${am.a} из ${am.n}`);
+      await page.keyboard.press('KeyS');
+      const stopped = await page.evaluate(() => __sp.selection.filter(s => s.amove || s.moveTo || s.forced).length);
+      await page.keyboard.press('KeyH');
+      const held = await page.evaluate(() => __sp.selection.filter(s => s.kind === 'ship' && !s.station && s.hold).length);
+      ok('S снимает приказы, H — держать позицию', stopped === 0 && held === am.n, `с приказами после S: ${stopped}; держат ${held} из ${am.n}`);
+      await page.keyboard.press('KeyH');
+    }
+
+    // Esc, когда отменять нечего, — меню паузы, и бой стоит (C35)
+    await tap(page, '[data-speed="1"]');
+    await page.keyboard.press('Escape');       // снимает выделение
+    await page.keyboard.press('Escape');       // отменять нечего — меню
+    const pauseShown = await page.waitForSelector('.screen.pause', { timeout: 5000 }).then(() => true, () => false);
+    const pt0 = await page.evaluate(() => __sp.time);
+    await waitFrames(page, 8);
+    const pt1 = await page.evaluate(() => __sp.time);
+    ok('Esc открывает меню паузы, и бой стоит', pauseShown && pt1 === pt0, `меню: ${pauseShown}, время ${pt0.toFixed(2)} → ${pt1.toFixed(2)}`);
+    await page.keyboard.press('Space');        // клавиши игры под меню молчат
+    ok('Пробел под меню паузы бой не трогает', await page.evaluate(() => __sp.paused && !!document.querySelector('.screen.pause')));
+    r = await tap(page, '.screen.pause [data-a="resume"]');
+    const resumed = await page.waitForFunction(t => !document.querySelector('.screen.pause') && __sp.time > t + 0.05, pt1, { timeout: 30000 }).then(() => true, () => false);
+    ok('«Продолжить» закрывает меню, бой идёт', r.ok && resumed, r.why);
+    r = await tap(page, '[data-role="menu"]');
+    const viaBtn = await page.waitForSelector('.screen.pause', { timeout: 5000 }).then(() => true, () => false);
+    await page.keyboard.press('Escape');
+    ok('«☰» открывает меню, Escape закрывает', r.ok && viaBtn && await page.evaluate(() => !document.querySelector('.screen.pause')), r.why);
+    await tap(page, '[data-speed="0"]');
+
     // «Мёртвые» кнопки HUD: всё выделено — панель действий полна
     r = await tap(page, '[data-q="all"]');
     ok('«Весь флот» нажимается', r.ok, r.why);
@@ -869,6 +1092,24 @@ const SCAN = () => {
       started ? await page.evaluate(() => `юнитов ${__gr.units.length}, построек ${(__gr.buildings || []).length}`) : '');
     await clean('наземная операция');
 
+    // Esc, когда отменять нечего, — меню паузы, бой стоит (C35); «Сдаться» — через подтверждение (C34)
+    if (started) {
+      await page.evaluate(() => { __gr.selection = []; __gr.placing = null; });
+      await page.keyboard.press('Escape');
+      const gp = await page.waitForSelector('.screen.pause', { timeout: 5000 }).then(() => true, () => false);
+      const gpaused = await page.evaluate(() => __gr.paused);
+      await page.keyboard.press('Escape');
+      const gback = await page.evaluate(() => !document.querySelector('.screen.pause') && !__gr.paused);
+      ok('земля: Esc — меню паузы, бой стоит; Esc ещё раз — дальше', gp && gpaused && gback, `меню ${gp}, пауза ${gpaused}, вернулись ${gback}`);
+      const q = await tap(page, '[data-role="retreat"]');
+      const asked = await page.waitForSelector('.modal.confirm', { timeout: 5000 }).then(() => true, () => false);
+      const q2 = await tap(page, '.modal.confirm [data-a="no"]');
+      await page.waitForTimeout(300);
+      const still = await page.evaluate(() => !document.querySelector('.modal.confirm') &&
+        getComputedStyle(document.querySelector('.endcard')).display === 'none');
+      ok('земля: «Сдаться» спрашивает, «Продолжить бой» — бой идёт', q.ok && asked && q2.ok && still, q.why || q2.why);
+    }
+
     // Сбой при отрисовке → «В меню»
     await page.evaluate(() => {
       const c = document.getElementById('view');
@@ -917,6 +1158,50 @@ const SCAN = () => {
       { timeout: 30000 }).then(() => true, () => false);
     ok('ход сменился', next, `ход ${turn0} → ${await page.evaluate(() => document.querySelector('[data-role="turn"]').textContent)}`);
     await page.waitForTimeout(500);
+    /* C28: кнопка после щелчка не держит фокус — Пробел и Enter её
+       не нажимают. Раньше они пропускали ещё два хода. */
+    await page.evaluate(() => document.querySelectorAll('.modal').forEach(m => m.remove()));
+    const tA = await page.evaluate(() => +document.querySelector('[data-role="turn"]').textContent);
+    const focused = await page.evaluate(() => document.activeElement && document.activeElement.tagName);
+    await page.keyboard.press('Space');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(800);
+    const tB = await page.evaluate(() => +document.querySelector('[data-role="turn"]').textContent);
+    ok('после щелчка «Конец хода» Пробел и Enter ход не пропускают (C28)', tA === tB && focused !== 'BUTTON',
+      `ход ${tA} → ${tB}, в фокусе ${focused}`);
+
+    /* C27 и C38: ЛКМ по соседнему миру только выбирает его — флот
+       остаётся дома; Escape снимает выбор, и снова виден блок
+       технологий; Escape без выбора — меню паузы. */
+    const g27 = await page.evaluate(async () => {
+      const G = await import('/game/js/galaxy.js');
+      document.querySelectorAll('.modal').forEach(m => m.remove());
+      const c = __gal.camp, my = c.playerFaction;
+      const home = Object.keys(c.systems).find(id => c.systems[id].owner === my);
+      Object.assign(c.systems[home], { moved: false, siege: null, fleet: [{ id: 'corvette', count: 2 }] });
+      __gal.selectTest(home);
+      const view = document.getElementById('view');
+      for (const nb of G.neighborsOf(home)) {
+        const p = __gal.screenTest(nb);
+        if (p.z < 1 && document.elementFromPoint(p.x, p.y) === view) return { home, nb, x: p.x, y: p.y };
+      }
+      return { home, nb: null };
+    });
+    if (g27.nb) {
+      await page.mouse.click(g27.x, g27.y);
+      await page.waitForTimeout(400);
+      const st = await page.evaluate(h => ({ sel: __gal.state.selected, moved: !!__gal.camp.systems[h].moved,
+        fleet: __gal.camp.systems[h].fleet.reduce((a, x) => a + x.count, 0), modal: !!document.querySelector('.modal') }), g27.home);
+      ok('карта: ЛКМ по соседнему миру выбирает его, флот остаётся дома (C27)', st.sel === g27.nb && !st.moved && st.fleet === 2 && !st.modal,
+        JSON.stringify(st));
+      await page.keyboard.press('Escape');
+      const desel = await page.evaluate(() => ({ sel: __gal.state.selected, tech: !!document.querySelector('.tech-block') }));
+      ok('карта: Escape снимает выбор, технологии снова видны (C38)', desel.sel === null && desel.tech, JSON.stringify(desel));
+      await page.keyboard.press('Escape');
+      const pm = await page.waitForSelector('.screen.pause', { timeout: 5000 }).then(() => true, () => false);
+      await page.keyboard.press('Escape');
+      ok('карта: Escape без выбора — меню паузы, Escape — закрыть', pm && await page.evaluate(() => !document.querySelector('.screen.pause')));
+    } else info('карта: ЛКМ по соседу', 'сосед не виден на поле — пропущено');
     await clean('кампания');
 
     /* Исход боя на орбите доходит до кампании ЧЕСТНО (C17). Раньше
@@ -941,8 +1226,13 @@ const SCAN = () => {
         return Math.min(k, foes.length);
       }, kill);
       q = await tap(page, '[data-role="retreat"]');
+      // C34: отход — только через подтверждение
+      const asked = await page.waitForSelector('.modal.confirm [data-a="yes"]', { state: 'visible', timeout: 5000 }).then(() => true, () => false);
+      const early = await page.evaluate(() => __sp.retreat[__sp.playerSide]);
+      const q2 = await tap(page, '.modal.confirm [data-a="yes"]');
       const going = await page.evaluate(() => __sp.retreat[__sp.playerSide]);
-      ok(`${what}: «Отход» нажимается и флот копит гипер`, q.ok && going, q.why);
+      ok(`${what}: «Отход» спрашивает подтверждение, после «Отходить» флот копит гипер`, q.ok && asked && !early && q2.ok && going,
+        q.why || q2.why || `окно: ${asked}, отход до подтверждения: ${early}`);
       await mute(page, true);
       await tap(page, '[data-speed="4"]');
       const done = await page.waitForFunction(() => {

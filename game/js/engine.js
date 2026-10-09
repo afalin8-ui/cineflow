@@ -1,13 +1,19 @@
 /* Движок: всё, что общее для трёх экранов (галактика, космос, земля).
-   Рендерер, тактическая камера, единое управление для пальцев и мыши,
+   Рендерер, тактическая камера, единое управление для мыши и пальцев,
    пул эффектов (лучи, трассеры, взрывы) и мелкая математика.
 
-   Управление сделано «планшет в первую очередь»:
+   Управление сделано «компьютер в первую очередь», как в RTS (C25, C72):
+     мышь:  ЛКМ — выбрать, протяжкой — рамка; ПКМ — приказ (на
+            ОТПУСКАНИИ, если мышь не уехала), ПКМ с протяжкой — поворот
+            камеры; средняя кнопка с протяжкой — двигать карту; колесо —
+            приближение к курсору; курсор у края экрана — прокрутка;
+     клавиши: стрелки — двигать карту, Q/E — поворот; WASD — только
+            там, где буквы не заняты приказами (см. `wasd`);
      палец: тянуть по пустому — двигать карту, щипок — приближение,
             два пальца — облёт, короткое касание — выбрать/приказать,
-            долгое нажатие и потянуть — рамка выделения;
-     мышь:  ЛКМ-рамка, ПКМ — приказ, колесо — приближение,
-            средняя кнопка или Alt — облёт, WASD — двигать карту. */
+            долгое нажатие и потянуть — рамка выделения.
+   Alt с мышью не используется вовсе: в Linux его забирает оконный
+   менеджер — Alt+протяжка двигает окно браузера (C72). */
 
 import * as THREE from '../vendor/three.module.min.js';
 import { EffectComposer } from '../vendor/EffectComposer.js';
@@ -25,6 +31,20 @@ export const TAU = Math.PI * 2;
 
 export const IS_TOUCH = matchMedia('(pointer: coarse)').matches ||
   ('ontouchstart' in window && navigator.maxTouchPoints > 0);
+
+/* Настройки управления — одни на все экраны, помнятся в localStorage
+   (`capella_<имя>`). Прокрутка у края по умолчанию включена: это первое,
+   чего ждёт рука за компьютером, а выключают её из меню паузы те, кому
+   она мешает (окно не во весь экран, второй монитор рядом). */
+export const prefs = { edge: true };
+try {
+  const v = localStorage.getItem('capella_edge');
+  if (v !== null) prefs.edge = v === '1';
+} catch (e) { /* приватный режим */ }
+export function setPref(key, val) {
+  prefs[key] = val;
+  try { localStorage.setItem('capella_' + key, val === true ? '1' : val === false ? '0' : String(val)); } catch (e) { /* и ладно */ }
+}
 
 // ─────────────────────────────────────────────────────────────
 // РЕНДЕРЕР
@@ -155,10 +175,24 @@ export class TacticalCamera {
     this.maxPitch = opts.maxPitch ?? 1.45;
     this.bounds = opts.bounds || null;
     this.allowY = !!opts.allowY;
+    /* WASD двигает камеру только там, где буквы не заняты приказами.
+       В бою на орбите A — атака с ходу, S — стоп, и половина раскладки
+       (W и D двигают, A и S — нет) путала бы сильнее, чем её отсутствие:
+       там камера на стрелках, у края экрана и на средней кнопке. */
+    this.wasd = opts.wasd !== false;
+    // Прокрутка у края экрана — только у камер игровых экранов
+    this.edge = !!opts.edge;
+    this.controls = null;          // Controls сам вписывается сюда
     this.keys = new Set();
     this.smooth = new THREE.Vector3().copy(this.target);
+    /* Расстояние сглаживается так же, как точка взгляда (C131): `dist` —
+       куда едем, `sdist` — где камера сейчас. Колесо раньше меняло
+       расстояние мгновенно, и приближение шло рывками по 13%. */
+    this.sdist = this.dist;
     this._onKeyDown = e => {
       if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+      // Ctrl/⌘ с буквой — это сочетание (группы, браузер), а не камера
+      if (e.ctrlKey || e.metaKey) return;
       this.keys.add(e.code);
     };
     this._onKeyUp = e => this.keys.delete(e.code);
@@ -185,25 +219,88 @@ export class TacticalCamera {
     if (dist) this.dist = clamp(dist, this.minDist, this.maxDist);
   }
 
+  /* Сдвиг точки взгляда в осях ЭКРАНА: fx — вправо, fz — к себе
+     (отрицательное — вперёд, вглубь экрана), amount — в единицах мира.
+     Раньше у s-членов стоял обратный знак: при взгляде строго с юга или
+     с севера (yaw 0 и π) этого не видно, а после поворота камеры Q/E
+     стрелки и WASD уводили карту в зеркальную сторону. */
+  move(fx, fz, amount) {
+    const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
+    this.target.x += (fx * c + fz * s) * amount;
+    this.target.z += (-fx * s + fz * c) * amount;
+  }
+
+  // Сколько единиц мира приходится на точку экрана у точки взгляда
+  worldPerPx(hPx) {
+    return 2 * this.sdist * Math.tan(THREE.MathUtils.degToRad(this.cam.fov) / 2) / Math.max(1, hPx);
+  }
+
+  /* Сдвиг «за экран»: мышь уехала на dx, dy точек — мир едет за ней.
+     Запасной путь там, где луч не встречает плоскость (над горизонтом). */
+  panScreen(dxPx, dyPx, hPx) {
+    const w = this.worldPerPx(hPx);
+    this.move(-dxPx * w, -dyPx * w / Math.max(0.25, Math.sin(this.pitch)), 1);
+    this.clampTarget();
+  }
+
+  /* Приближение К ТОЧКЕ ПОД КУРСОРОМ (C131). Масштабируем положение
+     камеры вокруг точки P на плоскости взгляда: тогда P остаётся под
+     тем же пикселем и в итоге, и на всём пути сглаживания (точка
+     взгляда и расстояние сглаживаются одной долей, и камера идёт по
+     прямой через P). P считаем от камеры «как встанет», а не от той,
+     что ещё в пути: иначе быстрые щелчки колеса копили бы увод.
+     nx, ny — координаты курсора в −1…1. */
+  zoomAt(factor, nx, ny) {
+    const d0 = this.dist;
+    const d1 = clamp(d0 * factor, this.minDist, this.maxDist);
+    if (d1 === d0) return;
+    const P = nx === undefined ? null : this._goalPoint(nx, ny);
+    this.dist = d1;
+    if (!P) return;
+    const k = 1 - d1 / d0;
+    this.target.x += (P.x - this.target.x) * k;
+    this.target.z += (P.z - this.target.z) * k;
+    this.clampTarget();
+  }
+
+  _goalPoint(nx, ny) {
+    const c = this._goal || (this._goal = new THREE.PerspectiveCamera());
+    c.fov = this.cam.fov; c.aspect = this.cam.aspect; c.near = this.cam.near; c.far = this.cam.far;
+    c.updateProjectionMatrix();
+    this._place(c, this.target, this.dist);
+    c.updateMatrixWorld();
+    const ray = this._ray || (this._ray = new THREE.Raycaster());
+    ray.setFromCamera(new THREE.Vector2(nx, ny), c);
+    const o = ray.ray.origin, d = ray.ray.direction;
+    // Над горизонтом или почти вдоль плоскости — приближаем к середине
+    if (d.y > -0.02) return null;
+    const py = this.target.y;
+    const t = (py - o.y) / d.y;
+    if (t < 0) return null;
+    const P = new THREE.Vector3(o.x + d.x * t, py, o.z + d.z * t);
+    // У горизонта точка улетает за тридевять земель — тянем не дальше трёх дистанций
+    const dx = P.x - this.target.x, dz = P.z - this.target.z, L = Math.hypot(dx, dz), max = this.dist * 3;
+    if (L > max) { P.x = this.target.x + dx / L * max; P.z = this.target.z + dz / L * max; }
+    return P;
+  }
+
   update(dt) {
     const k = this.keys;
     let fx = 0, fz = 0;
-    if (k.has('KeyW') || k.has('ArrowUp')) fz -= 1;
-    if (k.has('KeyS') || k.has('ArrowDown')) fz += 1;
-    if (k.has('KeyA') || k.has('ArrowLeft')) fx -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) fx += 1;
+    if (k.has('ArrowUp') || (this.wasd && k.has('KeyW'))) fz -= 1;
+    if (k.has('ArrowDown') || (this.wasd && k.has('KeyS'))) fz += 1;
+    if (k.has('ArrowLeft') || (this.wasd && k.has('KeyA'))) fx -= 1;
+    if (k.has('ArrowRight') || (this.wasd && k.has('KeyD'))) fx += 1;
     if (k.has('KeyQ')) this.yaw += dt * 1.3;
     if (k.has('KeyE')) this.yaw -= dt * 1.3;
     if (this.allowY) {
       if (k.has('KeyR')) this.target.y += this.dist * 0.5 * dt;
       if (k.has('KeyF')) this.target.y -= this.dist * 0.5 * dt;
     }
-    if (fx || fz) {
-      const speed = this.dist * 0.8 * dt;
-      const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
-      this.target.x += (fx * c - fz * s) * speed;
-      this.target.z += (fx * s + fz * c) * speed;
-    }
+    // Курсор у края экрана — та же прокрутка, что стрелками (C25)
+    const ed = this.edge && prefs.edge && this.controls ? this.controls.edgeDir() : null;
+    if (ed) { fx = clamp(fx + ed.x, -1, 1); fz = clamp(fz + ed.y, -1, 1); }
+    if (fx || fz) this.move(fx, fz, this.dist * 0.8 * dt);
     this.clampTarget();
     this.apply(dt);
   }
@@ -219,34 +316,50 @@ export class TacticalCamera {
   apply(dt, instant) {
     const t = instant ? 1 : 1 - Math.pow(0.0012, Math.min(dt, 0.1));
     this.smooth.lerp(this.target, t);
+    this.sdist += (this.dist - this.sdist) * t;
+    this._place(this.cam, this.smooth, this.sdist);
+  }
+
+  _place(cam, at, dist) {
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-    this.cam.position.set(
-      this.smooth.x + Math.sin(this.yaw) * cp * this.dist,
-      this.smooth.y + sp * this.dist,
-      this.smooth.z + Math.cos(this.yaw) * cp * this.dist,
+    cam.position.set(
+      at.x + Math.sin(this.yaw) * cp * dist,
+      at.y + sp * dist,
+      at.z + Math.cos(this.yaw) * cp * dist,
     );
-    this.cam.lookAt(this.smooth);
+    cam.lookAt(at);
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// УПРАВЛЕНИЕ: пальцы и мышь в одном месте
+// УПРАВЛЕНИЕ: мышь и пальцы в одном месте
 //
 // handlers:
-//   onTap(worldPoint, entity, opts)  — короткое касание / клик
+//   onTap({x, y, entity, world, shift, touch, double})
+//                                    — щелчок / касание; double — второй
+//                                      щелчок ЛКМ в том же месте за 0,4 с
 //   onBox(rect, additive)            — рамка выделения
-//   onOrder(worldPoint, entity, opts)— ПКМ на мыши (на планшете приказы
-//                                      идут через onTap с флагом order)
+//   onOrder({x, y, entity, world, shift})
+//                                    — ПКМ на мыши, на ОТПУСКАНИИ: если
+//                                      мышь уехала дальше 6 точек, это был
+//                                      поворот камеры, а не приказ
 //   pickMeshes()                     — что можно ткнуть
 //   canPick(entity)                  — можно ли его выбрать сейчас
 //                                      (скрытый противник — нельзя)
 //   planeY()                         — высота плоскости для приказов
-//   hasSelection()                   — есть ли выделение (решает,
-//                                      касание — это приказ или выбор)
+//
+// Наружу: hover {x, y, in} — где мышь над полем (экран сам решает,
+// что под ней, и красит курсор через setCursor); edgeDir() — для
+// прокрутки у края; viewQuad() — рамка обзора на миникарте.
 // ─────────────────────────────────────────────────────────────
 
 const LONG_PRESS_MS = 420;
 const TAP_SLOP = 12;
+// У мыши рука твёрже пальца: 6 точек отличают «щёлкнул» от «потянул»
+const MOUSE_SLOP = 6;
+const DBL_MS = 400, DBL_PX = 10;
+// Полоса у края экрана, где курсор прокручивает карту
+export const EDGE_PX = 10;
 
 // Виден ли объект на самом деле: спрятан он сам или кто-то из предков
 function shownInScene(o) {
@@ -263,9 +376,13 @@ export class Controls {
     this.ray = new THREE.Raycaster();
     this.ndc = new THREE.Vector2();
     this.pointers = new Map();
-    this.mode = null;        // 'pan' | 'box' | 'orbit' | 'pinch' | null
+    // 'pan' | 'box' | 'orbit' | 'pinch' | 'rotate' | 'mpan' | 'maybe-…' | null
+    this.mode = null;
     this.boxMode = false;    // принудительная рамка (кнопка на панели)
     this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    this.hover = { x: 0, y: 0, in: false };
+    this._cur = null;
+    tcam.controls = this;
 
     this.boxEl = document.createElement('div');
     this.boxEl.className = 'select-box';
@@ -277,9 +394,21 @@ export class Controls {
 
   dispose() {
     this.boxEl.remove();
+    this.setCursor(null);
+    this.dom.classList.remove('cur-drag');
     for (const [k, v] of this._listeners) this.dom.removeEventListener(k, v);
-    removeEventListener('pointerup', this._up);
-    removeEventListener('pointercancel', this._up);
+    for (const [k, v] of this._winListeners) removeEventListener(k, v);
+    if (this.tcam.controls === this) this.tcam.controls = null;
+  }
+
+  /* Курсор поля: экран говорит, что сейчас под мышью (выбрать /
+     атаковать / идти), а Controls держит ровно один такой класс на
+     канве. Канва общая для всех экранов, поэтому dispose его снимает. */
+  setCursor(cls) {
+    if (this._cur === cls) return;
+    if (this._cur) this.dom.classList.remove(this._cur);
+    this._cur = cls || null;
+    if (cls) this.dom.classList.add(cls);
   }
 
   // ── геометрия ──────────────────────────────────────────
@@ -298,6 +427,25 @@ export class Controls {
     const t = (py - o.y) / d.y;
     if (t < 0 || t > 1e6) return null;
     return new THREE.Vector3(o.x + d.x * t, py, o.z + d.z * t);
+  }
+
+  /* Рамка обзора на плоскости — четыре угла экрана (C73). Угол, чей
+     луч уходит над горизонтом, кладём на дальний край по направлению
+     взгляда: иначе рамка на миникарте рвётся. [[x, z] × 4] */
+  viewQuad(planeY = 0, far = 1e4) {
+    const out = [];
+    for (const [sx, sy] of [[-1, 1], [1, 1], [1, -1], [-1, -1]]) {
+      this.ndc.set(sx, sy);
+      this.ray.setFromCamera(this.ndc, this.tcam.cam);
+      const o = this.ray.ray.origin, d = this.ray.ray.direction;
+      let t = d.y < -1e-4 ? (planeY - o.y) / d.y : Infinity;
+      if (t < 0) t = Infinity;
+      if (t > far) {
+        const L = Math.hypot(d.x, d.z) || 1;
+        out.push([o.x + d.x / L * far, o.z + d.z / L * far]);
+      } else out.push([o.x + d.x * t, o.z + d.z * t]);
+    }
+    return out;
   }
 
   pick(x, y) {
@@ -322,8 +470,8 @@ export class Controls {
     return null;
   }
 
-  // Ближайшая к точке экрана сущность — запасной способ прицеливания
-  // пальцем, когда луч прошёл мимо мелкой модели.
+  // Ближайшая к точке экрана сущность — запасной способ прицеливания,
+  // когда луч прошёл мимо мелкой модели.
   pickNear(x, y, list, camera, w, h, radiusPx) {
     const r = this.dom.getBoundingClientRect();
     const px = x - r.left, py = y - r.top;
@@ -339,17 +487,72 @@ export class Controls {
     return best;
   }
 
+  /* ── ПРОКРУТКА У КРАЯ (C25). Куда толкает курсор: {x, y} в −1…1 или
+     null. Не толкает, если окно не в фокусе или мышь ушла из окна
+     (иначе карта уезжала бы, пока человек в соседней программе), если
+     под курсором панель интерфейса (кнопка «Отход» у верхнего края —
+     не повод уводить карту) и пока идёт протяжка камеры. Что под
+     курсором, спрашиваем у самой страницы (elementFromPoint), а не
+     помним с последнего движения: мышь стоит, а поверх поля открылось
+     меню паузы — карта под ним ехать не должна. Спрашиваем только
+     в полосе у края, то есть почти никогда. */
+  edgeDir() {
+    if (!this.enabled || !this._mouseIn) return null;
+    if (this.mode === 'rotate' || this.mode === 'mpan' || this.mode === 'maybe-rotate') return null;
+    if (typeof document.hasFocus === 'function' && !document.hasFocus()) return null;
+    const r = this.dom.getBoundingClientRect();
+    const x = this._mx - r.left, y = this._my - r.top;
+    if (x < 0 || y < 0 || x > r.width || y > r.height) return null;
+    let ex = 0, ey = 0;
+    if (x < EDGE_PX) ex = -1; else if (x > r.width - EDGE_PX) ex = 1;
+    if (y < EDGE_PX) ey = -1; else if (y > r.height - EDGE_PX) ey = 1;
+    if (!ex && !ey) return null;
+    if (document.elementFromPoint(this._mx, this._my) !== this.dom) return null;
+    return { x: ex, y: ey };
+  }
+
   // ── события ────────────────────────────────────────────
   _bind() {
     const d = this.dom;
     this._listeners = [];
+    this._winListeners = [];
     const on = (name, fn, opts) => { d.addEventListener(name, fn, opts); this._listeners.push([name, fn]); };
+    const onWin = (name, fn, opts) => { addEventListener(name, fn, opts); this._winListeners.push([name, fn]); };
 
     on('contextmenu', e => e.preventDefault());
+    // Средняя кнопка в Windows включает автопрокрутку, в Linux — вставку
+    on('mousedown', e => { if (e.button === 1) e.preventDefault(); });
+    on('auxclick', e => { if (e.button === 1) e.preventDefault(); });
+
+    /* Колесо — приближение к курсору (C131). Тачпад приходит сюда же:
+       щипок — это колесо с Ctrl (приближение мелким шагом, иначе
+       браузер зумил бы страницу целиком), а прокрутка двумя пальцами
+       вбок — сдвиг карты (C72). Строки и страницы (Firefox) переводим
+       в точки, иначе один щелчок колеса двигал бы на три точки. */
     on('wheel', e => {
       e.preventDefault();
-      this.tcam.zoom(Math.exp(e.deltaY * 0.0012));
+      if (!this.enabled) return;
+      let dx = e.deltaX, dy = e.deltaY;
+      if (e.deltaMode === 1) { dx *= 40; dy *= 40; } else if (e.deltaMode === 2) { dx *= 800; dy *= 800; }
+      const n = this._ndc(e.clientX, e.clientY);
+      const nx = n.x, ny = n.y;
+      if (e.ctrlKey) { this.tcam.zoomAt(Math.exp(clamp(dy, -60, 60) * 0.01), nx, ny); return; }
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.tcam.panScreen(-dx, 0, this.dom.getBoundingClientRect().height);
+        return;
+      }
+      this.tcam.zoomAt(Math.exp(clamp(dy, -400, 400) * 0.0012), nx, ny);
     }, { passive: false });
+
+    // Где мышь — для прокрутки у края (по всему окну, а не только над полем)
+    onWin('pointermove', e => {
+      if (e.pointerType !== 'mouse') return;
+      this._mx = e.clientX; this._my = e.clientY; this._mouseIn = true;
+    }, { passive: true });
+    onWin('mouseout', e => { if (!e.relatedTarget) this._mouseIn = false; });
+    onWin('blur', () => { this._mouseIn = false; });
+
+    on('pointerleave', e => { if (e.pointerType === 'mouse') this.hover.in = false; });
 
     on('pointerdown', e => {
       if (!this.enabled) return;
@@ -364,11 +567,17 @@ export class Controls {
       this.pointers.set(e.pointerId, p);
 
       if (e.pointerType === 'mouse') {
-        if (e.button === 2) {                       // ПКМ — приказ
-          this._emitOrder(e);
-          this.mode = null;
-        } else if (e.button === 1 || e.altKey) {
-          this.mode = 'orbit';
+        if (e.button === 2) {
+          /* ПКМ — приказ, но на ОТПУСКАНИИ: потянул больше 6 точек —
+             это поворот камеры, приказ не отдаётся */
+          this.mode = 'maybe-rotate';
+        } else if (e.button === 1) {
+          // Средняя — «схватить мир» и тянуть карту, как пальцем
+          e.preventDefault();
+          this.mode = 'mpan';
+          this._panAnchor = this.worldAt(e.clientX, e.clientY);
+          this._panStart = this.tcam.target.clone();
+          d.classList.add('cur-drag');
         } else if (e.button === 0) {
           this.mode = this.boxMode ? 'box' : 'maybe-box';
         }
@@ -398,13 +607,20 @@ export class Controls {
     });
 
     on('pointermove', e => {
+      if (e.pointerType === 'mouse') {
+        this.hover.x = e.clientX; this.hover.y = e.clientY; this.hover.in = true;
+      }
       const p = this.pointers.get(e.pointerId);
       if (!p) return;
       const prevX = p.x, prevY = p.y;
       p.x = e.clientX; p.y = e.clientY;
-      if (Math.abs(p.x - p.x0) > TAP_SLOP || Math.abs(p.y - p.y0) > TAP_SLOP) {
+      const slop = p.type === 'mouse' ? MOUSE_SLOP : TAP_SLOP;
+      if (Math.abs(p.x - p.x0) > slop || Math.abs(p.y - p.y0) > slop) {
         if (!p.moved) { p.moved = true; this._clearLongPress(); }
       }
+
+      // Средняя кнопка тянет карту с первой же точки — порога ей не нужно
+      if (this.mode === 'mpan') { this._grab(p, prevX, prevY); return; }
       if (!p.moved) return;
 
       if (this.mode === 'pinch' && this.pointers.size >= 2) {
@@ -419,24 +635,15 @@ export class Controls {
         return;
       }
 
-      if (this.mode === 'orbit') {
-        this.tcam.orbit((p.x - prevX) * 0.005, (p.y - prevY) * 0.005);
+      if (this.mode === 'maybe-rotate') { this.mode = 'rotate'; d.classList.add('cur-drag'); }
+      if (this.mode === 'rotate' || this.mode === 'orbit') {
+        this.tcam.orbit((p.x - prevX) * 0.005, (p.y - prevY) * 0.004);
         return;
       }
 
       if (this.mode === 'maybe-pan' || this.mode === 'pan') {
         this.mode = 'pan';
-        // «схватить мир»: держим точку под пальцем
-        const now = this.worldAt(p.x, p.y);
-        if (now && this._panAnchor) {
-          this.tcam.target.copy(this._panStart).add(this._panAnchor).sub(now);
-          this.tcam.clampTarget();
-          // якорь пересчитываем от новой позиции камеры
-          this.tcam.apply(0.016, true);
-          const re = this.worldAt(p.x, p.y);
-          if (re) this._panAnchor = re;
-          this._panStart = this.tcam.target.clone();
-        }
+        this._grab(p, prevX, prevY);
         return;
       }
 
@@ -453,8 +660,17 @@ export class Controls {
       this.pointers.delete(e.pointerId);
       this._clearLongPress();
       const dur = performance.now() - p.t0;
+      const mode = this.mode;
+      d.classList.remove('cur-drag');
 
-      if (this.mode === 'box' && (p.moved || this._boxOrigin)) {
+      if (p.type === 'mouse' && p.button !== 0) {
+        // ПКМ без протяжки — приказ; с протяжкой был поворот
+        if (p.button === 2 && mode === 'maybe-rotate' && !p.moved) this._emitOrder(p, e.shiftKey);
+        this.mode = this.pointers.size ? this.mode : null;
+        return;
+      }
+
+      if (mode === 'box' && (p.moved || this._boxOrigin)) {
         const shown = this.boxEl.style.display === 'block';
         this.boxEl.style.display = 'none';
         this._boxOrigin = null;
@@ -475,14 +691,33 @@ export class Controls {
       }
       this.boxEl.style.display = 'none';
 
-      if (!p.moved && dur < 500 && (p.type !== 'mouse' || p.button === 0)) {
+      if (!p.moved && (p.type === 'mouse' ? dur < 900 : dur < 500)) {
         this._emitTap(p, e.shiftKey);
       }
       if (!this.pointers.size) this.mode = null;
       else if (this.pointers.size === 1) this.mode = 'maybe-pan';
     };
-    addEventListener('pointerup', this._up);
-    addEventListener('pointercancel', this._up);
+    onWin('pointerup', this._up);
+    onWin('pointercancel', this._up);
+  }
+
+  /* «Схватить мир»: точка под указателем остаётся под ним. Где луч не
+     встречает плоскость (над горизонтом), двигаем «за экран». */
+  _grab(p, prevX, prevY) {
+    const now = this.worldAt(p.x, p.y);
+    if (now && this._panAnchor) {
+      this.tcam.target.copy(this._panStart).add(this._panAnchor).sub(now);
+      this.tcam.clampTarget();
+      // якорь пересчитываем от новой позиции камеры
+      this.tcam.apply(0.016, true);
+      const re = this.worldAt(p.x, p.y);
+      if (re) this._panAnchor = re;
+      this._panStart = this.tcam.target.clone();
+    } else {
+      this.tcam.panScreen(p.x - prevX, p.y - prevY, this.dom.getBoundingClientRect().height);
+      this._panAnchor = this.worldAt(p.x, p.y);
+      this._panStart = this.tcam.target.clone();
+    }
   }
 
   _clearLongPress() {
@@ -499,15 +734,22 @@ export class Controls {
   }
 
   _emitTap(p, shift) {
+    // Второй щелчок ЛКМ в том же месте за 0,4 с — двойной (C50)
+    let double = false;
+    if (p.type === 'mouse') {
+      const now = performance.now(), l = this._lastTap;
+      double = !!l && now - l.t < DBL_MS && Math.hypot(p.x - l.x, p.y - l.y) < DBL_PX;
+      this._lastTap = double ? null : { t: now, x: p.x, y: p.y };
+    }
     const ent = this.pick(p.x, p.y);
     const world = this.worldAt(p.x, p.y);
-    this.h.onTap && this.h.onTap({ x: p.x, y: p.y, entity: ent, world, shift, touch: p.type !== 'mouse' });
+    this.h.onTap && this.h.onTap({ x: p.x, y: p.y, entity: ent, world, shift, touch: p.type !== 'mouse', double });
   }
 
-  _emitOrder(e) {
-    const ent = this.pick(e.clientX, e.clientY);
-    const world = this.worldAt(e.clientX, e.clientY);
-    this.h.onOrder && this.h.onOrder({ x: e.clientX, y: e.clientY, entity: ent, world, shift: e.shiftKey });
+  _emitOrder(p, shift) {
+    const ent = this.pick(p.x, p.y);
+    const world = this.worldAt(p.x, p.y);
+    this.h.onOrder && this.h.onOrder({ x: p.x, y: p.y, entity: ent, world, shift });
   }
 
   setBoxMode(on) {
@@ -1115,14 +1357,50 @@ export function createMinimap(root, extent, opts = {}) {
     (z / extent * 0.5 + 0.5) * cv.height,
   ];
 
+  /* Мышью по миникарте — как в любой RTS (C73): ЛКМ переносит камеру,
+     протяжка ведёт её за курсором (указатель захвачен — можно уехать
+     за край карты и не потерять ведение), ПКМ отдаёт приказ в точку.
+     Меню браузера по ПКМ здесь не всплывает. opts.onGo(x, z),
+     opts.onOrder(x, z) — в игровых координатах. */
+  const toWorld = ev => {
+    const r = cv.getBoundingClientRect();
+    return {
+      x: clamp((ev.clientX - r.left) / r.width - 0.5, -0.5, 0.5) * 2 * extent,
+      z: clamp((ev.clientY - r.top) / r.height - 0.5, -0.5, 0.5) * 2 * extent,
+    };
+  };
+  let dragId = null;
+  box.addEventListener('contextmenu', e => e.preventDefault());
+  box.addEventListener('pointerdown', ev => {
+    ev.preventDefault();
+    const w = toWorld(ev);
+    if (ev.pointerType === 'mouse' && ev.button === 2) { if (opts.onOrder) opts.onOrder(w.x, w.z); return; }
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    dragId = ev.pointerId;
+    try { box.setPointerCapture(ev.pointerId); } catch (_) { /* и ладно */ }
+    if (opts.onGo) opts.onGo(w.x, w.z);
+  });
+  box.addEventListener('pointermove', ev => {
+    if (dragId !== ev.pointerId) return;
+    const w = toWorld(ev);
+    if (opts.onGo) opts.onGo(w.x, w.z);
+  });
+  const end = ev => { if (dragId === ev.pointerId) dragId = null; };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+
   return {
     el: box,
-    /* dots — [{x, z, color, r}], view — {x, z, r} область обзора.
-       Обе величины в игровых координатах, пересчёт здесь. */
+    /* dots — [{x, z, color, r}], view — область обзора: {pts: [[x, z]×4]}
+       (трапеция углов экрана, см. Controls.viewQuad) или {x, z, r}.
+       view можно отдать функцией — посчитается только при перерисовке.
+       Всё в игровых координатах, пересчёт здесь. */
     draw(dt, dots, view) {
       acc += dt;
       if (acc < 0.1) return;
       acc = 0;
+      if (typeof dots === 'function') dots = dots();
+      if (typeof view === 'function') view = view();
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.fillStyle = opts.bg || 'rgba(6,10,17,0.72)';
       ctx.fillRect(0, 0, cv.width, cv.height);
@@ -1134,11 +1412,21 @@ export function createMinimap(root, extent, opts = {}) {
         ctx.fillRect(px - r / 2, py - r / 2, r, r);
       }
       if (view) {
-        const [vx, vy] = toMap(view.x, view.z);
-        const vr = view.r / extent * 0.5 * cv.width;
         ctx.strokeStyle = 'rgba(230,240,250,0.65)';
         ctx.lineWidth = 2;
-        ctx.strokeRect(vx - vr, vy - vr, vr * 2, vr * 2);
+        if (view.pts) {
+          ctx.beginPath();
+          view.pts.forEach(([x, z], i) => {
+            const [px, py] = toMap(x, z);
+            if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+          });
+          ctx.closePath();
+          ctx.stroke();
+        } else {
+          const [vx, vy] = toMap(view.x, view.z);
+          const vr = view.r / extent * 0.5 * cv.width;
+          ctx.strokeRect(vx - vr, vy - vr, vr * 2, vr * 2);
+        }
       }
     },
     dispose() { box.remove(); },

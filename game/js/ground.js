@@ -126,7 +126,7 @@ export function createGroundBattle(ctx, config) {
 
   const tcam = new TacticalCamera({
     dist: 150, minDist: 40, maxDist: 380, pitch: 0.8, yaw: 0.4,
-    bounds: { x: MAP - 20, z: MAP - 20 }, far: 2600,
+    bounds: { x: MAP - 20, z: MAP - 20 }, far: 2600, edge: true,
   });
 
   // Ровные площадки: базы и поля снабжения. Задаём до построения меша
@@ -1596,6 +1596,7 @@ export function createGroundBattle(ctx, config) {
   hud.className = 'hud hud-ground';
   hud.innerHTML = `
     <div class="topbar">
+      <button class="menu-btn" data-role="menu" title="Меню · Esc" aria-label="Меню">☰</button>
       <div class="res"><span class="credits" data-role="credits">0</span><small>кредитов</small></div>
       <div class="title" data-role="banner"></div>
       <div class="speedctl">
@@ -1603,7 +1604,7 @@ export function createGroundBattle(ctx, config) {
         <button data-speed="1" class="on">1×</button>
         <button data-speed="2">2×</button>
         <button data-speed="4">4×</button>
-        <button data-role="retreat" class="danger">Сдаться</button>
+        <button data-role="retreat" class="danger danger-gap" title="Бой будет проигран — спросит подтверждение">Сдаться</button>
       </div>
     </div>
     <div class="markers" data-role="markers"></div>
@@ -1643,7 +1644,7 @@ export function createGroundBattle(ctx, config) {
       `<span class="wtag">${t.name}</span>`).join('')}</div>`;
   $('hint').innerHTML = IS_TOUCH
     ? 'Касание по своему — выбрать · по врагу — атаковать · по земле — идти · тянуть — карта · щипок — приближение · долгое нажатие — рамка · отряд записывается долгим нажатием на цифру'
-    : 'ЛКМ — выбрать, рамкой — группу · ПКМ — приказ · колесо — приближение · WASD — карта · отряд: удержать цифру справа';
+    : 'ЛКМ — выбрать · ПКМ — приказ · средняя кнопка или WASD — карта · Shift+1…3 — отряд · Esc — меню';
 
   hud.querySelectorAll('[data-speed]').forEach(b => {
     b.onclick = () => {
@@ -1653,7 +1654,18 @@ export function createGroundBattle(ctx, config) {
       hud.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', +x.dataset.speed === v));
     };
   });
-  $('retreat').onclick = () => finish('defeat');
+  /* «Сдаться» — через подтверждение (C34): кнопка стоит в полосе
+     скорости, и промах мимо «4×» раньше сразу проигрывал бой. */
+  $('retreat').onclick = () => {
+    if (ended) return;
+    if (!ctx.confirm) { finish('defeat'); return; }
+    ctx.confirm({
+      title: 'Сдаться?',
+      text: 'Бой будет проигран: плацдарм потерян, планета остаётся за противником.',
+      yes: 'Сдаться', no: 'Продолжить бой',
+    }, () => finish('defeat'));
+  };
+  $('menu').onclick = () => openPause();
 
   hud.querySelectorAll('[data-q]').forEach(b => {
     b.onclick = () => {
@@ -1704,10 +1716,12 @@ export function createGroundBattle(ctx, config) {
   };
 
   /* ── ОТРЯДЫ ───────────────────────────────────────────────
-     Цифровых клавиш на планшете нет, поэтому три кнопки:
-     коснулся — выбрал отряд и прыгнул к нему камерой, придержал —
-     записал в него то, что выделено сейчас. */
+     Три кнопки: коснулся — выбрал отряд и прыгнул к нему камерой,
+     придержал — записал в него то, что выделено сейчас. С клавиатуры
+     то же самое (C50): Ctrl или Shift + цифра — записать, цифра —
+     выбрать (см. onKey). */
   const groupBtns = hud.querySelectorAll('[data-g]');
+  const groupKeys = {};      // цифра → {save, pick}: то же с клавиатуры
   for (const b of groupBtns) {
     const id = b.dataset.g;
     let held = false, timer = null;
@@ -1727,6 +1741,7 @@ export function createGroundBattle(ctx, config) {
       focusOn(list);
       refreshSel();
     };
+    groupKeys[id] = { save, pick };
     b.addEventListener('pointerdown', () => {
       held = false;
       timer = setTimeout(() => { held = true; save(); }, 550);
@@ -2014,7 +2029,18 @@ export function createGroundBattle(ctx, config) {
      крупнее юнитов, поля снабжения жёлтым. Клик по ней переводит
      камеру — на планшете это единственный быстрый способ попасть
      на другой край карты. */
-  const minimap = createMinimap(hud, MAP);
+  const minimap = createMinimap(hud, MAP, {
+    // ЛКМ и протяжка — камера туда, ПКМ — приказ в точку (C73)
+    onGo(x, z) {
+      tcam.focus(new THREE.Vector3(x, tcam.target.y, z));
+      tcam.clampTarget();
+      tcam.apply(0, true);
+    },
+    onOrder(x, z) {
+      if (state.placing) return;
+      issueOrder(null, new THREE.Vector3(x, 0, z));
+    },
+  });
   if ((config.recon ?? 99) === 0) {
     setTimeout(() => toast('Разведки нет: высадка вслепую'), 900);
   }
@@ -2022,12 +2048,6 @@ export function createGroundBattle(ctx, config) {
   // чтобы читались по очереди, а не стопкой
   battleTags.forEach((t, i) =>
     setTimeout(() => toast(`${t.name}: ${t.desc.toLowerCase()}`), 1600 + i * 2200));
-  minimap.el.addEventListener('pointerdown', ev => {
-    const r = minimap.el.getBoundingClientRect();
-    const x = ((ev.clientX - r.left) / r.width - 0.5) * 2 * MAP;
-    const z = ((ev.clientY - r.top) / r.height - 0.5) * 2 * MAP;
-    tcam.focus(new THREE.Vector3(x, 0, z));
-  });
 
   const orbitBar = $('orbitbar');
   const orbitBtns = {};
@@ -2137,7 +2157,7 @@ export function createGroundBattle(ctx, config) {
       dots.push({ x: u.pos.x, z: u.pos.z, r: 2,
         color: u.side === 'me' ? '#5ce0a0' : '#e05a4a' });
     }
-    minimap.draw(dt, dots, { x: tcam.target.x, z: tcam.target.z, r: tcam.dist * 0.55 });
+    minimap.draw(dt, dots, () => ({ pts: controls.viewQuad(0, MAP * 3) }));
   }
 
   function refreshSel() {
@@ -2244,11 +2264,43 @@ export function createGroundBattle(ctx, config) {
   }
   refreshSel();
 
+  /* Меню паузы (C35): бой стоит, пока меню открыто */
+  let pauseOpen = false;
+  function openPause() {
+    if (ended || pauseOpen || !ctx.pause) return;
+    pauseOpen = true;
+    const was = state.paused;
+    state.paused = true;
+    ctx.pause({
+      exitText: config.inCampaign
+        ? 'Бой не будет засчитан: кампания продолжится с последнего сохранения.'
+        : 'Бой не будет засчитан.',
+      onClose: () => { pauseOpen = false; state.paused = was; },
+    });
+  }
+
   function onKey(e) {
-    if (e.target && /input|textarea/i.test(e.target.tagName)) return;
-    if (e.code === 'Space') { e.preventDefault(); hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); }
-    if (e.code === 'Escape') { state.selection = []; state.placing = null; state.support.aiming = null;
-      ghost.visible = false; refreshSel(); refreshOrbit(); }
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    if (ended) return;
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); return; }
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      // Отменить по очереди; отменять нечего — меню паузы
+      if (state.selection.length || state.placing || state.support.aiming || controls.boxMode) {
+        state.selection = []; state.placing = null; state.support.aiming = null;
+        if (controls.boxMode) controls.setBoxMode(false);
+        ghost.visible = false; refreshSel(); refreshOrbit();
+      } else openPause();
+      return;
+    }
+    // Отряды с клавиатуры: Ctrl или Shift + цифра — записать, цифра — выбрать
+    const dm = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+    if (dm && !e.repeat) {
+      const g = groupKeys[dm[1]];
+      if (!g) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey || e.shiftKey) g.save(); else g.pick();
+    }
   }
   addEventListener('keydown', onKey);
 

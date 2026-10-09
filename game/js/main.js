@@ -3,7 +3,7 @@
    (карта → бой на орбите → наземная операция), сохранение
    и справочник нейроинтерфейса. */
 
-import { THREE, Viewport, TacticalCamera, starfield, IS_TOUCH, rnd, disposeScene } from './engine.js';
+import { THREE, Viewport, TacticalCamera, starfield, IS_TOUCH, rnd, disposeScene, prefs, setPref } from './engine.js';
 import { createGalaxy, newCampaign, ownedCount } from './galaxy.js';
 import { createSpaceBattle, autoResolveSpace } from './space.js';
 import { createGroundBattle, autoResolveGround } from './ground.js';
@@ -165,16 +165,29 @@ function prepThen(title, work, need = {}) {
   });
 }
 
+/* Последний бой на орбите — его фабрика. По ней «Начать бой заново»
+   из меню паузы собирает тот же бой с нуля: конфиг боя не меняется
+   по ходу (резерв и дальний гипер копируются при сборке). */
+let lastSpace = null;
+function runSpace(factory) {
+  lastSpace = factory;
+  prepThen('Подготовка боя…', () => setMode(factory), NEED_SPACE);
+}
+
 const ctx = {
   viewport, hudRoot,
   save,
   goMenu: () => showMenu(),
-  showNeuro: () => showNeuro(),
+  showNeuro: tab => showNeuro(tab),
+  pause: opts => showPause(opts),
+  confirm: (opts, onYes) => confirmBox(opts, onYes),
+  restartBattle: () => { if (lastSpace) runSpace(lastSpace); },
   startSpaceBattle(cfg) {
-    prepThen('Подготовка боя…', () => setMode(() => createSpaceBattle(ctx, {
+    runSpace(() => createSpaceBattle(ctx, {
       ...cfg,
+      inCampaign: true,
       onEnd: res => { cfg.onEnd && cfg.onEnd(res); backToGalaxy(); },
-    })), NEED_SPACE);
+    }));
   },
   startGroundBattle(cfg) {
     /* Высадка идёт «нырком» сквозь облака, а не сменой экрана.
@@ -184,6 +197,7 @@ const ctx = {
        ожидание. Модели нырок дожидается сам, под облаками. */
     dive(() => setMode(() => createGroundBattle(ctx, {
       ...cfg,
+      inCampaign: true,
       onEnd: res => { cfg.onEnd && cfg.onEnd(res); backToGalaxy(); },
     })));
   },
@@ -268,6 +282,156 @@ function showAutoResult(title, text, cb) {
   m.querySelector('[data-a="ok"]').onclick = () => { m.remove(); cb(); };
 }
 
+/* Пробел и Enter по кнопке ПОД окном (её мог оставить в фокусе Tab)
+   нажали бы её: снять паузу под меню, сдаться под вопросом. Кнопки
+   самого окна с клавиатуры нажимаются как обычно. */
+function blockOutside(e, box) {
+  if (e.code !== 'Space' && e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+  const a = document.activeElement;
+  if (!a || !box.contains(a)) e.preventDefault();
+}
+
+/* ── ПОДТВЕРЖДЕНИЕ (C34). Для действий, которые одним промахом
+   проигрывают бой: «Отход», «Сдаться», выход посреди боя. Escape —
+   «нет»; пока окно открыто, клавиши игры молчат (Пробел не снимает
+   паузу под ним). opts: {title, text, yes, no, danger} */
+function confirmBox(opts, onYes) {
+  const m = document.createElement('div');
+  m.className = 'modal confirm';
+  m.innerHTML = `<div class="modal-inner"><h3></h3><p></p>
+    <div class="modal-actions">
+      <button class="btn ${opts.danger === false ? 'primary' : 'danger'}" data-a="yes"></button>
+      <button class="btn ghost" data-a="no"></button>
+    </div></div>`;
+  m.querySelector('h3').textContent = opts.title || 'Точно?';
+  m.querySelector('p').textContent = opts.text || '';
+  m.querySelector('[data-a="yes"]').textContent = opts.yes || 'Да';
+  m.querySelector('[data-a="no"]').textContent = opts.no || 'Отмена';
+  const close = () => { m.remove(); removeEventListener('keydown', onKey, true); };
+  const onKey = e => {
+    if (!m.isConnected) { removeEventListener('keydown', onKey, true); return; }
+    if (e.code === 'F3' || e.code === 'F11') return;
+    e.stopImmediatePropagation();
+    if (e.code === 'Escape') { e.preventDefault(); close(); }
+    else blockOutside(e, m);
+  };
+  addEventListener('keydown', onKey, true);
+  m.querySelector('[data-a="no"]').onclick = close;
+  m.querySelector('[data-a="yes"]').onclick = () => { close(); onYes(); };
+  m.addEventListener('click', e => { if (e.target === m) close(); });
+  hudRoot.appendChild(m);
+  return m;
+}
+
+/* ── МЕНЮ ПАУЗЫ (C35). Раньше выйти из боя или кампании можно было
+   только перезагрузкой страницы, а Escape по привычке ничего не
+   открывал. Теперь Escape — когда отменять нечего — или кнопка «☰»
+   открывают меню: продолжить, управление, настройки, начать бой
+   заново, в главное меню. Сам экран ставит бой на паузу и снимает
+   её в onClose. Пока меню открыто, клавиши игры до экрана не доходят
+   (иначе Пробел снял бы паузу под меню, а стрелки двигали камеру).
+   opts: {restart, exitText, onExit, onClose} */
+function showPause(opts = {}) {
+  if (hudRoot.querySelector('.screen.pause')) return;
+  const el = document.createElement('div');
+  el.className = 'screen pause';
+  el.innerHTML = `<div class="pause-inner">
+      <h2>Пауза</h2>
+      <div class="pause-actions">
+        <button class="btn primary big" data-a="resume">Продолжить</button>
+        <button class="btn big" data-a="help">Управление</button>
+        <button class="btn big" data-a="settings">Настройки</button>
+        ${opts.restart ? '<button class="btn big" data-a="restart">Начать бой заново</button>' : ''}
+        <button class="btn ghost big" data-a="menu">В главное меню</button>
+      </div>
+      <div class="pause-settings" data-role="settings" hidden>
+        <label class="opt"><input type="checkbox" data-a="edge"${prefs.edge ? ' checked' : ''}>
+          Прокрутка карты, когда курсор у края экрана</label>
+        <button class="btn" data-a="full">Полный экран · F11</button>
+        <label class="opt off" title="Звука в игре пока нет">
+          <input type="range" min="0" max="100" value="70" disabled> Громкость — звука пока нет</label>
+      </div>
+    </div>`;
+  let done = false;
+  const close = () => {
+    if (done) return;
+    done = true;
+    el.remove();
+    removeEventListener('keydown', onKey, true);
+    if (opts.onClose) opts.onClose();
+  };
+  const onKey = e => {
+    if (!el.isConnected) { removeEventListener('keydown', onKey, true); return; }
+    // Поверх меню открыта справка или подтверждение — Escape их
+    if (document.querySelector('.screen.neuro, .modal.confirm')) return;
+    if (e.code === 'F3' || e.code === 'F11') return;
+    e.stopImmediatePropagation();
+    if (e.code === 'Escape') { e.preventDefault(); close(); }
+    else blockOutside(e, el);
+  };
+  addEventListener('keydown', onKey, true);
+  el.addEventListener('click', e => { if (e.target === el) close(); });
+  el.querySelector('[data-a="resume"]').onclick = close;
+  el.querySelector('[data-a="help"]').onclick = () => showNeuro(NEURO_CONTROLS);
+  el.querySelector('[data-a="settings"]').onclick = e => {
+    const s = el.querySelector('[data-role="settings"]');
+    s.hidden = !s.hidden;
+    e.currentTarget.classList.toggle('on', !s.hidden);
+  };
+  el.querySelector('[data-a="edge"]').onchange = e => setPref('edge', e.target.checked);
+  el.querySelector('[data-a="full"]').onclick = () => toggleFullscreen();
+  const restart = el.querySelector('[data-a="restart"]');
+  if (restart) restart.onclick = () => { done = true; removeEventListener('keydown', onKey, true); el.remove(); opts.restart(); };
+  el.querySelector('[data-a="menu"]').onclick = () => {
+    const go = () => {
+      done = true;
+      removeEventListener('keydown', onKey, true);
+      if (opts.onExit) opts.onExit();
+      showMenu();
+    };
+    if (opts.exitText) confirmBox({ title: 'Выйти в главное меню?', text: opts.exitText, yes: 'Выйти', no: 'Остаться' }, go);
+    else go();
+  };
+  hudRoot.appendChild(el);
+}
+
+/* ── ПОЛНЫЙ ЭКРАН (F11). В обычной вкладке браузер забирает себе
+   Ctrl+1…8 (переключение вкладок), и отряды Ctrl+цифрой не записать —
+   поэтому они пишутся и Shift+цифрой. В полноэкранном режиме
+   Keyboard Lock (Chrome, Edge) отдаёт цифры игре, и Ctrl работает
+   тоже. Escape не запираем: он по-прежнему выводит из полного экрана. */
+const LOCK_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) {
+      if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+      await document.exitFullscreen();
+      return;
+    }
+    await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    if (navigator.keyboard && navigator.keyboard.lock) await navigator.keyboard.lock(LOCK_KEYS).catch(() => {});
+  } catch (e) { console.warn('Полный экран не открылся:', e); }
+}
+addEventListener('keydown', e => {
+  if (e.code !== 'F11') return;
+  e.preventDefault();          // свой полный экран, а не браузерный: только у него есть Keyboard Lock
+  toggleFullscreen();
+});
+
+/* ── КНОПКИ НЕ ДЕРЖАТ ФОКУС (C28). После щелчка кнопка оставалась
+   в фокусе, и браузер нажимал её снова по Пробелу и Enter: «Конец
+   хода» и Пробел-пауза за компьютером пропускали по два хода. Мышью
+   кнопки фокус больше не берут вовсе; с клавиатуры (Tab) — как
+   обычно. */
+document.addEventListener('mousedown', e => {
+  if (e.target.closest && e.target.closest('button')) e.preventDefault();
+}, true);
+/* Меню браузера по ПКМ в игре не нужно нигде (C73): на панелях оно
+   всплывало поверх боя. Текст ошибки в окне сбоя копировать можно. */
+document.addEventListener('contextmenu', e => {
+  if (!(e.target.closest && e.target.closest('input, textarea, pre'))) e.preventDefault();
+});
+
 // ─────────────────────────────────────────────────────────────
 // ФОН МЕНЮ: звёзды и планета
 // ─────────────────────────────────────────────────────────────
@@ -330,6 +494,9 @@ function showMenu() {
         <div class="menu-opts">
           <label class="opt" title="Показывает кадры в секунду, вызовы отрисовки и треугольники. Пригодится, чтобы прислать цифры со своего компьютера.">
             <input type="checkbox" data-a="fps"${fpsMeter.on ? ' checked' : ''}> Счётчик кадров (F3)</label>
+          <label class="opt" title="Курсор у края экрана двигает карту. Мешает, если окно не во весь экран или рядом второй монитор.">
+            <input type="checkbox" data-a="edge"${prefs.edge ? ' checked' : ''}> Прокрутка у края экрана</label>
+          <button class="btn ghost" data-a="full" title="Полный экран: в нём игре достаются и Ctrl+цифры">Полный экран · F11</button>
         </div>
         ${has ? `<div class="menu-note">Сохранение: ход ${has.turn}, клан
           ${FACTIONS[has.playerFaction].short}, миров под контролем —
@@ -341,6 +508,8 @@ function showMenu() {
     el.querySelector('[data-a="skirmish"]').onclick = () => showSkirmish();
     el.querySelector('[data-a="neuro"]').onclick = () => showNeuro();
     el.querySelector('[data-a="fps"]').onchange = e => setFps(e.target.checked);
+    el.querySelector('[data-a="edge"]').onchange = e => setPref('edge', e.target.checked);
+    el.querySelector('[data-a="full"]').onclick = () => toggleFullscreen();
     const hangar = el.querySelector('[data-a="hangar"]');
     if (hangar) hangar.onclick = () => prepThen('Открываю ангар…', () => setMode(() => createHangar(ctx)), { models: true });
     const cont = el.querySelector('[data-a="continue"]');
@@ -464,7 +633,7 @@ function showSkirmish() {
     const mine = sel('mine'), foe = sel('foe'), size = sel('size');
     el.remove();
     campaign = null;
-    prepThen('Подготовка боя…', () => setMode(() => createSpaceBattle(ctx, {
+    runSpace(() => createSpaceBattle(ctx, {
       attacker: { faction: mine, ships: scaleFor(mine, fleetOf(size)), reserve: scaleFor(mine, fleetOf('small')) },
       defender: { faction: foe, ships: scaleFor(foe, fleetOf(size)), station: size === 'big' },
       playerSide: 'attacker', biome: 'klotho', title: 'Быстрый бой · орбита',
@@ -473,7 +642,7 @@ function showSkirmish() {
       // можно увидеть только в кампании, построив орудие
       groundGun: foe,
       onEnd: () => showMenu(),
-    })), NEED_SPACE);
+    }));
   };
   el.querySelector('[data-a="ground"]').onclick = () => {
     const mine = sel('mine'), foe = sel('foe'), size = sel('size');
@@ -502,7 +671,9 @@ function showSkirmish() {
 // НЕЙРОИНТЕРФЕЙС — справочник
 // ─────────────────────────────────────────────────────────────
 
-function showNeuro() {
+const NEURO_CONTROLS = 4;    // вкладка «Управление»
+function showNeuro(start = 0) {
+  if (document.querySelector('.screen.neuro')) return;
   const el = document.createElement('div');
   el.className = 'screen neuro';
   const tabs = ['Правила', 'Флот', 'Авиация', 'Земля', 'Управление'];
@@ -513,7 +684,7 @@ function showNeuro() {
         <button class="btn ghost" data-a="close">Закрыть</button>
       </div>
       <div class="neuro-tabs">${tabs.map((t, i) =>
-        `<button data-tab="${i}"${i === 0 ? ' class="on"' : ''}>${t}</button>`).join('')}</div>
+        `<button data-tab="${i}"${i === start ? ' class="on"' : ''}>${t}</button>`).join('')}</div>
       <div class="neuro-body" data-role="body"></div>
     </div>`;
   hudRoot.appendChild(el);
@@ -577,31 +748,85 @@ function showNeuro() {
           <td>${u.hp}</td><td>${u.speed}</td><td>${u.weapon ? u.weapon.range : '—'}</td></tr>`).join('')}
         </table></section>`).join('')}`;
     } else {
+      /* Управление — СНАЧАЛА КОМПЬЮТЕР (C130): основное устройство —
+         мышь и клавиатура, и раньше вкладка начиналась с «Планшета»
+         и уверяла, что цифровых клавиш нет. Таблицей: клавишу ищут
+         глазами, а не читают абзац. */
+      const rows = list => `<table class="keys">${list.map(([k, v]) =>
+        `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>`;
       body.innerHTML = `
+        <section><h3>Камера</h3>${rows([
+          ['Стрелки', 'двигать карту'],
+          ['Курсор у края экрана', 'двигать карту (выключается: Esc → Настройки)'],
+          ['Средняя кнопка, тянуть', 'двигать карту'],
+          ['Колесо', 'приближение — к точке под курсором'],
+          ['Правая кнопка, тянуть', 'повернуть камеру'],
+          ['Q / E', 'повернуть камеру'],
+          ['R / F', 'камера выше / ниже (бой на орбите)'],
+          ['W A S D', 'двигать карту на карте системы и на земле; в бою на орбите эти буквы — приказы'],
+          ['Миникарта', 'щёлкнуть или тянуть — камера туда; правой кнопкой — приказ туда'],
+        ])}</section>
+        <section><h3>Выбор</h3>${rows([
+          ['Левая кнопка', 'выбрать; с протяжкой — рамка'],
+          ['Shift + левая', 'добавить к выбору или убрать из него'],
+          ['Двойной щелчок', 'все корабли этого типа на экране'],
+          ['F2', 'весь флот (бой на орбите)'],
+          ['Ctrl или Shift + 1…9', 'записать отряд из выбранного'],
+          ['1…9', 'выбрать отряд; нажать дважды — камера к отряду'],
+          ['Esc', 'отменить, снять выбор; если нечего — меню паузы'],
+        ])}
+        <p>В обычном окне браузер забирает Ctrl+1…8 себе (вкладки), поэтому
+        отряд пишется и Shift+цифрой. В полноэкранном режиме (F11) работают оба.</p></section>
+        <section><h3>Приказы в бою на орбите</h3>${rows([
+          ['Правая кнопка', 'по полю — идти; по врагу (по кораблю или его подписи) — атаковать'],
+          ['A, затем щелчок', 'атака с ходу: идут к точке и бьют всех встречных; по врагу — атаковать'],
+          ['S', 'стоп: снять все приказы'],
+          ['H', 'держать позицию: стоять и бить только тех, до кого достаёт оружие'],
+          ['Z / X / C', 'поднять перехватчиков / истребителей / бомбардировщиков'],
+          ['V', 'звено на посадку'],
+          ['G', 'уйти в гипер или отменить'],
+          ['D', 'дрифт'],
+          ['B', 'подкрепление'],
+          ['J / K / L', 'купол РЭБ: глушение / прикрытие / молчать'],
+          ['PgUp / PgDn', 'корабли выше / ниже'],
+          ['Пробел', 'пауза'],
+        ])}
+        <p>Буква действия написана в углу его кнопки. Курсор подсказывает,
+        что сделает щелчок: рука — выбрать, красный прицел — атаковать,
+        зелёная метка — идти.</p></section>
+        <section><h3>Карта системы</h3>${rows([
+          ['Левая кнопка', 'выбрать мир'],
+          ['Правая кнопка', 'по соседнему миру — отправить туда флот'],
+          ['Esc или щелчок в пустоту', 'снять выбор — снова видны технологии'],
+        ])}</section>
+        <section><h3>Наземная операция</h3>${rows([
+          ['Правая кнопка', 'идти, атаковать; при постройке — отменить'],
+          ['Ctrl или Shift + 1…3', 'записать отряд (или придержать кнопку отряда)'],
+          ['1…3', 'выбрать отряд и показать его'],
+          ['Пробел / Esc', 'пауза / отменить; если нечего — меню паузы'],
+        ])}</section>
+        <section><h3>Общее</h3>${rows([
+          ['Esc', 'меню паузы: управление, настройки, начать заново, выход'],
+          ['F11', 'полный экран'],
+          ['F3', 'счётчик кадров'],
+        ])}</section>
         <section><h3>Планшет</h3><p>
         Касание по своему кораблю или юниту — выбрать. Когда что-то выбрано:
         касание по врагу — атаковать, касание по пустому месту — идти туда.
         Тянуть одним пальцем — двигать карту. Щипок — приближение, поворот
         двух пальцев — облёт. Долгое нажатие и потянуть — рамка выделения
         (или кнопка «Рамка» справа).</p></section>
-        <section><h3>Компьютер</h3><p>
-        Левая кнопка — выбрать, с протяжкой — рамка. Правая — приказ.
-        Колесо — приближение. Alt+ЛКМ или средняя кнопка — облёт.
-        WASD или стрелки — двигать карту, Q/E — поворот, R/F — выше/ниже
-        в космосе. Пробел — пауза, Escape — снять выделение.</p></section>
         <section><h3>Кнопки справа</h3><p>
         Быстрый выбор целых групп: весь флот, только линкоры, только
         авианосцы, вся авиация. На земле — все войска, техника, пехота,
-        сборщики. Это самый быстрый способ управлять с планшета.
-        Коснись той же кнопки ещё раз — камера перепрыгнет к следующему
-        скоплению: пехота обычно стоит в двух-трёх местах, и «середина
-        всех сразу» — это точка в чистом поле между ними.</p></section>
-        <section><h3>Отряды</h3><p>
+        сборщики. Коснись той же кнопки ещё раз — камера перепрыгнет
+        к следующему скоплению: пехота обычно стоит в двух-трёх местах,
+        и «середина всех сразу» — это точка в чистом поле между ними.</p></section>
+        <section><h3>Отряды на земле</h3><p>
         Три кнопки с цифрами под столбиком. Выдели войска и
         <b>придержи</b> цифру — отряд записан, на кнопке появится
-        количество. Дальше короткое касание по ней выбирает отряд и
-        переносит к нему камеру. Цифровых клавиш на планшете нет,
-        поэтому так.</p></section>
+        количество. Короткое нажатие выбирает отряд и переносит к нему
+        камеру. С клавиатуры — Ctrl или Shift с цифрой и просто цифра.</p></section>
         <section><h3>Тактика поведения</h3><p>
         У выделенных боевых юнитов внизу появляются три кнопки.
         <b>Охрана</b> — держит участок: ввяжется в бой с тем, кто подошёл,
@@ -610,7 +835,7 @@ function showNeuro() {
         ставят артиллерию и зенитки. <b>Нападение</b> — идёт на всё, что
         видит, и преследует до конца; так зачищают карту, но так же
         и теряют отряд по частям. Приказ атаковать конкретную цель
-        сильнее любой тактики: ткнул пальцем — пойдёт добивать.</p></section>
+        сильнее любой тактики.</p></section>
         <section><h3>Идти с боем</h3><p>
         Обычный приказ идти гонит колонну мимо противника: стреляют
         на ходу, но не задерживаются. Кнопка «С боем» включает режим,
@@ -620,7 +845,7 @@ function showNeuro() {
         включённым, пока не выключишь.</p></section>`;
     }
   };
-  render(0);
+  render(start);
   el.querySelectorAll('[data-tab]').forEach(b => {
     b.onclick = () => {
       el.querySelectorAll('[data-tab]').forEach(x => x.classList.remove('on'));
