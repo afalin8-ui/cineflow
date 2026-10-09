@@ -114,6 +114,11 @@ http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_foreve
 // наблюдателем, а не опросом.
 const INIT = () => {
   window.__t = { prep: 0, prepText: [], bootFail: 0 };
+  /* Сколько ПОВТОРОВ Escape дошло до страницы. Слушатель встаёт раньше
+     игры (перехват на окне, первым), поэтому видит и те, что игра потом
+     гасит. Без повторов проверка «удержанный Esc» была бы пустой. */
+  window.__escRep = 0;
+  addEventListener('keydown', e => { if (e.code === 'Escape' && e.repeat) window.__escRep++; }, true);
   new MutationObserver(list => {
     for (const m of list) {
       const c = m.target.classList;
@@ -156,6 +161,28 @@ async function tap(page, sel, idx = 0) {
   await page.mouse.click(r.x, r.y);
   return { ok: r.hit, why: r.hit ? '' : 'в точке нажатия ' + r.what };
 }
+
+/* Удержание клавиши: второй и дальше keyboard.down той же клавиши
+   Playwright шлёт с repeat: true — это автоповтор, как у человека,
+   который держит Esc (так выходят из полного экрана с запертым Esc).
+   probe меряется ПОСЛЕ КАЖДОГО нажатия (all), а не только в конце:
+   мигание «открыл — закрыл — открыл» на нечётном числе нажатий
+   кончается тем же, что и правильное поведение, и проверка по одному
+   последнему замеру на копии до правки была зелёной. rep — сколько
+   повторов Escape дошло до страницы. */
+async function holdKey(page, code, n = 4, probe = null) {
+  const r0 = await page.evaluate(() => window.__escRep || 0);
+  const all = [];
+  for (let i = 0; i < n; i++) {
+    await page.keyboard.down(code);
+    if (probe) all.push(await probe());
+  }
+  await page.keyboard.up(code);
+  const r1 = await page.evaluate(() => window.__escRep || 0);
+  return { probe: all[all.length - 1], all, rep: r1 - r0 };
+}
+// Ряд замеров одним флагом: «1011» — видно, мигало ли
+const seq = (all, f) => all.map(x => (x[f] ? 1 : 0)).join('');
 
 // Отрисовка под присмотром: счётчик НАСТОЯЩИХ отрисовок (__renders) и
 // выключатель (__noRender) — ожидание итога боя под программным рендером
@@ -726,6 +753,10 @@ const SCAN = () => {
         if (p.x < 80 || p.x > innerWidth - 80 || p.y < 120 || p.y > innerHeight - 260) continue;
         const ly = p.y - 34;            // середина подписи над кораблём
         if (document.elementFromPoint(p.x, p.y) !== c || document.elementFromPoint(p.x, ly) !== c) continue;
+        /* Луч в центр корабля обязан первым встретить ЕГО корпус: строй
+           расставлен со случайным разбросом, и корабль, заслонённый
+           соседом, честно не выбирается — проверка от этого мигала */
+        if (__sp.pickTest(p.x, p.y).pick !== s.uid) continue;
         // подпись не должна лежать на чужой: соседей рядом нет
         const gap = Math.min(...all.filter(o => o.s !== s).map(o => Math.hypot((o.p.x - p.x) / 2, o.p.y - p.y)));
         if (!best || gap > best.gap) best = { uid: s.uid, x: p.x, y: p.y, ly, gap: Math.round(gap) };
@@ -743,6 +774,99 @@ const SCAN = () => {
       const forced = await page.evaluate(uid => __sp.selection.filter(s => s.kind === 'ship' && s.forced && s.forced.uid === uid).length, foeAt.uid);
       ok('ПКМ по подписи врага — приказ атаковать его (C29)', forced > 0, `атакуют: ${forced}`);
     } else info('наведение и подпись', 'нет врага на экране вне панелей — пропущено');
+
+    /* C29: свечение и факел соседа не перехватывают выбор. Луч упирался
+       в прозрачные эффекты раньше корпуса, и ПКМ по фрегату у носа
+       авианосца уводил флот бить авианосец. Ловушку ставим сами:
+       малый вражеский корабль — за факелом большого (корма с факелом
+       развёрнута к камере) и за зевом ангара носителя (нос вбок, курсор
+       за носом, но на светящемся пятне). Стенд сначала убеждается, что
+       первым луч встречает ЭФФЕКТ соседа (ловушка настоящая), и только
+       потом — что наведение и ПКМ берут малый корабль. Позиции после
+       проверки возвращаются. */
+    await tap(page, '[data-q="all"]');
+    for (const kind of ['plume', 'bay']) {
+      const what = kind === 'plume' ? 'факел' : 'зев ангара';
+      const tr = await page.evaluate(async kind => {
+        const { THREE } = await import('/game/js/engine.js');
+        const all = __sp.ships.filter(s => !s.dead);
+        const foes = all.filter(s => !s.station && !s.hyper && s.side !== __sp.playerSide && s.obj.visible);
+        const big = kind === 'bay'
+          ? foes.find(s => s.def.cls === 'carrier' && s.obj.children.some(o => o.isSprite))
+          : foes.filter(s => s.def.cls !== 'carrier' && (s.obj.userData.engines || []).length).sort((a, b) => b.radius - a.radius)[0];
+        const small = foes.filter(s => s !== big && s.def.cls !== 'carrier').sort((a, b) => a.radius - b.radius)[0];
+        if (!big || !small) return null;
+        // Пустое место поля: ни одного корабля ближе 700
+        let P = null;
+        for (let r = 900; r <= 2200 && !P; r += 260) {
+          for (let a = 0; a < 16 && !P; a++) {
+            const x = Math.cos(a / 16 * Math.PI * 2) * r, z = Math.sin(a / 16 * Math.PI * 2) * r;
+            if (all.every(s => Math.hypot(s.pos.x - x, s.pos.z - z) > 700)) P = new THREE.Vector3(x, 0, z);
+          }
+        }
+        if (!P) return null;
+        window.__trapSave = [big, small].map(s => ({ s, p: s.pos.clone(), q: s.obj.quaternion.clone(), d: s.dir.clone() }));
+        __sp.camTest(P.x, 0, P.z, 380);
+        const cam = __sp.pickTest(innerWidth / 2, innerHeight / 2).cam;
+        const C = new THREE.Vector3(cam.x, cam.y, cam.z);
+        const h = new THREE.Vector3(C.x - P.x, 0, C.z - P.z).normalize();   // к камере по горизонтали
+        const side = new THREE.Vector3(-h.z, 0, h.x);                          // поперёк взгляда
+        const place = (s, at, look) => {
+          s.pos.copy(at);
+          s.vel.set(0, 0, 0);
+          s.obj.lookAt(look);                    // корма (+Z) смотрит на look
+          s.dir.set(0, 0, -1).applyQuaternion(s.obj.quaternion);
+          s.obj.updateMatrixWorld(true);
+        };
+        let Q;
+        if (kind === 'plume') {
+          place(big, P, P.clone().add(h));       // факел — к камере
+          const mesh = big.obj.userData.engines[0].children.find(o => o.isMesh);
+          Q = mesh.localToWorld(new THREE.Vector3(0, 0, 0.8));
+        } else {
+          place(big, P, P.clone().add(side));    // нос вбок
+          const spr = big.obj.children.find(o => o.isSprite);
+          const sc = spr.getWorldScale(new THREE.Vector3());
+          Q = spr.getWorldPosition(new THREE.Vector3()).addScaledVector(big.dir, sc.x * 0.5 * 0.85);
+        }
+        /* Ловушку — в середину экрана: у флагмана факел длинный, и точка
+           уезжала под нижнюю панель. Камера только сдвигается (поворот
+           и расстояние те же), значит взгляд по горизонтали прежний */
+        __sp.camTest(Q.x, Q.y, Q.z, 380);
+        const c2 = __sp.pickTest(innerWidth / 2, innerHeight / 2).cam;
+        C.set(c2.x, c2.y, c2.z);
+        const ray = Q.clone().sub(C).normalize();
+        const at = Q.clone().addScaledVector(ray, small.radius * 1.3);
+        place(small, at, at.clone().add(side));  // малый — поперёк луча
+        return { big: big.uid, bigDef: big.def.id, small: small.uid, smallDef: small.def.id };
+      }, kind);
+      if (!tr) { info(`C29: ${what} соседа`, 'нет нужной пары вражеских кораблей или пустого места — пропущено'); continue; }
+      await waitFrames(page, 3);       // матрицы и подписи — по отрисованному кадру
+      const at = await page.evaluate(uid => {
+        const p = __sp.screenTest(__sp.ships.find(s => s.uid === uid));
+        const x = Math.round(p.x), y = Math.round(p.y);
+        return { x, y, onCanvas: document.elementFromPoint(x, y) === document.getElementById('view') };
+      }, tr.small);
+      const ray = await page.evaluate(([x, y]) => __sp.pickTest(x, y), [at.x, at.y]);
+      await page.mouse.move(at.x, at.y);
+      await waitFrames(page, 4);
+      const hv = await page.evaluate(() => __sp.inputTest());
+      await page.mouse.click(at.x, at.y, { button: 'right' });
+      await waitFrames(page, 1);
+      const f = await page.evaluate(([a, b]) => ({
+        small: __sp.selection.filter(s => s.forced && s.forced.uid === a).length,
+        big: __sp.selection.filter(s => s.forced && s.forced.uid === b).length }), [tr.small, tr.big]);
+      ok(`C29: ловушка «${what} ${tr.bigDef} перед ${tr.smallDef}» настоящая — первым луч встречает эффект`,
+        at.onCanvas && !!ray.first && ray.first.effect && ray.first.uid === tr.big,
+        `на поле ${at.onCanvas}, первое попадание ${JSON.stringify(ray.first)}`);
+      ok(`C29: курсор на ${tr.smallDef} за ${kind === 'plume' ? 'факелом' : 'зевом ангара'} ${tr.bigDef} — наведение и ПКМ берут его`,
+        ray.pick === tr.small && hv.hover === tr.small && hv.cursor === 'cur-attack' && f.small > 0 && f.big === 0,
+        `выбран ${ray.pick}, под курсором ${hv.hover} (ждали ${tr.small}), курсор ${hv.cursor}, атакуют малого ${f.small}, большого ${f.big}`);
+      await page.evaluate(() => {
+        for (const { s, p, q, d } of window.__trapSave) { s.pos.copy(p); s.obj.quaternion.copy(q); s.dir.copy(d); }
+        for (const s of __sp.selection) { s.forced = null; s.target = null; s.moveTo = null; }
+      });
+    }
 
     // A, затем щелчок — атака с ходу; S — стоп; H — держать.
     // Щёлкаем по пустому полю: щелчок по врагу после A — это атака его
@@ -891,6 +1015,37 @@ const SCAN = () => {
     const rBack = await page.evaluate(() => ({ modal: !!document.querySelector('.modal.confirm'), paused: __sp.paused, ret: __sp.retreat[__sp.playerSide] }));
     ok('«Отход?» ставит бой на паузу, Escape — «нет», скорость прежняя', r.ok && rAsk && rt0.paused && rt1 === rt0.t && !rBack.modal && !rBack.paused && !rBack.ret,
       r.why || `пауза под вопросом ${rt0.paused}, время ${rt0.t.toFixed(2)} → ${rt1.toFixed(2)}, после: ${JSON.stringify(rBack)}`);
+
+    /* Удержанный Esc: действует только ПЕРВОЕ нажатие, повторы
+       автоповтора молчат. Раньше повторы шли по очереди в меню паузы
+       и в бой: меню мигало, бой сам снимался с паузы. А держат Esc
+       нарочно — так выходят из полного экрана, где Esc заперт. Бой
+       идёт на 1×, ничего не выделено. */
+    {
+      const st = () => page.evaluate(() => ({ menu: !!document.querySelector('.screen.pause'),
+        ask: !!document.querySelector('.modal.confirm'), paused: __sp.paused, sel: __sp.selection.length,
+        ret: !!__sp.retreat[__sp.playerSide] }));
+      const qa = await tap(page, '[data-role="retreat"]');
+      await page.waitForSelector('.modal.confirm', { timeout: 5000 }).catch(() => {});
+      const k1 = await holdKey(page, 'Escape', 4, st);
+      ok('удержанный Esc на «Отход?»: вопрос закрыт, меню не открылось, бой идёт',
+        qa.ok && k1.rep >= 3 && k1.all.every(p => !p.ask && !p.menu && !p.paused && !p.ret),
+        qa.why || `повторов ${k1.rep}; по нажатиям: меню ${seq(k1.all, 'menu')}, вопрос ${seq(k1.all, 'ask')}, пауза ${seq(k1.all, 'paused')}`);
+      await tap(page, '[data-q="all"]');
+      const k2 = await holdKey(page, 'Escape', 4, st);
+      ok('удержанный Esc с выделением: выделение снято, меню не открылось',
+        k2.rep >= 3 && k2.all.every(p => p.sel === 0 && !p.menu && !p.paused),
+        `повторов ${k2.rep}; по нажатиям: меню ${seq(k2.all, 'menu')}, выделено ${k2.all.map(p => p.sel).join(',')}`);
+      const k3 = await holdKey(page, 'Escape', 4, st);
+      ok('удержанный Esc, отменять нечего: меню паузы открыто и бой стоит, пока держат',
+        k3.rep >= 3 && k3.all.every(p => p.menu && p.paused), `повторов ${k3.rep}; по нажатиям: меню ${seq(k3.all, 'menu')}, пауза ${seq(k3.all, 'paused')}`);
+      const k4 = await holdKey(page, 'Escape', 4, st);
+      await page.waitForTimeout(200);
+      const k5 = await st();
+      ok('удержанный Esc в меню паузы: меню закрыто и снова не открылось, бой идёт',
+        k4.rep >= 3 && k4.all.every(p => !p.menu && !p.paused) && !k5.menu && !k5.paused,
+        `повторов ${k4.rep}; по нажатиям: меню ${seq(k4.all, 'menu')}, пауза ${seq(k4.all, 'paused')}; после ${JSON.stringify(k5)}`);
+    }
     await tap(page, '[data-speed="0"]');
 
     // «Мёртвые» кнопки HUD: всё выделено — панель действий полна
@@ -1246,6 +1401,13 @@ const SCAN = () => {
       await page.keyboard.press('Escape');
       const gback = await page.evaluate(() => !document.querySelector('.screen.pause') && !__gr.paused);
       ok('земля: Esc — меню паузы, бой стоит; Esc ещё раз — дальше', gp && gpaused && gback, `меню ${gp}, пауза ${gpaused}, вернулись ${gback}`);
+      // Удержанный Esc — одно нажатие: меню не мигает, бой не снимается с паузы сам
+      const gs = () => page.evaluate(() => ({ menu: !!document.querySelector('.screen.pause'), paused: __gr.paused }));
+      const gk1 = await holdKey(page, 'Escape', 4, gs);
+      const gk2 = await holdKey(page, 'Escape', 4, gs);
+      ok('земля: удержанный Esc — меню открыто и бой стоит; удержанный ещё раз — меню закрыто, бой идёт',
+        gk1.rep >= 3 && gk2.rep >= 3 && gk1.all.every(p => p.menu && p.paused) && gk2.all.every(p => !p.menu && !p.paused),
+        `повторов ${gk1.rep}/${gk2.rep}; по нажатиям: меню ${seq(gk1.all, 'menu')} → ${seq(gk2.all, 'menu')}, пауза ${seq(gk1.all, 'paused')} → ${seq(gk2.all, 'paused')}`);
       // Справка из меню: Пробел ею листают, бой под ней стоит
       await hookRender(page);
       await page.keyboard.press('Escape');
@@ -1356,13 +1518,20 @@ const SCAN = () => {
         fleet: __gal.camp.systems[h].fleet.reduce((a, x) => a + x.count, 0), modal: !!document.querySelector('.modal') }), g27.home);
       ok('карта: ЛКМ по соседнему миру выбирает его, флот остаётся дома (C27)', st.sel === g27.nb && !st.moved && st.fleet === 2 && !st.modal,
         JSON.stringify(st));
-      await page.keyboard.press('Escape');
-      const desel = await page.evaluate(() => ({ sel: __gal.state.selected, tech: !!document.querySelector('.tech-block') }));
-      ok('карта: Escape снимает выбор, технологии снова видны (C38)', desel.sel === null && desel.tech, JSON.stringify(desel));
-      await page.keyboard.press('Escape');
-      const pm = await page.waitForSelector('.screen.pause', { timeout: 5000 }).then(() => true, () => false);
-      await page.keyboard.press('Escape');
-      ok('карта: Escape без выбора — меню паузы, Escape — закрыть', pm && await page.evaluate(() => !document.querySelector('.screen.pause')));
+      /* Escape держат: действует первое нажатие, повторы молчат — иначе
+         «снять выбор» тут же открывало меню, а меню мигало */
+      const cs = () => page.evaluate(() => ({ sel: __gal.state.selected, tech: !!document.querySelector('.tech-block'),
+        menu: !!document.querySelector('.screen.pause') }));
+      const ck1 = await holdKey(page, 'Escape', 4, cs);
+      ok('карта: Escape снимает выбор, технологии снова видны (C38); удержанный — меню не открывает',
+        ck1.rep >= 3 && ck1.all.every(p => p.sel === null && p.tech && !p.menu),
+        `повторов ${ck1.rep}; по нажатиям: меню ${seq(ck1.all, 'menu')}, ${JSON.stringify(ck1.probe)}`);
+      const ck2 = await holdKey(page, 'Escape', 4, cs);
+      const ck3 = await holdKey(page, 'Escape', 4, cs);
+      await page.waitForTimeout(200);
+      ok('карта: Escape без выбора — меню паузы, Escape — закрыть; удержанный не мигает',
+        ck2.all.every(p => p.menu) && ck3.all.every(p => !p.menu) && await page.evaluate(() => !document.querySelector('.screen.pause')),
+        `по нажатиям: меню ${seq(ck2.all, 'menu')} → ${seq(ck3.all, 'menu')}`);
     } else info('карта: ЛКМ по соседу', 'сосед не виден на поле — пропущено');
     await clean('кампания');
 

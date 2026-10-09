@@ -14,7 +14,7 @@
 
 import {
   THREE, TacticalCamera, Controls, Fx, starfield, screenOf, ringMesh,
-  clamp, lerp, rnd, disposeScene, IS_TOUCH, createMinimap,
+  clamp, lerp, rnd, disposeScene, IS_TOUCH, createMinimap, effectHit,
 } from './engine.js';
 import {
   buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula, buildHyperVortex, buildEcmDome,
@@ -2535,6 +2535,11 @@ export function createSpaceBattle(ctx, config) {
     }
     if (code === 'Escape') {
       e.preventDefault();
+      /* Повтор удержанного Esc не отменяет и не открывает ничего: иначе
+         повторы шли по очереди в меню паузы и сюда, меню мигало
+         пятнадцать раз в секунду, а бой сам снимался с паузы. А держат
+         Esc нарочно — так выходят из полного экрана с запертым Esc */
+      if (e.repeat) return;
       if (pending) { pending = null; updateHover(); toast('Атака с ходу отменена'); return; }
       if (controls.boxMode) { controls.setBoxMode(false); return; }
       if (state.selection.length) { state.selection = []; refreshSel(); updateHover(); return; }
@@ -2820,6 +2825,23 @@ export function createSpaceBattle(ctx, config) {
     };
     // Мир в точке экрана — куда должен лечь приказ правой кнопкой
     state.worldTest = (x, y) => controls.worldAt(x, y);
+    /* Что ловит луч в точке экрана (C29): `pick` — кого выберет игра,
+       `first` — самое первое попадание луча, хоть бы и по свечению
+       соседа (им стенд убеждается, что подстроенная ловушка настоящая),
+       `cam` — где стоит камера. */
+    state.pickTest = (x, y) => {
+      const ent = controls.pick(x, y);
+      const hits = controls.ray.intersectObjects(pickMeshes(), true);
+      const h = hits[0];
+      let o = h && h.object;
+      while (o && !o.userData.entity) o = o.parent;
+      const c = tcam.cam.position;
+      return {
+        pick: ent ? ent.uid : null,
+        first: h ? { uid: o && o.userData.entity.uid, effect: effectHit(h.object), type: h.object.type } : null,
+        cam: { x: c.x, y: c.y, z: c.z },
+      };
+    };
     // Камера: куда смотрит и где стоит — проверять протяжку, край, колесо
     state.camInfo = () => ({
       x: tcam.target.x, y: tcam.target.y, z: tcam.target.z, dist: tcam.dist,

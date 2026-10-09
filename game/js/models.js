@@ -98,6 +98,7 @@ function glowSprite(size, color) {
   });
   const s = new THREE.Sprite(m);
   s.scale.setScalar(size);
+  s.userData.noPick = true;      // свечение — не корабль: щелчок мимо него (C29)
   return s;
 }
 
@@ -147,6 +148,9 @@ export function enginePlume(size, color = 0xff8a34) {
   core.scale.setScalar(size * 0.5);
   g.add(core);
   g.userData.plumeMat = mat;
+  // Факел тянется назад на два-три сопла и лежит поверх соседей: по нему
+  // корабль не выбирается и не атакуется (C29, Controls.pick)
+  g.userData.noPick = true;
   return g;
 }
 

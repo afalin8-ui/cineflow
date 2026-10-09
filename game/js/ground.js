@@ -2294,6 +2294,7 @@ export function createGroundBattle(ctx, config) {
     if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) hud.querySelector(`[data-speed="${state.paused ? state.speed : 0}"]`).click(); return; }
     if (e.code === 'Escape') {
       e.preventDefault();
+      if (e.repeat) return;      // удержанный Esc — одно нажатие (см. space.js)
       // Отменить по очереди; отменять нечего — меню паузы
       if (state.selection.length || state.placing || state.support.aiming || controls.boxMode) {
         state.selection = []; state.placing = null; state.support.aiming = null;

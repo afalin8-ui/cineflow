@@ -367,6 +367,28 @@ function shownInScene(o) {
   return true;
 }
 
+/* Свечение и факел — не корабль (C29). Внутри модели сидят прозрачные
+   эффекты: зев ангара авианосца (спрайт в 1,3 его радиуса) и факелы
+   двигателей — плоскости в два-три сопла длиной НАЗАД. Луч упирался
+   в них первыми, и ПКМ по фрегату у носа авианосца или за кормой
+   крейсера уводил флот бить ДРУГОЙ корабль: замер — 3 промаха из 22,
+   причём у одного корвета его собственный корпус под курсором был.
+   Поэтому попадание по спрайту, по аддитивному материалу и по всему,
+   что помечено `userData.noPick` (сам эффект или его группа), не в
+   счёт: кораблём считается только корпус. Обычная полупрозрачность
+   (кольца планет на карте) остаётся — это часть самого мира. */
+export function effectHit(o) {
+  if (o.isSprite) return true;
+  const m = o.material;
+  if (Array.isArray(m) ? m.some(x => x && x.blending === THREE.AdditiveBlending)
+                       : m && m.blending === THREE.AdditiveBlending) return true;
+  for (let p = o; p; p = p.parent) {
+    if (p.userData.noPick) return true;
+    if (p.userData.entity) break;
+  }
+  return false;
+}
+
 export class Controls {
   constructor(dom, tcam, handlers = {}) {
     this.dom = dom;
@@ -460,6 +482,7 @@ export class Controls {
          Рииза ловился кликом и выдавал себя панелью с прочностью.
          Скрытое — у самого меша или у любого предка — не выбирается. */
       if (!shownInScene(hit.object)) continue;
+      if (effectHit(hit.object)) continue;
       let o = hit.object;
       while (o && !o.userData.entity) o = o.parent;
       const ent = o && o.userData.entity;

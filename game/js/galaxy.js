@@ -387,6 +387,7 @@ export function createGalaxy(ctx, camp) {
     if (e.code !== 'Escape') return;
     if (hudRoot.querySelector('.modal, .screen') || $('end').style.display === 'flex') return;
     e.preventDefault();
+    if (e.repeat) return;        // удержанный Esc — одно нажатие (см. space.js)
     if (!deselect()) openPause();
   }
   addEventListener('keydown', onKey);

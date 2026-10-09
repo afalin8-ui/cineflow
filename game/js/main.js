@@ -324,7 +324,7 @@ function confirmBox(opts, onYes) {
     if (!m.isConnected) { removeEventListener('keydown', onKey, true); return; }
     if (e.code === 'F3' || e.code === 'F11') return;
     e.stopImmediatePropagation();
-    if (e.code === 'Escape') { e.preventDefault(); close(); }
+    if (e.code === 'Escape') { e.preventDefault(); if (!e.repeat) close(); }
     else blockOutside(e, m);
   };
   addEventListener('keydown', onKey, true);
@@ -381,6 +381,11 @@ function showPause(opts = {}) {
   const onKey = e => {
     if (!el.isConnected) { removeEventListener('keydown', onKey, true); return; }
     if (e.code === 'F3' || e.code === 'F11') return;
+    /* Повтор удержанного Esc не закрывает ни меню, ни окно над ним
+       и дальше не идёт: иначе повторы по очереди закрывали меню здесь
+       и открывали его снова в бою — оно мигало, бой снимался с паузы.
+       Держат Esc нарочно: так выходят из полного экрана (LOCK_KEYS). */
+    if (e.code === 'Escape' && e.repeat) { e.stopImmediatePropagation(); e.preventDefault(); return; }
     /* Поверх меню открыта справка или подтверждение — Escape их.
        Остальные клавиши игре не отдаём и тогда: справка свои глушит
        сама, но правило «пока меню открыто, бой их не слышит» обязано
@@ -743,7 +748,8 @@ function showNeuro(start = 0) {
        уводил выделенные корабли «Ниже», G — в гипер. Действие по
        умолчанию не гасим — им справка и листается. */
     e.stopImmediatePropagation();
-    if (e.code === 'Escape') { e.preventDefault(); close(); }
+    // повтор удержанного Esc справку не закрывает — иначе следующий закрыл бы меню под ней
+    if (e.code === 'Escape') { e.preventDefault(); if (!e.repeat) close(); }
     else blockOutside(e, el);
   };
   addEventListener('keydown', onKey, true);
