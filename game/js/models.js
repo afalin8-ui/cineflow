@@ -22,18 +22,56 @@ const matCache = new Map();
 
 const TEX_BASE = new URL('../textures/', import.meta.url);
 let HULL_TEX = null;
+/* Скан обшивки — это «деталь», а не краска (C42). Сам файл тёмный:
+   средняя яркость в линейном пространстве 0,21/0,25/0,30, и карта
+   цвета УМНОЖАЕТСЯ на цвет материала — корпуса темнели в 3–4 раза
+   и читались бурыми брусками, а подкрутка света этого не лечила.
+   Поэтому при загрузке карту перекрашиваем: каждый канал делим на его
+   среднее и ставим среднее 0,85. Рисунок (швы, потёртости) остаётся —
+   у скана он узкий, от 0,22 до 0,26, и в 0,85 ничего не упирается в
+   белое, — а цвет корпуса задаёт материал, без синевы скана. */
+const HULL_DETAIL = 0.85;
+function detailMap(t) {
+  const img = t.image;
+  const w = img && (img.naturalWidth || img.width), h = img && (img.naturalHeight || img.height);
+  if (!w || !h || typeof document === 'undefined') return;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const c = cv.getContext('2d', { willReadFrequently: true });
+  c.drawImage(img, 0, 0);
+  const id = c.getImageData(0, 0, w, h), d = id.data;
+  const toLin = new Float32Array(256);
+  for (let i = 0; i < 256; i++) { const v = i / 255; toLin[i] = v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }
+  const toSrgb = new Uint8ClampedArray(4096);
+  for (let i = 0; i < 4096; i++) { const v = i / 4095; toSrgb[i] = 255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055); }
+  const mean = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) { mean[0] += toLin[d[i]]; mean[1] += toLin[d[i + 1]]; mean[2] += toLin[d[i + 2]]; }
+  const n = d.length / 4;
+  const k = mean.map(m => HULL_DETAIL / Math.max(1e-3, m / n));
+  for (let i = 0; i < d.length; i += 4) {
+    for (let ch = 0; ch < 3; ch++) d[i + ch] = toSrgb[Math.min(4095, (toLin[d[i + ch]] * k[ch] * 4095) | 0)];
+  }
+  c.putImageData(id, 0, 0);
+  t.image = cv;
+  t.needsUpdate = true;
+}
 function hullMaps() {
   if (HULL_TEX) return HULL_TEX;
   const L = new THREE.TextureLoader();
-  const get = (f, srgb, rep) => {
-    const t = L.load(new URL(f, TEX_BASE).href);
+  const get = (f, srgb, rep, onLoad) => {
+    const t = L.load(new URL(f, TEX_BASE).href, onLoad);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(rep, rep);
     t.anisotropy = 8;
     return t;
   };
-  HULL_TEX = { map: get('hull_diff.jpg', true, 3), nor: get('hull_nor.jpg', false, 3) };
+  HULL_TEX = {
+    map: get('hull_diff.jpg', true, 3, detailMap), nor: get('hull_nor.jpg', false, 3),
+    // Скан как есть — для склада на земле (`skin: 'raw'`): земля в этом
+    // пакете не меняется, и её ящики под солнцем не должны засветиться
+    raw: get('hull_diff.jpg', true, 3),
+  };
   return HULL_TEX;
 }
 
@@ -47,7 +85,7 @@ function mat(color, opts = {}) {
       emissive: opts.emissive ?? 0x000000, emissiveIntensity: opts.ei ?? 1,
       transparent: !!opts.transparent, opacity: opts.opacity ?? 1,
       flatShading: opts.flat !== false,
-      map: skin ? skin.map : null,
+      map: skin ? (opts.skin === 'raw' ? skin.raw : skin.map) : null,
       normalMap: skin ? skin.nor : null,
       // Ключ без скана не передаём вовсе: `undefined` three.js встречает
       // предупреждением на каждый материал, и шум в консоли прятал
@@ -162,12 +200,53 @@ export function enginePlume(size, color = 0xff8a34) {
 // только корпус, всё остальное игра расставит.
 // ─────────────────────────────────────────────────────────────
 
+/* ДЛИНА ПРИЕЗЖЕЙ МОДЕЛИ = ДЛИНА СВОЕЙ ТОГО ЖЕ СЛОТА (C88).
+   Раньше .glb вписывали в «радиус класса × 3,6», а процедурный корпус
+   после этого ещё умножался на K = 1,65 и обрастал надстройками —
+   приезжая модель выходила в 2,3–2,7 раза мельче своей: крейсер
+   Тройдена 43 единицы против 113 у чужого крейсера, мельче чужого
+   корвета. Таблица «длина по классу» разошлась бы с процедурной
+   веткой при первой же её правке, поэтому длину не задаём, а МЕРИМ:
+   строим процедурную модель того же слота один раз и берём её
+   габарит без свечения и факелов (`visualLength`). Мерка в кэше. */
+const procLen = new Map();
+export function visualLength(g) {
+  g.updateMatrixWorld(true);
+  const box = new THREE.Box3(), tmp = new THREE.Box3();
+  const fx = o => {
+    for (let p = o; p; p = p.parent) if (p.userData && p.userData.noPick) return true;
+    const m = o.material;
+    return !!m && !Array.isArray(m) && m.blending === THREE.AdditiveBlending;
+  };
+  g.traverse(o => {
+    if (!o.isMesh || fx(o)) return;
+    if (o.isInstancedMesh) {
+      o.computeBoundingBox();
+      tmp.copy(o.boundingBox).applyMatrix4(o.matrixWorld);
+    } else {
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      tmp.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+    }
+    box.union(tmp);
+  });
+  if (box.isEmpty()) return 0;
+  const sz = box.getSize(new THREE.Vector3());
+  return Math.max(sz.x, sz.z);
+}
+function procLength(key, build) {
+  if (!procLen.has(key)) procLen.set(key, visualLength(build()));
+  return procLen.get(key);
+}
+
 function fitCustom(kind, faction, id, targetLength, opts = {}) {
   const g = customModel(kind, faction.id, id);
   if (!g) return null;
   const inner = g.children[0];
-  inner.scale.multiplyScalar(targetLength);
-  const ext = g.userData.extent.multiplyScalar(targetLength);
+  // Длина может прийти функцией: процедурную модель строим, только
+  // когда приезжая правда есть
+  const len = typeof targetLength === 'function' ? targetLength() : targetLength;
+  inner.scale.multiplyScalar(len);
+  const ext = g.userData.extent.multiplyScalar(len);
   g.userData.ext = ext;
   if (opts.groundLevel) {
     // модель уже поднята так, что низ на нуле — ничего не двигаем
@@ -219,8 +298,9 @@ function shipHardpoints(g, def) {
 //                 bay — точка вылета авиации.
 // ─────────────────────────────────────────────────────────────
 
-export function buildShip(def, faction) {
-  const custom = fitCustom('ship', faction, def.id, def.radius * 3.6);
+export function buildShip(def, faction, noCustom) {
+  const custom = !noCustom && fitCustom('ship', faction, def.id,
+    () => procLength(`ship:${faction.id}:${def.id}`, () => buildShip(def, faction, true)));
   if (custom) return shipHardpoints(custom, def);
 
   const g = new THREE.Group();
@@ -447,8 +527,9 @@ export function buildShip(def, faction) {
 }
 
 // Малая авиация: три силуэта по ролям
-export function buildStrike(role, faction) {
-  const custom = fitCustom('strike', faction, role, 5.5);
+export function buildStrike(role, faction, noCustom) {
+  const custom = !noCustom && fitCustom('strike', faction, role,
+    () => procLength(`strike:${faction.id}:${role}`, () => buildStrike(role, faction, true)));
   if (custom) {
     const ext = custom.userData.ext;
     const sp = glowSprite(1.0, 0xff8a3a);
@@ -513,12 +594,14 @@ export function buildTorpedo(color = 0xffb060) {
 // Юниты смотрят в -Z, стоят на y = 0.
 // ─────────────────────────────────────────────────────────────
 
-const GROUND_LENGTH = {
-  worker: 7.5, rifle: 4.5, rocket: 4.5, tank: 8.5, aa: 7.5, arty: 9.5, jet: 11,
-};
-
-export function buildGroundUnit(def, faction) {
-  const custom = fitCustom('ground', faction, def.id, GROUND_LENGTH[def.id] || 8, { groundLevel: true });
+/* Длина приезжей наземной модели — та же мерка, что у кораблей:
+   габарит процедурной того же слота (C88). Таблица GROUND_LENGTH не
+   знала половины юнитов (разведка, БМП, инженер, РСЗО, вертолёт…),
+   и их .glb получили бы по 8 единиц. */
+export function buildGroundUnit(def, faction, noCustom) {
+  const custom = !noCustom && fitCustom('ground', faction, def.id,
+    () => procLength(`ground:${faction.id}:${def.id}`, () => buildGroundUnit(def, faction, true)),
+    { groundLevel: true });
   if (custom) {
     const ext = custom.userData.ext;
     custom.userData.muzzles = [new THREE.Vector3(0, ext.y * 0.6, -ext.z * 0.5)];
@@ -1436,10 +1519,10 @@ export function buildTrackField(max = 420, tex = null, tint = 0x241c14, lifeSec 
    мягкая карта вместо резкой геометрии. */
 export function buildSupplyField() {
   const g = new THREE.Group();
-  const crate = mat(0xb8a05a, { rough: 0.75, metal: 0.25, skin: true });
-  const crate2 = mat(0x8e7a44, { rough: 0.8, metal: 0.2, skin: true });
+  const crate = mat(0xb8a05a, { rough: 0.75, metal: 0.25, skin: 'raw' });
+  const crate2 = mat(0x8e7a44, { rough: 0.8, metal: 0.2, skin: 'raw' });
   const dark = mat(0x33302a, { rough: 0.95 });
-  const steel = mat(0x6b7078, { rough: 0.55, metal: 0.7, skin: true });
+  const steel = mat(0x6b7078, { rough: 0.55, metal: 0.7, skin: 'raw' });
   const glow = mat(0xffc861, { rough: 0.4, emissive: 0xffb03a, ei: 1.3 });
 
   // площадка с бортиком и разметкой
@@ -1584,7 +1667,11 @@ export function buildEcmDome(radius, color, height) {
   g.add(beam);
 
   g.renderOrder = 3;
-  g.userData.set = (t, power, col, emitY) => {
+  /* full = false — покой: одно тонкое кольцо по границе поля на средней
+     плоскости блина, без стенок, плоскостей и луча. Плотная картинка
+     (full) — только у выделенного корабля РЭБ: иначе каждый купол
+     в бою — цилиндр с двумя кольцами на пол-экрана (C111). */
+  g.userData.set = (t, power, col, emitY, full = true) => {
     // Плоскости блина светятся вчетверо слабее обода: именно они
     // раньше заливали молоком всё, что происходило под полем.
     for (const [m, k] of [[edgeMat, 1], [faceMat, 0.25]]) {
@@ -1593,7 +1680,12 @@ export function buildEcmDome(radius, color, height) {
       if (col !== undefined) m.uniforms.uColor.value.set(col);
     }
     if (col !== undefined) { rimMat.color.set(col); beamMat.color.set(col); }
-    rimMat.opacity = power * 0.55;
+    edge.visible = full;
+    for (const c of g.children) if (c.geometry === faceGeo) c.visible = full;
+    beam.visible = full;
+    rims[1].visible = full;
+    rims[0].position.y = full ? -h * 0.5 : 0;
+    rimMat.opacity = power * (full ? 0.55 : 0.4);
     const k = 0.25 + power * 0.75;          // блин раскрывается от точки
     edge.scale.set(radius * k, h, radius * k);
     for (const r of rims) r.scale.set(radius * k, radius * k, radius * k);
