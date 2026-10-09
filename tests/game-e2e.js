@@ -93,6 +93,16 @@ const T0 = Date.now();
 const secs = () => ((Date.now() - T0) / 1000).toFixed(0) + ' с';
 
 const server = spawn('python3', ['-m', 'http.server', PORT, '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
+/* Занятый порт: python молча выходит, и весь прогон шёл бы против
+   ЧУЖОГО сервера (P5). Вышел сервер — запоминаем; серверы гасим и при
+   прерывании прогона (Ctrl+C, тайм-аут), иначе они живут дальше, и
+   следующий прогон на том же порту проверяет вчерашние файлы */
+let serverGone = null;
+server.on('exit', code => { serverGone = code; });
+const extraServers = new Set();
+const killServers = () => { try { server.kill(); } catch (e) { /* уже */ } for (const s of extraServers) try { s.kill(); } catch (e) { /* уже */ } };
+process.on('exit', killServers);
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killServers(); process.exit(130); });
 
 /* Сервер «как GitHub Pages» для раздела update: max-age=600 (столько
    Pages разрешает браузеру держать файл, не спрашивая), ETag и ответ
@@ -308,7 +318,9 @@ const LABELS = () => {
    подсказка успела бы уйти, и проверка была бы пустой */
 const HINT = () => {
   const h = document.querySelector('.hud-space .hint');
-  h.style.animation = 'none'; void h.offsetWidth; h.style.animation = '';
+  // гаснет по игровому времени (класс out, P5): под программным рендером
+  // к проверке оно могло пройти — возвращаем подсказку, как на старте
+  h.classList.remove('out');
   const hr = h.getBoundingClientRect();
   const vis = el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
   const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
@@ -319,7 +331,17 @@ const HINT = () => {
 };
 
 (async () => {
-  await new Promise(r => setTimeout(r, 800));
+  // Ждём УСЛОВИЯ, а не секунд: сервер ответил — или вышел (порт занят)
+  for (let i = 0; i < 100 && serverGone === null; i++) {
+    // предел у запроса: молчащий чужой слушатель на порту иначе подвесил бы стенд
+    if (await fetch(BASE + 'js/space.js', { signal: AbortSignal.timeout(1000) }).then(r => r.ok, () => false)) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (serverGone !== null) {
+    console.error(`Сервер на порту ${PORT} не поднялся (код ${serverGone}) — порт, скорее всего, занят. ` +
+      'Освободите его или задайте другой: CF_PORT=…');
+    process.exit(2);
+  }
   /* На порту обязан отвечать НАШ сервер. Если там остался сервер от
      прошлого прогона (другая папка, копия игры до правок), новый молча
      не поднимается, а стенд проверяет чужие файлы — так однажды
@@ -394,8 +416,36 @@ const HINT = () => {
     await tap(page, '.neuro-head h2');
     await page.waitForTimeout(300);
     ok('справка: щелчок по самой панели НЕ закрывает', await page.evaluate(() => !!document.querySelector('.screen.neuro')));
+    /* P5: выделение текста, начатое в панели и отпущенное над фоном,
+       справку не закрывает — click в этом случае приходит самому фону */
+    {
+      const at = await page.evaluate(() => {
+        const t = document.querySelector('.screen.neuro section p') || document.querySelector('.neuro-head h2');
+        const b = t.getBoundingClientRect();
+        return { x: b.left + 12, y: b.top + b.height / 2, hit: document.elementFromPoint(b.left + 12, b.top + b.height / 2) !== document.querySelector('.screen.neuro') };
+      });
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await page.mouse.move(at.x - 80, at.y, { steps: 4 });
+      await page.mouse.move(15, at.y, { steps: 6 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      ok('справка: выделение текста с отпусканием над фоном НЕ закрывает её (P5)', at.hit &&
+        await page.evaluate(() => !!document.querySelector('.screen.neuro')));
+    }
     await page.keyboard.press('Escape');
     await closed();
+    /* P5: щипок тачпада (колесо с Ctrl) над панелью не увеличивает страницу —
+       событие отменено и вне поля боя */
+    {
+      const zoomed = await page.evaluate(() => {
+        const el = document.querySelector('[data-a="skirmish"]');
+        const ev = new WheelEvent('wheel', { ctrlKey: true, deltaY: -60, bubbles: true, cancelable: true });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      });
+      ok('Ctrl+колесо (щипок тачпада) над кнопками меню страницу не увеличивает (P5)', zoomed);
+    }
 
     // Счётчик кадров
     await page.keyboard.press('F3');
@@ -525,6 +575,156 @@ const HINT = () => {
   };
 
   // ─────────────────────────── БОЙ НА ОРБИТЕ
+  /* ── P5 · бой обязан кончаться, и конец боя читается.
+     Отдельными боями заданного состава (__spaceTest), без отрисовки:
+     simTest гонит бой шагами, как в игре, — минута игрового времени
+     проходит за секунды. */
+  const p5 = async page => {
+    const MID = [{ id: 'corvette', count: 3 }, { id: 'frigate', count: 3 }, { id: 'ecm', count: 1 },
+      { id: 'cruiser', count: 2 }, { id: 'carrier', count: 1 }, { id: 'capital', count: 1 }];
+    const battle = async cfg => {
+      const old = await page.evaluateHandle(() => window.__sp);
+      await page.evaluate(c => window.__spaceTest(c), cfg);
+      const up = await page.waitForFunction(o => window.__sp && window.__sp !== o && __sp.time > 0, old,
+        { timeout: 150000, polling: 250 }).then(() => true, () => false);
+      await settled().catch(() => {});
+      await page.evaluate(() => { __sp.paused = true; });
+      return up;
+    };
+    await mute(page, true);
+    /* 1. У Рииза остался один безоружный скрытый. Носитель (ангар — есть
+       чем бить) ИИ обязан найти там, где видел его последним; РЭБ (бить
+       нечем) уходит в гипер сам — с предупреждением в ленте */
+    for (const keep of ['carrier', 'ecm']) {
+      const up = await battle({ attacker: { faction: 'reez', ships: MID }, defender: { faction: 'devian', ships: MID }, playerSide: 'attacker' });
+      const st = up && await page.evaluate(keep => {
+        const P = __sp.playerSide;
+        const k = __sp.ships.find(s => !s.dead && s.side === P && s.def.id === keep);
+        for (const s of __sp.ships.filter(s => !s.dead && s.side === P && s !== k)) __sp.killTest(s);
+        const hidden0 = !!k.stealth && __sp.time >= k.revealUntil && !k.exposed;
+        const r = __sp.simTest(keep === 'ecm' ? 40 : 300, 1 / 30);
+        const log = __sp.feedLog.map(x => x[1]);
+        return { hidden0, ended: r.ended, t: Math.round(__sp.time), result: __sp.outcome && __sp.outcome.result,
+          search: log.some(x => /ищет наши скрытые/.test(x)), warn: log.findIndex(x => /нечем бить: ни орудий/.test(x)),
+          gone: log.findIndex(x => /Нечем бить — уцелевшие уходят/.test(x)) };
+      }, keep);
+      if (keep === 'carrier') {
+        ok('у Рииза остался один молчащий скрытый носитель: ИИ ищет его там, где видел, и бой кончается (P5)',
+          !!st && st.hidden0 && st.ended && st.search, JSON.stringify(st));
+      } else {
+        ok('у Рииза остался один безоружный РЭБ: лента предупреждает, флот уходит в гипер сам, итог — «Отход» (P5)',
+          !!st && st.ended && st.result === 'retreat' && st.warn >= 0 && st.gone > st.warn, JSON.stringify(st));
+      }
+    }
+    /* 2. «Мёртвое время»: у ИИ не осталось тяжёлых, а у игрока они есть —
+       ИИ уходит всем флотом, лента это говорит и подсказывает, чем
+       ответить. Раньше носители и эскорт отходили «за линию» от своего
+       же центра и полминуты уезжали через всё поле без единого выстрела */
+    {
+      const up = await battle({
+        attacker: { faction: 'troyden', ships: [{ id: 'capital', count: 1 }, { id: 'cruiser', count: 1 }] },
+        defender: { faction: 'plektor', ships: [{ id: 'carrier', count: 1 }, { id: 'frigate', count: 2 }, { id: 'cruiser', count: 1 }] },
+        playerSide: 'attacker',
+      });
+      const st = up && await page.evaluate(() => {
+        for (const s of __sp.ships) if (s.side !== __sp.playerSide && s.def.id === 'cruiser') s.hp = s.maxHp * 0.1;
+        const r = __sp.simTest(90, 1 / 30);
+        const log = __sp.feedLog;
+        const at = log.find(x => /Противник отходит/.test(x[1]));
+        return { ended: r.ended, t: Math.round(__sp.time), result: __sp.outcome && __sp.outcome.result,
+          flee: log.some(x => /копит гипер — добить/.test(x[1])), retreatAt: at ? at[0] : null, hint: at ? /Охота/.test(at[1]) : false };
+      });
+      ok('у ИИ не осталось тяжёлых: его флот уходит в гипер, лента говорит об этом и чем добить, бой кончается быстро (P5)',
+        !!st && st.ended && st.result === 'victory' && st.flee && st.retreatAt !== null && st.hint && st.t - st.retreatAt < 25,
+        JSON.stringify(st));
+    }
+    await mute(page, false);
+    /* 3. Подкрепление: строка в ленте «не в отрядах», щелчок по ней и N
+       выбирают прибывших; отряд с частью класса — с числом в скобках;
+       безоружный на «Охоте» держится при флоте и не пишет «целей не видно» */
+    {
+      const up = await battle({
+        attacker: { faction: 'troyden', ships: [{ id: 'cruiser', count: 1 }, { id: 'frigate', count: 2 }, { id: 'ecm', count: 1 }],
+          reserve: [{ id: 'frigate', count: 2 }, { id: 'corvette', count: 2 }] },
+        // противник — одна станция вне досягаемости: бой не кончится раньше подкрепления
+        defender: { faction: 'plektor', ships: [], station: true },
+        playerSide: 'attacker',
+      });
+      await page.evaluate(() => { __sp.reinforceTest(); __sp.simTest(36, 1 / 30); });
+      await waitFrames(page, 3);
+      const line = await page.evaluate(() => {
+        const d = [...document.querySelectorAll('.hud-space .feed .feed-line')].find(x => /Прибыло подкрепление/.test(x.textContent));
+        if (!d) return null;
+        const b = d.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
+        return { x, y, text: d.textContent, hit: document.elementFromPoint(x, y) === d, n: (__sp.arrived || []).length };
+      });
+      if (line) await page.mouse.click(line.x, line.y);
+      await waitFrames(page, 2);
+      const picked = await page.evaluate(() => __sp.selection.length === __sp.arrived.length && __sp.arrived.every(e => __sp.selection.includes(e)));
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('KeyN');
+      await waitFrames(page, 2);
+      const byKey = await page.evaluate(() => __sp.selection.length === (__sp.arrived || [1]).length);
+      ok('подкрепление: строка «Прибыло… не в отрядах» в ленте, щелчок по ней и N выбирают прибывших (P5)',
+        !!line && line.hit && /не в отрядах/.test(line.text) && line.n === 4 && picked && byKey, JSON.stringify({ line, picked, byKey }));
+      // Отряд 1 — один фрегат из четырёх: в ростере «1(1)», а не «1»
+      await page.evaluate(() => { __sp.selection = [__sp.ships.find(s => !s.dead && s.side === __sp.playerSide && s.def.id === 'frigate')]; });
+      await page.keyboard.press('Shift+Digit1');
+      await waitFrames(page, 9);
+      const grp = await page.evaluate(() => {
+        const c = [...document.querySelectorAll('.rcell')].find(x => /Фрегат/.test(x.textContent));
+        return c ? { text: c.querySelector('.rgrp').textContent, title: c.title } : null;
+      });
+      ok('ростер: отряд с частью класса — с числом в скобках, «1(1)», а не обещание всего класса (P5)',
+        !!grp && grp.text === '1(1)' && /отряд 1: 1 из 4/.test(grp.title), JSON.stringify(grp));
+      // Безоружный РЭБ с фрегатом на «Охоте»
+      const hunt = await page.evaluate(() => {
+        const P = __sp.playerSide;
+        const ecm = __sp.ships.find(s => !s.dead && s.side === P && s.ecm), fr = __sp.ships.find(s => !s.dead && s.side === P && s.def.id === 'frigate');
+        __sp.selection = [ecm, fr];
+        __sp.selDirty = true;        // панель команд — по новому выделению (клавиши берут её кнопки)
+        return true;
+      });
+      await waitFrames(page, 2);
+      await page.keyboard.press('KeyT');
+      await waitFrames(page, 2);
+      const ht = await page.evaluate(() => {
+        const ecm = __sp.ships.find(s => !s.dead && s.side === __sp.playerSide && s.ecm);
+        return { doing: __sp.doingTest(ecm), ward: ecm.guardOf ? ecm.guardOf.def.id : null };
+      });
+      ok('безоружный РЭБ на «Охоте» держится при флоте, подпись честная, не «целей не видно» (P5)',
+        hunt && ht.ward === 'frigate' && /безоружен/.test(ht.doing) && !/целей не видно/.test(ht.doing), JSON.stringify(ht));
+      // «Стоп» подтверждается звуком и полоской, как H
+      await page.evaluate(() => { __sp.selection = __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && s.guns.length).slice(0, 2); __sp.selDirty = true; });
+      await waitFrames(page, 2);
+      await page.waitForTimeout(700);    // звук «приказ» от T отзвучал: одновременно их не больше двух
+      const o0 = await page.evaluate(() => (window.__sound && __sound.stats.order) || 0);
+      await page.keyboard.press('KeyS');
+      await waitFrames(page, 2);
+      const stop = await page.evaluate(() => ({ order: (window.__sound && __sound.stats.order) || 0,
+        toast: [...document.querySelectorAll('.toasts > *')].map(t => t.textContent).join(' | ') }));
+      ok('«Стоп» (S) подтверждается звуком и полоской, как H (P5)', stop.order > o0 && /Стоп/.test(stop.toast), JSON.stringify({ o0, ...stop }));
+      /* Колесом нельзя въехать в корпус: камера — к флагману… здесь крейсер,
+         приближаем по нему колесом много раз */
+      const tgt = await page.evaluate(() => {
+        const s = __sp.ships.find(x => !x.dead && x.side === __sp.playerSide && x.def.id === 'cruiser');
+        __sp.camTest(s.pos.x, s.pos.y, s.pos.z, 400);
+        return s.uid;
+      });
+      await waitFrames(page, 3);
+      const sp = await page.evaluate(uid => __sp.screenTest(__sp.ships.find(s => s.uid === uid)), tgt);
+      await page.mouse.move(sp.x, sp.y);
+      for (let i = 0; i < 25; i++) await page.mouse.wheel(0, -400);
+      await waitFrames(page, 20);
+      const cam = await page.evaluate(uid => {
+        const s = __sp.ships.find(x => x.uid === uid), c = __sp.camPosTest();
+        return { d: Math.round(c.distanceTo(s.pos)), len: Math.round(s.len), dist: Math.round(__sp.camInfo().dist) };
+      }, tgt);
+      ok('колесом нельзя загнать камеру в корпус: ближний предел — по размеру корабля (P5)', cam.d >= cam.len * 0.5, JSON.stringify(cam));
+      await clean('P5: подкрепление, ростер, «Охота», камера');
+    }
+  };
+
   const space = async () => {
     console.log('\nБой на орбите  [' + secs() + ']');
     /* Модели «в пути», пока стенд не увидит, что заставка об этом
@@ -610,6 +810,37 @@ const HINT = () => {
     r = await tap(page, '[data-speed="0"]');
     ok('пауза нажимается', r.ok && await page.evaluate(() => __sp.paused), r.why);
     await page.waitForTimeout(400);
+
+    /* P5 · шапка: «Мы» и «Противник» словами (в зеркальном бою «ТРД / ТРД»
+       различал только цвет); имена кораблей одной стороны не повторяются */
+    const who = await page.evaluate(() => {
+      const P = __sp.playerSide, t = r => document.querySelector(`[data-role="${r}"]`).textContent;
+      const names = side => __sp.ships.filter(s => s.side === side).map(s => s.name);
+      const uniq = l => new Set(l).size === l.length;
+      return { mine: t(P === 'attacker' ? 'atk-who' : 'def-who'), foe: t(P === 'attacker' ? 'def-who' : 'atk-who'),
+        uniq: uniq(names('attacker')) && uniq(names('defender')), sample: names('defender').slice(0, 6) };
+    });
+    ok('шапка: «Мы» и «Противник» у полос силы; имена кораблей одной стороны разведены номерами (P5)',
+      who.mine === 'Мы' && who.foe === 'Противник' && who.uniq && who.sample.some(n => / II$/.test(n)), JSON.stringify(who));
+
+    /* P5 · первое «Весь флот» не собирает шейдеров посреди боя: кольца,
+       круги и линии приказов прогреты под заставкой. И кругов дальности
+       при большом выделении не больше двух, а у 1–3 выделенных — у всех */
+    {
+      const p0 = await page.evaluate(() => __sp.programsTest());
+      await page.keyboard.press('F2');
+      await waitFrames(page, 4);
+      const p1 = await page.evaluate(() => __sp.programsTest());
+      const all = await page.evaluate(() => ({ n: __sp.selection.filter(e => e.kind === 'ship' && e.guns.length).length, rings: __sp.rangeTest() }));
+      await page.evaluate(() => { __sp.selection = __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && s.guns.length).slice(0, 2); });
+      await waitFrames(page, 2);
+      const two = await page.evaluate(() => __sp.rangeTest());
+      await page.keyboard.press('Escape');
+      await waitFrames(page, 2);
+      ok('первое «Весь флот» не собирает новых шейдеров (прогрев под заставкой)', p0 > 0 && p1 === p0, `шейдеров ${p0} → ${p1}`);
+      ok('круги дальности: при «Весь флот» не больше двух, у двух выделенных — оба (P5)',
+        all.n > 3 && all.rings <= 2 && two === 2, `вооружённых выделено ${all.n}, кругов ${all.rings}; у двух — ${two}`);
+    }
 
     /* P3 · подсказка по управлению не лежит на метках кораблей при
        стартовой камере: под шапкой на 1366×768 на ней стояли метки
@@ -1350,6 +1581,21 @@ const HINT = () => {
         .map(([x, y]) => { const h = document.elementFromPoint(x, y); return h === c ? 'поле' : h.tagName + '.' + h.className; });
     });
     ok('пустая полоса рядом с ростером и название боя не глотают щелчок (C135)', holes.every(h => h === 'поле'), holes.join(' | '));
+    /* …и на ноутбуке 1366×768, где в начале боя над ростером стоит свой
+       флот: щель между ячейками и место правее ростера — поле */
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await waitFrames(page, 3);
+    const holes2 = await page.evaluate(() => {
+      const c = document.getElementById('view');
+      const cells = [...document.querySelectorAll('.rcell')].map(e => e.getBoundingClientRect());
+      const ro = document.querySelector('.roster').getBoundingClientRect();
+      const pts = [[ro.right + 60, ro.top + ro.height / 2]];
+      if (cells.length > 1) pts.push([(cells[0].right + cells[1].left) / 2, cells[0].top + cells[0].height / 2]);
+      return pts.map(([x, y]) => { const h = document.elementFromPoint(x, y); return h === c ? 'поле' : h.tagName + '.' + h.className; });
+    });
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await waitFrames(page, 3);
+    ok('1366×768: щель между ячейками ростера и место правее него — поле, щелчок не глотается', holes2.every(h => h === 'поле'), holes2.join(' | '));
     /* C43: свои и чужие — разные цвета по СТОРОНЕ, а не по клану:
        подписи, полоски силы в шапке. Камера — так, чтобы в кадре были оба флота */
     await page.evaluate(() => {
@@ -1841,7 +2087,9 @@ const HINT = () => {
     }, null, { timeout: 180000, polling: 500 }).then(() => true, () => false);
     await mute(page, false);
     const endText = await page.evaluate(() => (document.querySelector('.endcard') || {}).innerText || '');
-    ok('бой доходит до итоговой карточки', ended && /Орбита за нами/.test(endText), endText.slice(0, 60) || 'нет карточки, игровое время ' +
+    // В быстром бою высадки нет — и итог её не обещает (P5)
+    ok('бой доходит до итоговой карточки, и в быстром бою она не обещает десант', ended && /Орбита за нами/.test(endText) && !/десант/i.test(endText),
+      endText.slice(0, 160) || 'нет карточки, игровое время ' +
       await page.evaluate(() => __sp.time.toFixed(1)));
     if (ended) {
       /* Итоги боя: потери обеих сторон по видам кораблей, время, кто
@@ -1910,6 +2158,7 @@ const HINT = () => {
     ok('оборона одной станцией: стартовая камера смотрит на станцию — она в кадре, не под панелями, противник тоже в кадре (C76)',
       stUp && camSt.own === 1 && camSt.onScreen === 1 && camSt.under === 0 && camSt.low < 0.66 && camSt.foeOn > 0, JSON.stringify(camSt));
     await clean('оборона станцией');
+    await p5(page);
   };
 
   // ─────────────────────────── ЗЕМЛЯ
@@ -2241,15 +2490,20 @@ const HINT = () => {
     const log = path.join(dir, 'server.log');
     const port = String(+PORT + 1);
     const srv = spawn('python3', [path.join(dir, 'pages.py'), port, www, log], { stdio: 'ignore' });
+    extraServers.add(srv);
+    let srvGone = null;
+    srv.on('exit', c => { srvGone = c; });
     const URL5 = `http://127.0.0.1:${port}/game/`;
     let c5 = null;
     try {
       let up = false;
-      for (let i = 0; i < 60 && !up; i++) {
-        up = await fetch(URL5).then(r => r.ok, () => false);
-        if (!up) await new Promise(r => setTimeout(r, 100));
+      for (let i = 0; i < 60 && !up && srvGone === null; i++) {
+        up = await new Promise(r => setTimeout(r, 100)).then(() => srvGone === null && fetch(URL5).then(r => r.ok, () => false));
       }
-      if (!up) { ok('сервер «как GitHub Pages» поднялся на порту ' + port, false); return; }
+      if (up) await new Promise(r => setTimeout(r, 400));   // python выходит не сразу — даём ему время сказать «занято»
+      /* Сервер вышел — порт занят чужим, и «выкладка» в нашей папке до
+         страницы не дойдёт: ложный FAIL про F5. Говорим, в чём дело */
+      if (!up || srvGone !== null) { ok('сервер «как GitHub Pages» поднялся на порту ' + port, false, srvGone !== null ? 'порт занят — сервер вышел' : 'не отвечает'); return; }
       c5 = await browser.newContext({ viewport: { width: 1366, height: 768 } });   // service worker разрешён
       const p = await c5.newPage();
       const errs = [];
@@ -2299,6 +2553,7 @@ const HINT = () => {
     } finally {
       if (c5) await c5.close().catch(() => {});
       srv.kill();
+      extraServers.delete(srv);
       fs.rmSync(dir, { recursive: true, force: true });
     }
   };

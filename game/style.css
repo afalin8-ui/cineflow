@@ -139,6 +139,10 @@ select {
 .ss-row { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); }
 .ss-row .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .ss-row b { font-weight: 600; width: 34px; font-family: var(--mono); font-size: 11px; }
+/* «Мы» / «Противник» рядом с кланом (P5): в зеркальном бою «ТРД / ТРД» */
+.ss-row .ss-who { width: 64px; font-size: 11px; flex: none; }
+.ss-row .ss-who.mine { color: var(--good); }
+.ss-row .ss-who.foe { color: var(--bad); }
 .ss-row .bar {
   flex: 1; height: 7px; background: #101a28; border-radius: 4px; overflow: hidden;
   border: 1px solid var(--line-soft);
@@ -1114,7 +1118,17 @@ table.keys td:first-child {
   left: calc(12px + var(--safe-l));
   bottom: calc(10px + var(--botH) + 10px + 58px + var(--safe-b));
   max-width: min(380px, 28vw);
+  /* Подложка — как у строк ленты (P5): в обороне под подсказкой оказывается
+     светлый край планеты с бликом, и серый текст без подложки на нём
+     не читался («S» пропадала совсем) */
+  background: rgba(8, 12, 20, .74); padding: 4px 10px; border-radius: 6px;
+  color: var(--text-2);
+  /* Гаснет по ИГРОВОМУ времени (класс out из space.js), а не по CSS-часам:
+     при долгой подготовке боя и на паузе подсказка уходила раньше, чем её
+     успевали прочесть (P5) */
+  animation: none; transition: opacity .8s, visibility .8s;
 }
+.hud-space .hint.out { opacity: 0; visibility: hidden; }
 /* Лента событий боя — там же, где первые секунды стоит подсказка: первое
    событие её убирает. Прозрачна для мыши, как подсказка */
 .hud-space .feed {
@@ -1129,7 +1143,10 @@ table.keys td:first-child {
   animation: toast-in .18s ease-out; transition: opacity .8s;
 }
 .feed-line.bad { border-left-color: var(--bad); color: #ffd6cf; }
-.feed-line.good { border-left-color: var(--good); }
+.feed-line.good { border-left-color: var(--good); color: #d6ffe9; }
+/* Строка, по которой можно щёлкнуть (подкрепление — выбрать прибывших) */
+.feed-line.act { pointer-events: auto; cursor: pointer; text-decoration: underline dotted rgba(255,255,255,.35); }
+.feed-line.act:hover { background: rgba(20, 34, 52, .9); }
 .feed-line.warn { border-left-color: #e0a94e; }
 .feed-line.out { opacity: 0; }
 /* Название боя в шапке — только текст: растянутый на полшапки, он глотал
