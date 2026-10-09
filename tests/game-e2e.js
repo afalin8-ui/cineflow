@@ -269,6 +269,46 @@ const SCAN = () => {
   return out;
 };
 
+/* Подписи кораблей на экране (C78): имена не лежат друг на друге и на
+   шапке, и ЗНАЧОК (или полоска значка) не лежит на имени — раньше значки
+   ставились тем же проходом и закрывали буквы: «Нем●≡зида». Сравниваются
+   прямоугольники букв, а не меток: метка шире своего текста */
+const LABELS = () => {
+  const tb = document.querySelector('.topbar').getBoundingClientRect().bottom;
+  const ms = [...document.querySelectorAll('.hud-space .marker')].filter(m => m.style.display !== 'none');
+  const vis = el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+  const hit = (a, b, t = 0.5) => a.left < b.right - t && b.left < a.right - t && a.top < b.bottom - t && b.top < a.bottom - t;
+  const names = ms.filter(m => !m.classList.contains('mini'))
+    .map(m => ({ r: m.querySelector('.mk-name').getBoundingClientRect(), t: m.querySelector('.mk-name').textContent }));
+  let over = 0;
+  for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+    const a = names[i].r, b = names[j].r;
+    if (a.left < b.right - 4 && b.left < a.right - 4 && a.top < b.bottom - 2 && b.top < a.bottom - 2) over++;
+  }
+  const marks = ms.filter(m => m.classList.contains('mini'))
+    .flatMap(m => [m.querySelector('.mk-ico'), m.querySelector('.mk-bar')].filter(vis).map(el => el.getBoundingClientRect()));
+  const iconsOnNames = [];
+  for (const n of names) { const k = marks.filter(r => hit(r, n.r)).length; if (k) iconsOnNames.push(n.t + '×' + k); }
+  const onTop = ms.filter(m => [...m.children].some(c => vis(c) && c.getBoundingClientRect().top < tb)).length;
+  return { shown: ms.length, names: names.length, icons: ms.length - names.length, over, onTop, iconsOnNames };
+};
+
+/* Подсказка по управлению видна первые 16 секунд — ровно тогда, когда
+   игрок ищет противника, — и не должна лежать на метках кораблей.
+   Угасание запускаем заново: под программным рендером к проверке
+   подсказка успела бы уйти, и проверка была бы пустой */
+const HINT = () => {
+  const h = document.querySelector('.hud-space .hint');
+  h.style.animation = 'none'; void h.offsetWidth; h.style.animation = '';
+  const hr = h.getBoundingClientRect();
+  const vis = el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const on = [...document.querySelectorAll('.hud-space .marker')].filter(m => m.style.display !== 'none')
+    .filter(m => [...m.children].some(c => vis(c) && hit(c.getBoundingClientRect(), hr)))
+    .map(m => (m.classList.contains('foe') ? 'чужой ' : 'свой ') + (m.classList.contains('mini') ? 'значок' : m.querySelector('.mk-name').textContent));
+  return { shown: +getComputedStyle(h).opacity > 0.5 && hr.height > 0, box: [hr.left | 0, hr.top | 0, hr.right | 0, hr.bottom | 0], on };
+};
+
 (async () => {
   await new Promise(r => setTimeout(r, 800));
   /* На порту обязан отвечать НАШ сервер. Если там остался сервер от
@@ -559,6 +599,21 @@ const SCAN = () => {
     r = await tap(page, '[data-speed="0"]');
     ok('пауза нажимается', r.ok && await page.evaluate(() => __sp.paused), r.why);
     await page.waitForTimeout(400);
+
+    /* P3 · подсказка по управлению не лежит на метках кораблей при
+       стартовой камере: под шапкой на 1366×768 на ней стояли метки
+       противника (стартовая камера ставит его к верхнему краю), а «A —
+       ат●ка с ходу» и полузакрытое имя врага читались одинаково плохо.
+       И значки не лежат на именах уже на старте */
+    for (const [w, h] of [[1920, 1080], [1366, 768]]) {
+      if (w !== 1920) { await page.setViewportSize({ width: w, height: h }); await waitFrames(page, 3); }
+      const hs = await page.evaluate(HINT);
+      const lb = await page.evaluate(LABELS);
+      ok(`старт ${w}×${h}: подсказка по управлению видна и не лежит на метках, значки не на именах`,
+        hs.shown && !hs.on.length && !lb.iconsOnNames.length, JSON.stringify({ hint: hs, labels: lb }));
+    }
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await waitFrames(page, 2);
 
     // Выделение кликом: свой корабль, который на экране, не под панелью
     // и стоит ОСОБНЯКОМ — строй расставлен со случайным разбросом, и в
@@ -1125,21 +1180,10 @@ const SCAN = () => {
       ok(`панель команд ${w}×${h} при «Весь флот»: все ${cmd.n} кнопок в экране, не под миникартой и выделенным, подписи целиком, без прокрутки`,
         cmd.n >= 10 && !cmd.off.length && !cmd.overMap.length && !cmd.overSel.length && !cmd.cut.length && !cmd.scroll,
         `за краем: ${cmd.off.join(', ') || 'нет'}; под миникартой: ${cmd.overMap.join(', ') || 'нет'}; на выделенном: ${cmd.overSel.join(', ') || 'нет'}; обрезаны: ${cmd.cut.join(', ') || 'нет'}; прокрутка: ${cmd.scroll}`);
-      // Подписи кораблей (C78): имена не лежат друг на друге и не залезают на шапку
-      const lab = await page.evaluate(() => {
-        const tb = document.querySelector('.topbar').getBoundingClientRect().bottom;
-        const ms = [...document.querySelectorAll('.hud-space .marker')].filter(m => m.style.display !== 'none');
-        const vis = el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
-        const names = ms.filter(m => !m.classList.contains('mini')).map(m => m.querySelector('.mk-name').getBoundingClientRect());
-        let over = 0;
-        for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
-          const a = names[i], b = names[j];
-          if (a.left < b.right - 4 && b.left < a.right - 4 && a.top < b.bottom - 2 && b.top < a.bottom - 2) over++;
-        }
-        const onTop = ms.filter(m => [...m.children].some(c => vis(c) && c.getBoundingClientRect().top < tb)).length;
-        return { shown: ms.length, names: names.length, over, onTop };
-      });
-      ok(`подписи ${w}×${h}: имена не наложены друг на друга и не на шапке (C78)`, lab.shown > 0 && !lab.over && !lab.onTop, JSON.stringify(lab));
+      // Подписи кораблей (C78): имена не лежат друг на друге, на шапке, и значки не лежат на именах
+      const lab = await page.evaluate(LABELS);
+      ok(`подписи ${w}×${h}: имена не наложены друг на друга и не на шапке, значки не на именах (C78)`,
+        lab.shown > 0 && !lab.over && !lab.onTop && !lab.iconsOnNames.length, JSON.stringify(lab));
       if (s.scrolled || s.off.length) info(`HUD ${w}×${h}`, `в прокрутке ${s.scrolled}, за краем экрана ${s.off.length}${s.off.length ? ': ' + s.off.join('; ') : ''}`);
       // Номер отряда в ячейке ростера не лежит на имени корабля
       const rg = await page.evaluate(() => {
@@ -1213,6 +1257,50 @@ const SCAN = () => {
     const greenish = c => c && c[1] > c[0] + 40, reddish = c => c && c[0] > c[1] + 60;
     ok('свои — зелёные, чужие — красные: подписи и полоски силы (C43)',
       greenish(sideCol.mine) && reddish(sideCol.foe) && greenish(sideCol.myBar) && reddish(sideCol.foeBar), JSON.stringify(sideCol));
+    /* Издали, оба флота в кадре и весь свой флот выделен: имён много,
+       значков ещё больше — здесь значок на имени вероятнее всего (C78) */
+    await tap(page, '[data-q="all"]');
+    await waitFrames(page, 3);
+    const farLab = await page.evaluate(LABELS);
+    ok('издали при «Весь флот»: значки не на именах, имена не наложены (C78)',
+      farLab.names > 0 && farLab.icons > 0 && !farLab.over && !farLab.iconsOnNames.length, JSON.stringify(farLab));
+    /* Состояния читаются и у имени, и у значка: свой скрытый — фиолетовым
+       (имя курсивом), уходящий в гипер — голубым «⇢» и полоской даже у
+       целого. Раньше новые правила цвета той же силы стояли ниже старых
+       и перебивали их, а у значка этих признаков не было вовсе. Скрытность
+       и гипер ставим руками на паузе: бой стоит, и они не сойдут сами */
+    const mineMarks = () => page.evaluate(() => {
+      const rgb = c => (c.match(/\d+/g) || []).map(Number);
+      return [...document.querySelectorAll('.hud-space .marker.mine')].filter(m => m.style.display !== 'none').map(m => {
+        const nm = m.querySelector('.mk-name'), bar = m.querySelector('.mk-bar');
+        return { mini: m.classList.contains('mini'), cloak: m.classList.contains('cloak'), jump: m.classList.contains('jump'),
+          name: rgb(getComputedStyle(nm).color), italic: getComputedStyle(nm).fontStyle === 'italic',
+          ico: rgb(getComputedStyle(m.querySelector('.mk-ico')).color),
+          bar: getComputedStyle(bar).display !== 'none', after: getComputedStyle(m, '::after').content,
+          nameAfter: getComputedStyle(nm, '::after').content, cut: nm.scrollWidth > nm.clientWidth + 1 };
+      });
+    });
+    const bothKinds = async () => {
+      await page.keyboard.press('Escape'); await waitFrames(page, 3);
+      const a = await mineMarks();
+      await tap(page, '[data-q="all"]'); await waitFrames(page, 3);
+      return [...a, ...await mineMarks()];
+    };
+    const violet = c => c[2] > 220 && c[2] - c[1] > 50 && c[0] > c[1];
+    await page.evaluate(() => { for (const s of __sp.ships) if (!s.dead && s.side === __sp.playerSide) { s._st = s.stealth; s.stealth = true; s.revealUntil = 0; s.exposed = false; } });
+    const cl = await bothKinds();
+    await page.evaluate(() => { for (const s of __sp.ships) if (s._st !== undefined) { s.stealth = s._st; delete s._st; } });
+    const clN = cl.filter(m => !m.mini), clI = cl.filter(m => m.mini);
+    ok('свой скрытый: имя фиолетовым курсивом, значок фиолетовый',
+      clN.length > 0 && clI.length > 0 && cl.every(m => m.cloak) && clN.every(m => violet(m.name) && m.italic) && clI.every(m => violet(m.ico)),
+      `имён ${clN.length}, значков ${clI.length}; имя ${JSON.stringify(clN[0] && clN[0].name)} курсив ${clN[0] && clN[0].italic}; значок ${JSON.stringify(clI[0] && clI[0].ico)}`);
+    await page.evaluate(() => { for (const s of __sp.ships) if (!s.dead && s.side === __sp.playerSide && !s.station) s.hyper = { left: 99, total: 99, vortex: null }; });
+    const jm = await bothKinds();
+    await page.evaluate(() => { for (const s of __sp.ships) if (s.hyper && s.hyper.total === 99) s.hyper = null; });
+    const jmN = jm.filter(m => !m.mini), jmI = jm.filter(m => m.mini);
+    ok('уходящий в гипер: у имени «⇢ гипер» целиком, у значка «⇢», полоска у обоих',
+      jmN.length > 0 && jmI.length > 0 && jm.every(m => m.jump && m.bar) && jmN.every(m => /гипер/.test(m.nameAfter) && !m.cut) && jmI.every(m => /⇢/.test(m.after)),
+      `имён ${jmN.length}, значков ${jmI.length}; у имени ${jmN[0] && jmN[0].nameAfter} обрезано ${jmN.filter(m => m.cut).length}; у значка ${jmI[0] && jmI[0].after}; без полоски ${jm.filter(m => !m.bar).length}`);
     // Подсказка команды: сразу при наведении, с буквой клавиши, в пределах экрана
     await tap(page, '[data-q="all"]');
     const stopAt = await page.evaluate(() => { const r = document.querySelector('button.act[data-act="stop"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
@@ -1506,6 +1594,34 @@ const SCAN = () => {
       ok('после боя — снова меню', await menuVisible().then(() => true, () => false));
     }
     await clean('бой на орбите');
+
+    /* P3 · оборона одной станцией (только в кампании: ИИ напал на
+       систему, где флота нет, а станция есть). Стартовая камера смотрела
+       в середину поля, и станция — единственное своё на орбите — была
+       на 11 800 точек ниже экрана (C76) */
+    await page.evaluate(() => window.__spaceTest({
+      attacker: { faction: 'plektor', ships: [{ id: 'corvette', count: 4 }, { id: 'frigate', count: 2 }, { id: 'cruiser', count: 1 }] },
+      defender: { faction: 'troyden', ships: [], station: true },
+      playerSide: 'defender',
+    }));
+    const stUp = await page.waitForFunction(() => window.__sp && __sp.playerSide === 'defender' && __sp.time > 0,
+      null, { timeout: 150000, polling: 250 }).then(() => true, () => false);
+    await settled();
+    await page.waitForTimeout(500);
+    const camSt = await page.evaluate(() => {
+      const P = __sp.playerSide, c = document.getElementById('view');
+      const on = p => p.z < 1 && p.x >= 0 && p.y >= 0 && p.x <= innerWidth && p.y <= innerHeight;
+      const own = __sp.ships.filter(s => !s.dead && s.side === P).map(s => __sp.screenTest(s));
+      const foe = __sp.ships.filter(s => !s.dead && s.side !== P).map(s => __sp.screenTest(s));
+      const top = document.querySelector('.roster').getBoundingClientRect().top;
+      return { own: own.length, onScreen: own.filter(on).length,
+        under: own.filter(p => on(p) && document.elementFromPoint(p.x, p.y) !== c).length,
+        at: own.map(p => [Math.round(p.x), Math.round(p.y)]), rosterTop: Math.round(top),
+        low: +(Math.max(...own.map(p => p.y)) / innerHeight).toFixed(2), foeOn: foe.filter(on).length, foe: foe.length };
+    });
+    ok('оборона одной станцией: стартовая камера смотрит на станцию — она в кадре, не под панелями, противник тоже в кадре (C76)',
+      stUp && camSt.own === 1 && camSt.onScreen === 1 && camSt.under === 0 && camSt.low < 0.66 && camSt.foeOn > 0, JSON.stringify(camSt));
+    await clean('оборона станцией');
   };
 
   // ─────────────────────────── ЗЕМЛЯ

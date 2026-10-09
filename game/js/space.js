@@ -1799,6 +1799,33 @@ export function createSpaceBattle(ctx, config) {
   const iconOf = e => (e.station ? 'station' : e.def.id === 'corvette' ? 'corvette'
     : e.def.id === 'frigate' ? 'frigate' : e.def.id === 'ecm' ? 'ecm'
     : e.cls === 'carrier' ? 'carrier' : e.def.id === 'cruiser' ? 'cruiser' : 'capital');
+  /* Габарит значка на экране — ширина и высота из style.css
+     (`.mk-ico[data-k]`); ромб флагмана — квадрат 10 × 0,82, повёрнутый,
+     по диагонали 11,6. От них считаем, где значок стоит, чтобы он не лёг
+     на имя соседа. Замер разметки: буквы имени — от 17 до 5 точек над
+     низом метки, полоска — от 3 до 0, значок — на 3 выше полоски */
+  const ICON_BOX = { capital: [11.6, 11.6], cruiser: [10, 9], carrier: [13, 6], ecm: [9, 9],
+    frigate: [7, 7], corvette: [5, 5], station: [11, 11], squad: [9, 6] };
+  const NAME_UP = 18;          // имя с полоской: от низа метки до верха букв
+  /* Ширина имени — по самому тексту тем же шрифтом (канва, с кэшем):
+     мерить разметку на каждый кадр значило бы пересчитывать раскладку
+     страницы десятки раз в секунду */
+  const nameWidth = new Map();
+  let measureCtx = null, nameFont = '';
+  function textWidth(t) {
+    let w = nameWidth.get(t);
+    if (w === undefined) {
+      if (!measureCtx) {
+        measureCtx = document.createElement('canvas').getContext('2d');
+        nameFont = getComputedStyle(markerEl(0)._nm).font || '10px sans-serif';
+      }
+      measureCtx.font = nameFont;
+      w = measureCtx.measureText(t).width;
+      if (nameWidth.size > 500) nameWidth.clear();
+      nameWidth.set(t, w);
+    }
+    return w;
+  }
   let topEdge = 60;            // низ шапки: выше подписи не рисуем
   const measureTop = () => {
     const tb = hud.querySelector('.topbar');
@@ -1860,44 +1887,83 @@ export function createSpaceBattle(ctx, config) {
     }
     markerItems.sort((a, b) => b.pri - a.pri);
     const selN = state.selection.length;
-    const placed = [];
-    let i = 0;
+    /* Ход первый — ИМЕНА. Значки раньше ставились в том же проходе по
+       важности, и значок выделенного или крупного корабля ложился на
+       уже стоящее имя соседа: «Нем●≡зида», «Севе● Клоз» (замер на
+       «Генеральном» Плэктора — шесть значков на одном имени). Поэтому
+       сперва решаем, у кого имя, и только потом ставим значки в обход */
+    const names = [];
     for (const it of markerItems) {
-      const e = it.e, p = it.p, mine = e.side === state.playerSide, squad = e.kind === 'squad';
+      const e = it.e, p = it.p, squad = e.kind === 'squad';
       // Подпись — над корпусом, а не на нём: отступ растёт с размером на экране
-      const ay = p.y - Math.max(14, it.rpx * 0.55 + 6);
+      it.ay = p.y - Math.max(14, it.rpx * 0.55 + 6);
+      it.hp = squad ? it.live.reduce((a, c) => a + c.hp / c.maxHp, 0) / it.live.length : e.hp / e.maxHp;
+      if (squad) {
+        const r = STRIKE_ROLES[e.role];
+        it.text = it.sel || it.hov ? `${r.label} ×${it.live.length}` : `${r.short} ${it.live.length}`;
+        it.k = 'squad';
+      } else {
+        const nm = e.def.name;
+        it.text = nm.includes('«') ? nm.slice(nm.indexOf('«')) : nm;
+        it.k = iconOf(e);
+      }
       let name = it.sel || it.hov || it.rpx >= NEAR_PX || squad;
-      // Под шапкой подписей нет: ни имени, ни значка поверх кнопок (C78)
-      if (ay - (name ? 22 : 12) < topEdge) continue;
+      // Под шапкой имён нет (C78): не влезло — пусть будет значок
+      if (name && it.ay - NAME_UP < topEdge) name = false;
+      // «⇢ гипер» дописывается к имени — оно шире
+      const hw = name ? Math.max(20, textWidth(it.text + (e.hyper ? ' ⇢ гипер' : '')) / 2) + 2 : 0;
       /* Разводим всех, кроме того, что под курсором, и единственного
          выделенного: при «Весь флот» имена выделенных ложились друг на
          друга так же, как раньше чужие */
       if (name && !it.hov && !(it.sel && selN === 1)) {
-        for (const q of placed) if (Math.abs(q.x - p.x) < 86 && Math.abs(q.y - ay) < 15) { name = false; break; }
+        for (const q of names) {
+          if (Math.abs(q.x - p.x) < Math.max(86, q.hw + hw + 4) && Math.abs(q.y - it.ay) < 15) { name = false; break; }
+        }
       }
-      if (name) placed.push({ x: p.x, y: ay });
-      const hp = squad ? it.live.reduce((a, c) => a + c.hp / c.maxHp, 0) / it.live.length : e.hp / e.maxHp;
-      const bar = name || it.sel || hp < 0.995;
+      it.name = name;
+      if (name) names.push({ x: p.x, y: it.ay, hw });
+    }
+    /* Ход второй — ЗНАЧКИ, в обход имён. Значок, легший на имя, едет
+       к своему кораблю: под имя или над ним, что ближе к его месту, и
+       не ниже самого корабля. Некуда — значка нет: корабль виден моделью
+       и ловится щелчком по ней. Выше шапки значков тоже нет */
+    for (const it of markerItems) {
+      if (it.name) continue;
+      const b = ICON_BOX[it.k], jump = !!it.e.hyper;
+      it.bar = it.sel || it.hp < 0.995 || jump;
+      // ширина: значок, полоска 22 под ним, «⇢» справа у уходящего в гипер
+      const hw = Math.max(b[0] / 2, it.bar ? 11 : 0, jump ? 19 : 0);
+      const up = b[1] + 4 + (it.bar ? 3 : 0);
+      const near = names.filter(q => Math.abs(q.x - it.p.x) < q.hw + hw + 1);
+      const free = y => y - up >= topEdge && !near.some(q => y > q.y - NAME_UP - 1 && y - up < q.y + 1);
+      let ay = it.ay;
+      if (!free(ay)) {
+        ay = NaN;
+        const cands = [];
+        for (const q of near) cands.push(q.y + up + 2, q.y - NAME_UP - 2);
+        cands.sort((a, c) => Math.abs(a - it.ay) - Math.abs(c - it.ay));
+        for (const y of cands) if (y <= it.p.y + up / 2 + 2 && y >= it.ay - 30 && free(y)) { ay = y; break; }
+      }
+      it.ay = ay;
+      it.up = up;
+    }
+    let i = 0;
+    for (const it of markerItems) {
+      if (Number.isNaN(it.ay)) continue;
+      const e = it.e, p = it.p, ay = it.ay, name = it.name, mine = e.side === state.playerSide;
+      const bar = name || it.bar;
       const d = markerEl(i++);
       d.style.display = 'flex';
       setCls(d, 'marker ' + (mine ? 'mine' : 'foe') + (name ? '' : ' mini') + (bar ? '' : ' nobar') +
         (it.sel ? ' sel' : '') + (it.hov ? ' hover' : '') + (it.cloak ? ' cloak' : '') + (e.hyper ? ' jump' : ''));
       d.style.transform = `translate(${(p.x - 48) | 0}px,${(ay - 34) | 0}px)`;
-      if (squad) {
-        const r = STRIKE_ROLES[e.role];
-        setTxt(d._nm, it.sel || it.hov ? `${r.label} ×${it.live.length}` : `${r.short} ${it.live.length}`);
-        if (d._ico.dataset.k !== 'squad') d._ico.dataset.k = 'squad';
-      } else {
-        const nm = e.def.name;
-        setTxt(d._nm, nm.includes('«') ? nm.slice(nm.indexOf('«')) : nm);
-        const k = iconOf(e);
-        if (d._ico.dataset.k !== k) d._ico.dataset.k = k;
-      }
-      if (bar) d._fill.style.width = (clamp(hp, 0, 1) * 100) + '%';
+      setTxt(d._nm, it.text);
+      if (d._ico.dataset.k !== it.k) d._ico.dataset.k = it.k;
+      if (bar) d._fill.style.width = (clamp(it.hp, 0, 1) * 100) + '%';
       // Попадание по подписи: от неё до самого корабля — это его место
       labelHits.push(name
         ? { ent: e, x: p.x, hw: 48, y0: ay - 24, y1: Math.max(ay + 4, p.y), my: ay - 10 }
-        : { ent: e, x: p.x, hw: 13, y0: ay - 18, y1: Math.max(ay + 4, p.y), my: ay - 6 });
+        : { ent: e, x: p.x, hw: 13, y0: ay - it.up - 4, y1: Math.max(ay + 4, p.y), my: ay - 6 });
     }
     for (; i < markerPool.length; i++) if (markerPool[i].style.display !== 'none') markerPool[i].style.display = 'none';
   }
@@ -2986,7 +3052,12 @@ export function createSpaceBattle(ctx, config) {
      на 1366 и 1920, противник — 0,11…0,15, ни один свой не под HUD. */
   tcam.yaw = state.playerSide === 'attacker' ? 0 : Math.PI;
   {
-    const own = state.ships.filter(s => s.side === state.playerSide && !s.station);
+    /* Обороняется одна станция (ИИ напал на систему, где флота нет,
+       а станция есть) — смотрим на неё. Без этого центр оставался в
+       середине поля, станция проецировалась на 11 800 точек ниже экрана,
+       и единственное своё на орбите было не найти, кроме как миникартой */
+    let own = state.ships.filter(s => s.side === state.playerSide && !s.station);
+    if (!own.length) own = state.ships.filter(s => s.side === state.playerSide);
     const c = new THREE.Vector3();
     for (const s of own) c.add(s.pos);
     if (own.length) c.divideScalar(own.length);

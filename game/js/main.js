@@ -1114,6 +1114,11 @@ if (viewport) {
   if (fpsMeter.on) setFps(true);
   showMenu();
   requestAnimationFrame(frame);
+  /* Для автотеста: бой на орбите заданного состава. Так стенд собирает
+     случаи, до которых из меню быстрого боя не дойти, — например,
+     оборону одной станцией (бывает только в кампании) */
+  window.__spaceTest = cfg => runSpace(() => createSpaceBattle(ctx, {
+    title: 'Проверка', biome: 'klotho', onEnd: () => showMenu(), ...cfg }));
   window.__capellaUp = true;
   if (window.__bootDone) window.__bootDone();
 }

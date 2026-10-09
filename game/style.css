@@ -1070,8 +1070,21 @@ table.keys td:first-child {
   top: auto; transform: none;
   bottom: calc(10px + var(--mm) + 10px + var(--safe-b));
 }
-/* Подсказка по управлению — под шапкой: внизу посередине теперь команды */
-.hud-space .hint { bottom: auto; top: calc(62px + var(--safe-t)); }
+/* Подсказка по управлению — слева над ростером. Внизу посередине теперь
+   команды, а под шапкой она легла на противника: стартовая камера (C76)
+   ставит его к верхнему краю, на 1366×768 это 85…115 точек — та же
+   полоса, и первые 16 секунд, ровно когда игрок ищет врага, его имя
+   читалось «Нем●зида» сквозь «A — атака с ходу». Прятать метки под
+   подсказкой — прятать врага; над ростером же пусто по построению:
+   свой флот кончается выше 0,64 высоты, а метки стоят над кораблями.
+   Узкой колонкой в две строки: в одну строку её правый конец доходил
+   до левого края своего флота и ложился на корпус корвета */
+.hud-space .hint {
+  top: auto; transform: none; text-align: left;
+  left: calc(12px + var(--safe-l));
+  bottom: calc(10px + var(--botH) + 10px + 58px + var(--safe-b));
+  max-width: min(380px, 28vw);
+}
 /* Название боя в шапке — только текст: растянутый на полшапки, он глотал
    щелчки и рамку по полю под собой (C135) */
 .topbar .title { pointer-events: none; }
@@ -1101,15 +1114,40 @@ table.keys td:first-child {
   display: block; width: 7px; height: 7px; margin-bottom: 3px; background: currentColor;
   filter: drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1px #000);
 }
-.hud-space .mk-ico[data-k="capital"] { width: 10px; height: 10px; transform: rotate(45deg) scale(.82); }
-.hud-space .mk-ico[data-k="cruiser"] { width: 10px; height: 9px; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
-.hud-space .mk-ico[data-k="carrier"] { width: 13px; height: 6px; border-radius: 1px; }
-.hud-space .mk-ico[data-k="ecm"] { width: 9px; height: 9px; background: none; border: 2px solid currentColor; border-radius: 50%; }
-.hud-space .mk-ico[data-k="frigate"] { width: 7px; height: 7px; border-radius: 50%; }
-.hud-space .mk-ico[data-k="corvette"] { width: 5px; height: 5px; border-radius: 50%; }
-.hud-space .mk-ico[data-k="station"] { width: 11px; height: 11px; }
-.hud-space .mk-ico[data-k="squad"] { width: 9px; height: 6px; clip-path: polygon(0 0, 50% 55%, 100% 0, 100% 45%, 50% 100%, 0 45%); }
-.hud-space .marker.cloak .mk-ico { opacity: .7; }
+/* Размеры значков — с `.marker.mini` в селекторе: без него общее
+   правило выше (у него на класс больше) снимало их, и все значки были
+   квадратиком 7×7 — носитель не отличался от станции, фрегат от корвета.
+   Те же размеры — в ICON_BOX в space.js: по ним значок обходит имена */
+.hud-space .marker.mini .mk-ico[data-k="capital"] { width: 10px; height: 10px; transform: rotate(45deg) scale(.82); }
+.hud-space .marker.mini .mk-ico[data-k="cruiser"] { width: 10px; height: 9px; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.hud-space .marker.mini .mk-ico[data-k="carrier"] { width: 13px; height: 6px; border-radius: 1px; }
+.hud-space .marker.mini .mk-ico[data-k="ecm"] { width: 9px; height: 9px; background: none; border: 2px solid currentColor; border-radius: 50%; }
+.hud-space .marker.mini .mk-ico[data-k="frigate"] { width: 7px; height: 7px; border-radius: 50%; }
+.hud-space .marker.mini .mk-ico[data-k="corvette"] { width: 5px; height: 5px; border-radius: 50%; }
+.hud-space .marker.mini .mk-ico[data-k="station"] { width: 11px; height: 11px; }
+.hud-space .marker.mini .mk-ico[data-k="squad"] { width: 9px; height: 6px; clip-path: polygon(0 0, 50% 55%, 100% 0, 100% 45%, 50% 100%, 0 45%); }
+/* СОСТОЯНИЯ, которые обязаны читаться и у имени, и у значка.
+   Старые правила `.marker.cloak` / `.marker.jump` выше той же силы, что
+   новые `.hud-space .marker …`, и проигрывали им по порядку в файле:
+   у Рииза скрыт весь флот, и «невидим» от «раскрыт выстрелом» стало
+   не отличить, а уходящий в гипер вдали ничем себя не выдавал.
+   Скрыт (только свои: чужой скрытый не рисуется вовсе) — фиолетовым:
+   имя курсивом, значок фиолетовый. Уходит в гипер (свой при отходе —
+   беззащитен; чужой — уйдёт, если не добить) — голубым: «⇢ гипер»
+   у имени, у значка «⇢» справа, голубое свечение и полоска даже у
+   целого */
+.hud-space .marker.cloak .mk-name { color: #c9a9ff; font-style: italic; }
+.hud-space .marker.cloak.hover .mk-name { color: #e6dbff; }
+.hud-space .marker.cloak .mk-bar { border-color: rgba(176, 122, 224, .7); opacity: .75; }
+.hud-space .marker.mini.cloak .mk-ico { color: #c9a9ff; opacity: .85; }
+.hud-space .marker.jump .mk-bar { border-color: #9fd0ff; box-shadow: 0 0 8px rgba(159, 208, 255, .7); }
+.hud-space .marker.jump .mk-name { max-width: 170px; overflow: visible; }
+.hud-space .marker.mini.jump .mk-ico { filter: drop-shadow(0 0 2px #9fd0ff) drop-shadow(0 0 1px #000); }
+.hud-space .marker.mini.jump::after {
+  content: '⇢'; position: absolute; left: calc(50% + 7px); bottom: 3px;
+  font-size: 12px; line-height: 1; color: #9fd0ff;
+  text-shadow: 0 0 4px rgba(159, 208, 255, .8), 0 1px 2px #000;
+}
 .hud-space button.act.long b { font-size: 11px; letter-spacing: -.01em; }
 /* Узкие окна: выделенное уже, кнопки мельче — иначе сетка команд в три
    ряда не помещается и наезжает на ростер */
