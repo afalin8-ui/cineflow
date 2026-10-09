@@ -396,20 +396,31 @@ export function createSpaceBattle(ctx, config) {
     squad.dead = true;
     const carrier = squad.home;
     if (!landed && carrier && !carrier.dead && carrier.hangar) carrier.hangar.rebuild.push(state.time + 26);
-    state.selection = state.selection.filter(s => s !== squad);
+    if (state.selection.includes(squad)) {
+      state.selection = state.selection.filter(s => s !== squad);
+      state.selDirty = true;
+    }
   }
 
   /* Звено без носителя (тот погиб или ушёл в гипер) ищет другой свой
      носитель, на который можно сесть. Нет такого — звено остаётся
-     без дома, и об этом говорится ОДИН раз (C8). */
+     без дома, и об этом говорится ОДИН раз (C8).
+     Сесть можно только на СВОБОДНОЕ место, и занимает его звено сразу,
+     как при пуске: посадка потом вернёт это место (free + 1). Раньше
+     чужое звено место не занимало, а посадка его всё равно
+     «возвращала» — носитель на четыре ангара держал в воздухе восемь
+     звеньев, ровно то, что чинил C99. */
   function rehome(squad) {
     let best = null, bd = Infinity;
     for (const s of state.ships) {
-      if (s.dead || s.hyper || s.side !== squad.side || !s.hangar) continue;
+      if (s.dead || s.hyper || s.side !== squad.side || !s.hangar || s.hangar.free <= 0) continue;
       const d = s.pos.distanceToSquared(squad.pos);
       if (d < bd) { bd = d; best = s; }
     }
-    if (best) best.hangar.launched.push(squad);
+    if (best) {
+      best.hangar.free--;
+      best.hangar.launched.push(squad);
+    }
     squad.home = best;
     return best;
   }
@@ -579,7 +590,10 @@ export function createSpaceBattle(ctx, config) {
     scene.remove(e.obj);
     removeDome(e);
     state.jumped[e.side].push(e.def.id);
-    state.selection = state.selection.filter(x => x !== e);
+    if (state.selection.includes(e)) {
+      state.selection = state.selection.filter(x => x !== e);
+      state.selDirty = true;
+    }
     /* Уход носителя = флот остался без авиации: бой проигран, и за
        носителем уходит весь флот. Уходит ЧЕСТНО — накачкой гипера,
        под огнём; бой кончится, когда уйдут или погибнут все (C17). */
@@ -761,7 +775,10 @@ export function createSpaceBattle(ctx, config) {
       e.squad.craft = e.squad.craft.filter(c => c !== e);
       if (!e.squad.craft.length) killSquad(e.squad);
     }
-    state.selection = state.selection.filter(s => s !== e);
+    if (state.selection.includes(e)) {
+      state.selection = state.selection.filter(s => s !== e);
+      state.selDirty = true;     // панель — в этом же кадре, а не через треть секунды
+    }
   }
 
   // ── ПОИСК ЦЕЛЕЙ ──────────────────────────────────────────
@@ -1226,7 +1243,8 @@ export function createSpaceBattle(ctx, config) {
       }
       if (squad.side === state.playerSide && !squad.toldNoHome) {
         squad.toldNoHome = true;
-        toast(`${c.def.name}: садиться некуда — носителей не осталось`);
+        const any = state.ships.some(s => !s.dead && !s.hyper && s.side === squad.side && s.hangar);
+        toast(`${c.def.name}: садиться некуда — ${any ? 'все ангары заняты' : 'носителей не осталось'}`);
       }
     }
 
@@ -1496,6 +1514,8 @@ export function createSpaceBattle(ctx, config) {
     }
     for (const sq of state.squads) {
       if (sq.dead) continue;
+      // Скрытое звено противника не выдаём и здесь (C18)
+      if (sq.side !== state.playerSide && unseen(sq)) continue;
       dots.push({ x: sq.pos.x, z: sq.pos.z, r: 2,
         color: sq.side === state.playerSide ? '#5ce0a0' : '#e05a4a' });
     }
@@ -1668,6 +1688,12 @@ export function createSpaceBattle(ctx, config) {
       d.classList.toggle('mine', s.side === state.playerSide);
       d.classList.toggle('sel', state.selection.includes(s));
     }
+    /* Скрытая машина противника не рисуется, как и скрытый корабль.
+       Выбрать её нельзя (C18), и видимая, но не нажимаемая машина
+       хуже обеих: игрок жмёт по ней ПКМ, а флот уходит в точку. */
+    for (const c of state.craft) {
+      if (!c.dead) c.obj.visible = !(c.side !== state.playerSide && craftHidden(c));
+    }
     /* Подписи звеньям. Истребитель — точка размером с пиксель, и без
        метки игрок просто не знает, что авиация вообще в бою. Метка
        одна на звено, у центра масс: пять отдельных было бы месивом. */
@@ -1675,7 +1701,7 @@ export function createSpaceBattle(ctx, config) {
       if (sq.dead || !sq.craft.length) continue;
       const live = sq.craft.filter(c => !c.dead);
       if (!live.length) continue;
-      if (sq.side !== state.playerSide && craftHidden(live[0])) continue;
+      if (sq.side !== state.playerSide && unseen(sq)) continue;
       _v.set(0, 0, 0);
       for (const c of live) _v.add(c.pos);
       _v.divideScalar(live.length);
@@ -2240,7 +2266,9 @@ export function createSpaceBattle(ctx, config) {
         ? 'Противник в этой системе больше не контролирует пространство. Можно высаживать десант.'
         : result === 'retreat'
           ? 'Флот вышел из боя. Домой вернутся только те, кто успел уйти в гипер.'
-          : 'Корабли потеряны. Система остаётся за противником.'}</p>
+          : saved || spare
+            ? `Орбита за противником. Домой вернутся только ${[saved ? 'ушедшие в гипер' : '', spare ? 'корабли резерва' : ''].filter(Boolean).join(' и ')}.`
+            : 'Корабли потеряны. Орбита остаётся за противником.'}</p>
       ${tally ? `<p class="end-tally">${tally[0].toUpperCase() + tally.slice(1)}.</p>` : ''}
       <button class="btn primary" data-role="cont">Продолжить</button></div>`;
     state.outcome = outcome;     // для автотестов: что уйдёт в кампанию
@@ -2258,8 +2286,16 @@ export function createSpaceBattle(ctx, config) {
     const P = state.playerSide, E = enemyOf(P);
     const pOut = sideOut(P), eOut = sideOut(E);
     if (!pOut && !eOut) return;
-    if (pOut) finish(state.jumped[P].length ? 'retreat' : 'defeat');
-    else finish('victory');
+    /* «Отход» — только когда флот действительно отходил: по кнопке, за
+       ушедшим носителем или ушёл в гипер весь, не потеряв ни корабля.
+       Флагман, ушедший сам при 20% прочности, пока остальных добивали, —
+       это разгром, а не отход: раньше такой бой назывался «Отходом»
+       почти всегда. На кампанию надпись не влияет — она в обоих случаях
+       считает уцелевших одинаково. */
+    if (pOut) {
+      const lost = state.ships.some(s => s.dead && !s.fled && s.side === P && !s.station);
+      finish(state.jumped[P].length && (state.retreat[P] || !lost) ? 'retreat' : 'defeat');
+    } else finish('victory');
   }
 
   // ── ЦИКЛ ─────────────────────────────────────────────────
@@ -2332,8 +2368,15 @@ export function createSpaceBattle(ctx, config) {
     /* Панель выделенного пересобираем раз в треть секунды: строка
        «что делает» должна жить, а каждый кадр перекладывать DOM
        незачем. */
+    /* И при ПУСТОМ выделении тоже: destroy() и completeJump() сами
+       вычищают погибшего из выделения, и проверка «выделен мёртвый»
+       его уже не находит — панель застывала на погибшем корабле
+       («прочность 4030/4030») с кнопками, которые ничего не делают.
+       Пустое выделение обходится дёшево: setHtml и ключ без изменений
+       DOM не трогают. */
     selTick -= rawDt;
-    if (selTick <= 0) { selTick = 0.34; if (state.selection.length) refreshSel(); refreshRoster(); }
+    if (state.selDirty) { state.selDirty = false; refreshSel(); }
+    if (selTick <= 0) { selTick = 0.34; refreshSel(); refreshRoster(); }
 
     let pa = 0, pd = 0, na = 0, nd = 0;
     for (const s of state.ships) {
@@ -2423,6 +2466,8 @@ export function createSpaceBattle(ctx, config) {
     // Уничтожить корабль сразу — проверять, что остаётся после гибели
     state.killTest = e => destroy(e);
     state.retreatTest = side => orderRetreat(side || state.playerSide);
+    // Поднять звено с носителя — как кнопка, но и у противника (C99)
+    state.launchTest = (c, role) => launchSquadron(c, role || 'interceptor');
     // Пул эффектов: сколько занято (busy) — мерить, не переполнен ли
     state.fxTest = () => fx;
   }

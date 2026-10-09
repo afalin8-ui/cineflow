@@ -1,6 +1,6 @@
 // Игра «Капелла» (папка game/): сквозная проверка в браузере.
 //
-// Запуск:  node tests/game-e2e.js                 — всё (около двух с половиной минут)
+// Запуск:  node tests/game-e2e.js                 — всё (около четырёх минут)
 //          node tests/game-e2e.js --only space    — только бой на орбите
 //                                   (и shell | ground | campaign | update)
 // Порт сервера — переменная CF_PORT (по умолчанию 8300); раздел update
@@ -26,13 +26,19 @@
 //             приказ правой кнопкой; «мёртвые» кнопки HUD на 1920×1080
 //             и 1366×768; сбой в кадре не замораживает игру (отрисовка
 //             идёт, «Продолжить»); медленный клик по кнопке действия
-//             (C30); ПКМ по вражескому звену — урон конечен, флот
+//             (C30); погибший выделенный корабль очищает панель;
+//             посадка звеньев погибшего носителя не даёт другому больше
+//             звеньев, чем ангаров (C99); скрытая машина не рисуется
+//             (C18); ПКМ по вражескому звену — урон конечен, флот
 //             стреляет (C14); бой доходит до итога и в меню.
 //  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
 //             второй бой сквозь неё не начать; операция стартует без
 //             ошибок; сбой → «В меню».
 //  campaign — новая кампания открывает карту, не дожидаясь моделей
-//             кораблей; «Конец хода» проходит.
+//             кораблей; «Конец хода» проходит; два настоящих боя
+//             с «Отходом» мышью (C17): в атаке потери противника
+//             остаются за ним, в обороне ушедшие в гипер возвращаются,
+//             а флот противника уходит к себе.
 //  update   — выкладка доходит по F5 (C121): копия game/ на сервере
 //             «как GitHub Pages» (max-age=600 + ETag), service worker
 //             ВКЛЮЧЁН; правка main.js, модуля глубже и стилей приходит
@@ -226,6 +232,17 @@ const SCAN = () => {
 
 (async () => {
   await new Promise(r => setTimeout(r, 800));
+  /* На порту обязан отвечать НАШ сервер. Если там остался сервер от
+     прошлого прогона (другая папка, копия игры до правок), новый молча
+     не поднимается, а стенд проверяет чужие файлы — так однажды
+     проверялась копия «до правок» и краснела там, где всё починено. */
+  const mine = fs.readFileSync(path.join(ROOT, 'game/js/space.js'), 'utf8');
+  const served = await fetch(BASE + 'js/space.js').then(r => r.text(), () => '');
+  if (served !== mine) {
+    console.error(`На порту ${PORT} отвечает не эта папка (game/js/space.js другой или не отдаётся). ` +
+      'Освободите порт или задайте другой: CF_PORT=…');
+    server.kill(); process.exit(2);
+  }
   const browser = await playwright.chromium.launch({
     executablePath: '/opt/pw-browsers/chromium',
     args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
@@ -602,6 +619,103 @@ const SCAN = () => {
         `звеньев ${launch.n} → ${after.n}, кнопка та же: ${after.same}`);
     }
 
+    /* Панель выделенного не застывает на погибшем: destroy() сам
+       вычищает корабль из выделения, и раньше панель так и показывала
+       «прочность 4030/4030» с кнопками, которые ничего не делают. */
+    const victim = await page.evaluate(() => {
+      const s = __sp.ships.find(x => !x.dead && x.side === __sp.playerSide && x.cls === 'escort');
+      if (!s) return null;
+      __sp.selection = [s];
+      window.__victim = s;
+      return s.def.name;
+    });
+    if (victim) {
+      await waitFrames(page, 9);
+      const before = await page.evaluate(() => document.querySelector('[data-role="sel"]').innerText.split('\n')[0]);
+      await page.evaluate(() => __sp.killTest(window.__victim));
+      await waitFrames(page, 2);
+      const after = await page.evaluate(() => ({
+        text: document.querySelector('[data-role="sel"]').innerText.replace(/\s+/g, ' ').slice(0, 60),
+        acts: document.querySelectorAll('[data-role="acts"] button.act').length,
+      }));
+      ok('выделенный корабль погиб — панель пустеет, кнопок нет', /Ничего не выбрано/.test(after.text) && after.acts === 0,
+        `до: «${before}», после: «${after.text}», кнопок ${after.acts}`);
+    }
+
+    /* C99 + rehome: звенья погибшего носителя садятся на другой ТОЛЬКО
+       на свободное место. Раньше чужое звено место не занимало, а
+       посадка его «возвращала» — носитель на четыре ангара держал
+       в воздухе восемь звеньев. Оба носителя поднимают всё, первый
+       гибнет, его звенья и одно своё звено второго идут на посадку
+       прямо над ним: «свободно + своих в воздухе + на постройке» обязано
+       не превышать числа ангаров ни в одном кадре. */
+    const rh = await page.evaluate(() => {
+      const side = ['defender', 'attacker'].find(sd => __sp.ships.filter(s => !s.dead && s.side === sd && s.hangar).length >= 2);
+      if (!side) return null;
+      const [A, B] = __sp.ships.filter(s => !s.dead && s.side === side && s.hangar);
+      for (const c of [A, B]) for (let i = 0; i < 12 && c.hangar.free > 0; i++) __sp.launchTest(c, 'interceptor');
+      const orphans = A.hangar.launched.filter(q => !q.dead);
+      const own = B.hangar.launched.filter(q => !q.dead);
+      __sp.killTest(A);
+      for (const q of [...orphans, own[0]]) {
+        q.recall = true;
+        for (const c of q.craft) c.pos.set(B.pos.x + 4, B.pos.y, B.pos.z + 4);
+      }
+      /* Своё звено B — первым в очереди кадра: оно садится и освобождает
+         место, и сироты в том же кадре пробуют его занять. Иначе они
+         обновляются раньше, видят полный ангар и уходят обратно в бой,
+         а место между кадрами забирает ИИ новым звеном */
+      __sp.craft.sort((x, y) => (x.squad === own[0] ? 0 : 1) - (y.squad === own[0] ? 0 : 1));
+      const count = () => B.hangar.free + B.hangar.rebuild.length
+        + B.hangar.launched.filter(q => !q.dead && q.home === B).length;
+      window.__rh = { B, orphans, worst: count(), samples: 0 };
+      window.__rhIv = setInterval(() => {
+        const r = window.__rh; r.samples++; r.worst = Math.max(r.worst, count());
+      }, 5);
+      return { side, bays: B.hangar.bays, orphans: orphans.length, own: own.length };
+    });
+    ok('для проверки посадки нашлись два носителя с поднятыми звеньями', !!rh && rh.orphans > 0 && rh.own > 0, JSON.stringify(rh));
+    if (rh && rh.orphans > 0) {
+      await mute(page, true);
+      await tap(page, '[data-speed="1"]');
+      await waitFrames(page, 24);
+      await tap(page, '[data-speed="0"]');
+      await mute(page, false);
+      const got = await page.evaluate(() => {
+        clearInterval(window.__rhIv);
+        const r = window.__rh, B = r.B;
+        return {
+          worst: r.worst, bays: B.hangar.bays, samples: r.samples,
+          landedHere: r.orphans.filter(q => q.dead && q.home === B).length,
+        };
+      });
+      ok('посадка чужих звеньев не даёт носителю больше звеньев, чем ангаров (C99)', got.worst <= got.bays,
+        `свободно + в воздухе + на постройке — до ${got.worst} при ${got.bays} ангарах (замеров ${got.samples})`);
+      ok('звено погибшего носителя село на освободившееся место', got.landedHere > 0, `село на второй носитель: ${got.landedHere}`);
+    }
+
+    /* C18: скрытая машина противника не рисуется (как и скрытый
+       корабль) — видимая, но не нажимаемая была ловушкой: ПКМ по ней
+       уводил флот в точку. Маскировку даём одной машине на месте. */
+    const cloak = await page.evaluate(() => {
+      const c = __sp.craft.find(x => !x.dead && x.side !== __sp.playerSide);
+      if (!c) return null;
+      window.__cloakDef = c.def;
+      c.def = { ...c.def, stealth: true };
+      c.revealUntil = 0; c.exposed = false;
+      window.__cloak = c;
+      return c.def.name;
+    });
+    if (cloak) {
+      await waitFrames(page, 2);
+      const vis = await page.evaluate(() => {
+        const c = window.__cloak, v = c.obj.visible;
+        c.def = window.__cloakDef;
+        return v;
+      });
+      ok('скрытая машина противника не рисуется (C18)', vis === false, `${cloak}: visible = ${vis}`);
+    }
+
     /* C14: приказ атаковать вражеское ЗВЕНО. У звена нет прочности —
        раньше урон по нему уходил в NaN, звено становилось бессмертным,
        а весь флот стрелял главным калибром в пустоту. Звено ставим
@@ -804,6 +918,96 @@ const SCAN = () => {
     ok('ход сменился', next, `ход ${turn0} → ${await page.evaluate(() => document.querySelector('[data-role="turn"]').textContent)}`);
     await page.waitForTimeout(500);
     await clean('кампания');
+
+    /* Исход боя на орбите доходит до кампании ЧЕСТНО (C17). Раньше
+       отход в атаке оставлял противнику все сбитые им корабли, а в
+       обороне ушедшие в гипер корабли игрока пропадали, и флот
+       нападавшего записывался в НАШУ систему — то есть числился нашим.
+       Два настоящих боя: «Отход» нажимается мышью, итог догоняется
+       без отрисовки, после «Продолжить» сверяется карта. */
+    const n = f => (f || []).reduce((a, x) => a + x.count, 0);
+    // Состав флота строкой: не только сколько, но и КТО — счёт совпадает и у чужого флота
+    const key = f => (f || []).filter(x => x.count > 0).map(x => x.id + '×' + x.count).sort().join(' ');
+    const fight = async (what, kill) => {
+      await page.waitForSelector('.modal [data-a="fight"]', { state: 'visible', timeout: 15000 });
+      let q = await tap(page, '.modal [data-a="fight"]');
+      ok(`${what}: «${what === 'оборона' ? 'Принять бой' : 'В бой'}» нажимается`, q.ok, q.why);
+      await page.waitForFunction(() => window.__sp && __sp.time > 0, null, { timeout: 150000 });
+      await settled();
+      await tap(page, '[data-speed="0"]');
+      const killed = await page.evaluate(k => {
+        const foes = __sp.ships.filter(s => !s.dead && s.side !== __sp.playerSide && !s.station);
+        for (const s of foes.slice(0, k)) __sp.killTest(s);
+        return Math.min(k, foes.length);
+      }, kill);
+      q = await tap(page, '[data-role="retreat"]');
+      const going = await page.evaluate(() => __sp.retreat[__sp.playerSide]);
+      ok(`${what}: «Отход» нажимается и флот копит гипер`, q.ok && going, q.why);
+      await mute(page, true);
+      await tap(page, '[data-speed="4"]');
+      const done = await page.waitForFunction(() => {
+        const e = document.querySelector('.endcard'); return e && e.style.display === 'flex';
+      }, null, { timeout: 180000, polling: 300 }).then(() => true, () => false);
+      await mute(page, false);
+      const res = await page.evaluate(() => ({ o: __sp.outcome, card: document.querySelector('.endcard').innerText.replace(/\s+/g, ' ') }));
+      ok(`${what}: бой кончился отходом`, done && res.o && res.o.result === 'retreat', res.card.slice(0, 90));
+      q = await tap(page, '.endcard [data-role="cont"]');
+      ok(`${what}: «Продолжить» нажимается`, q.ok, q.why);
+      await page.waitForFunction(() => document.querySelector('[data-role="endturn"]'), null, { timeout: 60000 });
+      await settled();
+      return { ...res, killed };
+    };
+
+    // Атака с отходом: сбитые противником корабли за ним и остаются
+    const atk = await page.evaluate(async () => {
+      const G = await import('/game/js/galaxy.js');
+      const D = await import('/game/js/data.js');
+      document.querySelectorAll('.modal').forEach(m => m.remove());
+      const c = __gal.camp, my = c.playerFaction;
+      const ai = D.FACTION_IDS.find(f => f !== my);
+      const home = Object.keys(c.systems).find(id => c.systems[id].owner === my);
+      const to = G.neighborsOf(home)[0];
+      Object.assign(c.systems[home], { moved: false, siege: null,
+        fleet: [{ id: 'corvette', count: 2 }, { id: 'frigate', count: 2 }, { id: 'cruiser', count: 1 }] });
+      Object.assign(c.systems[to], { owner: ai, regiments: 1, buildings: [], siege: null,
+        fleet: [{ id: 'corvette', count: 3 }, { id: 'frigate', count: 2 }] });
+      window.__sp = null;
+      __gal.refreshAll();
+      __gal.moveTest(home, to);
+      return { home, to, ai };
+    });
+    const a = await fight('атака', 2);
+    const aMap = await page.evaluate(([h, t]) => ({ home: __gal.camp.systems[h].fleet, to: __gal.camp.systems[t].fleet }), [atk.home, atk.to]);
+    ok('атака, отход: потери противника остались за ним (C17)', key(aMap.to) === key(a.o.defender) && n(aMap.to) <= 5 - a.killed,
+      `у противника было 5, сбито ${a.killed}; в итоге боя ${n(a.o.defender)}, на карте ${n(aMap.to)}`);
+    ok('атака, отход: домой вернулись только уцелевшие', key(aMap.home) === key(a.o.attacker),
+      `в итоге боя ${key(a.o.attacker)}; дома ${key(aMap.home) || 'пусто'}`);
+    await clean('атака с отходом');
+
+    // Оборона с отходом: противнику высаживать некого — планета наша,
+    // его флот уходит домой, наши ушедшие в гипер возвращаются
+    await page.evaluate(([home, src, ai]) => {
+      document.querySelectorAll('.modal').forEach(m => m.remove());
+      const c = __gal.camp;
+      Object.assign(c.systems[home], { regiments: 1, siege: null,
+        fleet: [{ id: 'corvette', count: 2 }, { id: 'frigate', count: 2 }] });
+      Object.assign(c.systems[src], { owner: ai, regiments: 0,
+        fleet: [{ id: 'cruiser', count: 2 }, { id: 'frigate', count: 3 }] });
+      window.__sp = null;
+      __gal.refreshAll();
+      __gal.defenceTest(ai, src, home);
+    }, [atk.home, atk.to, atk.ai]);
+    const d = await fight('оборона', 1);
+    const dMap = await page.evaluate(([h, s]) => ({
+      owner: __gal.camp.systems[h].owner, my: __gal.camp.playerFaction,
+      home: __gal.camp.systems[h].fleet, src: __gal.camp.systems[s].fleet,
+    }), [atk.home, atk.to]);
+    ok('оборона, отход: ушедшие в гипер вернулись в свою систему, чужих в ней нет (C17)',
+      dMap.owner === dMap.my && n(d.o.defender) > 0 && key(dMap.home) === key(d.o.defender),
+      `ушли в гипер: ${key(d.o.defender)}; в системе: ${key(dMap.home) || 'пусто'}; хозяин ${dMap.owner}`);
+    ok('оборона, отход: флот противника ушёл туда, откуда пришёл', key(dMap.src) === key(d.o.attacker),
+      `у противника в итоге боя: ${key(d.o.attacker)}; в его системе: ${key(dMap.src) || 'пусто'}`);
+    await clean('оборона с отходом');
   };
 
   // ─────────────────────────── ОБНОВЛЕНИЯ ПО F5 (C121)

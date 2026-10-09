@@ -824,10 +824,36 @@ export function createGalaxy(ctx, camp) {
     return { wave, rest };
   }
 
+  /* Куда уходят корабли, ушедшие в гипер из боя, после которого
+     орбита осталась за другим: над ней им не остаться, поэтому —
+     в ближайшую по прыжкам свою систему. Раньше в обороне и при штурме
+     с блокады они пропадали, хотя итоговая карточка обещала «вернутся»
+     (C17), а у ИИ пропадали ушедшие из проигранного боя — и «отход»
+     противника стоил ему всего флота. Отдаёт имя системы; '' — своей
+     системы нет, флот рассеян; null — посылать было некого. */
+  function sendSurvivors(faction, list, atId) {
+    if (!faction || !fleetSize(list)) return null;
+    const dist = hopsFrom(atId, GALAXY_MAP.systems.length);
+    let best = null, bd = Infinity;
+    for (const def of GALAXY_MAP.systems) {
+      const d = dist[def.id];
+      if (def.id === atId || d === undefined || camp.systems[def.id].owner !== faction) continue;
+      if (d < bd) { bd = d; best = def; }
+    }
+    if (!best) return '';
+    camp.systems[best.id].fleet = mergeFleets(camp.systems[best.id].fleet, list);
+    return best.name;
+  }
+  // Строка журнала о своих ушедших в гипер: куда они делись
+  const savedLine = (list, went) => !fleetSize(list) ? ''
+    : went ? ` Ушедшие в гипер (${ships(fleetSize(list))}) — в системе ${went}.`
+    : ` Ушедшим в гипер (${ships(fleetSize(list))}) некуда вернуться — флот рассеян.`;
+
   function startSiegeAssault(toId, siege) {
     const to = camp.systems[toId];
     const toDef = GALAXY_MAP.systems.find(s => s.id === toId);
     const my = camp.playerFaction;
+    const foe = to.owner;
     const attacker = { faction: my, ships: siege.fleet.map(x => ({ ...x })), reserve: [] };
     const defender = {
       faction: to.owner, ships: to.fleet.map(x => ({ ...x })),
@@ -838,10 +864,14 @@ export function createGalaxy(ctx, camp) {
         to.fleet = res.attacker || [];
         to.owner = my;               // орбита и мир переходят разом:
         to.regiments = 0;            // блокада уже выморила гарнизон
+        sendSurvivors(foe, res.defender, toId);
         logLine(`${toDef.name}: блокада перешла в штурм, мир взят.`);
       } else {
-        logLine(`${toDef.name}: штурм с блокады отбит, флот потерян.`);
+        /* Отбит. Ушедшие в гипер не возвращаются в блокаду — над этой
+           орбитой хозяин противник, — а уходят к своим */
         to.fleet = res.defender || to.fleet;
+        const went = sendSurvivors(my, res.attacker, toId);
+        logLine(`${toDef.name}: штурм с блокады отбит${went === null ? ', флот потерян.' : '.'}${savedLine(res.attacker, went)}`);
       }
       state.selected = toId;
       refreshAll();
@@ -896,6 +926,7 @@ export function createGalaxy(ctx, camp) {
   function startSpace(fromId, toId, auto) {
     const from = camp.systems[fromId], to = camp.systems[toId];
     const my = camp.playerFaction;
+    const foe = to.owner;
     const toDef = GALAXY_MAP.systems.find(s => s.id === toId);
     from.moved = true;
 
@@ -913,9 +944,18 @@ export function createGalaxy(ctx, camp) {
         const src = camp.systems[f.id];
         if (src) src.fleet = subtractFleet(src.fleet, f.ships);
       }
+      // Сколько ушло в бой: свой флот плюс дошедшая подмога — от этого
+      // и считаются потери в журнале
+      const sent = fleetSize(attacker.ships) + (res.far || []).reduce((a, f) => a + fleetSize(f.ships), 0);
+      const lostLine = () => {
+        const lost = sent - fleetSize(res.attacker);
+        return lost > 0 ? `потеряно ${ships(lost)}` : 'без потерь';
+      };
       if (res.result === 'victory' || res.result === 'attacker') {
         from.fleet = [];
         to.fleet = res.attacker || [];
+        // Ушедшие в гипер корабли противника уходят к своим, а не пропадают
+        sendSurvivors(foe, res.defender, toId);
         logLine(`${toDef.name}: орбита очищена.`);
         // высадка
         if (from.regiments > 0) {
@@ -933,14 +973,18 @@ export function createGalaxy(ctx, camp) {
       } else if (res.result === 'retreat') {
         /* Домой возвращаются только успевшие уйти в гипер и резерв,
            который так и не вызвали. Ноль уцелевших — это ноль, а не
-           прежний флот целиком (C17). */
-        logLine(`${toDef.name}: флот отошёл, не приняв бой до конца.`);
+           прежний флот целиком (C17). И потери противника остаются за
+           ним: раньше ветка отхода флот защитника не трогала, и все
+           сбитые им корабли после боя стояли на орбите снова — отход
+           стоил игроку кораблей, а урон противнику пропадал. */
         from.fleet = res.attacker || [];
+        to.fleet = res.defender || to.fleet;
+        logLine(`${toDef.name}: флот отошёл, ${lostLine()}.`);
       } else {
         // Разбит на поле — но невызванный резерв и ушедшие в гипер целы
         from.fleet = res.attacker || [];
         to.fleet = res.defender || to.fleet;
-        logLine(`${toDef.name}: наш флот разбит.`);
+        logLine(`${toDef.name}: наш флот разбит, ${lostLine()}.`);
       }
       state.selected = toId;
       refreshAll();
@@ -1187,22 +1231,35 @@ export function createGalaxy(ctx, camp) {
       </div></div>`;
     hudRoot.appendChild(m);
 
+    /* res.result — 'attacker' (орбиту взял противник: разгром или наш
+       отход) или 'defender' (отбились). res.defender — наши уцелевшие:
+       при поражении это ушедшие в гипер. */
     const apply = res => {
-      const attackerWon = res.result === 'attacker' || res.result === 'defeat';
-      if (attackerWon) {
-        from.fleet = [];
-        to.fleet = res.attacker || [];
+      const mine = res.defender || [];
+      if (res.result === 'attacker') {
         if (from.regiments > to.regiments) {
           to.owner = aiFaction;
+          to.fleet = res.attacker || [];
+          from.fleet = [];
           to.regiments = Math.max(1, from.regiments - to.regiments);
           from.regiments = 0;
           to.buildings = to.buildings.filter(b => b !== 'station');
-          logLine(`${toDef.name}: система потеряна.`);
+          // Над потерянным миром нашим не остаться — к своим (C17)
+          const went = sendSurvivors(camp.playerFaction, mine, toId);
+          logLine(`${toDef.name}: система потеряна.${savedLine(mine, went)}`);
         } else {
-          logLine(`${toDef.name}: орбита потеряна, планета удержана.`);
+          /* Орбиту противник взял, а высаживать ему некого: планета
+             удержана. Его флот уходит обратно — раньше он записывался
+             в НАШУ систему и, раз хозяин системы мы, считался нашим
+             флотом. Наши ушедшие в гипер возвращаются домой. */
+          from.fleet = res.attacker || [];
+          to.fleet = mine;
+          logLine(`${toDef.name}: орбиту не удержали, но планета выстояла — противник ушёл.`
+            + (fleetSize(mine) ? ` Вернулись ушедшие в гипер: ${ships(fleetSize(mine))}.` : ''));
         }
       } else {
-        from.fleet = [];
+        // Ушедшие в гипер корабли противника возвращаются туда, откуда пришли
+        from.fleet = res.attacker || [];
         to.fleet = res.defender || to.fleet;
         logLine(`${toDef.name}: атака отбита.`);
       }
@@ -1319,6 +1376,8 @@ export function createGalaxy(ctx, camp) {
       state, camp, refreshAll,
       selectTest: id => { state.selected = id; refreshAll(); },
       moveTest: (a, b) => tryMoveFleet(a, b),
+      // Нападение ИИ на мир игрока — окно «Тревога», как в конце хода
+      defenceTest: (ai, a, b) => queueDefence(ai, a, b),
     };
   }
 
