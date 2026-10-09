@@ -16,6 +16,7 @@ import {
   SHIPS, shipDef, STATION,
   TECH_LEVELS, MAX_TECH, RESEARCH_PER_LAB, RESEARCH_BASE, supportFrom, EXTERMINATUS,
   shipHasDrive, BREAKER, HYPER, traitsOf, planetMods, diffOf,
+  SPACE_TOUGH,
 } from './data.js';
 
 const NEUTRAL = { colorCss: '#6f6b63', tag: '—', name: 'Ничей мир', short: 'ничей' };
@@ -1201,7 +1202,8 @@ export function createGalaxy(ctx, camp) {
       if (!targets.length) continue;
       const t = targets[0];
       const mineVal = fleetValue(f, st.fleet);
-      const theirVal = fleetValue(t.st.owner || f, t.st.fleet) + (t.st.buildings.includes('station') ? 6000 : 0);
+      // Станция — как её прочность в бою: та выросла вместе с кораблями (SPACE_TOUGH)
+      const theirVal = fleetValue(t.st.owner || f, t.st.fleet) + (t.st.buildings.includes('station') ? 6000 * SPACE_TOUGH : 0);
       if (t.st.owner === null) {
         t.st.owner = f;
         t.st.fleet = mergeFleets(t.st.fleet, st.fleet);

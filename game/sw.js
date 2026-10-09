@@ -21,7 +21,7 @@
    SHELL и чистит старый кэш, а смена самого service worker'а заодно
    сбрасывает кэш памяти, накопленный при прежнем. */
 
-const VERSION = 'capella-v37';
+const VERSION = 'capella-v38';
 const CACHE = VERSION;
 
 /* Ответ странице — с перепроверкой (см. шапку). Ответ после
@@ -64,6 +64,7 @@ const SHELL = [
   './js/ground.js',
   './js/galaxy.js',
   './js/hangar.js',
+  './js/audio.js',
   './vendor/DRACOLoader.js',
   './vendor/meshopt_decoder.module.js',
   // Внешние модели и сканы обшивки и грунта: без них офлайн корабли

@@ -40,6 +40,11 @@
 //             не наложены (C78), ростер группами (C77), пустые полосы
 //             прозрачны (C135), свой/чужой (C43), подсказка, «Дрифт» по
 //             выделению (C136), купол РЭБ в покое (C111).
+//             Решения в бою (P4): тактики S/H/Y/T и кнопками, круги
+//             дальности, «Держать» не уходит дальше корпуса за 10 с при
+//             враге в досягаемости, лента событий о погибшем, звук
+//             (громкость и «Без звука» в настройках паузы), итоги боя
+//             с потерями и «Ещё раз», собирающий тот же бой.
 //  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
 //             второй бой сквозь неё не начать; операция стартует без
 //             ошибок; сбой → «В меню».
@@ -549,6 +554,8 @@ const HINT = () => {
     }));
     ok('бой стартовал, корабли обеих сторон на месте', fleet.mine > 0 && fleet.foe > 0,
       `${fleet.mine} против ${fleet.foe}, сборка ${((Date.now() - t) / 1000).toFixed(1)} с`);
+    // Состав на старте — по нему «Ещё раз» на итогах проверяется как ТОТ ЖЕ бой
+    const firstN = await page.evaluate(() => JSON.stringify(__sp.stats.n));
     await clean('старт боя');
     // Часы «Давления Земли» в шапке — только когда на планете есть орудие
     const gun = await page.evaluate(() => ({ gun: !!__sp.gun,
@@ -990,12 +997,23 @@ const HINT = () => {
         a: __sp.selection.filter(s => s.amove).length, sel: __sp.selection.length }));
       ok('A, затем щелчок — атака с ходу у выделенных, выделение не сбито', curA === 'cur-attack' && am.a === am.n && am.n > 0,
         `курсор после A: ${curA}, с атакой с ходу ${am.a} из ${am.n}`);
+      /* Тактики (C26): S — стоп, и это то же «Держать»; Y — охрана,
+         T — охота, H — держать. По умолчанию у всех «Охрана» */
+      const stanceN = id => page.evaluate(id => __sp.selection.filter(s => s.kind === 'ship' && !s.station && s.stance === id).length, id);
+      const guard0 = await stanceN('guard');
       await page.keyboard.press('KeyS');
       const stopped = await page.evaluate(() => __sp.selection.filter(s => s.amove || s.moveTo || s.forced).length);
+      const sHold = await stanceN('hold');
+      await page.keyboard.press('KeyY');
+      const guardN = await stanceN('guard');
+      await page.keyboard.press('KeyT');
+      const huntN = await stanceN('hunt');
       await page.keyboard.press('KeyH');
-      const held = await page.evaluate(() => __sp.selection.filter(s => s.kind === 'ship' && !s.station && s.hold).length);
-      ok('S снимает приказы, H — держать позицию', stopped === 0 && held === am.n, `с приказами после S: ${stopped}; держат ${held} из ${am.n}`);
-      await page.keyboard.press('KeyH');
+      const held = await stanceN('hold');
+      ok('тактики: сначала у всех «Охрана»; S снимает приказы и встаёт (= «Держать»); Y, T, H — охрана, охота, держать (C26)',
+        guard0 === am.n && stopped === 0 && sHold === am.n && guardN === am.n && huntN === am.n && held === am.n,
+        `охрана на старте ${guard0} из ${am.n}; с приказами после S: ${stopped}, держат ${sHold}; Y → ${guardN}, T → ${huntN}, H → ${held}`);
+      await page.keyboard.press('KeyY');
     }
 
     // Esc, когда отменять нечего, — меню паузы, и бой стоит (C35)
@@ -1025,6 +1043,27 @@ const HINT = () => {
     ok('«Настройки» в меню паузы раскрываются и прячутся, галочка «у края» нажимается',
       !sh0 && sq.ok && sh1 && eq.ok && edgeOff === '0' && edgeOn === '1' && !sh2,
       sq.why || eq.why || `видны до ${sh0}, после ${sh1}, после второго нажатия ${sh2}; у края: ${edgeOff} → ${edgeOn}`);
+    /* Звук (C54): ползунок громкости и «Без звука» в настройках меню паузы
+       живые (раньше стояла выключенная заглушка «звука пока нет») и
+       помнятся. Звук заводится по первому жесту — к этому месту игрок уже
+       нажимал не раз, значит AudioContext должен быть */
+    await tap(page, '.screen.pause [data-a="settings"]');
+    const vb = await page.evaluate(() => { const r = document.querySelector('.screen.pause [data-a="vol"]').getBoundingClientRect(); return { x0: r.left + 3, x1: r.right - 3, y: r.top + r.height / 2, dis: document.querySelector('.screen.pause [data-a="vol"]').disabled }; });
+    const vHit = await page.evaluate(([x, y]) => (document.elementFromPoint(x, y) || {}).dataset?.a === 'vol', [vb.x1, vb.y]);
+    await page.mouse.click(vb.x0, vb.y);
+    const vLow = await page.evaluate(() => ({ v: __sound.volume, s: localStorage.getItem('capella_vol') }));
+    await page.mouse.click(vb.x1, vb.y);
+    const vHigh = await page.evaluate(() => __sound.volume);
+    const mq = await tap(page, '.screen.pause [data-a="mute"]');
+    const muted = await page.evaluate(() => ({ m: __sound.muted, s: localStorage.getItem('capella_mute') }));
+    await tap(page, '.screen.pause [data-a="mute"]');
+    const unmuted = await page.evaluate(() => !__sound.muted);
+    const ctxOn = await page.evaluate(() => __sound.on);
+    ok('звук: AudioContext заведён по жесту; в настройках паузы громкость двигается и помнится, «Без звука» включается и выключается (C54)',
+      ctxOn && !vb.dis && vHit && vLow.v <= 10 && vLow.s === String(vLow.v) && vHigh >= 90 && mq.ok && muted.m && muted.s === '1' && unmuted,
+      `звук ${ctxOn}, ползунок под мышью ${vHit}, громкость ${vLow.v} (${vLow.s}) → ${vHigh}, без звука ${JSON.stringify(muted)} → включён ${unmuted}`);
+    await page.evaluate(() => __sound.setVolume(70));
+    await tap(page, '.screen.pause [data-a="settings"]');
     r = await tap(page, '.screen.pause [data-a="resume"]');
     const resumed = await page.waitForFunction(t => !document.querySelector('.screen.pause') && __sp.time > t + 0.05, pt1, { timeout: 30000 }).then(() => true, () => false);
     ok('«Продолжить» закрывает меню, бой идёт', r.ok && resumed, r.why);
@@ -1327,6 +1366,22 @@ const HINT = () => {
       ok('«Дрифт» подсвечен по выделению: у одного — горит, у всего флота — «часть» (C136)',
         /\bon\b/.test(one) && /\bpart\b/.test(all) && !/\bon\b/.test(all) && off === 0, `один: ${one}; весь флот: ${all}; дрейфуют после: ${off}`);
     }
+    /* Тактики кнопками (C26): «Охота» и «Охрана» нажимаются мышью при
+       «Весь флот», горит та, что у всех; у выделенных — круги дальности
+       главного калибра */
+    await tap(page, '[data-q="all"]');
+    await waitFrames(page, 2);
+    const huq = await tap(page, 'button.act[data-act="hunt"]');
+    const huntAll = await page.evaluate(() => ({ n: __sp.selection.filter(s => s.kind === 'ship' && !s.station).length,
+      hunt: __sp.selection.filter(s => s.stance === 'hunt').length, on: document.querySelector('button.act[data-act="hunt"]').classList.contains('on') }));
+    const gq = await tap(page, 'button.act[data-act="guard"]');
+    await waitFrames(page, 2);
+    const guardAll = await page.evaluate(() => ({ guard: __sp.selection.filter(s => s.stance === 'guard').length,
+      on: document.querySelector('button.act[data-act="guard"]').classList.contains('on'),
+      rings: __sp.rangeTest() }));
+    ok('кнопки тактик: «Охота» и «Охрана» мышью у всего флота, горит выбранная; круги дальности у выделенных',
+      huq.ok && gq.ok && huntAll.n > 0 && huntAll.hunt === huntAll.n && huntAll.on && guardAll.guard === huntAll.n && guardAll.on && guardAll.rings >= 1,
+      (huq.why || gq.why) + ` охота ${huntAll.hunt} из ${huntAll.n}, охрана ${guardAll.guard}, кругов дальности ${guardAll.rings}`);
     /* Купол РЭБ в покое — одно кольцо, плотная картинка — у выделенного
        (часть C111); и на паузе тоже */
     const ecmIdx = await page.evaluate(() => [...document.querySelectorAll('.rcell')].findIndex(c => /РЭБ/.test(c.textContent)));
@@ -1421,6 +1476,11 @@ const HINT = () => {
       }));
       ok('выделенный корабль погиб — панель пустеет, кнопок нет', /Ничего не выбрано/.test(after.text) && after.acts === 0,
         `до: «${before}», после: «${after.text}», кнопок ${after.acts}`);
+      // Лента событий: гибель своего корабля называется по имени, звучит тревога
+      const fd = await page.evaluate(() => ({ lines: [...document.querySelectorAll('.hud-space .feed .feed-line')].map(d => d.textContent), lost: __sound.stats.lost || 0 }));
+      const vn = victim.slice(victim.indexOf('«'));
+      ok('лента событий: «Потерян …» с именем погибшего, звучит тревога', fd.lines.some(t => /^Потерян/.test(t) && t.includes(vn)) && fd.lost > 0,
+        `${fd.lines.join(' | ')} · тревог «потерян» ${fd.lost}`);
     }
 
     /* C99 + rehome: звенья погибшего носителя садятся на другой ТОЛЬКО
@@ -1573,6 +1633,51 @@ const HINT = () => {
     }
     await clean('медленный клик и приказ на звено');
 
+    /* «Держать» (C26): враг в досягаемости, а корабль за 10 игровых секунд
+       не уходит дальше корпуса — и стреляет. Враг поставлен на 0,95
+       дальности: «Охрана» и «Охота» пошли бы к нему на рабочую дистанцию
+       (0,68), то есть на добрые полтора корпуса */
+    const holdSel = await page.evaluate(() => {
+      const S = __sp, P = S.playerSide;
+      const s = S.ships.find(x => !x.dead && x.side === P && x.cls === 'capital' && x.guns.length && !x.hyper);
+      if (!s) return null;
+      S.selection = [s]; S.selDirty = true; window.__holdS = s;
+      return s.def.name;
+    });
+    if (!holdSel) ok('для проверки «Держать» нашёлся свой тяжёлый корабль', false);
+    else {
+      await waitFrames(page, 3);
+      await page.keyboard.press('KeyH');
+      const hd = await page.evaluate(() => {
+        const S = __sp, s = window.__holdS, P = S.playerSide;
+        const f = S.ships.filter(x => !x.dead && x.side !== P && !x.station).sort((a, b) => b.maxHp - a.maxHp)[0];
+        const was = S.paused; S.paused = true;
+        // в стороне от всех: свой — в углу поля, враг — на 0,95 дальности перед ним, обездвижен и живуч
+        for (const x of S.ships) if (x !== s && x !== f && !x.dead && x.pos.distanceTo(new x.pos.constructor(-1900, 0, 1900)) < 1300) x.pos.x += 2600;
+        s.pos.set(-1900, 0, 1900); s.vel.set(0, 0, 0); s.moveTo = null; s.amove = null; s.forced = null; s.target = null;
+        const R = s.guns[0].def.range;
+        f.pos.copy(s.pos).add(new s.pos.constructor(0, 0, -R * 0.95)); f.vel.set(0, 0, 0);
+        f.ionUntil = S.time + 60; const hp = f.hp; f.hp = f.maxHp = 1e7;
+        const p0 = s.pos.clone(), fired0 = s.dealt;
+        S.simTest(10);
+        const res = { stance: s.stance, moved: Math.round(s.pos.distanceTo(p0)), len: Math.round(s.len), fired: s.dealt > fired0, range: R };
+        /* Контроль: тот же опыт на «Охоте» обязан увести корабль к цели —
+           иначе проверка выше ничего не доказывает (враг не приманка) */
+        s.pos.copy(p0); s.vel.set(0, 0, 0); s.target = null;
+        S.stanceTest([s], 'hunt');
+        S.simTest(10);
+        res.hunt = Math.round(s.pos.distanceTo(p0));
+        s.pos.copy(p0); s.vel.set(0, 0, 0);
+        S.stanceTest([s], 'guard');
+        f.hp = f.maxHp = Math.max(1, hp); f.ionUntil = 0;
+        S.paused = was;
+        return res;
+      });
+      ok('«Держать»: враг в досягаемости, за 10 с корабль не ушёл дальше корпуса и стреляет, а на «Охоте» ушёл бы (C26)',
+        hd.stance === 'hold' && hd.moved < hd.len && hd.fired && hd.hunt > hd.moved + hd.len * 0.6,
+        `${holdSel}: тактика ${hd.stance}, сдвиг ${hd.moved} при корпусе ${hd.len}, стрелял ${hd.fired}; на «Охоте» сдвиг ${hd.hunt}`);
+    }
+
     // До итога: флоты в упор, противник на последнем издыхании, 4×, без отрисовки
     r = await tap(page, '[data-speed="4"]');
     ok('4× нажимается', r.ok, r.why);
@@ -1589,8 +1694,41 @@ const HINT = () => {
     ok('бой доходит до итоговой карточки', ended && /Орбита за нами/.test(endText), endText.slice(0, 60) || 'нет карточки, игровое время ' +
       await page.evaluate(() => __sp.time.toFixed(1)));
     if (ended) {
+      /* Итоги боя: потери обеих сторон по видам кораблей, время, кто
+         больше всех нанёс урона — и «Ещё раз», который собирает ТОТ ЖЕ бой */
+      const es = await page.evaluate(() => {
+        const c = document.querySelector('.endcard');
+        return {
+          rows: [...c.querySelectorAll('.end-loss tr')].slice(1).map(r => r.innerText.replace(/\s+/g, ' ').trim()),
+          head: (c.querySelector('.end-loss tr') || {}).textContent || '',
+          time: (c.querySelector('.end-time') || {}).textContent || '',
+          best: (c.querySelector('.end-best') || {}).innerText || '',
+          cont: (c.querySelector('[data-role="cont"]') || {}).textContent || '',
+        };
+      });
+      ok('итоги боя: потери обеих сторон по видам, время боя, кто больше всех нанёс урона',
+        es.rows.length >= 3 && es.rows.every(x => /\d+ из \d+|—/.test(x)) && /Свои/.test(es.head) && /Противник/.test(es.head) &&
+        /Бой длился \d+:\d\d/.test(es.time) && /у нас:/.test(es.best) && /у противника:/.test(es.best) && es.cont === 'В меню',
+        JSON.stringify(es).slice(0, 320));
+      const oldSp = await page.evaluateHandle(() => window.__sp);
+      r = await tap(page, '.endcard [data-role="again"]');
+      const again = await page.waitForFunction(o => window.__sp && window.__sp !== o && __sp.time > 0 && !__sp.outcome,
+        oldSp, { timeout: 150000, polling: 250 }).then(() => true, () => false);
+      const n2 = again ? await page.evaluate(() => JSON.stringify(__sp.stats.n)) : '';
+      ok('«Ещё раз» нажимается и собирает тот же бой заново', r.ok && again && n2 === firstN,
+        r.why || `новый бой ${again}; состав ${n2 === firstN ? 'тот же' : n2 + ' против ' + firstN}`);
+      if (again) {
+        await settled();
+        await page.evaluate(() => {
+          __sp.paused = true;
+          __sp.closeInTest(300);
+          for (const s of __sp.ships) if (s.side !== __sp.playerSide) s.hp = Math.min(s.hp, 1);
+          __sp.simTest(120);
+        });
+        await page.waitForFunction(() => { const e = document.querySelector('.endcard'); return e && e.style.display === 'flex'; }, null, { timeout: 30000 }).catch(() => {});
+      }
       r = await tap(page, '.endcard [data-role="cont"]');
-      ok('«Продолжить» на итоговой карточке нажимается', r.ok, r.why);
+      ok('«В меню» на итоговой карточке нажимается', r.ok, r.why);
       ok('после боя — снова меню', await menuVisible().then(() => true, () => false));
     }
     await clean('бой на орбите');

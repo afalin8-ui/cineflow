@@ -10,6 +10,7 @@ import { createGroundBattle, autoResolveGround } from './ground.js';
 import { buildPlanet, buildNebula } from './models.js';
 import { loadModelLibrary, modelCount, loadPlanetTextures, planetCount } from './assets.js';
 import { createHangar } from './hangar.js';
+import { sound } from './audio.js';
 import {
   FACTIONS, FACTION_IDS, NEURO_BRIEF, SHIPS, STRIKE, STRIKE_ROLES,
   GROUND_UNITS, GROUND_BUILDINGS, GALAXY_MAP, DIFFICULTY, DIFF_IDS, diffOf,
@@ -366,8 +367,9 @@ function showPause(opts = {}) {
         <label class="opt"><input type="checkbox" data-a="edge"${prefs.edge ? ' checked' : ''}>
           Прокрутка карты, когда курсор у края экрана</label>
         <button class="btn" data-a="full">Полный экран · F11</button>
-        <label class="opt off" title="Звука в игре пока нет">
-          <input type="range" min="0" max="100" value="70" disabled> Громкость — звука пока нет</label>
+        <label class="opt" title="Общая громкость боя">
+          <input type="range" min="0" max="100" step="5" data-a="vol" value="${sound.volume}"> Громкость</label>
+        <label class="opt"><input type="checkbox" data-a="mute"${sound.muted ? ' checked' : ''}> Без звука · M</label>
       </div>
     </div>`;
   let done = false;
@@ -411,6 +413,14 @@ function showPause(opts = {}) {
   };
   el.querySelector('[data-a="edge"]').onchange = e => setPref('edge', e.target.checked);
   el.querySelector('[data-a="full"]').onclick = () => toggleFullscreen();
+  /* Громкость слышна сразу: щелчок-подтверждение на каждом шаге ползунка,
+     иначе громкость под паузой подбирать вслепую */
+  el.querySelector('[data-a="vol"]').oninput = e => {
+    sound.setVolume(+e.target.value);
+    if (+e.target.value > 0 && sound.muted) { sound.setMuted(false); el.querySelector('[data-a="mute"]').checked = false; }
+    sound.ui('select');
+  };
+  el.querySelector('[data-a="mute"]').onchange = e => { sound.setMuted(e.target.checked); if (!e.target.checked) sound.ui('order'); };
   const restart = el.querySelector('[data-a="restart"]');
   if (restart) restart.onclick = () => { done = true; removeEventListener('keydown', onKey, true); el.remove(); opts.restart(); };
   if (opts.leave) {
@@ -824,10 +834,12 @@ function showNeuro(start = 0) {
         <p>В обычном окне браузер забирает Ctrl+1…8 себе (вкладки), поэтому
         отряд пишется и Shift+цифрой. В полноэкранном режиме (F11) работают оба.</p></section>
         <section><h3>Приказы в бою на орбите</h3>${rows([
-          ['Правая кнопка', 'по полю — идти; по врагу (по кораблю или его подписи) — атаковать'],
+          ['Правая кнопка', 'по полю — идти; по врагу (по кораблю или его подписи) — бить его, пока жив (фокус огня); по своему кораблю — охранять его'],
           ['A, затем щелчок', 'атака с ходу: идут к точке и бьют всех встречных; по врагу — атаковать'],
-          ['S', 'стоп: снять все приказы'],
-          ['H', 'держать позицию: стоять и бить только тех, до кого достаёт оружие'],
+          ['S', 'стоп: снять приказы и встать (дальше — как «Держать»)'],
+          ['H', 'тактика «Держать»: стоять и бить только тех, до кого достаёт оружие'],
+          ['Y', 'тактика «Охрана» (сначала у всех): держать участок, отходить недалеко и возвращаться'],
+          ['T', 'тактика «Охота»: самим искать цели по всему полю'],
           ['Z / X / C', 'поднять перехватчиков / истребителей / бомбардировщиков'],
           ['V', 'звено на посадку'],
           ['G', 'уйти в гипер или отменить; с авианосцем спросит — за ним отходит весь флот'],
@@ -835,12 +847,15 @@ function showNeuro(start = 0) {
           ['B', 'подкрепление'],
           ['J / K / L', 'купол РЭБ: глушение / прикрытие / молчать'],
           ['PgUp / PgDn', 'корабли выше / ниже'],
+          ['M', 'звук: выключить / включить (громкость — Esc → Настройки)'],
           ['Пробел', 'пауза'],
         ])}
         <p>Буква действия написана в углу его кнопки, а что она делает —
         в подсказке, если навести на кнопку мышь. Ростер флота над панелью
         собран по классам: щелчок — все корабли класса, ещё щелчок — по одному,
-        Shift — добавить к выбранным. Свои всегда зелёные, противник — красный,
+        Shift — добавить к выбранным. У выделенных тонкий круг — дальность
+        главного калибра: достанет ли отсюда. Слева над ростером — лента
+        событий: кто погиб, кто под огнём, кто ушёл в гипер. Свои всегда зелёные, противник — красный,
         какой бы клан ни был. Курсор подсказывает,
         что сделает щелчок: рука — выбрать, красный прицел — атаковать,
         зелёная метка — идти.</p></section>

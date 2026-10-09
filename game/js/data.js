@@ -225,6 +225,15 @@ function strikeCraft(faction) {
   };
 }
 
+/* Запас прочности кораблей на орбите (C59: «медленнее убивать»).
+   Бой на орбите решался за полминуты свалки: «Сражение» — 30 кораблей
+   до 18 за 30 секунд, «Генеральное» — 69 до 35 за 18. Ни отвести
+   побитого, ни сменить цель, ни увести строй из-под ракеты за такое
+   время не успеть, и приказы не значили ничего. Множитель общий для
+   всех кланов и станции — соотношение сил между ними он не трогает;
+   авиацию не трогает тоже: её сбивает ПВО, и это её цена */
+export const SPACE_TOUGH = 1.8;
+
 const SHIP_NAMES = {
   troyden: {
     corvette: ['Корвет «Гроссер»', true], frigate: ['Фрегат «Диксон»', true],
@@ -266,7 +275,7 @@ function shipsFor(faction) {
   const cdMod    = trd ? 0.9 : 1.0;
 
   const N = SHIP_NAMES[faction];
-  const H = h => Math.round(h * hpMod);
+  const H = h => Math.round(h * hpMod * SPACE_TOUGH);
   const A = a => Math.min(0.6, +(a * armorMod).toFixed(3));
   const C = c => Math.round(c * costMod / 10) * 10;
   const G = d => Math.round(d * gunMod);
@@ -274,7 +283,7 @@ function shipsFor(faction) {
   const base = [
     {
       id: 'corvette', cls: 'escort', tier: 1, role: 'Корвет · разведка и ПВО',
-      hp: 620, armor: 0.12, maxSpeed: 46, thrust: 18, turn: 0.7, radius: 5,
+      hp: 620, armor: 0.12, maxSpeed: 60, thrust: 30, turn: 0.85, radius: 5,
       cost: 220, build: 1, hyperCharge: 5,
       guns: [{ type: 'light', dmg: 40, cd: 2.2, range: 220 }],
       pd: { count: 2, dmg: 15, cd: 0.26, range: 120 },
@@ -283,7 +292,7 @@ function shipsFor(faction) {
     },
     {
       id: 'frigate', cls: 'escort', tier: 1, role: 'Фрегат · зонт ПВО',
-      hp: 1000, armor: 0.18, maxSpeed: 34, thrust: 11, turn: 0.55, radius: 6.5,
+      hp: 1000, armor: 0.18, maxSpeed: 48, thrust: 20, turn: 0.7, radius: 6.5,
       cost: 380, build: 1, hyperCharge: 6,
       guns: [{ type: 'light', dmg: 66, cd: 2.6, range: 270 }],
       pd: { count: 4, dmg: 17, cd: 0.26, range: 130 },
@@ -292,7 +301,7 @@ function shipsFor(faction) {
     },
     {
       id: 'ecm', cls: 'escort', tier: 2, role: 'РЭБ · поле помех',
-      hp: 1400, armor: 0.20, maxSpeed: 30, thrust: 9, turn: 0.5, radius: 8,
+      hp: 1400, armor: 0.20, maxSpeed: 42, thrust: 16, turn: 0.6, radius: 8,
       cost: 720, build: 2, hyperCharge: 8, ecm: true,
       guns: [],
       pd: { count: 2, dmg: 14, cd: 0.3, range: 120 },
@@ -304,7 +313,7 @@ function shipsFor(faction) {
     },
     {
       id: 'cruiser', cls: 'capital', tier: 2, role: 'Крейсер · тяжёлый лазер',
-      hp: 2600, armor: 0.30, maxSpeed: 22, thrust: 4.2, turn: 0.30, radius: 12,
+      hp: 2600, armor: 0.30, maxSpeed: 38, thrust: 10, turn: 0.40, radius: 12,
       cost: 980, build: 2, hyperCharge: 9,
       guns: [{ type: 'heavy', dmg: 430, cd: 9, range: 780, charge: 1.3 }],
       pd: { count: 3, dmg: 14, cd: 0.32, range: 115 },
@@ -314,7 +323,7 @@ function shipsFor(faction) {
     },
     {
       id: 'carrier', cls: 'carrier', tier: 2, role: 'Носитель',
-      hp: 3100, armor: 0.22, maxSpeed: 18, thrust: 3.0, turn: 0.24, radius: 15,
+      hp: 3100, armor: 0.22, maxSpeed: 31, thrust: 8, turn: 0.32, radius: 15,
       cost: 1150, build: 3, hyperCharge: 12,
       guns: [],
       pd: { count: 5, dmg: 15, cd: 0.3, range: 135 },
@@ -325,15 +334,15 @@ function shipsFor(faction) {
     },
     {
       id: 'capital', cls: 'capital', tier: 3, role: 'Флагман · главный калибр',
-      hp: 5400, armor: 0.38, maxSpeed: 16, thrust: 2.5, turn: 0.17, radius: 22,
+      hp: 5400, armor: 0.38, maxSpeed: 30, thrust: 7, turn: 0.26, radius: 22,
       cost: 2300, build: 4, hyperCharge: 14, flee: 0.2,
       guns: [
         { type: 'heavy', dmg: 820, cd: 12, range: 900, charge: 1.8 },
         { type: 'heavy', dmg: 820, cd: 12, range: 900, charge: 1.8 },
       ],
       pd: { count: 6, dmg: 18, cd: 0.26, range: 145 },
-      desc: 'Две башни главного калибра. Разгоняется полминуты и столько ' +
-            'же тормозит. Получив больше 80% повреждений, уходит в гипер ' +
+      desc: 'Две башни главного калибра. Тяжелее всех на разгоне и торможении. ' +
+            'Получив больше 80% повреждений, уходит в гипер ' +
             'сам — командир флагмана не спрашивает разрешения.',
     },
   ];
@@ -343,7 +352,7 @@ function shipsFor(faction) {
   // тяжёлый крейсер Плэктора: медленный, много брони, залповый огонь.
   if (plk) base.push({
     id: 'sinho', cls: 'capital', tier: 3, role: 'Тяжёлый крейсер · залп',
-    hp: 4200, armor: 0.34, maxSpeed: 14, thrust: 2.2, turn: 0.15, radius: 18,
+    hp: 4200, armor: 0.34, maxSpeed: 27, thrust: 6.4, turn: 0.24, radius: 18,
     cost: 1700, build: 3, hyperCharge: 13, flee: 0.15,
     guns: [
       { type: 'heavy', dmg: 560, cd: 11, range: 840, charge: 1.6 },
@@ -387,7 +396,7 @@ export function shipDef(faction, id) {
 
 export const STATION = {
   id: 'station', cls: 'capital', name: 'Орбитальная станция', role: 'Неподвижная крепость',
-  hp: 6500, armor: 0.42, maxSpeed: 0, thrust: 0, turn: 0.12, radius: 26, cost: 1400,
+  hp: Math.round(6500 * SPACE_TOUGH), armor: 0.42, maxSpeed: 0, thrust: 0, turn: 0.12, radius: 26, cost: 1400,
   hyperCharge: 0, station: true,
   guns: [{ type: 'heavy', dmg: 640, cd: 10, range: 920, charge: 1.5 }],
   pd: { count: 8, dmg: 18, cd: 0.24, range: 155 },
@@ -824,6 +833,9 @@ export const doctrineOf = f => BASE_DOCTRINE[f] || BASE_DOCTRINE.plektor;
    push   — насколько охотно он наступает в кампании
    auto   — та же фора в автобою, иначе «Решить автоматически»
             обходит сложность стороной
+   focus  — бой на орбите: какая доля тяжёлых кораблей ИИ бьёт одну
+            общую цель (фокус огня). На «Новобранце» каждый стреляет
+            по своей — фокус огня и есть то, чему учится игрок
 
    На «Новобранце» ИИ беднее и медлительнее игрока — это честный
    учебный режим, а не поддавки: армия у него та же, просто копится
@@ -833,22 +845,22 @@ export const doctrineOf = f => BASE_DOCTRINE[f] || BASE_DOCTRINE.plektor;
 export const DIFFICULTY = {
   easy: {
     id: 'easy', name: 'Новобранец',
-    eco: 0.6, tempo: 1.7, wave: 10, aim: 0.75, camp: 0.7, push: 0.3, auto: 0.8,
+    eco: 0.6, tempo: 1.7, wave: 10, aim: 0.75, camp: 0.7, push: 0.3, auto: 0.8, focus: 0,
     desc: 'ИИ добывает вполсилы, думает медленно и долго копит перед атакой',
   },
   normal: {
     id: 'normal', name: 'Офицер',
-    eco: 1, tempo: 1, wave: 6, aim: 1, camp: 1, push: 0.6, auto: 1,
+    eco: 1, tempo: 1, wave: 6, aim: 1, camp: 1, push: 0.6, auto: 1, focus: 0.7,
     desc: 'Ровный бой: у противника ровно те же возможности, что и у тебя',
   },
   hard: {
     id: 'hard', name: 'Ветеран',
-    eco: 1.4, tempo: 0.7, wave: 5, aim: 1.12, camp: 1.4, push: 0.85, auto: 1.15,
+    eco: 1.4, tempo: 0.7, wave: 5, aim: 1.12, camp: 1.4, push: 0.85, auto: 1.15, focus: 1,
     desc: 'Богаче, поворотливее и бьёт больнее. Атакует часто и небольшими волнами',
   },
   brutal: {
     id: 'brutal', name: 'Кошмар',
-    eco: 2, tempo: 0.45, wave: 4, aim: 1.25, camp: 2, push: 1, auto: 1.3,
+    eco: 2, tempo: 0.45, wave: 4, aim: 1.25, camp: 2, push: 1, auto: 1.3, focus: 1,
     desc: 'Вдвое больше денег, постоянное давление и точный огонь. Честной эту игру не назовёшь',
   },
 };
@@ -885,6 +897,45 @@ export const STANCES = {
 };
 export const STANCE_IDS = ['guard', 'hold', 'hunt'];
 export const stanceOf = id => STANCES[id] || STANCES.guard;
+
+/* ─────────────────────────────────────────────────────────────
+   ТАКТИКИ КОРАБЛЕЙ НА ОРБИТЕ (C26) — та же мысль, что у земли.
+
+   Раньше корабль сам брал цель в 1,8 дальности главного калибра и шёл
+   на сближение: «Стоп» держал его секунду, линию было не удержать,
+   а у крейсера радиус захвата (1404) был больше стартового зазора —
+   крейсеры уползали к врагу сами. Теперь как поступать, решает игрок:
+
+   Держать — стоят на месте и бьют только то, до чего достают с места.
+             «Стоп» — это тоже «Держать».
+   Охрана   — по умолчанию. Держат участок (или корабль — ПКМ по своему):
+             бьют подошедших, отходят от точки не дальше поводка
+             и возвращаются.
+   Охота    — сами ищут цели (захват в 1,8 дальности — только здесь)
+             и гонятся за ними по всему полю.
+
+   reach — во сколько дальностей главного калибра искать цель;
+   leash — поводок «Охраны»: не меньше этого и не меньше 0,4 дальности.
+   Приказ атаковать (фокус огня) сильнее любой тактики: корабль идёт
+   бить цель, пока та жива и видна, а потом снова живёт по тактике.
+   ───────────────────────────────────────────────────────────── */
+
+export const SPACE_STANCES = {
+  hold:  { id: 'hold',  name: 'Держать', key: 'KeyH', reach: 1.0,
+           hint: 'Стоят на месте и бьют только тех, до кого достают. Не преследуют' },
+  guard: { id: 'guard', name: 'Охрана',  key: 'KeyY', reach: 1.3, leash: 240,
+           hint: 'Держат участок: бьют подошедших, отходят недалеко и возвращаются. ПКМ по своему кораблю — охранять его' },
+  hunt:  { id: 'hunt',  name: 'Охота',   key: 'KeyT', reach: 1.8,
+           hint: 'Сами ищут цели и гонятся за ними по всему полю' },
+};
+export const SPACE_STANCE_IDS = ['hold', 'guard', 'hunt'];
+
+/* Полёт на орбите. reverse — доля тяги, которую корабль даёт против
+   своего носа (маневровые и тормозные). Торможение считается от неё
+   же (C70): раньше тормозной путь брался от ПОЛНОЙ тяги, а тормозил
+   корабль на 30%, и каждый класс проскакивал точку приказа на 80–97
+   единиц — полтора-два корпуса — и так там и оставался. */
+export const SPACE_MOVE = { reverse: 0.6 };
 
 export const REGIMENT_COST = 350;
 
@@ -1102,8 +1153,8 @@ export const NEURO_BRIEF = [
   {
     title: 'Инерция',
     text: 'Корабль летит по вектору, а не «куда смотрит». Отдав приказ ' +
-          'на движение, ты задаёшь тягу, а не скорость: линкор будет ' +
-          'разгоняться полминуты и столько же тормозить. Разворот корпуса ' +
+          'на движение, ты задаёшь тягу, а не скорость: тяжёлый корабль ' +
+          'разгоняется и тормозит по нескольку секунд. Разворот корпуса ' +
           'от вектора не зависит — можно скользить боком, держа противника ' +
           'в прицеле.',
   },
