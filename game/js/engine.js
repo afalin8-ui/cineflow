@@ -189,6 +189,12 @@ export class TacticalCamera {
        куда едем, `sdist` — где камера сейчас. Колесо раньше меняло
        расстояние мгновенно, и приближение шло рывками по 13%. */
     this.sdist = this.dist;
+    /* Ближний предел, который экран пересчитывает КАЖДЫЙ кадр (в бою
+       на орбите — от корпусов, см. keepOutOfHulls). Камера встаёт на
+       max(dist, floor), а `dist` — то, что выбрал игрок, — не трогается:
+       иначе корабль, прошедший сквозь точку камеры, навсегда отодвигал
+       выбранное приближение, и на долгой сцене оно «уползало» */
+    this.floor = 0;
     this._onKeyDown = e => {
       if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
       // Ctrl/⌘ с буквой — это сочетание (группы, браузер), а не камера
@@ -209,7 +215,9 @@ export class TacticalCamera {
     removeEventListener('blur', this._onBlur);
   }
 
-  zoom(factor) { this.dist = clamp(this.dist * factor, this.minDist, this.maxDist); }
+  // Шаг колеса — от того, где камера стоит: упёршись в корпус, игрок
+  // крутит колесо назад и сразу видит отъезд, а не догоняет предел
+  zoom(factor) { this.dist = clamp(Math.max(this.dist, this.floor) * factor, this.minDist, this.maxDist); }
   orbit(dx, dy) {
     this.yaw -= dx;
     this.pitch = clamp(this.pitch + dy, this.minPitch, this.maxPitch);
@@ -251,7 +259,7 @@ export class TacticalCamera {
      что ещё в пути: иначе быстрые щелчки колеса копили бы увод.
      nx, ny — координаты курсора в −1…1. */
   zoomAt(factor, nx, ny) {
-    const d0 = this.dist;
+    const d0 = Math.max(this.dist, this.floor);
     const d1 = clamp(d0 * factor, this.minDist, this.maxDist);
     if (d1 === d0) return;
     const P = nx === undefined ? null : this._goalPoint(nx, ny);
@@ -267,7 +275,8 @@ export class TacticalCamera {
     const c = this._goal || (this._goal = new THREE.PerspectiveCamera());
     c.fov = this.cam.fov; c.aspect = this.cam.aspect; c.near = this.cam.near; c.far = this.cam.far;
     c.updateProjectionMatrix();
-    this._place(c, this.target, this.dist);
+    const at = Math.max(this.dist, this.floor);
+    this._place(c, this.target, at);
     c.updateMatrixWorld();
     const ray = this._ray || (this._ray = new THREE.Raycaster());
     ray.setFromCamera(new THREE.Vector2(nx, ny), c);
@@ -279,7 +288,7 @@ export class TacticalCamera {
     if (t < 0) return null;
     const P = new THREE.Vector3(o.x + d.x * t, py, o.z + d.z * t);
     // У горизонта точка улетает за тридевять земель — тянем не дальше трёх дистанций
-    const dx = P.x - this.target.x, dz = P.z - this.target.z, L = Math.hypot(dx, dz), max = this.dist * 3;
+    const dx = P.x - this.target.x, dz = P.z - this.target.z, L = Math.hypot(dx, dz), max = at * 3;
     if (L > max) { P.x = this.target.x + dx / L * max; P.z = this.target.z + dz / L * max; }
     return P;
   }
@@ -316,7 +325,7 @@ export class TacticalCamera {
   apply(dt, instant) {
     const t = instant ? 1 : 1 - Math.pow(0.0012, Math.min(dt, 0.1));
     this.smooth.lerp(this.target, t);
-    this.sdist += (this.dist - this.sdist) * t;
+    this.sdist += (Math.max(this.dist, this.floor) - this.sdist) * t;
     this._place(this.cam, this.smooth, this.sdist);
   }
 

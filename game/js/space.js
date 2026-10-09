@@ -929,7 +929,7 @@ export function createSpaceBattle(ctx, config) {
     if (t.side !== state.playerSide || (t.cls !== 'capital' && t.cls !== 'carrier')) return;
     if (state.time - (t.alarmAt || -99) < 25) { t.alarmAt = Math.max(t.alarmAt, state.time - 15); return; }
     t.alarmAt = state.time;
-    feed(`${shortName(t)} под огнём`, 'warn');
+    feed(`${t.station ? 'Наша' : 'Наш'} ${shortName(t)} под огнём`, 'warn');
     sound.ui('alarm');
   }
 
@@ -1254,7 +1254,7 @@ export function createSpaceBattle(ctx, config) {
     if (e.jam && e.side === state.playerSide && !e.station && state.time - jamFeedAt > 25 &&
         e.target && e.target.kind === 'ship' && e.target.pos.distanceTo(e.pos) > e.jam.lockRange) {
       jamFeedAt = state.time;
-      feed(`${shortName(e)} под помехами РЭБ — бьёт только вблизи`, 'warn');
+      feed(`Наш ${shortName(e)} под помехами РЭБ — бьёт только вблизи`, 'warn');
     }
 
     const def = e.def;
@@ -1962,24 +1962,47 @@ export function createSpaceBattle(ctx, config) {
     const C = new THREE.Vector3();
     for (const s of free) C.add(s.pos);
     C.divideScalar(free.length);
-    // Свежее всех видели — того и ищем; поровну — ближнего
-    let tgt = lost[0];
-    for (const s of lost) {
-      if (s.seenAt > tgt.seenAt + 0.5 || (Math.abs(s.seenAt - tgt.seenAt) <= 0.5 &&
-          s.seenPos.distanceTo(C) < tgt.seenPos.distanceTo(C))) tgt = s;
-    }
+    /* Кого ищем, того и ищем дальше, пока не увидели кого-то свежее.
+       Иначе двоих, которых видели в один миг (оба вышли из гипера и
+       молчат), «ближний» менялся по ходу флота, поиск всякий раз
+       начинался с нуля у точки выхода, и бой не кончался вовсе */
     let S = ai.search;
+    let tgt = S ? lost.find(s => s.uid === S.uid) : null;
+    if (tgt && lost.some(s => s.seenAt > tgt.seenAt + 0.5)) tgt = null;
+    if (!tgt) {
+      // Свежее всех видели — того и ищем; поровну — ближнего
+      tgt = lost[0];
+      for (const s of lost) {
+        if (s.seenAt > tgt.seenAt + 0.5 || (Math.abs(s.seenAt - tgt.seenAt) <= 0.5 &&
+            s.seenPos.distanceTo(C) < tgt.seenPos.distanceTo(C))) tgt = s;
+      }
+    }
+    const fresh = t => ({ uid: t.uid, seenAt: t.seenAt, pos: t.seenPos.clone(), step: 0,
+      t: state.time, cycle: S ? S.cycle : 0 });
     if (!S || S.uid !== tgt.uid || tgt.seenAt > S.seenAt + 0.5) {
-      S = ai.search = { uid: tgt.uid, seenAt: tgt.seenAt, pos: tgt.seenPos.clone(), step: 0, t: state.time };
+      S = ai.search = fresh(tgt);
       if (tgt.side === state.playerSide && state.time - ai.toldSearch > 45) {
         ai.toldSearch = state.time;
         feed('Противник ищет наши скрытые корабли — там, где их видели последний раз', 'warn');
       }
     } else if (C.distanceTo(S.pos) < 260 || state.time - S.t > 45) {
-      // На месте пусто — следующая точка по раскручивающейся спирали
-      S.step = S.step >= 7 ? 1 : S.step + 1;
-      S.t = state.time;
-      const a = S.step * 2.4 + tgt.uid, r = 220 + 240 * S.step;
+      if (S.step >= 7) {
+        /* Виток спирали пройден впустую. Следующий — повёрнутый и со
+           сдвигом по радиусу: повтор тех же семи точек не найдёт того,
+           кто стоит между ними. Скрыт не один — следующий виток у точки
+           другого, иначе второго не искали бы никогда */
+        const others = lost.filter(s => s.uid !== tgt.uid).sort((a, b) => a.uid - b.uid);
+        const next = others.find(s => s.uid > tgt.uid) || others[0];
+        if (next) tgt = next;
+        S = ai.search = fresh(tgt);
+        S.cycle++;
+      } else {
+        // На месте пусто — следующая точка по раскручивающейся спирали
+        S.step++;
+        S.t = state.time;
+      }
+      const a = S.step * 2.4 + tgt.uid + S.cycle * 1.3;
+      const r = S.step ? 220 + 240 * S.step + (S.cycle % 2) * 120 : 0;
       S.pos.copy(tgt.seenPos).add(_v.set(Math.cos(a) * r, 0, Math.sin(a) * r));
       S.pos.x = clamp(S.pos.x, -FIELD * 0.9, FIELD * 0.9);
       S.pos.z = clamp(S.pos.z, -FIELD * 0.9, FIELD * 0.9);
@@ -3458,9 +3481,12 @@ export function createSpaceBattle(ctx, config) {
           const going = id !== 'hold' && ships.some(s => s.moveTo || s.amove);
           setStance(ships, id);
           sound.ui('order');
+          // Безоружным на «Охоте» охотиться нечем: при флоте — держатся
+          // у главного из вооружённых, без флота — на своём участке
           const unarmed = id === 'hunt' && ships.some(s => !s.guns.length);
+          const armed = ships.some(s => s.guns.length);
           toast(`${st.name}${going ? ' — после прихода в точку' : ''}: ${st.hint.split('.')[0].toLowerCase()}` +
-            (unarmed ? ' · носитель и РЭБ безоружны — держатся при флоте' : ''));
+            (!unarmed ? '' : armed ? ' · безоружные держатся при флоте' : ' · безоружным охотиться нечем — держат участок'));
           refreshSel();
         }, { cat: 'тактика', on: n === ships.length, part: n > 0 && n < ships.length });
       }
@@ -3965,7 +3991,9 @@ export function createSpaceBattle(ctx, config) {
         if (d > d0 && d < d1) d = d1;
       }
     }
-    if (d > tcam.dist) tcam.dist = Math.min(d, tcam.maxDist);
+    // Предел, а не новое расстояние: корабль ушёл — камера вернулась
+    // туда, куда её поставил игрок
+    tcam.floor = d > tcam.dist ? Math.min(d, tcam.maxDist) : 0;
   }
 
   function update(rawDt) {
