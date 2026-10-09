@@ -673,6 +673,12 @@ table.stats em { display: block; font-style: normal; font-size: 11px; color: var
   animation: reservepulse 1.1s ease-in-out infinite;
 }
 @keyframes reservepulse { 50% { background: #3a2c12; } }
+/* Подкрепление прибыло и не выбрано — та же кнопка с N, мятной: это своё
+   и готовое, а не тревога (refreshReinforce, P5) */
+.speedctl button[data-role="reinforce"][data-mode="arr"].nudge {
+  border-color: var(--good); color: #d6ffe9; animation-name: arrivedpulse;
+}
+@keyframes arrivedpulse { 50% { background: #12322a; } }
 
 /* ПАНЕЛЬ ОРБИТАЛЬНОЙ ПОДДЕРЖКИ — слева, под шапкой.
    Кнопки не исчезают, когда корабль потерян: они покрываются
@@ -1148,7 +1154,7 @@ table.keys td:first-child {
 .feed-line.act { pointer-events: auto; cursor: pointer; text-decoration: underline dotted rgba(255,255,255,.35); }
 .feed-line.act:hover { background: rgba(20, 34, 52, .9); }
 .feed-line.warn { border-left-color: #e0a94e; }
-.feed-line.out { opacity: 0; }
+.feed-line.out { opacity: 0; pointer-events: none; }
 /* Название боя в шапке — только текст: растянутый на полшапки, он глотал
    щелчки и рамку по полю под собой (C135) */
 .topbar .title { pointer-events: none; }

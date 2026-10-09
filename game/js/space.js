@@ -864,6 +864,12 @@ export function createSpaceBattle(ctx, config) {
   function arrivedFeed(list) {
     if (!list || !list.length) return;
     state.arrived = list;
+    state.arrivedAt = state.time;
+    state.arrivedSeen = false;
+    // прежняя строка о прибывших больше не кликается: она выбрала бы новых
+    for (const d of feedBox.children) if (d.classList.contains('act')) {
+      d.classList.remove('act'); d.onclick = null; d.title = ''; d._life = FEED_LIFE;
+    }
     feed(`Прибыло подкрепление: ${list.length} ${plural(list.length, 'корабль', 'корабля', 'кораблей')} — не в отрядах · щелчок или N — выбрать`,
       'good', selectArrived);
   }
@@ -872,6 +878,7 @@ export function createSpaceBattle(ctx, config) {
     const list = state.arrived.filter(e => !e.dead && !e.fled);
     if (!list.length) { toast('Прибывших кораблей не осталось'); return; }
     state.selection = list;
+    state.arrivedSeen = true;      // кнопка в шапке снова про резерв
     focusOn(list);
     sound.ui('select');
     refreshSel();
@@ -2132,6 +2139,12 @@ export function createSpaceBattle(ctx, config) {
      гасил setTimeout: на паузе событие уходило непрочитанным, а
      проверка ленты в стенде краснела на медленной машине */
   const FEED_LIFE = 6, FEED_WALL = 3;
+  /* Строка, по которой щёлкают (подкрепление — выбрать прибывших), живёт
+     дольше и из переполненной ленты уходит ПОСЛЕДНЕЙ: после имён с номерами
+     строки о гибели больше не склеиваются, и в свалке четыре новые строки
+     приходят за пять секунд — «Прибыло подкрепление… N — выбрать» жила
+     1–4 секунды, а N объяснена только в ней */
+  const FEED_ACT_LIFE = 12;
   let jamFeedAt = -99;     // «под помехами» — не чаще раза в 25 с
   let hintOut = false;
   state.feedLog = [];
@@ -2153,14 +2166,19 @@ export function createSpaceBattle(ctx, config) {
     }
     if (onClick) { d.classList.add('act'); d.onclick = onClick; d.title = 'Выбрать'; }
     d._at = state.time; d._wall = performance.now();
+    d._life = onClick ? FEED_ACT_LIFE : FEED_LIFE;
     feedBox.appendChild(d);          // склеенная строка встаёт вниз, к свежим
-    while (feedBox.children.length > FEED_MAX) feedBox.firstChild.remove();
+    // Переполнение: уходит самая старая строка, по которой НЕ щёлкают
+    while (feedBox.children.length > FEED_MAX) {
+      const kids = [...feedBox.children];
+      (kids.find(x => !x.classList.contains('act')) || kids[0]).remove();
+    }
   }
   function fadeFeed() {
     const now = performance.now();
     for (const d of [...feedBox.children]) {
       if (d._gone) { if (now > d._gone) d.remove(); continue; }
-      if (state.time - d._at >= FEED_LIFE && now - d._wall >= FEED_WALL * 1000) {
+      if (state.time - d._at >= (d._life || FEED_LIFE) && now - d._wall >= FEED_WALL * 1000) {
         d.classList.add('out');
         d._gone = now + 900;        // столько идёт угасание в CSS
       }
@@ -2171,7 +2189,15 @@ export function createSpaceBattle(ctx, config) {
      их не больше четырёх: лавина плашек с размытием фона роняла кадры
      до слайд-шоу и закрывала бой (C8). */
   const TOAST_MAX = 4;
+  /* Журнал полосок — для стенда, как feedLog: сама полоска живёт по
+     настоящему времени (2,6 с), и под программным рендером на загруженной
+     машине два кадра идут дольше — проверка «полоска есть» не заставала
+     её, хотя она была */
+  state.toastLog = state.toastLog || [];
   function toast(text) {
+    const log = state.toastLog || (state.toastLog = []);
+    log.push([+(state.time || 0).toFixed(1), text]);
+    if (log.length > 80) log.shift();
     for (const d of toastBox.children) {
       if (d._text !== text || d.classList.contains('out')) continue;
       d._n++;
@@ -2368,22 +2394,41 @@ export function createSpaceBattle(ctx, config) {
 
   const reinfBtn = $('reinforce');
   const reinfTxt = $('reinf-t');
+  const reinfKbd = reinfBtn.querySelector('kbd');
   const myReserve = () => state.reserve[state.playerSide];
+  /* Прибывшие и не выбранные — та же кнопка, только с N (P5): строка
+     в ленте уходит за секунды, а кнопка в шапке стоит, пока прибывших
+     не выбрали (N, кнопкой или строкой), но не дольше минуты боя */
+  const ARRIVED_HINT = 60;
+  function arrivedLeft() {
+    if (!state.arrived || state.arrivedSeen || state.time - state.arrivedAt > ARRIVED_HINT) return 0;
+    return state.arrived.filter(e => !e.dead && !e.fled).length;
+  }
   function refreshReinforce() {
     const n = (myReserve() || []).reduce((a, x) => a + x.count, 0);
     const pending = state.reinforceAt[state.playerSide];
-    let txt, off = true;
+    let txt, off = true, arr = 0;
     // флот отходит: резерв в бой уже не идёт и вернётся домой целым
     if (state.retreat[state.playerSide]) txt = n ? `Резерв дома (${n})` : 'Резерва нет';
     else if (pending) txt = `Гипер ${Math.max(0, Math.ceil(pending - state.time))} с`;
-    else if (!n) txt = 'Резерва нет';
-    else { txt = `Подкрепление (${n})`; off = false; }
+    else if (n) { txt = `Подкрепление (${n})`; off = false; }
+    else if ((arr = arrivedLeft())) { txt = `Прибывшие (${arr})`; off = false; }
+    else txt = 'Резерва нет';
     // кнопка обновляется каждый кадр — трогаем DOM, только если что-то поменялось
     if (reinfTxt.textContent !== txt) reinfTxt.textContent = txt;
     if (reinfBtn.disabled !== off) reinfBtn.disabled = off;
+    const mode = arr ? 'arr' : 'res';
+    if (reinfBtn.dataset.mode !== mode) {
+      reinfBtn.dataset.mode = mode;
+      if (reinfKbd) reinfKbd.textContent = arr ? 'N' : 'B';
+      reinfBtn.title = arr ? 'Прибывшее подкрепление — ни в одном отряде. Выбрать · N'
+                           : 'Вызвать второй эшелон из гипера · B';
+      reinfBtn.classList.toggle('nudge', !!arr);
+    }
   }
   reinfBtn.onclick = () => {
     if (reinfBtn.disabled) return;
+    if (reinfBtn.dataset.mode === 'arr') { selectArrived(); refreshReinforce(); return; }
     if (callReinforcements(state.playerSide)) {
       toast('Резерв вызван — выход из гипера через полминуты');
       reinfBtn.classList.remove('nudge');
@@ -4138,6 +4183,8 @@ export function createSpaceBattle(ctx, config) {
     state.camPosTest = () => tcam.cam.position.clone();
     // Может ли сторона нанести урон (P5)
     state.canHurtTest = side => canHurt(side || state.playerSide);
+    // Строка в ленту — как событие боя (P5: кликабельная уходит последней)
+    state.feedTest = (text, kind) => feed(text, kind);
   }
   return { scene, camera: tcam.cam, update, dispose, state };
 }

@@ -657,6 +657,32 @@ const HINT = () => {
       });
       await page.evaluate(() => { __sp.reinforceTest(); __sp.simTest(36, 1 / 30); });
       await waitFrames(page, 3);
+      /* Кнопка в шапке, пока прибывших не выбрали: «Прибывшие (4)» с N
+         и нажимается. Строка в ленте живёт секунды, кнопка — до выбора */
+      const rbOf = () => page.evaluate(() => {
+        const b = document.querySelector('[data-role="reinforce"]');
+        const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
+        return { x, y, text: b.querySelector('[data-role="reinf-t"]').textContent, kbd: b.querySelector('kbd').textContent,
+          dis: b.disabled, hit: !!h && b.contains(h) };
+      });
+      const rb0 = await rbOf();
+      if (rb0.hit && !rb0.dis) await page.mouse.click(rb0.x, rb0.y);
+      await waitFrames(page, 3);
+      const byBtn = await page.evaluate(() => (__sp.arrived || []).length > 0 && __sp.selection.length === __sp.arrived.length &&
+        __sp.arrived.every(e => __sp.selection.includes(e)));
+      const rb1 = await rbOf();
+      ok('подкрепление: кнопка в шапке — «Прибывшие (4)» с N, щелчок выбирает их, после выбора она снова про резерв (P5)',
+        /Прибывшие \(4\)/.test(rb0.text) && rb0.kbd === 'N' && rb0.hit && !rb0.dis && byBtn && !/Прибывшие/.test(rb1.text) && rb1.kbd === 'B',
+        JSON.stringify({ rb0, byBtn, rb1 }));
+      await page.keyboard.press('Escape');
+      /* Переполнение ленты: строка о прибывших уходит ПОСЛЕДНЕЙ — пять
+         новых событий вытесняют старые, а не её */
+      await page.evaluate(() => { for (let i = 1; i <= 5; i++) __sp.feedTest(`Проба ленты ${i}`, 'bad'); });
+      await waitFrames(page, 2);
+      const kept = await page.evaluate(() => [...document.querySelectorAll('.hud-space .feed .feed-line')].map(d => d.textContent));
+      ok('лента переполнена пятью событиями: строка «Прибыло подкрепление…» осталась, ушли старые (P5)',
+        kept.length === 4 && kept.some(t => /Прибыло подкрепление/.test(t)) && kept.some(t => /Проба ленты 5/.test(t)) &&
+        !kept.some(t => /Проба ленты [12]$/.test(t)), JSON.stringify(kept));
       const line = await page.evaluate(() => {
         const d = [...document.querySelectorAll('.hud-space .feed .feed-line')].find(x => /Прибыло подкрепление/.test(x.textContent));
         if (!d) return null;
@@ -703,11 +729,15 @@ const HINT = () => {
       await page.evaluate(() => { __sp.selection = __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && s.guns.length).slice(0, 2); __sp.selDirty = true; });
       await waitFrames(page, 2);
       await page.waitForTimeout(700);    // звук «приказ» от T отзвучал: одновременно их не больше двух
-      const o0 = await page.evaluate(() => (window.__sound && __sound.stats.order) || 0);
+      const [o0, t0] = await page.evaluate(() => [(window.__sound && __sound.stats.order) || 0, __sp.toastLog.length]);
       await page.keyboard.press('KeyS');
-      await waitFrames(page, 2);
-      const stop = await page.evaluate(() => ({ order: (window.__sound && __sound.stats.order) || 0,
-        toast: [...document.querySelectorAll('.toasts > *')].map(t => t.textContent).join(' | ') }));
+      /* Полоску читаем из ЖУРНАЛА (`toastLog`), а не со страницы: сама
+         она живёт 2,6 с настоящего времени, и на загруженной машине два
+         кадра программного рендера идут дольше — проверка не заставала её,
+         хотя она была. Ждём условия, а не кадров */
+      await page.waitForFunction(t0 => __sp.toastLog.slice(t0).some(x => /Стоп/.test(x[1])), t0, { timeout: 8000 }).catch(() => {});
+      const stop = await page.evaluate(t0 => ({ order: (window.__sound && __sound.stats.order) || 0,
+        toast: __sp.toastLog.slice(t0).map(x => x[1]).join(' | ') }), t0);
       ok('«Стоп» (S) подтверждается звуком и полоской, как H (P5)', stop.order > o0 && /Стоп/.test(stop.toast), JSON.stringify({ o0, ...stop }));
       /* Колесом нельзя въехать в корпус: камера — к флагману… здесь крейсер,
          приближаем по нему колесом много раз */
@@ -1395,6 +1425,11 @@ const HINT = () => {
       mv: __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && (s.moveTo || s.hyper)).length,
       help: !!document.querySelector('.screen.neuro'), menu: !!document.querySelector('.screen.pause') }));
     const h0 = await busy();
+    // N объяснена не только строкой в ленте, которая уходит за секунды (P5)
+    const nRow = await page.evaluate(() => [...document.querySelectorAll('.screen.neuro table.keys tr')]
+      .map(tr => [...tr.children].map(td => td.textContent)).find(([k]) => k === 'N') || null);
+    ok('справка «Управление»: есть строка N — выбрать прибывшее подкрепление (P5)',
+      !!nRow && /прибывш/.test(nRow[1]), JSON.stringify(nRow));
     for (const k of ['Space', 'PageDown', 'KeyG', 'KeyS', 'ArrowLeft', 'Digit1']) await page.keyboard.press(k);
     await waitFrames(page, 6);
     const h1 = await busy();
@@ -1441,9 +1476,10 @@ const HINT = () => {
       ok('«Остаться в бою»: гипера нет, бой снова идёт', r.ok && !gNo.modal && !gNo.paused && await myHyper() === 0, r.why || JSON.stringify(gNo));
     } else info('G с авианосцем', 'авианосца в своём флоте нет — пропущено');
     await tap(page, '[data-q="escort"]');
+    const gT0 = await page.evaluate(() => __sp.toastLog.length);
     await page.keyboard.press('KeyG');
-    const e1 = await page.evaluate(() => ({ modal: !!document.querySelector('.modal.confirm'), n: __sp.selection.length,
-      hyper: __sp.selection.filter(s => s.hyper).length, toast: [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ') }));
+    const e1 = await page.evaluate(t0 => ({ modal: !!document.querySelector('.modal.confirm'), n: __sp.selection.length,
+      hyper: __sp.selection.filter(s => s.hyper).length, toast: __sp.toastLog.slice(t0).map(x => x[1]).join(' | ') }), gT0);
     await page.keyboard.press('KeyG');
     const e2 = await myHyper();
     ok('G без авианосца — гипер сразу и полоска «G — отменить»; G ещё раз — отмена',
