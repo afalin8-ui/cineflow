@@ -41,8 +41,12 @@
 //             прозрачны (C135), свой/чужой (C43), подсказка, «Дрифт» по
 //             выделению (C136), купол РЭБ в покое (C111).
 //             Решения в бою (P4): тактики S/H/Y/T и кнопками, круги
-//             дальности, «Держать» не уходит дальше корпуса за 10 с при
-//             враге в досягаемости, лента событий о погибшем, звук
+//             дальности, ПКМ впереди флагмана при «Весь флот» — идти,
+//             а не охранять; охрана — только точно по корпусу своего,
+//             с курсором-щитом; H посреди марша встаёт; «Держать» не
+//             уходит дальше корпуса за 10 с при враге в досягаемости;
+//             фокус под чужим куполом РЭБ бьёт глушитель; лента
+//             событий о погибшем, звук
 //             (громкость и «Без звука» в настройках паузы), итоги боя
 //             с потерями и «Ещё раз», собирающий тот же бой.
 //  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
@@ -841,6 +845,76 @@ const HINT = () => {
     ok('цифра отряда дважды подряд — камера к отряду', Math.hypot(after2.x - gc.x, after2.z - gc.z) < 5,
       `камера была в ${Math.round(Math.hypot(before2.x - gc.x, before2.z - gc.z))} от отряда, стала в ${Math.round(Math.hypot(after2.x - gc.x, after2.z - gc.z))}`);
 
+    /* ПКМ рядом со своим флотом — «идти», а не «охранять» (замечание к P4).
+       Щедрая зона попадания по кораблю (подпись до самого корпуса, ближайший
+       в 30 точках) заведена ради врага (C29), а охрана по ней превращала
+       «подвинь флот чуть вперёд» в «встаньте кольцом вокруг флагмана»:
+       замер — ПКМ на 25–70 точек впереди головного давал охрану у семи
+       кораблей и движение ни у одного. Охранять — только прямым попаданием
+       в корпус СВОЕГО НЕВЫДЕЛЕННОГО корабля, и курсор над ним — щит */
+    await tap(page, '[data-q="all"]');
+    await page.evaluate(() => {
+      const m = __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && !s.station);
+      const c = m.reduce((a, s) => ({ x: a.x + s.pos.x / m.length, z: a.z + s.pos.z / m.length }), { x: 0, z: 0 });
+      __sp.camTest(c.x, 0, c.z, 1100);
+    });
+    await waitFrames(page, 3);
+    const lead = await page.evaluate(() => {
+      const c = document.getElementById('view');
+      const l = __sp.selection.filter(s => s.kind === 'ship').map(s => ({ s, p: __sp.screenTest(s) })).filter(o => o.p.z < 1);
+      /* Самый крупный — флагман: у него и подпись выше всех, и зона попадания
+         «от подписи до корпуса» шире всех; у мелкого головного 40 точек
+         впереди — уже чистое поле, и проверка была бы зелёной и до правки */
+      l.sort((a, b) => b.s.len - a.s.len);
+      if (!l.length) return null;
+      const h = l[0];
+      const pts = [40, 50, 60].map(dy => ({ dy, x: Math.round(h.p.x), y: Math.round(h.p.y - dy) }));
+      return { name: h.s.def.name, pts, field: pts.every(p => document.elementFromPoint(p.x, p.y) === c) };
+    });
+    if (!lead || !lead.field) ok('ПКМ впереди головного: точки на поле', false, JSON.stringify(lead));
+    else {
+      const got = [];
+      for (const p of lead.pts) {
+        await page.evaluate(() => { for (const s of __sp.ships) { s.moveTo = null; s.guardOf = null; } });
+        await page.mouse.click(p.x, p.y, { button: 'right' });
+        await waitFrames(page, 1);
+        const r = await page.evaluate(() => {
+          const l = __sp.selection.filter(s => s.kind === 'ship' && !s.station && !s.dead);
+          return { n: l.length, move: l.filter(s => s.moveTo).length, guard: __sp.ships.filter(s => s.guardOf).length };
+        });
+        got.push({ dy: p.dy, ...r });
+      }
+      ok('«Весь флот», ПКМ на 40–60 точек впереди флагмана — все идут, охраны нет',
+        got.every(r => r.n > 1 && r.move === r.n && r.guard === 0),
+        `${lead.name}: ` + got.map(r => `${r.dy}: идут ${r.move} из ${r.n}, охраняют ${r.guard}`).join('; '));
+      // Прямое попадание в корпус своего невыделенного — щит и охрана
+      const ward = await page.evaluate(() => {
+        const P = __sp.playerSide, c = document.getElementById('view');
+        const l = __sp.ships.filter(s => !s.dead && s.side === P && !s.station && !s.hyper)
+          .map(s => ({ s, p: __sp.screenTest(s) })).filter(o => o.p.z < 1 && document.elementFromPoint(o.p.x, o.p.y) === c)
+          .filter(o => __sp.pickTest(o.p.x, o.p.y).pick === o.s.uid).sort((a, b) => b.s.len - a.s.len);
+        if (l.length < 2) return null;
+        const w = l[0].s, g = __sp.ships.find(s => !s.dead && s.side === P && !s.station && s !== w && !s.hyper);
+        __sp.selection = [g]; __sp.selDirty = true;
+        window.__ward = w; window.__guard = g;
+        return { x: Math.round(l[0].p.x), y: Math.round(l[0].p.y), w: w.def.name, g: g.def.name };
+      });
+      if (!ward) info('охрана своего по ПКМ', 'нет своего корабля, в который точно попадает луч, — пропущено');
+      else {
+        await page.mouse.move(ward.x, ward.y);
+        await waitFrames(page, 4);
+        const cur = await page.evaluate(() => __sp.inputTest().cursor);
+        await page.mouse.click(ward.x, ward.y, { button: 'right' });
+        await waitFrames(page, 1);
+        const gd = await page.evaluate(() => window.__guard.guardOf === window.__ward && !window.__guard.moveTo);
+        ok('ПКМ точно по корпусу своего невыделенного — курсор «охранять» и охрана', cur === 'cur-guard' && gd,
+          `${ward.g} → ${ward.w}: курсор ${cur}, охраняет ${gd}`);
+      }
+      await page.evaluate(() => {
+        for (const s of __sp.ships) if (s.side === __sp.playerSide) { s.moveTo = null; s.guardOf = null; s.anchor.copy(s.pos); }
+      });
+    }
+
     // Наведение: над врагом при выделенных — прицел; ПКМ по ПОДПИСИ врага — атака (C29, C74)
     await tap(page, '[data-q="all"]');
     await page.evaluate(() => {
@@ -1476,11 +1550,16 @@ const HINT = () => {
       }));
       ok('выделенный корабль погиб — панель пустеет, кнопок нет', /Ничего не выбрано/.test(after.text) && after.acts === 0,
         `до: «${before}», после: «${after.text}», кнопок ${after.acts}`);
-      // Лента событий: гибель своего корабля называется по имени, звучит тревога
-      const fd = await page.evaluate(() => ({ lines: [...document.querySelectorAll('.hud-space .feed .feed-line')].map(d => d.textContent), lost: __sound.stats.lost || 0 }));
+      /* Лента событий: гибель своего корабля называется по имени, звучит
+         тревога. Строка гаснет по ИГРОВОМУ времени (6 с), поэтому от
+         скорости машины проверка не зависит: раньше строка гасла по
+         setTimeout через 6 настоящих секунд, и под нагрузкой (кадр —
+         секунды) её уже не было, хотя тревога прозвучала */
+      const fd = await page.evaluate(() => ({ lines: [...document.querySelectorAll('.hud-space .feed .feed-line')].map(d => d.textContent),
+        lost: __sound.stats.lost || 0, log: __sp.feedLog.slice(-3).map(x => x.join(' ')) }));
       const vn = victim.slice(victim.indexOf('«'));
       ok('лента событий: «Потерян …» с именем погибшего, звучит тревога', fd.lines.some(t => /^Потерян/.test(t) && t.includes(vn)) && fd.lost > 0,
-        `${fd.lines.join(' | ')} · тревог «потерян» ${fd.lost}`);
+        `${fd.lines.join(' | ')} · тревог «потерян» ${fd.lost} · журнал: ${fd.log.join(' | ')}`);
     }
 
     /* C99 + rehome: звенья погибшего носителя садятся на другой ТОЛЬКО
@@ -1646,6 +1725,39 @@ const HINT = () => {
     });
     if (!holdSel) ok('для проверки «Держать» нашёлся свой тяжёлый корабль', false);
     else {
+      /* «Держать» посреди марша (замечание к P4): H — это приказ встать,
+         как «Стоп». Раньше H меняла только тактику, приказ «идти»
+         оставался, и корабль проходил ещё пять корпусов, хотя полоска
+         обещала «стоят на месте». Здесь приказ НЕ снимается руками: корабль
+         разгоняется по приказу, нажимается настоящая H — и за 10 с он
+         уходит не дальше тормозного пути и корпуса */
+      const march = await page.evaluate(() => {
+        const S = __sp, s = window.__holdS, P = S.playerSide;
+        S.paused = true;
+        for (const x of S.ships) if (x !== s && !x.dead && x.pos.distanceTo(new x.pos.constructor(-1900, 0, 1900)) < 1300) x.pos.x += 2600;
+        s.pos.set(-1900, 0, 1900); s.vel.set(0, 0, 0); s.forced = null; s.amove = null; s.target = null;
+        S.orderTest(null, s.pos.clone().add(new s.pos.constructor(1400, 0, 0)));
+        S.simTest(5);
+        S.selDirty = true;
+        return { v: Math.round(s.vel.length()), moveTo: !!s.moveTo };
+      });
+      await waitFrames(page, 3);          // панель собрана для этого корабля — H найдёт свою кнопку
+      await page.keyboard.press('KeyH');
+      const mh = await page.evaluate(() => {
+        const S = __sp, s = window.__holdS;
+        const after = { moveTo: !!s.moveTo, amove: !!s.amove, forced: !!s.forced, stance: s.stance };
+        const v0 = s.vel.length(), p0 = s.pos.clone();
+        S.simTest(10);
+        const brake = v0 * v0 / (2 * s.def.thrust * 0.6);    // против носа — 0,6 тяги (SPACE_MOVE.reverse)
+        return { ...after, v0: Math.round(v0), moved: Math.round(s.pos.distanceTo(p0)), brake: Math.round(brake), len: Math.round(s.len),
+          v: Math.round(s.vel.length()), doing: S.doingTest(s) };
+      });
+      ok('«Держать» посреди марша: H снимает приказ «идти», корабль встаёт за тормозной путь',
+        march.moveTo && march.v > 10 && !mh.moveTo && !mh.amove && !mh.forced && mh.stance === 'hold' &&
+        // корпус флагмана — две сотни, поэтому запас — не корпус, а до 60: прежняя H уходила на 300 за 10 с
+        mh.moved <= mh.brake * 1.15 + Math.min(mh.len, 60) && mh.v < 3 && /держит позицию/.test(mh.doing),
+        `скорость перед H ${march.v}; после H: идёт ${mh.moveTo}, тактика ${mh.stance}; за 10 с ${mh.moved} при тормозном пути ${mh.brake} и корпусе ${mh.len}, скорость ${mh.v}, «${mh.doing}»`);
+      await page.evaluate(() => { __sp.paused = false; });
       await waitFrames(page, 3);
       await page.keyboard.press('KeyH');
       const hd = await page.evaluate(() => {
@@ -1676,6 +1788,44 @@ const HINT = () => {
       ok('«Держать»: враг в досягаемости, за 10 с корабль не ушёл дальше корпуса и стреляет, а на «Охоте» ушёл бы (C26)',
         hd.stance === 'hold' && hd.moved < hd.len && hd.fired && hd.hunt > hd.moved + hd.len * 0.6,
         `${holdSel}: тактика ${hd.stance}, сдвиг ${hd.moved} при корпусе ${hd.len}, стрелял ${hd.fired}; на «Охоте» сдвиг ${hd.hunt}`);
+
+      /* Фокус огня под чужим куполом РЭБ (замечание к P4). Под куполом
+         наведение работает только ближе lockRange (170), а фокус вёл
+         тяжёлый корабль на 0,68 дальности — и он стоял там молча: замер —
+         25 с, ноль урона, панель всё писала «фокус огня». Теперь корабль
+         под помехами бьёт ближних и первым — сам глушитель (идёт к нему),
+         а панель говорит «под помехами». Глушитель в 335 от нас, цель
+         фокуса — в 750: обе дальше 170 */
+      const jm = await page.evaluate(() => {
+        const S = __sp, s = window.__holdS, P = S.playerSide, V = s.pos.constructor;
+        const E = S.ships.find(x => !x.dead && x.side !== P && x.ecm && !x.hyper);
+        const T = S.ships.find(x => !x.dead && x.side !== P && !x.station && !x.ecm && x.guns.length && !x.hyper && x !== E);
+        if (!E || !T || s.dead) return null;
+        const was = S.paused; S.paused = true;
+        const C = new V(-1900, 0, 1900);
+        for (const x of S.ships) if (x !== s && x !== E && x !== T && !x.dead && x.pos.distanceTo(C) < 1300) x.pos.x += 2600;
+        s.pos.copy(C); s.vel.set(0, 0, 0); s.anchor.copy(C); const sHp = s.hp; s.hp = s.maxHp * 50;
+        T.pos.copy(C).add(new V(0, 0, -750)); T.vel.set(0, 0, 0); T.ionUntil = S.time + 60;
+        const tGuns = T.guns; T.guns = []; const tHp = T.hp; T.hp = T.maxHp * 50;
+        E.pos.copy(C).add(new V(300, 0, -150)); E.vel.set(0, 0, 0); E.ionUntil = S.time + 60;
+        E.ecm.mode = 'jam'; E.ecm.power = 1;
+        S.simTest(0.5, 1 / 30, 0.1, () => { E.ecm.mode = 'jam'; });
+        S.selection = [s]; S.orderTest(T, null);
+        const jam0 = !!s.jam, e0 = E.hp, d0 = s.dealt;
+        S.simTest(1, 1 / 30, 0.1, () => { E.ecm.mode = 'jam'; });
+        const doing = S.doingTest(s);
+        S.simTest(24, 1 / 30, 0.1, () => { if (!E.dead) E.ecm.mode = 'jam'; });
+        const res = { jam0, doing, dealt: Math.round(s.dealt - d0), ecmHit: E.dead || E.hp < e0, ecmDead: E.dead,
+          forced: s.forced === T, gap: Math.round(E.dead ? -1 : s.pos.distanceTo(E.pos)) };
+        T.guns = tGuns; T.hp = Math.min(tHp, T.maxHp); s.hp = Math.min(sHp, s.maxHp); s.forced = null; s.target = null;
+        S.stanceTest([s], 'guard');
+        S.paused = was;
+        return res;
+      });
+      if (!jm) info('фокус под чужим куполом РЭБ', 'у противника нет РЭБ или цели — пропущено');
+      else ok('фокус огня под чужим куполом РЭБ: корабль бьёт глушитель, а не стоит молча, панель говорит «под помехами»',
+        jm.jam0 && jm.dealt > 0 && jm.ecmHit && /под помехами/.test(jm.doing),
+        JSON.stringify(jm));
     }
 
     // До итога: флоты в упор, противник на последнем издыхании, 4×, без отрисовки

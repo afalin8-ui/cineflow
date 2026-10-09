@@ -547,7 +547,7 @@ export function createSpaceBattle(ctx, config) {
         const ey = emit ? emit.y * 1.25 : -e.radius;
         _fields.push({
           pos: new THREE.Vector3(e.pos.x, e.pos.y + ey, e.pos.z),
-          side: e.side, mode: e.ecm.mode, prof: E,
+          side: e.side, mode: e.ecm.mode, prof: E, src: e,
         });
       }
     }
@@ -990,6 +990,46 @@ export function createSpaceBattle(ctx, config) {
     return best;
   }
 
+  /* ── ПОД ЧУЖИМ КУПОЛОМ РЭБ наведение работает только ближе lockRange
+     (170, у Девиана 102). Фокус огня и «Охрана» вели тяжёлый корабль на
+     0,68 дальности — 530 для главного калибра — и он стоял там, молча:
+     замер — 25 с, ноль урона, а панель всё писала «фокус огня». Теперь
+     корабль под помехами бьёт то, до чего достаёт, и первым — сам
+     глушитель: его гибель снимает помехи со всех. Глушитель дальше —
+     к нему идут «Охота», фокус огня и атака с ходу, «Охрана» — если он
+     в пределах её поводка; «Держать» с места не сходит. Цель «под
+     помехами» — временная (`jamShot`): кончились помехи — корабль
+     возвращается к своей цели и своей дальности */
+  function jamPick(e) {
+    const gun = e.guns[0];
+    if (!gun || !e.jam) return null;
+    const foe = enemyOf(e.side), lock = e.jam.lockRange;
+    const roam = !e.station && (e.forced || e.amove || e.stance === 'hunt' || e.stance === 'guard');
+    let best = null, bs = -Infinity;
+    for (const f of _fields) {
+      if (f.mode !== 'jam' || f.side === e.side || !f.src || f.src.dead || hidden(f.src) || !inField(f, e.pos)) continue;
+      const s = f.src;
+      if (dmgMult(SPACE_DMG, gun.def.type, s.cls) <= 0) continue;
+      const d = s.pos.distanceTo(e.pos);
+      if (d > lock && !roam) continue;
+      // «Охрана» к глушителю идёт, только если дотянется, не сходя с поводка
+      if (d > lock && !e.forced && !e.amove && e.stance === 'guard' &&
+          s.pos.distanceTo(e.anchor) > leashOf(e) + lock * 0.8) continue;
+      const sc = 3000 - d;
+      if (sc > bs) { bs = sc; best = s; }
+    }
+    for (const s of state.ships) {
+      if (s.dead || s.side !== foe || hidden(s)) continue;
+      const m = dmgMult(SPACE_DMG, gun.def.type, s.cls);
+      if (m <= 0) continue;
+      const d = s.pos.distanceTo(e.pos);
+      if (d > lock) continue;
+      const sc = m * 1000 - d;
+      if (sc > bs) { bs = sc; best = s; }
+    }
+    return best;
+  }
+
   function craftAcquire(c) {
     const foe = enemyOf(c.side);
     if (c.role === 'interceptor') {
@@ -1055,6 +1095,7 @@ export function createSpaceBattle(ctx, config) {
      Запас 0,75 — на разворот и дискретный шаг; у самой точки скорость
      пропорциональна расстоянию, чтобы корабль не дрожал вокруг неё. */
   const REV = SPACE_MOVE.reverse;
+  const UPDOWN = 180;       // шаг «Выше/Ниже»: столько выводит из-под купола помех
   function arriveSpeed(e, dist, vmax) {
     if (dist <= 0) return 0;
     const aB = e.def.thrust * REV * 0.85;
@@ -1076,7 +1117,8 @@ export function createSpaceBattle(ctx, config) {
     const def = e.def;
     /* По авиации бьёт ПВО, а не главный калибр — к машине подходим на
        дальность зениток (C14): с 0,68 дальности орудия их не достать */
-    const want = t.kind === 'craft' ? Math.min(range0 * 0.68, def.pd ? def.pd.range * 0.7 : range0 * 0.5) : range0 * 0.68;
+    const want = t.kind === 'craft' ? Math.min(range0 * 0.68, def.pd ? def.pd.range * 0.7 : range0 * 0.5)
+      : e.jam ? e.jam.lockRange * 0.8 : range0 * 0.68;     // под помехами наводится только вблизи
     _v.subVectors(t.pos, e.pos);
     const d = _v.length() || 1;
     _v.divideScalar(d);
@@ -1089,7 +1131,7 @@ export function createSpaceBattle(ctx, config) {
      поводка от своей точки. Цель ушла за поводок — бьём, пока достаём,
      а догонять не идём; кончилась цель — назад, к точке (см. updateShip) */
   function guardStation(e, t, range0) {
-    const want = range0 * 0.68;
+    const want = e.jam && t.kind === 'ship' ? e.jam.lockRange * 0.8 : range0 * 0.68;
     _v.subVectors(e.pos, t.pos);
     const d = _v.length() || 1;
     const r = d > want * 1.08 || d < want * 0.55 ? want : d;
@@ -1126,9 +1168,29 @@ export function createSpaceBattle(ctx, config) {
       e.forced = null;
       if (!e.guardOf) e.anchor.copy(e.pos);
     }
-    if (!e.target || e.retarget <= 0 || (e.forced && e.target !== e.forced && e.forced.kind !== 'squad')) {
+    // Под чужими помехами (см. jamPick): дальность наведения — lockRange
+    e.jam = e.guns.length ? jamProfile(e.pos, e.side) : null;
+    // jamShot — временная цель «под помехами»; цель сменили приказом — она уже не та
+    if (e.jamShot && e.jamShot !== e.target) e.jamShot = null;
+    if (!e.target || e.retarget <= 0 || (e.forced && e.target !== e.forced && e.forced.kind !== 'squad' && !e.jamShot)) {
       e.target = liveTarget(e, e.forced) || shipAcquire(e);
+      e.jamShot = null;
       e.retarget = rnd(0.8, 1.6);
+    }
+    if (e.jamShot && !e.jam) {        // вышли из-под купола или глушитель сбит — к своей цели
+      e.jamShot = null;
+      e.target = liveTarget(e, e.forced) || shipAcquire(e);
+    }
+    if (e.jam && !e.jamShot && (!e.target ||
+        (e.target.kind === 'ship' && e.target.pos.distanceTo(e.pos) > e.jam.lockRange))) {
+      const j = jamPick(e);
+      if (j) { e.target = j; e.jamShot = j; }
+    }
+    // Свои под помехами — одной строкой в ленте, не чаще раза в 25 с
+    if (e.jam && e.side === state.playerSide && !e.station && state.time - jamFeedAt > 25 &&
+        e.target && e.target.kind === 'ship' && e.target.pos.distanceTo(e.pos) > e.jam.lockRange) {
+      jamFeedAt = state.time;
+      feed(`${shortName(e)} под помехами РЭБ — бьёт только вблизи`, 'warn');
     }
 
     const def = e.def;
@@ -1249,8 +1311,7 @@ export function createSpaceBattle(ctx, config) {
       _v.subVectors(t.pos, e.pos).divideScalar(d || 1);
       if (e.dir.dot(_v) < (e.station ? -0.3 : 0.25)) continue;   // башня не довернулась
       // Помехи: под чужим куполом наведение работает только вблизи
-      const jam = jamProfile(e.pos, e.side);
-      if (jam && d > jam.lockRange) continue;
+      if (e.jam && d > e.jam.lockRange) continue;
       // РЭБ-излучатель с планеты слепит так же, как чужой купол
       if (e.blindUntil && state.time < e.blindUntil && d > ECM.lockRange) continue;
 
@@ -1846,22 +1907,42 @@ export function createSpaceBattle(ctx, config) {
   feedBox.className = 'feed';
   hud.appendChild(feedBox);
   const FEED_MAX = 4;
+  /* Строка гаснет по ИГРОВОМУ времени (6 с), но не раньше чем через 3 с
+     настоящих: на паузе лента стоит — по ней и разбираются, что
+     случилось, — а на 4× строка не мелькает за полторы секунды. Раньше
+     гасил setTimeout: на паузе событие уходило непрочитанным, а
+     проверка ленты в стенде краснела на медленной машине */
+  const FEED_LIFE = 6, FEED_WALL = 3;
+  let jamFeedAt = -99;     // «под помехами» — не чаще раза в 25 с
   state.feedLog = [];
   function feed(text, kind) {
     state.feedLog.push([+state.time.toFixed(1), text]);
     if (state.feedLog.length > 80) state.feedLog.shift();
     const h = $('hint');
     if (h && h.style.display !== 'none') h.style.display = 'none';
-    const d = document.createElement('div');
-    d.className = 'feed-line ' + (kind || '');
-    d.textContent = text;
-    feedBox.appendChild(d);
-    d._t1 = setTimeout(() => d.classList.add('out'), 6000);
-    d._t2 = setTimeout(() => d.remove(), 6900);
-    while (feedBox.children.length > FEED_MAX) {
-      const old = feedBox.firstChild;
-      clearTimeout(old._t1); clearTimeout(old._t2);
-      old.remove();
+    /* Одинаковые строки склеиваются («×3»), как полоски: у звеньев одного
+       рода имена повторяются, и четыре строки «Сбито звено
+       бомбардировщиков «Шерман»» занимали всю ленту */
+    let d = [...feedBox.children].find(x => x._text === text && !x._gone);
+    if (d) d.textContent = `${text} ×${++d._n}`;
+    else {
+      d = document.createElement('div');
+      d.className = 'feed-line ' + (kind || '');
+      d.textContent = text;
+      d._text = text; d._n = 1;
+    }
+    d._at = state.time; d._wall = performance.now();
+    feedBox.appendChild(d);          // склеенная строка встаёт вниз, к свежим
+    while (feedBox.children.length > FEED_MAX) feedBox.firstChild.remove();
+  }
+  function fadeFeed() {
+    const now = performance.now();
+    for (const d of [...feedBox.children]) {
+      if (d._gone) { if (now > d._gone) d.remove(); continue; }
+      if (state.time - d._at >= FEED_LIFE && now - d._wall >= FEED_WALL * 1000) {
+        d.classList.add('out');
+        d._gone = now + 900;        // столько идёт угасание в CSS
+      }
     }
   }
   sound.setListener(tcam.cam);
@@ -2076,9 +2157,24 @@ export function createSpaceBattle(ctx, config) {
     if (reinfBtn.disabled) return;
     if (callReinforcements(state.playerSide)) {
       toast('Резерв вызван — выход из гипера через полминуты');
+      reinfBtn.classList.remove('nudge');
       refreshReinforce();
     }
   };
+  /* Резерв сам не придёт (C15: второй эшелон — до 40% флота), а кнопка
+     в шапке среди скоростей незаметна: замер «Сражения» — без неё бой
+     проигран при любых приказах (18 из 18). Поэтому при первом залпе
+     главного калибра, если резерв ещё в гипере, — строка в ленте
+     и кнопка начинает светиться. Один раз за бой */
+  let reserveHinted = false;
+  function hintReserve() {
+    if (reserveHinted || !state.stats.firstGun) return;
+    reserveHinted = true;
+    const n = (myReserve() || []).reduce((a, x) => a + x.count, 0);
+    if (!n || state.reinforceAt[state.playerSide] || state.retreat[state.playerSide]) return;
+    feed(`Резерв (${n}) ещё в гипере: «Подкрепление» или B — выйдет через полминуты`, 'warn');
+    reinfBtn.classList.add('nudge');
+  }
   refreshReinforce();
 
   $('menu').onclick = () => openPause();
@@ -2567,6 +2663,20 @@ export function createSpaceBattle(ctx, config) {
     return m;
   }
 
+  /* Кого охранять по ПКМ: СВОЙ корабль только ПРЯМЫМ попаданием луча
+     в корпус и не тот, что сам в выделении. Щедрая зона попадания
+     (подпись до самого корпуса, «ближайший в 30 точках») заведена
+     ради врага (C29), а с охраной она превращала самое частое действие
+     боя — «подвинь флот чуть вперёд» — в «встаньте кольцом вокруг
+     флагмана»: замер, «Весь флот», ПКМ на 25–70 точек впереди головного —
+     охрана у семи, движения ни у кого. Курсор над таким кораблём —
+     «охранять» (cur-guard), чтобы было видно, что сделает ПКМ */
+  function wardAt(x, y) {
+    const e = controls.pick(x, y);
+    return e && e.kind === 'ship' && e.side === state.playerSide && !e.dead && !e.hyper &&
+      !state.selection.includes(e) ? e : null;
+  }
+
   function entityAt(x, y) {
     let ent = controls.pick(x, y);
     if (!ent) ent = labelAt(x, y);
@@ -2678,6 +2788,7 @@ export function createSpaceBattle(ctx, config) {
     moveGroup(mine, world);
     fx.flash(world, 16, 0x8fffc8, 0.6);
     sound.ui('order');
+    state.selDirty = true;       // «чем занят» — сразу, а не через треть секунды
     return true;
   }
 
@@ -2703,7 +2814,13 @@ export function createSpaceBattle(ctx, config) {
   }
 
   /* Тактика выделенным (C26): «Держать», «Охрана», «Охота». Участок
-     «Охраны» и «Держать» — там, где корабль стоит сейчас */
+     «Охраны» и «Держать» — там, где корабль стоит сейчас.
+     «Держать» — это ПРИКАЗ ВСТАТЬ, то же, что «Стоп»: снимает «идти»,
+     «с ходу», фокус огня и дрифт (с выключенными гасителями корабль
+     не встанет). Раньше H меняла только тактику, а приказ «идти»
+     оставался: панель писала «идёт к точке», полоска — «стоят на
+     месте», и корабль проходил ещё пять корпусов. «Охрана» и «Охота» —
+     манера боя: начатый марш корабль доводит, а дальше живёт по ней */
   function setStance(list, id) {
     const ships = list.filter(s => s.kind === 'ship' && !s.dead && !s.station);
     if (!ships.length) return false;
@@ -2712,6 +2829,10 @@ export function createSpaceBattle(ctx, config) {
       s.guardOf = null;
       s.anchor.copy(s.pos);
       if (id !== 'hunt') s.target = null;
+      if (id === 'hold') {
+        s.moveTo = null; s.amove = null; s.forced = null;
+        s.groupSpeed = 0; s.arriveT = 0; s.drift = false; s.jamShot = null;
+      }
     }
     return true;
   }
@@ -2806,7 +2927,8 @@ export function createSpaceBattle(ctx, config) {
         nearMissAt = state.time;
         toast('Мимо цели — флот идёт в точку. Атаковать: правой кнопкой по кораблю или его подписи');
       }
-      issueOrder(ent, controls.worldAt(x, y));
+      // Свой корабль — «охранять», только если щёлкнули точно в него (wardAt)
+      issueOrder(ent && ent.side !== state.playerSide ? ent : wardAt(x, y), controls.worldAt(x, y));
     },
     onBox(rect, additive) {
       pending = null;
@@ -2839,7 +2961,8 @@ export function createSpaceBattle(ctx, config) {
     const own = state.selection.some(s => s.side === P && !s.dead);
     let cur = null;
     if (pending === 'amove') cur = 'cur-attack';
-    else if (hoverEnt) cur = hoverEnt.side !== P && own ? 'cur-attack' : 'cur-pick';
+    else if (hoverEnt && hoverEnt.side !== P) cur = own ? 'cur-attack' : 'cur-pick';
+    else if (hoverEnt) cur = own && wardAt(hv.x, hv.y) ? 'cur-guard' : 'cur-pick';
     else if (own && hv.in && !ended) cur = 'cur-move';
     controls.setCursor(cur);
   }
@@ -2859,22 +2982,36 @@ export function createSpaceBattle(ctx, config) {
     }
     if (e.hyper) return `уходит в гипер · ${Math.ceil(e.hyper.left)} с`;
     if (e.ionized) return 'двигатели выжжены';
+    return shipDoing(e) + jamNote(e);
+  }
+  function shipDoing(e) {
     if (e.drift) return 'дрифт: тяга отключена';
     if (e.moveTo) {
       const d = Math.round(e.pos.distanceTo(e.moveTo));
       return `идёт к точке · ${d}`;
     }
-    if (e.amove) {
-      const d = Math.round(e.pos.distanceTo(e.amove));
-      const t = e.target && !e.target.dead && e.target.def ? ` · бьёт «${short(e.target.def.name)}»` : '';
-      return `идёт с боем · ${d}${t}`;
-    }
+    // под помехами цель называет jamNote — там и сказано, достаёт ли
+    const t = !e.jam && e.target && !e.target.dead && e.target.def ? ` · бьёт «${short(e.target.def.name)}»` : '';
+    if (e.amove) return `идёт с боем · ${Math.round(e.pos.distanceTo(e.amove))}${t}`;
     if (e.forced && !e.forced.dead) return `фокус огня: «${short(e.forced.def.name)}»`;
     const st = e.stance === 'hold' ? 'держит позицию'
       : e.stance === 'hunt' ? 'охота'
       : e.guardOf ? `охраняет «${short(e.guardOf.def.name)}»` : 'охрана участка';
-    if (e.target && !e.target.dead) return `${st} · бьёт «${short(e.target.def.name)}»`;
+    if (e.jam) return st;
+    if (t) return st + t;
     return e.stance === 'hunt' ? 'охота · целей не видно' : `${st} · ждёт`;
+  }
+  /* Под чужим куполом РЭБ — сказать прямо: раньше панель писала «фокус
+     огня» над кораблём, который полминуты не мог выстрелить */
+  function jamNote(e) {
+    if (!e.jam || e.kind !== 'ship') return '';
+    const t = e.target && !e.target.dead && e.target.kind === 'ship' ? e.target : null;
+    const near = t && t.pos.distanceTo(e.pos) <= e.jam.lockRange;
+    // «Держать» к глушителю не пойдёт — с места бьёт только вблизи
+    const goes = !e.station && (e.forced || e.amove || e.stance !== 'hold');
+    if (t && t.ecm && t.ecm.mode === 'jam' && (near || goes)) return ` · под помехами — ${near ? 'бьёт' : 'идёт бить'} глушитель «${short(t.def.name)}»`;
+    if (near) return ` · под помехами — бьёт «${short(t.def.name)}» вблизи`;
+    return ' · под помехами — бьёт только вблизи';
   }
 
   /* ── ПАНЕЛЬ ВЫДЕЛЕННОГО.
@@ -2960,8 +3097,7 @@ export function createSpaceBattle(ctx, config) {
     }
     if (ships.length) {
       addBtn('stop', 'Стоп', 'Снять приказы и встать — дальше корабли держат позицию, как «Держать»', () => {
-        for (const s of ships) { s.moveTo = null; s.amove = null; s.forced = null; s.groupSpeed = 0; }
-        setStance(ships, 'hold');
+        setStance(ships, 'hold');     // «Держать» сама снимает приказы и дрифт
         refreshSel();
       }, { cat: 'приказ' });
       /* Тактики (C26): одна горит — та, что у всех выделенных; пунктиром —
@@ -2971,17 +3107,22 @@ export function createSpaceBattle(ctx, config) {
         const st = SPACE_STANCES[id];
         const n = ships.filter(s => s.stance === id).length;
         addBtn(id, st.name, st.hint, () => {
+          // «Охрана» и «Охота» марш не прерывают — так и скажем
+          const going = id !== 'hold' && ships.some(s => s.moveTo || s.amove);
           setStance(ships, id);
           sound.ui('order');
-          toast(`${st.name}: ${st.hint.split('.')[0].toLowerCase()}`);
+          toast(`${st.name}${going ? ' — после прихода в точку' : ''}: ${st.hint.split('.')[0].toLowerCase()}`);
           refreshSel();
         }, { cat: 'тактика', on: n === ships.length, part: n > 0 && n < ships.length });
       }
-      addBtn('up', 'Выше', 'Поднять на 120 — выйти из купола помех или над строем', () => {
-        for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); s.amove = null; s.guardOf = null; }
+      /* Шаг — 180, а не 120: блин помех ловит по высоте ±144 от излучателя
+         (ECM.height × 1,6), и с прежних 120 корабль оставался под куполом,
+         хотя подсказка обещала «выйти из купола» (замер стендом) */
+      addBtn('up', 'Выше', `Поднять на ${UPDOWN} — выйти из купола помех или над строем`, () => {
+        for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, UPDOWN, 0)); s.amove = null; s.guardOf = null; }
       }, { cat: 'высота' });
-      addBtn('down', 'Ниже', 'Опустить на 120', () => {
-        for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); s.amove = null; s.guardOf = null; }
+      addBtn('down', 'Ниже', `Опустить на ${UPDOWN} — выйти из купола помех снизу`, () => {
+        for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, -UPDOWN, 0)); s.amove = null; s.guardOf = null; }
       }, { cat: 'высота' });
       const driftN = ships.filter(s => s.drift).length;
       addBtn('drift', 'Дрифт', 'Гасители инерции: корабль скользит по вектору, корпус свободно наводится на цель. Приказ идти включает их обратно',
@@ -3449,9 +3590,12 @@ export function createSpaceBattle(ctx, config) {
     if (dt > 0) simStep(dt);
 
     fx.update(rawDt);
+    fadeFeed();
     planet.rotation.y += rawDt * 0.004;
     if (planet.userData.clouds) planet.userData.clouds.rotation.y += rawDt * 0.0022;
     refreshReinforce();
+    hintReserve();
+    if (reinfBtn.disabled) reinfBtn.classList.remove('nudge');
     refreshRetreat();
     if (fx.shake > 0.001) {
       const s = fx.shake * 3.2;
@@ -3637,6 +3781,8 @@ export function createSpaceBattle(ctx, config) {
     state.stanceTest = (list, id) => setStance(list, id);
     // Сколько кругов дальности видно у выделенных
     state.rangeTest = () => rangeRings.filter(r => r.visible).length;
+    // Строка «чем занят» из панели выделенного — для корабля e
+    state.doingTest = e => doingOf(e);
   }
   return { scene, camera: tcam.cam, update, dispose, state };
 }
