@@ -18,7 +18,7 @@ import {
 } from './engine.js';
 import {
   buildShip, buildStrike, buildTorpedo, buildPlanet, buildNebula, buildHyperVortex, buildEcmDome,
-  planetRings,
+  planetRings, visualLength,
 } from './models.js';
 import { nebulaTexture } from './textures.js';
 import {
@@ -36,6 +36,35 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 
+/* СВОЙ И ЧУЖОЙ — ЖЁСТКАЯ ПАРА ЦВЕТОВ, НЕ ЗАВИСЯЩАЯ ОТ КЛАНА (C43).
+   Цвета кланов близки (Тройден и Рииз оба бирюзовые), а в быстром бою
+   можно взять один клан за обе стороны — модели тогда одинаковы, и по
+   цвету клана своих от чужих не отличить вовсе. Поэтому подписи,
+   полоски прочности, кольца выделения и наведения, купола РЭБ и
+   миникарта красятся по СТОРОНЕ: свои — мятные, чужие — красные.
+   Цвет клана остался акцентом: точка в шапке и отделка корпуса. */
+const MINE_CSS = '#8fffc8', FOE_CSS = '#ff6b5a';
+const MINE_DIM = '#5ce0a0', FOE_DIM = '#e05a4a';
+const MINE_HEX = 0x8fffc8, FOE_HEX = 0xff6b5a;
+
+// Окружность единичного радиуса в плоскости боя — кольца выделения и наведения
+const CIRCLE_GEO = (() => {
+  const pts = [];
+  for (let i = 0; i < 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(Math.cos(a), 0, Math.sin(a)); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.userData.shared = true;
+  return g;
+})();
+function circleLine(color, opacity) {
+  const l = new THREE.LineLoop(CIRCLE_GEO, new THREE.LineBasicMaterial({
+    color, transparent: true, opacity, depthWrite: false, toneMapped: false,
+  }));
+  l.renderOrder = 5;
+  l.frustumCulled = false;
+  return l;
+}
+
 function quatFromDir(dir, out) {
   const up = Math.abs(dir.y) > 0.985 ? ALT_UP : UP;
   _m4.lookAt(ZERO, dir, up);
@@ -50,8 +79,8 @@ export function createSpaceBattle(ctx, config) {
   scene.background = new THREE.Color(0x03050a);
 
   const tcam = new TacticalCamera({
-    // Ближе к бою: с полутора тысяч единиц флот читался россыпью точек
-    dist: 780, maxDist: 3400, minDist: 45, pitch: 0.52, yaw: 0,
+    // Стартовая точка и расстояние — в конце createSpaceBattle (C76)
+    dist: 1100, maxDist: 3400, minDist: 45, pitch: 0.52, yaw: 0,
     bounds: { x: FIELD, z: FIELD, y: 600 }, far: 9000, allowY: true,
     // Буквы здесь — приказы (A — атака с ходу, S — стоп): камера на
     // стрелках, у края экрана и на средней кнопке (C50)
@@ -276,6 +305,11 @@ export function createSpaceBattle(ctx, config) {
   function spawnShip(sideId, def, pos) {
     const side = sides[sideId];
     const obj = buildShip(def, side.faction);
+    /* Длина корпуса на экране — по ней кольцо выделения, подпись над
+       кораблём и «близко ли он к камере» (C78, C111). Радиус класса
+       для этого не годится: процедурный корпус вдвое-вчетверо длиннее
+       радиуса, а у приезжей модели своя форма. */
+    const len = visualLength(obj) || def.radius * 6;
     obj.position.copy(pos);
     scene.add(obj);
 
@@ -284,7 +318,7 @@ export function createSpaceBattle(ctx, config) {
       uid: uid++, kind: 'ship', side: sideId, faction: side.faction, def,
       obj, pos: obj.position, dir, vel: new THREE.Vector3(),
       hp: def.hp, maxHp: def.hp, armor: def.armor, cls: def.cls,
-      radius: def.radius, dead: false,
+      radius: def.radius, len, dead: false,
       moveTo: null, target: null, forced: null, retarget: rnd(0, 1),
       guns: (def.guns || []).map((g, i) => ({ def: g, idx: i, cd: rnd(0, g.cd), chargeFx: 0 })),
       pdCd: def.pd ? new Array(def.pd.count).fill(0).map(() => rnd(0, 0.4)) : [],
@@ -483,18 +517,36 @@ export function createSpaceBattle(ctx, config) {
           side: e.side, mode: e.ecm.mode, prof: E,
         });
       }
-      if (e.dome) {
-        /* Купол скрытого противника не рисуется: висящий над пустотой
-           цилиндр выдавал невидимый флот Рииза (C67). Глушит он при
-           этом по-прежнему — помехи от невидимки и есть его сила. */
-        e.dome.visible = e.ecm.power > 0.02 && !(e.side !== state.playerSide && hidden(e));
-        // Блин лежит в плоскости боя, а не крутится вместе с корпусом
-        const emit = e.obj.userData.emitter;
-        const ey = emit ? emit.y * 1.25 : -e.radius;
-        e.dome.position.set(e.pos.x, e.pos.y + ey, e.pos.z);
-        e.dome.userData.set(state.time, e.ecm.power * 0.55,
-          e.ecm.mode === 'shield' ? 0xcfe8ff : e.faction.color, -ey);
-      }
+    }
+  }
+  /* Купола рисуются КАЖДЫЙ кадр, и на паузе тоже: выделил корабль РЭБ
+     на паузе — плотная картинка его поля должна появиться сразу, а не
+     после «Продолжить». Мощность считает updateEcm (только в ходе боя). */
+  function updateDomes() {
+    /* Плотная картинка — когда выбраны именно корабли РЭБ (или курсор
+       на нём): при «Весь флот» четыре полных купола Плэктора снова
+       заливали бы полэкрана */
+    const onlyEcm = state.selection.length > 0 && state.selection.every(x => x.ecm);
+    for (const e of state.ships) {
+      if (!e.dome || e.dead) continue;
+      /* Купол скрытого противника не рисуется: висящий над пустотой
+         цилиндр выдавал невидимый флот Рииза (C67). Глушит он при
+         этом по-прежнему — помехи от невидимки и есть его сила. */
+      e.dome.visible = e.ecm.power > 0.02 && !(e.side !== state.playerSide && hidden(e));
+      if (!e.dome.visible) continue;
+      // Блин лежит в плоскости боя, а не крутится вместе с корпусом
+      const emit = e.obj.userData.emitter;
+      const ey = emit ? emit.y * 1.25 : -e.radius;
+      e.dome.position.set(e.pos.x, e.pos.y + ey, e.pos.z);
+      /* В покое от купола остаётся ОДНО тонкое кольцо — граница поля
+         на плоскости боя; сетка, стенки и луч — только у выделенного
+         (когда выбраны одни РЭБ) или наведённого корабля (часть C111). Цилиндры с кольцами
+         шириной в пол-экрана перекрывали собой сами корабли. Цвет —
+         по стороне, а не по клану: чьё это поле, видно и в зеркальном
+         бою (C43). */
+      const full = hoverEnt === e || (onlyEcm && state.selection.includes(e));
+      e.dome.userData.set(state.time, e.ecm.power * 0.55,
+        e.ecm.mode === 'shield' ? 0xcfe8ff : e.side === state.playerSide ? MINE_HEX : FOE_HEX, -ey, full);
     }
   }
 
@@ -1427,7 +1479,12 @@ export function createSpaceBattle(ctx, config) {
   // ── HUD ──────────────────────────────────────────────────
   const hud = document.createElement('div');
   hud.className = 'hud hud-space';
+  /* Подписи кораблей — ПЕРВЫМ слоем: панели, шапка и кнопки лежат
+     поверх них. Стоя последними, подписи вражеского клубка закрывали
+     кнопки скорости и паузы (C78). */
   hud.innerHTML = `
+    <div class="markers" data-role="markers"></div>
+
     <div class="topbar">
       <button class="menu-btn" data-role="menu" title="Меню · Esc" aria-label="Меню">☰</button>
       <div class="strength">
@@ -1444,13 +1501,10 @@ export function createSpaceBattle(ctx, config) {
         <button data-speed="1" class="on" title="Обычная скорость">1×</button>
         <button data-speed="2" title="Вдвое быстрее">2×</button>
         <button data-speed="4" title="Вчетверо быстрее">4×</button>
-        <button data-role="drift" title="Гасители инерции у выделенных: корабль скользит по вектору, корпус свободно наводится · D"><span data-role="drift-t">Дрифт</span><kbd class="hk">D</kbd></button>
         <button data-role="reinforce" title="Вызвать второй эшелон из гипера · B"><span data-role="reinf-t"></span><kbd class="hk">B</kbd></button>
         <button data-role="retreat" class="danger danger-gap" title="Весь флот копит гипер и уходит — спросит подтверждение">Отход</button>
       </div>
     </div>
-
-    <div class="markers" data-role="markers"></div>
 
     <div class="sidebar">
       <button data-q="all" title="Весь флот · F2">Весь<br>флот</button>
@@ -1467,6 +1521,7 @@ export function createSpaceBattle(ctx, config) {
       <div class="sel-info" data-role="sel"></div>
       <div class="sel-actions" data-role="acts"></div>
     </div>
+    <div class="act-tip" data-role="tip" hidden></div>
 
     <div class="hint" data-role="hint"></div>
     <div class="endcard" data-role="end" style="display:none"></div>
@@ -1542,14 +1597,14 @@ export function createSpaceBattle(ctx, config) {
       const mine = e.side === state.playerSide;
       dots.push({ x: e.pos.x, z: e.pos.z,
         r: e.cls === 'capital' || e.cls === 'carrier' ? 5 : 3,
-        color: mine ? '#8fffc8' : '#ff6b5a' });
+        color: mine ? MINE_CSS : FOE_CSS });
     }
     for (const sq of state.squads) {
       if (sq.dead) continue;
       // Скрытое звено противника не выдаём и здесь (C18)
       if (sq.side !== state.playerSide && unseen(sq)) continue;
       dots.push({ x: sq.pos.x, z: sq.pos.z, r: 2,
-        color: sq.side === state.playerSide ? '#5ce0a0' : '#e05a4a' });
+        color: sq.side === state.playerSide ? MINE_DIM : FOE_DIM });
     }
     // Рамка обзора — трапеция углов экрана, а не квадрат: камера
     // наклонена и повёрнута, и квадрат после облёта врал (C73)
@@ -1579,7 +1634,12 @@ export function createSpaceBattle(ctx, config) {
   const fleetCount = list => (list || []).reduce((a, x) => a + x.count, 0);
   refreshFar();
 
+  /* Полоса силы — цветом СТОРОНЫ (свои / противник), точка рядом —
+     цветом клана: в зеркальном бою кланы одинаковы, а стороны нет (C43) */
   hud.querySelectorAll('.dot').forEach(d => { d.style.background = sides[d.dataset.side].faction.colorCss; });
+  for (const sd of ['attacker', 'defender']) {
+    $(sd === 'attacker' ? 'atk-bar' : 'def-bar').style.background = sd === state.playerSide ? MINE_CSS : FOE_CSS;
+  }
   $('atk-name').textContent = sides.attacker.faction.tag;
   $('def-name').textContent = sides.defender.faction.tag;
   $('banner').textContent = config.title || 'Бой на орбите';
@@ -1600,20 +1660,23 @@ export function createSpaceBattle(ctx, config) {
       hud.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', +x.dataset.speed === v));
     };
   });
-  /* Дрифт включается на выделенные корабли — кнопкой и клавишей D */
+  /* Дрифт включается на выделенные корабли — кнопкой в панели команд
+     и клавишей D. Подсветка кнопки считается ИЗ ВЫДЕЛЕНИЯ (C136) при
+     каждом обновлении панели: раньше кнопка жила в шапке и класс «on»
+     ставился только нажатием — «Дрифт» горел при «Весь флот», хотя
+     дрифтовал один корвет, давно ушедший в гипер. */
   function toggleDrift() {
-    const mine = state.selection.filter(e => !e.dead && e.side === state.playerSide && !e.station);
+    const mine = state.selection.filter(e => !e.dead && e.kind === 'ship' && e.side === state.playerSide && !e.station);
     if (!mine.length) { toast('Сначала выбери корабли'); return; }
     const on = !mine.every(e => e.drift);
     for (const e of mine) {
       e.drift = on;
       if (on) fx.ring(e.pos, e.radius * 1.5, e.radius * 5, 0xffc27a, 0.5);
     }
-    $('drift').classList.toggle('on', on);
     toast(on ? 'Гасители инерции отключены: корабль скользит по вектору'
              : 'Гасители инерции включены');
+    refreshSel();
   }
-  $('drift').onclick = toggleDrift;
 
   /* «Отход» — гипер ВСЕГО флота с накачкой, а не мгновенный выход из
      боя (C17). Второе нажатие отменяет отход, пока носитель не ушёл.
@@ -1717,49 +1780,62 @@ export function createSpaceBattle(ctx, config) {
     if (n) tcam.focus(c.divideScalar(n));
   }
 
-  // маркеры кораблей поверх канваса
+  /* ── ПОДПИСИ НАД КОРАБЛЯМИ (C78).
+     Имя и полоска были у КАЖДОГО корабля, и над вражеским флотом
+     стояла сплошная каша из двадцати «Исса», закрывавшая и сами
+     корабли, и кнопки шапки. Теперь имя — только у выделенных, под
+     курсором и у тех, кто близко к камере (корпус на экране крупнее
+     NEAR_PX); остальным — значок класса цвета стороны, а полоска
+     прочности — если корабль ранен. Имя, легшее на уже стоящее,
+     становится значком (разводим по важности: под курсором, выделен,
+     крупнее на экране). Выше шапки подписей нет вовсе. */
   const markerPool = [];
   /* Где на экране стоят подписи (C29). Сами метки прозрачны для
      указателя — иначе они заслоняли бы поле, — поэтому попадание по
      подписи считаем здесь: игрок целится в название врага, а раньше
      такой ПКМ уходил мимо модели и отправлял флот в упор к противнику. */
   const labelHits = [];
+  const NEAR_PX = 26;          // полудлина корпуса на экране, с которой корабль «близко»
+  const iconOf = e => (e.station ? 'station' : e.def.id === 'corvette' ? 'corvette'
+    : e.def.id === 'frigate' ? 'frigate' : e.def.id === 'ecm' ? 'ecm'
+    : e.cls === 'carrier' ? 'carrier' : e.def.id === 'cruiser' ? 'cruiser' : 'capital');
+  let topEdge = 60;            // низ шапки: выше подписи не рисуем
+  const measureTop = () => {
+    const tb = hud.querySelector('.topbar');
+    if (tb) topEdge = tb.getBoundingClientRect().bottom - viewport.canvas.getBoundingClientRect().top;
+  };
+  addEventListener('resize', measureTop);
+  const markerItems = [];
+  function markerEl(i) {
+    let d = markerPool[i];
+    if (!d) {
+      d = document.createElement('div');
+      d.className = 'marker';
+      d.innerHTML = '<i class="mk-ico"></i><span class="mk-name"></span><span class="mk-bar"><i></i></span>';
+      d._ico = d.firstChild; d._nm = d.children[1]; d._bar = d.lastChild; d._fill = d.lastChild.firstChild;
+      markers.appendChild(d);
+      markerPool[i] = d;
+    }
+    return d;
+  }
+  const setCls = (d, c) => { if (d._cls !== c) { d._cls = c; d.className = c; } };
+  const setTxt = (el, t) => { if (el._t !== t) { el._t = t; el.textContent = t; } };
   function updateMarkers() {
-    const w = viewport.w, h = viewport.h;
-    let i = 0;
+    const w = viewport.w, h = viewport.h, cam = tcam.cam;
+    const fpx = (h / 2) / Math.tan(cam.fov * Math.PI / 360);
     labelHits.length = 0;
+    markerItems.length = 0;
     for (const s of state.ships) {
       if (s.dead) continue;
-      let d = markerPool[i];
-      if (!d) {
-        d = document.createElement('div');
-        d.className = 'marker';
-        d.innerHTML = '<span class="mk-name"></span><span class="mk-bar"><i></i></span>';
-        markers.appendChild(d);
-        markerPool[i] = d;
-      }
-      i++;
       const cloak = hidden(s);
       // Скрытый противник не рисуется вовсе — ни модель, ни метка
       s.obj.visible = !(cloak && s.side !== state.playerSide);
-      if (cloak && s.side !== state.playerSide) { d.style.display = 'none'; continue; }
-      const p = screenOf(s.pos, tcam.cam, w, h);
-      if (p.z > 1 || p.x < -90 || p.x > w + 90 || p.y < -50 || p.y > h + 50) { d.style.display = 'none'; continue; }
-      d.style.display = 'block';
-      d.classList.toggle('cloak', cloak);
-      d.classList.toggle('jump', !!s.hyper);
-      d.style.transform = `translate(${(p.x - 48) | 0}px,${(p.y - 44) | 0}px)`;
-      labelHits.push({ ent: s, x: p.x, y: p.y - 44 });
-      d.classList.toggle('hover', hoverEnt === s);
-      d.classList.toggle('foe-hover', hoverEnt === s && s.side !== state.playerSide);
-      const hp = clamp(s.hp / s.maxHp, 0, 1);
-      const bar = d.lastChild.firstChild;
-      bar.style.width = (hp * 100) + '%';
-      bar.style.background = hp > 0.55 ? s.faction.colorCss : hp > 0.25 ? '#e0a94e' : '#e05555';
-      const nm = s.def.name;
-      d.firstChild.textContent = nm.includes('«') ? nm.slice(nm.indexOf('«')) : nm;
-      d.classList.toggle('mine', s.side === state.playerSide);
-      d.classList.toggle('sel', state.selection.includes(s));
+      if (cloak && s.side !== state.playerSide) continue;
+      const p = screenOf(s.pos, cam, w, h);
+      if (p.z > 1 || p.x < -90 || p.x > w + 90 || p.y < -50 || p.y > h + 50) continue;
+      const rpx = s.len * 0.5 * fpx / Math.max(1, cam.position.distanceTo(s.pos));
+      const sel = state.selection.includes(s), hov = hoverEnt === s;
+      markerItems.push({ e: s, p, rpx, sel, hov, cloak, pri: (hov ? 4e6 : 0) + (sel ? 2e6 : 0) + rpx });
     }
     /* Скрытая машина противника не рисуется, как и скрытый корабль.
        Выбрать её нельзя (C18), и видимая, но не нажимаемая машина
@@ -1767,9 +1843,8 @@ export function createSpaceBattle(ctx, config) {
     for (const c of state.craft) {
       if (!c.dead) c.obj.visible = !(c.side !== state.playerSide && craftHidden(c));
     }
-    /* Подписи звеньям. Истребитель — точка размером с пиксель, и без
-       метки игрок просто не знает, что авиация вообще в бою. Метка
-       одна на звено, у центра масс: пять отдельных было бы месивом. */
+    /* Звену — одна метка у центра масс: истребитель с пиксель размером,
+       и без метки игрок не знает, что авиация вообще в бою. */
     for (const sq of state.squads) {
       if (sq.dead || !sq.craft.length) continue;
       const live = sq.craft.filter(c => !c.dead);
@@ -1778,32 +1853,53 @@ export function createSpaceBattle(ctx, config) {
       _v.set(0, 0, 0);
       for (const c of live) _v.add(c.pos);
       _v.divideScalar(live.length);
-      let d = markerPool[i];
-      if (!d) {
-        d = document.createElement('div');
-        d.className = 'marker';
-        d.innerHTML = '<span class="mk-name"></span><span class="mk-bar"><i></i></span>';
-        markers.appendChild(d);
-        markerPool[i] = d;
-      }
-      i++;
-      const p = screenOf(_v, tcam.cam, w, h);
-      if (p.z > 1 || p.x < -90 || p.x > w + 90 || p.y < -50 || p.y > h + 50) { d.style.display = 'none'; continue; }
-      d.style.display = 'block';
-      d.classList.remove('cloak', 'jump');
-      d.style.transform = `translate(${(p.x - 48) | 0}px,${(p.y - 40) | 0}px)`;
-      labelHits.push({ ent: sq, x: p.x, y: p.y - 40 });
-      d.classList.toggle('hover', hoverEnt === sq);
-      d.classList.toggle('foe-hover', hoverEnt === sq && sq.side !== state.playerSide);
-      d.firstChild.textContent = `${STRIKE_ROLES[sq.role].label} ×${live.length}`;
-      const bar = d.lastChild.firstChild;
-      const hp = live.reduce((a, c) => a + c.hp / c.maxHp, 0) / live.length;
-      bar.style.width = (clamp(hp, 0, 1) * 100) + '%';
-      bar.style.background = sq.faction.colorCss;
-      d.classList.toggle('mine', sq.side === state.playerSide);
-      d.classList.toggle('sel', state.selection.includes(sq));
+      const p = screenOf(_v, cam, w, h);
+      if (p.z > 1 || p.x < -90 || p.x > w + 90 || p.y < -50 || p.y > h + 50) continue;
+      const sel = state.selection.includes(sq), hov = hoverEnt === sq;
+      markerItems.push({ e: sq, p, rpx: 6, sel, hov, live, pri: (hov ? 4e6 : 0) + (sel ? 2e6 : 0) + 6 });
     }
-    for (; i < markerPool.length; i++) markerPool[i].style.display = 'none';
+    markerItems.sort((a, b) => b.pri - a.pri);
+    const selN = state.selection.length;
+    const placed = [];
+    let i = 0;
+    for (const it of markerItems) {
+      const e = it.e, p = it.p, mine = e.side === state.playerSide, squad = e.kind === 'squad';
+      // Подпись — над корпусом, а не на нём: отступ растёт с размером на экране
+      const ay = p.y - Math.max(14, it.rpx * 0.55 + 6);
+      let name = it.sel || it.hov || it.rpx >= NEAR_PX || squad;
+      // Под шапкой подписей нет: ни имени, ни значка поверх кнопок (C78)
+      if (ay - (name ? 22 : 12) < topEdge) continue;
+      /* Разводим всех, кроме того, что под курсором, и единственного
+         выделенного: при «Весь флот» имена выделенных ложились друг на
+         друга так же, как раньше чужие */
+      if (name && !it.hov && !(it.sel && selN === 1)) {
+        for (const q of placed) if (Math.abs(q.x - p.x) < 86 && Math.abs(q.y - ay) < 15) { name = false; break; }
+      }
+      if (name) placed.push({ x: p.x, y: ay });
+      const hp = squad ? it.live.reduce((a, c) => a + c.hp / c.maxHp, 0) / it.live.length : e.hp / e.maxHp;
+      const bar = name || it.sel || hp < 0.995;
+      const d = markerEl(i++);
+      d.style.display = 'flex';
+      setCls(d, 'marker ' + (mine ? 'mine' : 'foe') + (name ? '' : ' mini') + (bar ? '' : ' nobar') +
+        (it.sel ? ' sel' : '') + (it.hov ? ' hover' : '') + (it.cloak ? ' cloak' : '') + (e.hyper ? ' jump' : ''));
+      d.style.transform = `translate(${(p.x - 48) | 0}px,${(ay - 34) | 0}px)`;
+      if (squad) {
+        const r = STRIKE_ROLES[e.role];
+        setTxt(d._nm, it.sel || it.hov ? `${r.label} ×${it.live.length}` : `${r.short} ${it.live.length}`);
+        if (d._ico.dataset.k !== 'squad') d._ico.dataset.k = 'squad';
+      } else {
+        const nm = e.def.name;
+        setTxt(d._nm, nm.includes('«') ? nm.slice(nm.indexOf('«')) : nm);
+        const k = iconOf(e);
+        if (d._ico.dataset.k !== k) d._ico.dataset.k = k;
+      }
+      if (bar) d._fill.style.width = (clamp(hp, 0, 1) * 100) + '%';
+      // Попадание по подписи: от неё до самого корабля — это его место
+      labelHits.push(name
+        ? { ent: e, x: p.x, hw: 48, y0: ay - 24, y1: Math.max(ay + 4, p.y), my: ay - 10 }
+        : { ent: e, x: p.x, hw: 13, y0: ay - 18, y1: Math.max(ay + 4, p.y), my: ay - 6 });
+    }
+    for (; i < markerPool.length; i++) if (markerPool[i].style.display !== 'none') markerPool[i].style.display = 'none';
   }
 
   /* ── ПРИКАЗЫ ГЛАЗАМИ.
@@ -1870,19 +1966,68 @@ export function createSpaceBattle(ctx, config) {
      Полоска значков со всеми своими кораблями и звеньями — как
      в Empire at War. Она отвечает на вопрос, на который поле боя
      не отвечает никогда: «что у меня вообще есть и где оно».
-     Касание выбирает корабль и переносит к нему камеру; полоска
-     прочности показывает, кому уже плохо. */
+
+     Корабли — ПО КЛАССУ, с числом («Корвет ×8», C77): по ячейке на
+     корабль у Плэктора выходило 34 ячейки, около 2700 точек при
+     ~1240 видимых, а полоса прокрутки была спрятана — половина флота
+     была в ростере недоступна мышью. Щелчок по группе выбирает всех
+     этого класса, следующий — по одному (камера к каждому), после
+     последнего — снова всех. Shift — добавить к выделению. Полоса
+     прочности — средняя, цвет — по самому раненому. Колесо листает
+     ростер вбок, если он всё же длиннее экрана. */
   const rosterBox = $('roster');
   const rosterCells = new Map();
+  const ROSTER_ORDER = { capital: 0, sinho: 1, cruiser: 2, carrier: 3, ecm: 4, frigate: 5, corvette: 6,
+    interceptor: 10, fighter: 11, bomber: 12 };
+  const classWord = e => (e.kind === 'squad' ? STRIKE_ROLES[e.role].label
+    : (e.def.role || e.def.name).split(' · ')[0]);
+  rosterBox.addEventListener('wheel', ev => {
+    if (rosterBox.scrollWidth <= rosterBox.clientWidth + 1) return;
+    ev.preventDefault();
+    rosterBox.scrollLeft += ev.deltaY + ev.deltaX;
+  }, { passive: false });
+  function rosterGroups() {
+    const P = state.playerSide;
+    const by = new Map();
+    const add = (k, e) => { if (!by.has(k)) by.set(k, []); by.get(k).push(e); };
+    for (const s of state.ships) if (!s.dead && s.side === P && !s.station) add('s:' + s.def.id, s);
+    for (const q of state.squads) if (!q.dead && q.side === P && q.craft.some(c => !c.dead)) add('q:' + q.role, q);
+    return [...by.entries()].sort((a, b) => {
+      const ka = ROSTER_ORDER[a[0].slice(2)] ?? 9, kb = ROSTER_ORDER[b[0].slice(2)] ?? 9;
+      return ka - kb;
+    });
+  }
+  function rosterClick(cell, ev) {
+    const list = cell._list.filter(e => !e.dead);
+    if (!list.length) return;
+    const sel = state.selection.filter(e => !e.dead);
+    const posOf = e => (e.kind === 'squad' ? (e.craft.find(c => !c.dead) || {}).pos : e.pos);
+    if (ev && ev.shiftKey) {
+      state.selection = [...new Set([...sel, ...list])];
+      refreshSel();
+      return;
+    }
+    const all = sel.length === list.length && list.every(e => sel.includes(e));
+    const one = sel.length === 1 && list.includes(sel[0]);
+    let pick;
+    if (list.length > 1 && all) pick = [list[0]];
+    else if (one && list.length > 1) {
+      const i = list.indexOf(sel[0]);
+      pick = i + 1 < list.length ? [list[i + 1]] : list.slice();
+    } else pick = list.slice();
+    state.selection = pick;
+    if (pick.length === 1) {
+      const p = posOf(pick[0]);
+      if (p) tcam.focus(p.clone(), Math.min(tcam.dist, 420));
+    } else focusOn(pick.map(e => ({ pos: posOf(e) || e.pos })));
+    refreshSel();
+  }
   function refreshRoster() {
-    const mine = [
-      ...state.ships.filter(s => !s.dead && s.side === state.playerSide && !s.station),
-      ...state.squads.filter(q => !q.dead && q.side === state.playerSide && q.craft.some(c => !c.dead)),
-    ];
     const seen = new Set();
-    for (const e of mine) {
-      seen.add(e.uid);
-      let cell = rosterCells.get(e.uid);
+    let at = 0;
+    for (const [key, list] of rosterGroups()) {
+      seen.add(key);
+      let cell = rosterCells.get(key);
       if (!cell) {
         cell = document.createElement('button');
         cell.className = 'rcell';
@@ -1890,36 +2035,38 @@ export function createSpaceBattle(ctx, config) {
         cell._name = cell.querySelector('b');
         cell._bar = cell.querySelector('.rbar i');
         cell._grp = cell.querySelector('.rgrp');
-        cell.onclick = () => {
-          state.selection = [e];
-          const p = e.kind === 'squad'
-            ? (e.craft.find(c => !c.dead) || {}).pos : e.pos;
-          if (p) tcam.focus(p.clone(), Math.min(tcam.dist, 420));
-          refreshSel();
-        };
-        rosterBox.appendChild(cell);
-        rosterCells.set(e.uid, cell);
+        cell.onclick = ev => rosterClick(cell, ev);
+        rosterCells.set(key, cell);
       }
-      const isSquad = e.kind === 'squad';
-      const live = isSquad ? e.craft.filter(c => !c.dead) : null;
-      const hp = isSquad
-        ? live.reduce((a, c) => a + c.hp / c.maxHp, 0) / Math.max(1, live.length)
-        : e.hp / e.maxHp;
-      cell._name.textContent = isSquad
-        ? `${STRIKE_ROLES[e.role].short || STRIKE_ROLES[e.role].label} ${live.length}`
-        : short(e.def.name);
+      // Порядок ячеек держим по классу: новый класс встаёт на своё место
+      if (rosterBox.children[at] !== cell) rosterBox.insertBefore(cell, rosterBox.children[at] || null);
+      at++;
+      cell._list = list;
+      const isSquad = key[0] === 'q';
+      const hps = list.map(e => (isSquad
+        ? e.craft.filter(c => !c.dead).reduce((a, c) => a + c.hp / c.maxHp, 0) / Math.max(1, e.craft.filter(c => !c.dead).length)
+        : e.hp / e.maxHp));
+      const avg = hps.reduce((a, x) => a + x, 0) / hps.length;
+      const worst = Math.min(...hps);
+      const word = classWord(list[0]);
+      const txt = list.length > 1 ? `${word} ×${list.length}` : word;
+      if (cell._name.textContent !== txt) cell._name.textContent = txt;
+      const tip = (list.length > 1 ? `${list.length} шт. · щелчок — все, ещё щелчок — по одному` : list[0].def.name) +
+        ' · Shift — добавить к выбранным';
+      if (cell.title !== tip) cell.title = tip;
       const bar = cell._bar;
-      bar.style.width = (clamp(hp, 0, 1) * 100) + '%';
-      bar.style.background = hp > 0.55 ? '#8fffc8' : hp > 0.25 ? '#e0a94e' : '#e05555';
-      cell.classList.toggle('on', state.selection.includes(e));
+      bar.style.width = (clamp(avg, 0, 1) * 100) + '%';
+      bar.style.background = worst > 0.55 ? MINE_CSS : worst > 0.25 ? '#e0a94e' : '#e05555';
+      const sel = state.selection;
+      cell.classList.toggle('on', list.some(e => sel.includes(e)));
       cell.classList.toggle('air', isSquad);
-      // В каких отрядах корабль — цифрами справа от имени
-      const g = Object.keys(groups).filter(n => groups[n].includes(e)).join('');
+      // В каких отрядах корабли класса — цифрами справа от имени
+      const g = Object.keys(groups).filter(n => groups[n].some(e => list.includes(e))).join('');
       const em = cell._grp;
       if (em.textContent !== g) em.textContent = g;
     }
-    for (const [uid, cell] of rosterCells) {
-      if (!seen.has(uid)) { cell.remove(); rosterCells.delete(uid); }
+    for (const [key, cell] of rosterCells) {
+      if (!seen.has(key)) { cell.remove(); rosterCells.delete(key); }
     }
   }
 
@@ -1937,17 +2084,19 @@ export function createSpaceBattle(ctx, config) {
       const targets = e.kind === 'squad' ? e.craft : [e];
       for (const u of targets) {
         if (!selRings[i]) {
-          const r = ringMesh(1, 0x8fffc8, 0.85, 0.07);
-          r.renderOrder = 5;
+          const r = circleLine(MINE_HEX, 0.9);
           scene.add(r);
           selRings[i] = r;
         }
         const r = selRings[i++];
         r.visible = true;
         r.position.copy(u.pos);
-        // корпуса стали крупнее — кольцо выделения тоже, иначе оно
-        // прячется внутри силуэта
-        r.scale.setScalar(e.kind === 'squad' ? 14 : u.radius * 3.1);
+        /* Кольцо — по длине корпуса, чуть шире его (C111): «радиус
+           × 3,1» у приезжих моделей выходил кольцом в полтора-два
+           корабля. Цвет — по стороне: выделенный враг (его можно
+           выбрать, чтобы рассмотреть) обводится красным (C43). */
+        r.scale.setScalar(e.kind === 'squad' ? 9 : ringR(u));
+        r.material.color.set(e.side === state.playerSide ? MINE_HEX : FOE_HEX);
       }
       // вектор скорости — чтобы инерция была видна глазами
       if (e.kind === 'ship' && e.vel.lengthSq() > 1) {
@@ -1977,14 +2126,17 @@ export function createSpaceBattle(ctx, config) {
     const he = hoverEnt && !hoverEnt.dead && !state.selection.includes(hoverEnt) ? hoverEnt : null;
     hoverRing.visible = !!he;
     if (he) {
-      const at = he.kind === 'squad' ? he.pos : he.pos;
-      hoverRing.position.copy(at);
-      hoverRing.scale.setScalar(he.kind === 'squad' ? 16 : he.radius * 3.3);
-      hoverRing.material.color.set(he.side === state.playerSide ? 0x8fffc8 : 0xff6b5a);
+      hoverRing.position.copy(he.pos);
+      hoverRing.scale.setScalar(he.kind === 'squad' ? 18 : ringR(he) * 1.08);
+      hoverRing.material.color.set(he.side === state.playerSide ? MINE_HEX : FOE_HEX);
     }
   }
-  const hoverRing = ringMesh(1, 0x8fffc8, 0.45, 0.07);
-  hoverRing.renderOrder = 5;
+  /* Кольцо выделения — ТОНКАЯ линия по длине корпуса (C111). Мягкое
+     кольцо эффектов (ringMesh) толщиной в треть радиуса: на крупном
+     корабле оно становилось светящимся блином шире самого корабля.
+     Линия в одну точку читается одинаково на любом размере. */
+  const ringR = e => Math.max(e.radius * 1.6, (e.len || e.radius * 6) * 0.55);
+  const hoverRing = circleLine(MINE_HEX, 0.45);
   hoverRing.visible = false;
   scene.add(hoverRing);
 
@@ -2021,8 +2173,8 @@ export function createSpaceBattle(ctx, config) {
     let best = null, bd = Infinity;
     for (const hl of labelHits) {
       if (hl.ent.dead || !canPick(hl.ent)) continue;
-      if (x < hl.x - 48 || x > hl.x + 48 || y < hl.y - 3 || y > hl.y + 24) continue;
-      const d = Math.abs(x - hl.x) + Math.abs(y - (hl.y + 10)) * 2;
+      if (x < hl.x - hl.hw || x > hl.x + hl.hw || y < hl.y0 || y > hl.y1) continue;
+      const d = Math.abs(x - hl.x) + Math.abs(y - hl.my) * 2;
       if (d < bd) { bd = d; best = hl.ent; }
     }
     return best;
@@ -2266,7 +2418,8 @@ export function createSpaceBattle(ctx, config) {
     const list = state.selection.filter(s => !s.dead);
     if (!list.length) {
       setHtml(sel, '<div class="sel-empty">Ничего не выбрано</div>');
-      if (actsKey !== '') { actsKey = ''; actsEls = []; acts.innerHTML = ''; }
+      if (actsKey !== '') { actsKey = ''; actsEls = []; acts.innerHTML = ''; hideTip(); }
+      acts.hidden = true;
       actsItems = [];
       return;
     }
@@ -2286,16 +2439,16 @@ export function createSpaceBattle(ctx, config) {
       } else {
         const spd = Math.round(e.vel.length());
         const foreign = e.side !== state.playerSide ? '<span class="tag foe">противник</span>' : '';
-        setHtml(sel, `<div class="sel-title">${e.def.name} ${foreign}</div>
+        setHtml(sel, `<div class="sel-title${e.side !== state.playerSide ? ' foe' : ''}">${e.def.name} ${foreign}</div>
           <div class="sel-sub">${e.def.role || ''} · скорость ${spd} · прочность ${Math.max(0, Math.round(e.hp))}/${e.maxHp}</div>
-          <div class="sel-hpbar"><i style="width:${clamp(e.hp / e.maxHp, 0, 1) * 100}%"></i></div>
+          <div class="sel-hpbar${e.side !== state.playerSide ? ' foe' : ''}"><i style="width:${clamp(e.hp / e.maxHp, 0, 1) * 100}%"></i></div>
           <div class="sel-doing">${doingOf(e)}</div>
           <div class="sel-desc">${e.def.desc || ''}</div>`);
       }
     } else {
       const by = {};
       for (const e of list) {
-        const n = e.kind === 'squad' ? STRIKE_ROLES[e.role].label : e.def.name;
+        const n = classWord(e);
         by[n] = (by[n] || 0) + 1;
       }
       setHtml(sel, `<div class="sel-title">Выделено: ${list.length}</div>
@@ -2303,53 +2456,61 @@ export function createSpaceBattle(ctx, config) {
         <div class="sel-doing">${doingOf(list[0])}</div>`);
     }
 
-    /* Описание кнопок: id задаёт место в ключе, остальное обновляется на
-       месте. key — клавиша (e.code), её буква стоит в углу кнопки (C50). */
+    /* ── ПАНЕЛЬ КОМАНД (C33). Сетка коротких кнопок, как командная
+       карта RTS: на кнопке — короткое слово и буква клавиши, а описание
+       ушло во всплывающую подсказку. Раньше это была одна строка кнопок
+       с описанием внутри, шириной 1701 точку: на 1366 шесть из
+       одиннадцати («Стоп», «Гипер», «Выше», «Ниже»…) были за краем
+       экрана, а колесо их не прокручивало. Общие команды — первыми
+       и всегда на тех же местах; особые (ангар, купол) — за ними.
+       id задаёт место в ключе, остальное обновляется на месте (C30);
+       key — клавиша (e.code), её буква стоит в углу кнопки (C50);
+       cat — мелкая строка над словом (сколько мест в ангаре и т. п.). */
     const items = [];
     const KEYS = {
+      amove: 'KeyA', stop: 'KeyS', hold: 'KeyH', up: 'PageUp', down: 'PageDown', drift: 'KeyD',
+      jump: 'KeyG', unjump: 'KeyG',
       'launch-interceptor': 'KeyZ', 'launch-fighter': 'KeyX', 'launch-bomber': 'KeyC',
       land: 'KeyV', 'ecm-jam': 'KeyJ', 'ecm-shield': 'KeyK', 'ecm-off': 'KeyL',
-      jump: 'KeyG', unjump: 'KeyG', stop: 'KeyS', hold: 'KeyH', up: 'PageUp', down: 'PageDown',
     };
-    const addBtn = (id, label, hint, fn, disabled) => items.push({ id, label, hint, fn, disabled: !!disabled, key: KEYS[id] });
-    const addNote = (id, text) => items.push({ id, note: text });
-
-    const carriers = list.filter(e => e.kind === 'ship' && e.hangar && e.side === state.playerSide);
-    if (carriers.length) {
-      const free = carriers.reduce((a, c) => a + c.hangar.free, 0);
-      for (const role of ['interceptor', 'fighter', 'bomber']) {
-        const r = STRIKE_ROLES[role];
-        addBtn('launch-' + role, r.label, r.hint, () => {
-          const c = carriers.find(x => !x.dead && x.hangar.free > 0);
-          if (c) { launchSquadron(c, role); refreshSel(); }
-        }, free <= 0);
-      }
-      addNote('bays', `Мест в ангаре: ${free}`);
-    }
-    const squads = list.filter(e => e.kind === 'squad' && e.side === state.playerSide);
-    if (squads.length) addBtn('land', 'На посадку', 'Вернуть звено, освободить ангар', () => { for (const s of squads) s.recall = true; });
-
-    const ecms = list.filter(e => e.ecm && e.side === state.playerSide);
-    if (ecms.length) {
-      const cur = ecms[0].ecm.mode;
-      addBtn('ecm-jam', (cur === 'jam' ? '⦿ ' : '') + 'Глушение',
-        'Ломает чужое наведение в куполе', () => {
-          for (const e of ecms) e.ecm.mode = 'jam';
-          toast('Купол помех развёрнут');
-          refreshSel();
-        });
-      addBtn('ecm-shield', (cur === 'shield' ? '⦿ ' : '') + 'Прикрытие',
-        'Снимает чужие помехи со своих', () => {
-          for (const e of ecms) e.ecm.mode = 'shield';
-          toast('Купол переключён на защиту');
-          refreshSel();
-        });
-      addBtn('ecm-off', (cur === 'off' ? '⦿ ' : '') + 'Молчать',
-        'Выключить излучение', () => { for (const e of ecms) e.ecm.mode = 'off'; refreshSel(); });
-    }
+    const addBtn = (id, label, hint, fn, o = {}) => items.push({
+      id, label, hint, fn, disabled: !!o.disabled, key: KEYS[id], cat: o.cat || '', on: !!o.on, part: !!o.part,
+    });
 
     const ships = list.filter(e => e.kind === 'ship' && e.side === state.playerSide && !e.station);
+    const squads = list.filter(e => e.kind === 'squad' && e.side === state.playerSide);
+    if (ships.length || squads.length) {
+      addBtn('amove', 'Атака с ходу', 'Идут к точке и бьют всех встречных: нажми, затем щёлкни точку или цель',
+        () => startAmove(), { cat: 'приказ' });
+    }
     if (ships.length) {
+      addBtn('stop', 'Стоп', 'Снять все приказы, погасить ход', () => {
+        for (const s of ships) { s.moveTo = null; s.amove = null; s.target = null; s.forced = null; s.hold = false; }
+        refreshSel();
+      }, { cat: 'приказ' });
+      /* «Держать позицию» (H): стоять и бить только то, до чего орудие
+         достаёт с места. Без неё «Стоп» держал корабль секунду — дальше
+         он сам находил цель и шёл на сближение (C26). */
+      const holdN = ships.filter(s => s.hold).length;
+      addBtn('hold', 'Держать', 'Стоять на месте, бить только тех, до кого достаёт оружие, не преследовать', () => {
+        const on = !ships.every(s => s.hold);
+        for (const s of ships) {
+          s.hold = on;
+          if (on) { s.moveTo = null; s.amove = null; s.forced = null; s.target = null; }
+        }
+        toast(on ? 'Держать позицию: стоят и бьют только тех, до кого достают' : 'Корабли снова сами идут на сближение');
+        refreshSel();
+      }, { cat: 'приказ', on: holdN === ships.length, part: holdN > 0 && holdN < ships.length });
+      addBtn('up', 'Выше', 'Поднять на 120 — выйти из купола помех или над строем', () => {
+        for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); s.amove = null; s.hold = false; }
+      }, { cat: 'высота' });
+      addBtn('down', 'Ниже', 'Опустить на 120', () => {
+        for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); s.amove = null; s.hold = false; }
+      }, { cat: 'высота' });
+      const driftN = ships.filter(s => s.drift).length;
+      addBtn('drift', 'Дрифт', 'Гасители инерции: корабль скользит по вектору, корпус свободно наводится на цель. Приказ идти включает их обратно',
+        toggleDrift, { cat: driftN && driftN < ships.length ? `${driftN} из ${ships.length}` : 'ход',
+          on: driftN === ships.length, part: driftN > 0 && driftN < ships.length });
       const jumping = ships.filter(s => s.hyper);
       if (jumping.length) {
         // Носитель ушёл — бой проигран, отход уже не отменить
@@ -2361,7 +2522,7 @@ export function createSpaceBattle(ctx, config) {
               refreshRetreat();
             }
             refreshSel();
-          });
+          }, { cat: 'гипер', on: true });
         }
       } else {
         /* С носителем «Уйти в гипер» — это «Отход» всего флота: за
@@ -2379,9 +2540,9 @@ export function createSpaceBattle(ctx, config) {
                         : `Гипер через ${t} с, всё это время беззащитны · G — отменить`);
           refreshSel();
         };
-        addBtn('jump', 'Уйти в гипер', carrier
-          ? 'Носитель уходит — за ним отходит весь флот, бой проигран'
-          : 'Копит переход, всё это время беззащитен', () => {
+        addBtn('jump', 'В гипер', carrier
+          ? 'Носитель уходит — за ним отходит весь флот, бой проигран. Спросит подтверждение'
+          : 'Копит переход и уходит из боя, всё это время беззащитен', () => {
           if (!carrier) { go(); return; }
           ask({
             title: 'Авианосец уходит — это отход',
@@ -2390,73 +2551,104 @@ export function createSpaceBattle(ctx, config) {
               'уход можно отменить — G или «Отменить гипер».',
             yes: 'Уйти в гипер', no: 'Остаться в бою',
           }, go);
-        });
+        }, { cat: 'уйти' });
       }
-      addBtn('stop', 'Стоп', 'Снять все приказы, погасить ход', () => {
-        for (const s of ships) { s.moveTo = null; s.amove = null; s.target = null; s.forced = null; s.hold = false; }
+    }
+
+    const carriers = list.filter(e => e.kind === 'ship' && e.hangar && e.side === state.playerSide);
+    if (carriers.length) {
+      const free = carriers.reduce((a, c) => a + c.hangar.free, 0);
+      for (const role of ['interceptor', 'fighter', 'bomber']) {
+        const r = STRIKE_ROLES[role];
+        addBtn('launch-' + role, r.label, `Поднять звено: ${r.hint}. Свободно мест в ангаре: ${free}`, () => {
+          const c = carriers.find(x => !x.dead && x.hangar.free > 0);
+          if (c) { launchSquadron(c, role); refreshSel(); }
+        }, { disabled: free <= 0, cat: `ангар ${free}` });
+      }
+    }
+    if (squads.length) addBtn('land', 'На посадку', 'Вернуть звено, освободить ангар', () => { for (const s of squads) s.recall = true; }, { cat: 'звено' });
+
+    const ecms = list.filter(e => e.ecm && e.side === state.playerSide);
+    if (ecms.length) {
+      const cur = ecms[0].ecm.mode;
+      addBtn('ecm-jam', 'Глушение', 'Купол помех: ломает чужое наведение внутри', () => {
+        for (const e of ecms) e.ecm.mode = 'jam';
+        toast('Купол помех развёрнут');
         refreshSel();
-      });
-      /* «Держать позицию» (H): стоять и бить только то, до чего орудие
-         достаёт с места. Без неё «Стоп» держал корабль секунду — дальше
-         он сам находил цель и шёл на сближение (C26). */
-      const allHold = ships.every(s => s.hold);
-      addBtn('hold', (allHold ? '⦿ ' : '') + 'Держать', 'Стоять на месте, не преследовать', () => {
-        const on = !ships.every(s => s.hold);
-        for (const s of ships) {
-          s.hold = on;
-          if (on) { s.moveTo = null; s.amove = null; s.forced = null; s.target = null; }
-        }
-        toast(on ? 'Держать позицию: стоят и бьют только тех, до кого достают' : 'Корабли снова сами идут на сближение');
+      }, { cat: 'купол', on: cur === 'jam' });
+      addBtn('ecm-shield', 'Прикрытие', 'Купол защиты: снимает чужие помехи со своих', () => {
+        for (const e of ecms) e.ecm.mode = 'shield';
+        toast('Купол переключён на защиту');
         refreshSel();
-      });
-      addBtn('up', 'Выше', 'Поднять на 120', () => { for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, 120, 0)); s.amove = null; s.hold = false; } });
-      addBtn('down', 'Ниже', 'Опустить на 120', () => { for (const s of ships) { s.moveTo = s.pos.clone().add(_v.set(0, -120, 0)); s.amove = null; s.hold = false; } });
+      }, { cat: 'купол', on: cur === 'shield' });
+      addBtn('ecm-off', 'Молчать', 'Выключить излучение', () => { for (const e of ecms) e.ecm.mode = 'off'; refreshSel(); },
+        { cat: 'купол', on: cur === 'off' });
     }
 
     const key = list.map(e => e.uid).join(',') + '|' + items.map(i => i.id).join(',');
     if (key !== actsKey) {
       actsKey = key;
       acts.innerHTML = '';
-      actsEls = items.map(it => {
-        if (it.note !== undefined) {
-          const d = document.createElement('div');
-          d.className = 'act-note';
-          acts.appendChild(d);
-          return { d };
-        }
+      hideTip();
+      actsEls = items.map((it, idx) => {
         const b = document.createElement('button');
         b.className = 'act';
         b.dataset.act = it.id;
+        const cat = document.createElement('i');
         const lb = document.createElement('b');
-        const sm = document.createElement('small');
-        b.append(lb, sm);
+        b.append(cat, lb);
         if (it.key) {
           const k = document.createElement('kbd');
           k.className = 'hk';
           k.textContent = keyName(it.key);
           b.appendChild(k);
         }
+        // Подсказка — своя, сразу при наведении: штатный title ждёт
+        // секунду и прячется, стоит шевельнуть мышью
+        b.addEventListener('pointerenter', ev => { if (ev.pointerType === 'mouse') showTip(b, idx); });
+        b.addEventListener('pointerleave', hideTip);
+        b.addEventListener('pointerdown', hideTip);
         acts.appendChild(b);
-        return { b, lb, sm };
+        return { b, lb, cat };
       });
     }
+    acts.hidden = !items.length;
     items.forEach((it, i) => {
       const el = actsEls[i];
-      if (it.note !== undefined) {
-        if (el.d.textContent !== it.note) el.d.textContent = it.note;
-        return;
+      if (el.lb.textContent !== it.label) {
+        el.lb.textContent = it.label;
+        // «Бомбардировщик», «Отменить гипер» — мельче, чтобы влезли целиком
+        el.b.classList.toggle('long', it.label.length > 12);
       }
-      if (el.lb.textContent !== it.label) el.lb.textContent = it.label;
-      const hint = it.hint || '';
-      if (el.sm.textContent !== hint) el.sm.textContent = hint;
-      el.sm.hidden = !hint;
+      if (el.cat.textContent !== it.cat) el.cat.textContent = it.cat;
       if (el.b.disabled !== it.disabled) el.b.disabled = it.disabled;
-      const title = hint + (it.key ? ` · ${keyName(it.key)}` : '');
-      if (el.b.title !== title) el.b.title = title;
+      el.b.classList.toggle('on', it.on);
+      el.b.classList.toggle('part', it.part);
+      const aria = it.label + (it.key ? ` (${keyName(it.key)})` : '');
+      if (el.b.getAttribute('aria-label') !== aria) el.b.setAttribute('aria-label', aria);
       el.b.onclick = it.fn;
     });
     actsItems = items;
+    if (tipFor >= 0) showTip(actsEls[tipFor] && actsEls[tipFor].b, tipFor);
   }
+  /* Всплывающая подсказка команды: название, клавиша, что делает.
+     Стоит над кнопкой и не выходит за края экрана. */
+  const tipEl = $('tip');
+  let tipFor = -1;
+  function showTip(b, idx) {
+    const it = actsItems[idx];
+    if (!b || !it || !b.isConnected) { hideTip(); return; }
+    tipFor = idx;
+    const html = `<b>${it.label}</b>${it.key ? `<kbd class="hk">${keyName(it.key)}</kbd>` : ''}` +
+      `<span>${it.hint || ''}${it.disabled ? ' · сейчас недоступно' : ''}</span>`;
+    if (tipEl._html !== html) { tipEl._html = html; tipEl.innerHTML = html; }
+    tipEl.hidden = false;
+    const r = b.getBoundingClientRect(), hr = hud.getBoundingClientRect();
+    const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+    const x = clamp(r.left + r.width / 2 - tw / 2 - hr.left, 6, hr.width - tw - 6);
+    tipEl.style.transform = `translate(${x | 0}px,${(r.top - hr.top - th - 8) | 0}px)`;
+  }
+  function hideTip() { tipFor = -1; if (tipEl) tipEl.hidden = true; }
   let actsItems = [];
   const keyName = code => code === 'PageUp' ? 'PgUp' : code === 'PageDown' ? 'PgDn' : code.replace(/^Key|^Digit/, '');
   refreshSel();
@@ -2727,6 +2919,7 @@ export function createSpaceBattle(ctx, config) {
     hoverTick -= rawDt;
     if (hoverTick <= 0) { hoverTick = 0.1; updateHover(); }
     updateMarkers();
+    updateDomes();
     updateSelVisuals();
     updateOrders();
     /* Панель выделенного пересобираем раз в треть секунды: строка
@@ -2740,7 +2933,7 @@ export function createSpaceBattle(ctx, config) {
        DOM не трогают. */
     selTick -= rawDt;
     if (state.selDirty) { state.selDirty = false; refreshSel(); }
-    if (selTick <= 0) { selTick = 0.34; refreshSel(); refreshRoster(); }
+    if (selTick <= 0) { selTick = 0.34; refreshSel(); refreshRoster(); measureTop(); }
 
     let pa = 0, pd = 0, na = 0, nd = 0;
     for (const s of state.ships) {
@@ -2750,9 +2943,7 @@ export function createSpaceBattle(ctx, config) {
     const max = Math.max(1, pa + pd);
     const ab = $('atk-bar'), db = $('def-bar');
     ab.style.width = (pa / max * 100) + '%';
-    ab.style.background = sides.attacker.faction.colorCss;
     db.style.width = (pd / max * 100) + '%';
-    db.style.background = sides.defender.faction.colorCss;
     $('atk-num').textContent = na;
     $('def-num').textContent = nd;
 
@@ -2777,21 +2968,32 @@ export function createSpaceBattle(ctx, config) {
        не попадали в обход, и их геометрия с материалами не освобождалась
        (C66) */
     removeEventListener('keydown', onKey);
+    removeEventListener('resize', measureTop);
     tcam.dispose();
     controls.dispose();
     hud.remove();
     disposeScene(scene);
   }
 
-  // Стартовая камера: свой флот в нижней трети кадра, противник — в верхней.
-  // Точка взгляда смещена вперёд, за спину своим, иначе корабли уезжают
-  // под нижнюю панель интерфейса.
+  /* СТАРТОВАЯ КАМЕРА (C76): свой флот в середине кадра, противник —
+     у верхнего края, то есть сразу видно и «что у меня», и «откуда
+     идут». Раньше точка взгляда стояла на 330 единиц впереди флота
+     с расстояния 1250 (а «ближе, 780» в конструкторе этим перебивалось):
+     флот лежал в нижней трети, и на 1366×768 его хвост уходил под
+     ростер и панель команд — щелчок попадал в плашку, а не в корабль.
+     Замер на «Генеральном» Плэктора (34 корабля) при точке на 60
+     впереди центра флота и расстоянии 1100: свои — 0,45…0,64 высоты
+     на 1366 и 1920, противник — 0,11…0,15, ни один свой не под HUD. */
   tcam.yaw = state.playerSide === 'attacker' ? 0 : Math.PI;
-  /* Камера садится над своим флотом, а не посередине поля: флоты
-     теперь стоят далеко, и вид из центра показал бы пустоту.
-     Точку смещаем вперёд по курсу — свои корабли должны оказаться
-     в нижней трети экрана, а не под панелью интерфейса. */
-  tcam.focus(new THREE.Vector3(0, 0, state.playerSide === 'attacker' ? 620 : -620), 1250);
+  {
+    const own = state.ships.filter(s => s.side === state.playerSide && !s.station);
+    const c = new THREE.Vector3();
+    for (const s of own) c.add(s.pos);
+    if (own.length) c.divideScalar(own.length);
+    c.y = 0;
+    c.z += (sides[state.playerSide].sign > 0 ? -1 : 1) * 60;
+    tcam.focus(c, 1100);
+  }
   tcam.apply(1, true);
 
   // Состояние боя наружу — по нему автотесты проверяют скрытность,

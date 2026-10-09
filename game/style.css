@@ -986,3 +986,146 @@ table.keys td:first-child {
 
 /* Кнопка «Полный экран» среди галочек меню — мельче основных */
 .menu-opts button { pointer-events: auto; min-height: 32px; padding: 5px 12px; font-size: 13px; }
+
+/* ─────────── ЭКРАН БОЯ НА ОРБИТЕ: НИЖНЯЯ КОМАНДНАЯ ПАНЕЛЬ ───────────
+   Раскладка одна на все размеры (C33, C75): внизу слева направо —
+   выделенное | команды | миникарта, и ничто не заходит под соседа.
+   Правый край команд считается от ширины миникарты (--mm), а не числом
+   «112 px»: прежняя полоса кнопок шириной 62vw уезжала под миникарту
+   на 1366 и за край экрана. Ростер — над панелью, на постоянной высоте:
+   если бы он ездил вместе с её высотой, следующий щелчок по нему
+   приходился бы мимо. Столбик быстрого выбора — над миникартой. */
+.hud-space { --mm: 170px; --botH: 172px; }
+@media (pointer: coarse) { .hud-space { --mm: 134px; } }
+.hud-space .botpanel {
+  right: calc(var(--mm) + 20px + var(--safe-r));
+  flex-wrap: nowrap; gap: 8px; align-items: flex-end;
+}
+.hud-space .sel-info {
+  flex: 0 0 270px; width: 270px; min-width: 0; max-width: none;
+  max-height: var(--botH); overflow: hidden;
+}
+.hud-space .sel-desc {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hud-space .sel-sub { overflow-wrap: anywhere; }
+.hud-space .sel-title.foe { color: #ffc0b5; }
+.hud-space .sel-hpbar.foe i { background: var(--bad); }
+/* Команды — сетка коротких кнопок, как командная карта RTS: слово,
+   буква клавиши в углу, над словом мелкая строка (места в ангаре,
+   «приказ», «купол»). Описание — во всплывающей подсказке. */
+.hud-space .sel-actions {
+  flex: 0 1 auto; min-width: 0; max-width: none;
+  display: flex; flex-wrap: wrap; align-content: flex-end; gap: 5px;
+  overflow: visible;
+  padding: 6px; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius); backdrop-filter: blur(8px);
+}
+.hud-space button.act {
+  flex: 0 0 auto; width: 116px; min-width: 0; max-width: none;
+  height: 48px; min-height: 0; padding: 5px 8px 6px;
+  display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start;
+  gap: 0; background: var(--panel-solid); border-radius: 8px; text-align: left;
+}
+.hud-space button.act i {
+  font-style: normal; font-size: 9.5px; line-height: 1.2; color: var(--muted);
+  letter-spacing: .03em; white-space: nowrap; max-width: 76px; overflow: hidden; text-overflow: ellipsis;
+}
+.hud-space button.act b {
+  font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.hud-space button.act kbd.hk { top: 4px; right: 5px; font-size: 9.5px; padding: 1px 4px; }
+.hud-space button.act.on { border-color: var(--accent); background: #1a1608; }
+.hud-space button.act.on b { color: var(--accent); }
+.hud-space button.act.part { border-color: #8a6a2e; border-style: dashed; }
+.hud-space button.act:disabled { opacity: .45; }
+/* Подсказка команды: сразу при наведении, над кнопкой, в пределах экрана */
+.act-tip {
+  position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none;
+  max-width: 300px; padding: 8px 11px; border-radius: 8px;
+  background: var(--panel-solid); border: 1px solid #35506e;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  font-size: 12.5px; line-height: 1.45; color: var(--text);
+}
+.act-tip b { font-weight: 600; }
+.act-tip kbd.hk { margin-left: 8px; vertical-align: 1px; }
+.act-tip span { display: block; margin-top: 3px; color: var(--text-2); font-size: 12px; }
+
+/* Ростер — группами по классу (C77). Сама полоса прозрачна для мыши,
+   ловят только ячейки (C135): прежняя полоса шириной в экран глотала
+   рамку и щелчки по кораблям за пустым местом. Ширина — по ячейкам,
+   не дальше левого края миникарты; прокрутка — колесом. */
+.hud-space .roster {
+  right: auto; max-width: calc(100% - var(--mm) - 40px - var(--safe-l) - var(--safe-r));
+  bottom: calc(10px + var(--botH) + 10px + var(--safe-b));
+  pointer-events: none; scrollbar-width: thin; scrollbar-color: #35506e transparent;
+}
+.hud-space .roster::-webkit-scrollbar { display: block; height: 4px; }
+.hud-space .roster::-webkit-scrollbar-thumb { background: #35506e; border-radius: 2px; }
+.hud-space .rcell { pointer-events: auto; min-width: 86px; }
+/* Столбик быстрого выбора — над миникартой, а не по центру высоты:
+   на ноутбуке с панелями браузера (1366×657) «Рамка» уходила под неё */
+.hud-space .sidebar {
+  top: auto; transform: none;
+  bottom: calc(10px + var(--mm) + 10px + var(--safe-b));
+}
+/* Подсказка по управлению — под шапкой: внизу посередине теперь команды */
+.hud-space .hint { bottom: auto; top: calc(62px + var(--safe-t)); }
+/* Название боя в шапке — только текст: растянутый на полшапки, он глотал
+   щелчки и рамку по полю под собой (C135) */
+.topbar .title { pointer-events: none; }
+
+/* ─────────── ПОДПИСИ КОРАБЛЕЙ (C78) И СВОЙ/ЧУЖОЙ (C43) ───────────
+   Имя — у выделенных, под курсором и близких к камере; остальным —
+   значок класса цвета стороны и полоска, если ранен. Свои мятные,
+   чужие красные — независимо от клана. */
+.hud-space .marker {
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  height: 34px; width: 96px; color: var(--good);
+}
+.hud-space .marker.foe { color: var(--bad); }
+.hud-space .marker .mk-name { color: #c8ffe6; max-width: 96px; margin-bottom: 2px; }
+.hud-space .marker.foe .mk-name { color: #ffc0b5; }
+.hud-space .marker .mk-bar { width: 40px; border-color: rgba(143, 255, 200, .35); }
+.hud-space .marker.foe .mk-bar { border-color: rgba(255, 107, 90, .4); }
+.hud-space .marker .mk-bar i { background: currentColor; }
+.hud-space .marker.nobar .mk-bar { display: none; }
+.hud-space .marker.mini .mk-name { display: none; }
+.hud-space .marker.mini .mk-bar { width: 22px; height: 3px; }
+.hud-space .marker.sel .mk-bar { box-shadow: 0 0 6px currentColor; border-color: currentColor; }
+.hud-space .marker.hover .mk-name { color: #fff; }
+.hud-space .marker.foe.hover .mk-name { color: #ffd6cf; }
+.mk-ico { display: none; }
+.hud-space .marker.mini .mk-ico {
+  display: block; width: 7px; height: 7px; margin-bottom: 3px; background: currentColor;
+  filter: drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1px #000);
+}
+.hud-space .mk-ico[data-k="capital"] { width: 10px; height: 10px; transform: rotate(45deg) scale(.82); }
+.hud-space .mk-ico[data-k="cruiser"] { width: 10px; height: 9px; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.hud-space .mk-ico[data-k="carrier"] { width: 13px; height: 6px; border-radius: 1px; }
+.hud-space .mk-ico[data-k="ecm"] { width: 9px; height: 9px; background: none; border: 2px solid currentColor; border-radius: 50%; }
+.hud-space .mk-ico[data-k="frigate"] { width: 7px; height: 7px; border-radius: 50%; }
+.hud-space .mk-ico[data-k="corvette"] { width: 5px; height: 5px; border-radius: 50%; }
+.hud-space .mk-ico[data-k="station"] { width: 11px; height: 11px; }
+.hud-space .mk-ico[data-k="squad"] { width: 9px; height: 6px; clip-path: polygon(0 0, 50% 55%, 100% 0, 100% 45%, 50% 100%, 0 45%); }
+.hud-space .marker.cloak .mk-ico { opacity: .7; }
+.hud-space button.act.long b { font-size: 11px; letter-spacing: -.01em; }
+/* Узкие окна: выделенное уже, кнопки мельче — иначе сетка команд в три
+   ряда не помещается и наезжает на ростер */
+@media (max-width: 1150px) {
+  .hud-space .sel-info { flex-basis: 200px; width: 200px; }
+  .hud-space button.act { width: 100px; padding: 5px 6px 6px; }
+  .hud-space button.act b { font-size: 10.5px; letter-spacing: -.02em; }
+  .hud-space button.act.long b { font-size: 9.5px; letter-spacing: -.02em; }
+  .hud-space button.act i { max-width: 58px; }
+}
+@media (max-width: 1000px) {
+  .hud-space .sel-info { flex-basis: 180px; width: 180px; }
+}
+/* Низкое окно: столбик быстрого выбора над миникартой не должен
+   доставать до шапки */
+@media (max-height: 620px) {
+  .hud-space .sidebar { gap: 4px; }
+  .hud-space .sidebar button { min-height: 34px; padding: 5px 4px; font-size: 11px; }
+}

@@ -35,6 +35,11 @@
 //             справка из него не пропускает клавиши в бой, G с авианосцем
 //             и «Отход» спрашивают и на это время ставят бой на паузу,
 //             номер отряда в ростере не лежит на имени.
+//             Экран боя (P3): стартовая камера (C76), масштаб .glb (C88),
+//             панель команд в экране без прокрутки (C33/C75), подписи
+//             не наложены (C78), ростер группами (C77), пустые полосы
+//             прозрачны (C135), свой/чужой (C43), подсказка, «Дрифт» по
+//             выделению (C136), купол РЭБ в покое (C111).
 //  ground   — пока высадка ждёт модели, экран закрыт и подпись читается,
 //             второй бой сквозь неё не начать; операция стартует без
 //             ошибок; сбой → «В меню».
@@ -509,6 +514,44 @@ const SCAN = () => {
     const gun = await page.evaluate(() => ({ gun: !!__sp.gun,
       shown: getComputedStyle(document.querySelector('[data-role="gunclock"]')).display !== 'none' }));
     ok('часы «Давления Земли» в шапке — только при орудии на планете', gun.gun === gun.shown, JSON.stringify(gun));
+
+    /* P3 · стартовая камера (C76): свой флот на экране и не под панелями,
+       противник тоже в кадре — видно, откуда идут. Мерить надо ДО любого
+       движения камеры. */
+    await page.waitForTimeout(800);
+    const cam0 = await page.evaluate(() => {
+      const P = __sp.playerSide, c = document.getElementById('view');
+      const on = p => p.z < 1 && p.x >= 0 && p.y >= 0 && p.x <= innerWidth && p.y <= innerHeight;
+      const own = __sp.ships.filter(s => !s.dead && s.side === P && !s.station).map(s => __sp.screenTest(s));
+      const foe = __sp.ships.filter(s => !s.dead && s.side !== P).map(s => __sp.screenTest(s));
+      const top = document.querySelector('.roster').getBoundingClientRect().top;
+      return { own: own.length, onScreen: own.filter(on).length,
+        under: own.filter(p => on(p) && document.elementFromPoint(p.x, p.y) !== c).length,
+        lowest: Math.round(Math.max(...own.map(p => p.y))), rosterTop: Math.round(top),
+        low: +(Math.max(...own.map(p => p.y)) / innerHeight).toFixed(2),
+        foeOn: foe.filter(on).length, foe: foe.length };
+    });
+    /* Доля высоты, а не точки: вертикальный угол камеры один на любой
+       размер окна, и та же доля на 1366×768 — это 0,66 от низа ростера
+       (он там начинается на 0,69 высоты). До правки было 0,74 — хвост
+       флота под ростером на ноутбуке. */
+    ok('стартовая камера: свой флот весь в кадре и выше ростера даже на 1366×768, противник в кадре (C76)',
+      cam0.onScreen === cam0.own && cam0.under === 0 && cam0.lowest < cam0.rosterTop && cam0.low < 0.66 && cam0.foeOn > 0, JSON.stringify(cam0));
+
+    /* P3 · своя .glb того же масштаба, что процедурная того же слота
+       (C88): строим процедурную тем же кодом и сравниваем габарит */
+    const glbFit = await page.evaluate(async () => {
+      const M = await import('/game/js/models.js');
+      const out = [];
+      for (const s of __sp.ships) {
+        if (s.dead || !s.obj.userData.custom || out.some(o => o.id === s.def.id)) continue;
+        const proc = M.visualLength(M.buildShip(s.def, s.faction, true));
+        out.push({ id: s.def.id, glb: Math.round(s.len), proc: Math.round(proc), k: +(s.len / proc).toFixed(2) });
+      }
+      return out;
+    }).catch(e => [{ err: e.message }]);
+    ok('своя .glb одного масштаба с процедурной того же слота, ±20% (C88)',
+      glbFit.length > 0 && glbFit.every(g => g.k > 0.8 && g.k < 1.2), JSON.stringify(glbFit));
 
     await hookRender(page);
 
@@ -1058,6 +1101,45 @@ const SCAN = () => {
       if (w !== 1920) { await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(800); }
       const s = await page.evaluate(SCAN);
       ok(`HUD ${w}×${h}: все видимые кнопки под мышью (${s.total} шт.)`, s.total > 10 && !s.dead.length, s.dead.join('; '));
+      /* P3 · панель команд (C33, C75): при «Весь флот» ни одна кнопка не
+         выходит за экран, не залезает под миникарту и выделенное, подписи
+         не обрезаны — и всё это без прокрутки */
+      const cmd = await page.evaluate(() => {
+        const R = el => el.getBoundingClientRect();
+        const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+        const mm = R(document.querySelector('.minimap')), si = R(document.querySelector('.hud-space .sel-info'));
+        const acts = [...document.querySelectorAll('#hud button.act')];
+        const out = { n: acts.length, off: [], overMap: [], overSel: [], cut: [], scroll: false };
+        for (const b of acts) {
+          const r = R(b), t = b.querySelector('b').textContent;
+          if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight) out.off.push(t);
+          if (hit(r, mm)) out.overMap.push(t);
+          if (hit(r, si)) out.overSel.push(t);
+          const lb = b.querySelector('b');
+          if (lb.scrollWidth > lb.clientWidth + 1) out.cut.push(t);
+        }
+        const box = document.querySelector('[data-role="acts"]');
+        out.scroll = box.scrollWidth > box.clientWidth + 1 || box.scrollHeight > box.clientHeight + 1;
+        return out;
+      });
+      ok(`панель команд ${w}×${h} при «Весь флот»: все ${cmd.n} кнопок в экране, не под миникартой и выделенным, подписи целиком, без прокрутки`,
+        cmd.n >= 10 && !cmd.off.length && !cmd.overMap.length && !cmd.overSel.length && !cmd.cut.length && !cmd.scroll,
+        `за краем: ${cmd.off.join(', ') || 'нет'}; под миникартой: ${cmd.overMap.join(', ') || 'нет'}; на выделенном: ${cmd.overSel.join(', ') || 'нет'}; обрезаны: ${cmd.cut.join(', ') || 'нет'}; прокрутка: ${cmd.scroll}`);
+      // Подписи кораблей (C78): имена не лежат друг на друге и не залезают на шапку
+      const lab = await page.evaluate(() => {
+        const tb = document.querySelector('.topbar').getBoundingClientRect().bottom;
+        const ms = [...document.querySelectorAll('.hud-space .marker')].filter(m => m.style.display !== 'none');
+        const vis = el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+        const names = ms.filter(m => !m.classList.contains('mini')).map(m => m.querySelector('.mk-name').getBoundingClientRect());
+        let over = 0;
+        for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+          const a = names[i], b = names[j];
+          if (a.left < b.right - 4 && b.left < a.right - 4 && a.top < b.bottom - 2 && b.top < a.bottom - 2) over++;
+        }
+        const onTop = ms.filter(m => [...m.children].some(c => vis(c) && c.getBoundingClientRect().top < tb)).length;
+        return { shown: ms.length, names: names.length, over, onTop };
+      });
+      ok(`подписи ${w}×${h}: имена не наложены друг на друга и не на шапке (C78)`, lab.shown > 0 && !lab.over && !lab.onTop, JSON.stringify(lab));
       if (s.scrolled || s.off.length) info(`HUD ${w}×${h}`, `в прокрутке ${s.scrolled}, за краем экрана ${s.off.length}${s.off.length ? ': ' + s.off.join('; ') : ''}`);
       // Номер отряда в ячейке ростера не лежит на имени корабля
       const rg = await page.evaluate(() => {
@@ -1081,6 +1163,94 @@ const SCAN = () => {
     }
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.waitForTimeout(500);
+
+    /* P3 · ростер группами по классу (C77): ячеек меньше, чем кораблей;
+       щелчок по группе — все, следующий — по одному, после последнего —
+       снова все */
+    const rg0 = await page.evaluate(() => ({
+      cells: [...document.querySelectorAll('.rcell')].map(c => c.querySelector('b').textContent),
+      ships: __sp.ships.filter(s => !s.dead && s.side === __sp.playerSide && !s.station).length,
+    }));
+    ok('ростер — группы по классу с числом (C77)', rg0.cells.length < rg0.ships && rg0.cells.some(t => /×\d/.test(t)),
+      `${rg0.ships} кораблей → ячейки: ${rg0.cells.join(', ')}`);
+    const multi = rg0.cells.findIndex(t => /×\d/.test(t));
+    if (multi >= 0) {
+      const cyc = [];
+      for (let k = 0; k < 4; k++) {
+        r = await tap(page, '.rcell', multi);
+        cyc.push(await page.evaluate(() => __sp.selection.length + ':' + __sp.selection.map(e => e.uid).join(',')));
+      }
+      const n = +cyc[0].split(':')[0];
+      ok('щелчок по группе ростера: все → по одному → снова все', r.ok && n > 1 && cyc[1].startsWith('1:') && cyc[2].startsWith('1:') &&
+        cyc[1] !== cyc[2] && (n > 2 || cyc[3] === cyc[0]), cyc.join(' | '));
+    }
+    // C135: пустое место справа от ростера и название боя в шапке — это поле, а не панель
+    const holes = await page.evaluate(() => {
+      const c = document.getElementById('view');
+      const ro = document.querySelector('.roster').getBoundingClientRect();
+      const t = document.querySelector('.topbar .title').getBoundingClientRect();
+      return [[ro.right + 40, ro.top + ro.height / 2], [t.left + t.width / 2, t.top + t.height / 2]]
+        .map(([x, y]) => { const h = document.elementFromPoint(x, y); return h === c ? 'поле' : h.tagName + '.' + h.className; });
+    });
+    ok('пустая полоса рядом с ростером и название боя не глотают щелчок (C135)', holes.every(h => h === 'поле'), holes.join(' | '));
+    /* C43: свои и чужие — разные цвета по СТОРОНЕ, а не по клану:
+       подписи, полоски силы в шапке. Камера — так, чтобы в кадре были оба флота */
+    await page.evaluate(() => {
+      const all = __sp.ships.filter(s => !s.dead);
+      const c = all.reduce((a, s) => ({ x: a.x + s.pos.x / all.length, z: a.z + s.pos.z / all.length }), { x: 0, z: 0 });
+      __sp.camTest(c.x, 0, c.z, 2200);
+    });
+    await waitFrames(page, 3);
+    const sideCol = await page.evaluate(() => {
+      const rgb = c => (c.match(/\d+/g) || []).map(Number);
+      const m = [...document.querySelectorAll('.hud-space .marker')].filter(x => x.style.display !== 'none');
+      const mine = m.find(x => x.classList.contains('mine')), foe = m.find(x => x.classList.contains('foe'));
+      const P = __sp.playerSide;
+      const bar = sd => rgb(getComputedStyle(document.querySelector(`[data-role="${sd === 'attacker' ? 'atk' : 'def'}-bar"]`)).backgroundColor);
+      return { mine: mine ? rgb(getComputedStyle(mine).color) : null, foe: foe ? rgb(getComputedStyle(foe).color) : null,
+        myBar: bar(P), foeBar: bar(P === 'attacker' ? 'defender' : 'attacker') };
+    });
+    const greenish = c => c && c[1] > c[0] + 40, reddish = c => c && c[0] > c[1] + 60;
+    ok('свои — зелёные, чужие — красные: подписи и полоски силы (C43)',
+      greenish(sideCol.mine) && reddish(sideCol.foe) && greenish(sideCol.myBar) && reddish(sideCol.foeBar), JSON.stringify(sideCol));
+    // Подсказка команды: сразу при наведении, с буквой клавиши, в пределах экрана
+    await tap(page, '[data-q="all"]');
+    const stopAt = await page.evaluate(() => { const r = document.querySelector('button.act[data-act="stop"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    await page.mouse.move(stopAt.x, stopAt.y);
+    await page.waitForTimeout(300);
+    const tip = await page.evaluate(() => {
+      const t = document.querySelector('.act-tip'), r = t.getBoundingClientRect();
+      return { shown: !t.hidden, text: t.textContent, inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight };
+    });
+    ok('подсказка команды появляется при наведении, с клавишей и описанием, в экране', tip.shown && tip.inside && /Стоп\s*S/.test(tip.text) && tip.text.length > 12, JSON.stringify(tip));
+    await page.mouse.move(900, 300);
+    /* C136: «Дрифт» горит по выделению — включили у одного, выделили весь
+       флот: кнопка «часть», а не «все» */
+    const flag = await page.evaluate(() => [...document.querySelectorAll('.rcell')].findIndex(c => !/×/.test(c.querySelector('b').textContent)));
+    if (flag >= 0) {
+      await tap(page, '.rcell', flag);
+      await page.keyboard.press('KeyD');
+      const one = await page.evaluate(() => document.querySelector('button.act[data-act="drift"]').className);
+      await tap(page, '[data-q="all"]');
+      const all = await page.evaluate(() => document.querySelector('button.act[data-act="drift"]').className);
+      await tap(page, '.rcell', flag);
+      await page.keyboard.press('KeyD');
+      const off = await page.evaluate(() => __sp.ships.filter(s => s.drift).length);
+      ok('«Дрифт» подсвечен по выделению: у одного — горит, у всего флота — «часть» (C136)',
+        /\bon\b/.test(one) && /\bpart\b/.test(all) && !/\bon\b/.test(all) && off === 0, `один: ${one}; весь флот: ${all}; дрейфуют после: ${off}`);
+    }
+    /* Купол РЭБ в покое — одно кольцо, плотная картинка — у выделенного
+       (часть C111); и на паузе тоже */
+    const ecmIdx = await page.evaluate(() => [...document.querySelectorAll('.rcell')].findIndex(c => /РЭБ/.test(c.textContent)));
+    if (ecmIdx >= 0) {
+      await page.keyboard.press('Escape');
+      await waitFrames(page, 2);
+      const rest = await page.evaluate(() => { const e = __sp.ships.find(s => !s.dead && s.ecm && s.side === __sp.playerSide); return e && e.dome.visible ? e.dome.children.filter(c => c.visible).length : -1; });
+      await tap(page, '.rcell', ecmIdx);
+      await waitFrames(page, 2);
+      const full = await page.evaluate(() => { const e = __sp.ships.find(s => !s.dead && s.ecm && s.side === __sp.playerSide); return e && e.dome.visible ? e.dome.children.filter(c => c.visible).length : -1; });
+      ok('купол РЭБ: в покое одно кольцо, у выделенного — весь купол (C111)', rest === 1 && full > 3, `видимых частей: в покое ${rest}, выделен ${full}`);
+    }
 
     // Сбой в кадре: одноразовое исключение внутри update боя
     await tap(page, '[data-speed="1"]');
