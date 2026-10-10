@@ -245,8 +245,12 @@ jobs:
         run: |
           set -euo pipefail
           # «новый» — такого выпуска, в том числе черновика, ещё нет (черновики видны
-          # только с contents: write — потому проверка здесь, а не в test-build)
-          if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | grep -qx "$TAG"; then
+          # только с contents: write — потому проверка здесь, а не в test-build).
+          # Не «gh | grep -q»: под pipefail он «не находит» и заводит второй черновик
+          # (godot/tools/release_exists.sh; отказ gh роняет шаг, а не создаёт выпуск)
+          state=$(godot/tools/release_exists.sh "$TAG")
+          echo "есть ли выпуск $TAG: $state"
+          if [ "$state" = yes ]; then
             echo "выпуск $TAG уже есть — нового не будет"; exit 0
           fi
           title=$(sed -n 2p godot/RELEASE)

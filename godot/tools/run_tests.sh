@@ -14,7 +14,8 @@
 # 6. вывод прогона — в файл, хвост — в stderr: при обрыве stdout теряется;
 # 7. процессы — только по PID (никакого pkill -f: он убивает чужие прогоны).
 # Плюс: главная сцена и в режиме --selftest, и С ОКНОМ (--quit-after); --overrides
-# с относительным путём из чужой папки; номер выпуска по каждому случаю двери.
+# с относительным путём из чужой папки; номер выпуска по каждому случаю двери;
+# «есть ли выпуск» на заглушке gh (с откатом на прежний «gh | grep -q»).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROJ="$ROOT/godot"
@@ -130,6 +131,44 @@ tag_case ""           workflow_dispatch branch claude/capella-godot "" capella-v
 tag_case ""           workflow_dispatch branch claude/capella-godot "0.3" capella-v0.2
 rm -f "$relf"
 say "   случаев: 6"
+
+# ── есть ли выпуск (tools/release_exists.sh): заглушка gh вместо GitHub ──
+# Номер стоит ПЕРВЫМ, за ним ещё строки (настоящий gh пишет строка за строкой). Хвост —
+# больше буфера канала (~750 КБ): прежний «gh | grep -q» обязан получить SIGPIPE
+# при любой скорости машины, а не «если успеет» — паузой это было бы гонкой.
+say "── есть ли выпуск"
+ghstub="$(mktemp -d)"
+cat >"$ghstub/gh" <<'EOF'
+#!/usr/bin/env bash
+case "${GH_STUB:-}" in
+  first) echo capella-v0.1; seq -f 'capella-v9.%g' 1 50000 ;;
+  empty) ;;
+  fail) echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$ghstub/gh"
+exists_case() {  # exists_case <скрипт> <режим заглушки> <номер> → yes / no / ERR (отказ)
+  local out
+  out="$(PATH="$ghstub:$PATH" GH_STUB="$2" GITHUB_REPOSITORY=afalin8-ui/cineflow bash "$1" "$3" 2>/dev/null)" || out=ERR
+  printf '%s' "$out"
+}
+exists_ok() {  # все случаи верны → 0; первый неверный печатается
+  local s="$1" c got want
+  for c in "first capella-v0.1 yes" "first capella-v9.50000 yes" "first capella-v0.2 no" \
+           "empty capella-v0.1 no" "fail capella-v0.1 ERR"; do
+    set -- $c
+    got="$(exists_case "$s" "$1" "$2")"; want="$3"
+    if [[ "$got" != "$want" ]]; then echo "заглушка $1, номер $2: получили «$got», ждали «$want»"; return 1; fi
+  done
+}
+if ! why="$(exists_ok "$PROJ/tools/release_exists.sh")"; then fail "release_exists.sh: $why"; fi
+# откат: прежняя конструкция из задания release обязана краснеть
+cat >"$ghstub/old.sh" <<'EOF'
+set -euo pipefail
+if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | grep -qx "$1"; then echo yes; else echo no; fi
+EOF
+if why="$(exists_ok "$ghstub/old.sh")"; then fail "откат: «gh | grep -q» прошёл проверку — проверка ничего не ловит"; else say "   откат «gh | grep -q» краснеет: $why"; fi
+rm -rf "$ghstub"
 
 # ── данные: выгрузка не устарела, доктрина цела и её проверка краснеет на порче ──
 say "── данные"

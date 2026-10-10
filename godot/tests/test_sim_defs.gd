@@ -323,8 +323,19 @@ const BASE := {
 const PD_MOD := {"troyden": [1.30, 1.35], "plektor": [0.9, 1.0], "reez": [0.9, 1.0], "devian": [0.85, 0.85]}
 
 
+## Формула ПВО клана (часть 01, 2.4; data.js:268): урон — до десятых, дальность — до целого.
+static func pd_dmg(base: float, m: float) -> float:
+	return snappedf(base * m, 0.1)
+
+
+static func pd_rng(base: float, m: float) -> float:
+	return roundf(base * m)
+
+
 ## Применить формулу клана к базе и сверить с загруженным (= выгрузкой, сверено выше).
-func clan_formula(d: Defs, dmg_f: Callable, cd_f: Callable) -> Array:
+## Все четыре половины формулы — параметрами: у каждой свой откат (иначе сверку ПВО
+## можно выключить, и счёт «84» этого не заметит — он считает сверки, а не беды).
+func clan_formula(d: Defs, dmg_f: Callable, cd_f: Callable, pdd_f: Callable, pdr_f: Callable) -> Array:
 	var n := 0
 	var bad: PackedStringArray = []
 	for f in d.faction_ids:
@@ -340,12 +351,12 @@ func clan_formula(d: Defs, dmg_f: Callable, cd_f: Callable) -> Array:
 				var gcd: float = cd_f.call(g[1], fd.cd_mod)
 				n += 2
 				if gdmg != w.dmg:
-					bad.append("%s %s урон %s ≠ %s" % [f, id, gdmg, w.dmg])
+					bad.append("%s %s орудие урон %s ≠ %s" % [f, id, gdmg, w.dmg])
 				if absf(gcd - w.cd) > EPS:
-					bad.append("%s %s перезарядка %s ≠ %s" % [f, id, gcd, w.cd])
+					bad.append("%s %s орудие перезарядка %s ≠ %s" % [f, id, gcd, w.cd])
 			var p: Array = b["pd"]
-			var pdmg := snappedf(num(p[0]) * num(pm[0]), 0.1)
-			var prng := roundf(num(p[1]) * num(pm[1]))
+			var pdmg: float = pdd_f.call(p[0], pm[0])
+			var prng: float = pdr_f.call(p[1], pm[1])
 			n += 2
 			if absf(pdmg - s.pd.dmg) > EPS:
 				bad.append("%s %s ПВО урон %s ≠ %s" % [f, id, pdmg, s.pd.dmg])
@@ -358,17 +369,30 @@ func test_clan_formula_84() -> void:
 	if D == null or not D.ok:
 		ok(false, "данные не загрузились")
 		return
-	var r := clan_formula(D, Defs.clan_dmg, Defs.clan_cd)
+	var r := clan_formula(D, Defs.clan_dmg, Defs.clan_cd, pd_dmg, pd_rng)
 	var bad: PackedStringArray = r[1]
 	eq(r[0], 84, "чисел нынешних орудий и ПВО")
 	ok(bad.is_empty(), "формула клана: %d из %d сошлись; беды: %s" % [whole(r[0]) - bad.size(), whole(r[0]), "; ".join(bad.slice(0, 6))])
-	# откат: не та формула обязана краснеть
-	var floor_dmg := func(base: float, m: float) -> float: return floorf(base * m)
-	var raw_cd := func(base: float, _m: float) -> float: return base
-	var r2 := clan_formula(D, floor_dmg, Defs.clan_cd)
-	var r3 := clan_formula(D, Defs.clan_dmg, raw_cd)
-	ok(strs(r2[1]).size() > 0, "откат: floor вместо round не сходится")
-	ok(strs(r3[1]).size() > 0, "откат: перезарядка без cdMod не сходится")
+	# откат: не та формула обязана краснеть — у каждой из четырёх половин свой,
+	# и беда обязана быть ИМЕННО в этой половине (а не где-то ещё)
+	var raw := func(base: float, _m: float) -> float: return base
+	var floor_x := func(base: float, m: float) -> float: return floorf(base * m)
+	var round_x := func(base: float, m: float) -> float: return roundf(base * m)
+	var spoiled := [
+		["floor вместо round у урона орудия", "орудие урон", clan_formula(D, floor_x, Defs.clan_cd, pd_dmg, pd_rng)],
+		["перезарядка без cdMod", "орудие перезарядка", clan_formula(D, Defs.clan_dmg, raw, pd_dmg, pd_rng)],
+		["урон ПВО без множителя клана", "ПВО урон", clan_formula(D, Defs.clan_dmg, Defs.clan_cd, raw, pd_rng)],
+		["урон ПВО до целого, а не до десятых", "ПВО урон", clan_formula(D, Defs.clan_dmg, Defs.clan_cd, round_x, pd_rng)],
+		["дальность ПВО без множителя клана", "ПВО дальность", clan_formula(D, Defs.clan_dmg, Defs.clan_cd, pd_dmg, raw)],
+		["дальность ПВО floor вместо round", "ПВО дальность", clan_formula(D, Defs.clan_dmg, Defs.clan_cd, pd_dmg, floor_x)],
+	]
+	for sp: Array in spoiled:
+		var res: Array = sp[2]
+		var hits := 0
+		for line in strs(res[1]):
+			if line.contains(" %s " % sp[1]):
+				hits += 1
+		ok(hits > 0, "откат «%s» не сходится (бед «%s»: %d)" % [sp[0], sp[1], hits])
 
 
 # ───────────── батарея по кланам (09, 1.3) ─────────────
