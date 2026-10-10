@@ -17,27 +17,27 @@ jobs:
           set -e
           nproc; lscpu | grep 'Model name' || true
           curl -sSL -o g.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
-          unzip -q g.zip && mv Godot_v4.7.2-stable_linux.x86_64 godot && ./godot --version
+          unzip -q g.zip && mv Godot_v4.7.2-stable_linux.x86_64 $HOME/gd && $HOME/gd --version
           curl -sSL -o t.tpz https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
           mkdir -p ~/.local/share/godot/export_templates/4.7.2.stable
           unzip -q -j t.tpz 'templates/linux_release.x86_64' 'templates/windows_release_x86_64.exe' 'templates/version.txt' -d ~/.local/share/godot/export_templates/4.7.2.stable
           rm t.tpz
       - name: Импорт
-        run: timeout 300 ./godot --headless --path probe-c/proj --import || true
+        run: timeout 300 $HOME/gd --headless --path probe-c/proj --import || true
       - name: Сверка с JS (таблица 2.22)
-        run: timeout 300 ./godot --headless --path probe-c/proj --script res://tests/table222.gd
+        run: timeout 300 $HOME/gd --headless --path probe-c/proj --script res://tests/table222.gd
       - name: Бои «ИИ против ИИ» (4 боя, 4 процесса)
         run: |
           start=$(date +%s)
-          for k in 0 1 2 3; do (timeout 900 ./godot --headless --path probe-c/proj --script res://tests/bench.gd -- scen=mid_tp n=1 seed=$((k+1)) doctrine=1 > b$k.txt 2>&1) & done; wait
+          for k in 0 1 2 3; do (timeout 900 $HOME/gd --headless --path probe-c/proj --script res://tests/bench.gd -- scen=mid_tp n=1 seed=$((k+1)) doctrine=1 > b$k.txt 2>&1) & done; wait
           echo "стена: $(( $(date +%s) - start )) с"; grep -h -E '^\{|ИТОГО' b*.txt | cut -c1-260
       - name: Интерфейс (настоящие события ввода)
-        run: timeout 180 ./godot --headless --path probe-c/proj res://tests/ui_e2e.tscn
+        run: timeout 180 $HOME/gd --headless --path probe-c/proj res://tests/ui_e2e.tscn
       - name: Экспорт Linux и Windows
         run: |
           set -e
-          ./godot --headless --path probe-c/proj --export-release "Linux" ../out/export/capella.x86_64
-          ./godot --headless --path probe-c/proj --export-release "Windows" ../out/export/capella.exe
+          $HOME/gd --headless --path probe-c/proj --export-release "Linux" ../out/export/capella.x86_64
+          $HOME/gd --headless --path probe-c/proj --export-release "Windows" ../out/export/capella.exe
           cd probe-c/out/export && ls -la && zip -9 -q capella-linux.zip capella.x86_64 && zip -9 -q capella-windows.zip capella.exe && ls -la *.zip
       - uses: actions/upload-artifact@v4
         with:
