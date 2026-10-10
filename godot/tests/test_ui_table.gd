@@ -16,6 +16,7 @@ const Defs := preload("res://sim/defs.gd")
 const Showcase := preload("res://tools/showcase.gd")
 const ShipModels := preload("res://view/ship_models.gd")
 const MainScene := preload("res://main.tscn")
+const MainScript := preload("res://main.gd")
 
 const FACTION := &"plektor"
 
@@ -111,8 +112,10 @@ func test_table_is_the_worst_battle() -> void:
 
 
 func test_bench_line_matches_the_table() -> void:
+	MainScript.boot = &"table"             # с G1 по умолчанию — «Полигон»; «Стол» — F6 или F5
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(2)
 	var bench: Node = main.get("bench")
 	if ok(bench != null, "замер кадров заведён"):
@@ -122,14 +125,17 @@ func test_bench_line_matches_the_table() -> void:
 	await hooks.frames(2)
 
 
-## Главная сцена с испорченным обмером моделей: беда на экране, «Стола» и замера нет.
-func _main_with(models_file: String) -> Dictionary:
+## Главная сцена с испорченным обмером моделей: беда на экране, ни «Стола», ни
+## «Полигона», ни замера нет. boot — с чего начинает главная сцена.
+func _main_with(models_file: String, boot: StringName = &"table") -> Dictionary:
 	ShipModels.use_file(models_file)
+	MainScript.boot = boot
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(2)
 	var out := {
-		"view": main.get("view") != null,
+		"view": main.get("view") != null or main.get("polygon") != null,
 		"bench": main.get("bench") != null,
 		"text": str(main.get("error_text")),
 		"shown": main.find_child("Errors", false, false) != null,
@@ -166,6 +172,10 @@ func test_missing_models_are_loud() -> void:
 	var t2: String = r2["text"]
 	ok(not flag(r2["view"]) and not flag(r2["bench"]), "пропала одна .glb: «Стола» и замера нет")
 	ok(t2.contains("plektor.cruiser") and t2.contains("plektor_cruiser_пропал.glb"), "пропала одна .glb: беда называет корабль и файл — «%s»" % t2.replace("\n", " / "))
+	# то же у «Полигона» (с G1 он открывается по умолчанию): пустого места молча нет
+	var r2p := await _main_with(broken, &"")
+	var t2p: String = r2p["text"]
+	ok(not flag(r2p["view"]) and not flag(r2p["bench"]) and t2p.contains("plektor.cruiser"), "«Полигон» с пропавшей .glb не собирается: «%s»" % t2p.replace("\n", " / "))
 	# та же беда — у самого «Стола», ДО расстановки: пустого места молча нет
 	ShipModels.use_file(broken)
 	var defs := Defs.load_default({}) as Defs

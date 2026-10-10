@@ -20,6 +20,9 @@ var out_dir := ""
 var driver: Callable
 var title := ""
 var extra_line := ""
+## Итог — в буфер обмена (G0, п. 7: обратная связь от пользователя — текстом из буфера).
+## false — ТОЛЬКО откат проверки tests/test_render_polygon.gd.
+var to_clipboard := true
 
 var running := false
 var elapsed := 0.0
@@ -73,7 +76,7 @@ func _finish() -> void:
 	DisplayServer.window_set_vsync_mode(_vsync)
 	var text := summary()
 	var file := _write(text)
-	if DisplayServer.get_name() != "headless":
+	if to_clipboard and DisplayServer.get_name() != "headless":
 		DisplayServer.clipboard_set(text)
 	finished.emit(text, file)
 

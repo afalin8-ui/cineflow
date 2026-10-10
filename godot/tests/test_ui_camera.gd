@@ -15,6 +15,7 @@ extends "res://tests/case.gd"
 const Defs := preload("res://sim/defs.gd")
 const CameraRig := preload("res://view/camera_rig.gd")
 const MainScene := preload("res://main.tscn")
+const MainScript := preload("res://main.gd")
 
 var _defs: Defs
 
@@ -196,8 +197,10 @@ func test_edge_waits_for_mouse() -> void:
 
 func test_f5_starts_and_cancels_bench() -> void:
 	await hooks.set_window_size(Vector2i(1366, 768))
+	MainScript.boot = &"table"             # с G1 по умолчанию — «Полигон» (его F5 — tests/test_ui_polygon.gd)
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(3)
 	var bench: Node = main.get("bench")
 	var view: Node = main.get("view")

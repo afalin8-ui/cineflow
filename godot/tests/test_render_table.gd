@@ -26,6 +26,7 @@ const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
 const FpsCounter := preload("res://ui/fps_counter.gd")
 const MainScene := preload("res://main.tscn")
+const MainScript := preload("res://main.gd")
 
 const MAGENTA := Color(1, 0, 1)
 
@@ -439,8 +440,10 @@ static func _rect_of(c: Control) -> Rect2:
 func test_bench_progress_layout() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		await hooks.set_window_size(size)
+		MainScript.boot = &"table"         # подсказка «Стола» — на ней проверялась строка замера
 		var main := MainScene.instantiate()
 		tree.root.add_child(main)
+		MainScript.boot = &""
 		await hooks.frames(3)
 		var fps: FpsCounter = main.get("fps")
 		var report: BenchReport = main.get("report")

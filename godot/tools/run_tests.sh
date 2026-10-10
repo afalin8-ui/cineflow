@@ -16,7 +16,8 @@
 # 6. вывод прогона — в файл, хвост — в stderr: при обрыве stdout теряется;
 # 7. процессы — только по PID (никакого pkill -f: он убивает чужие прогоны).
 # Плюс: главная сцена и в режиме --selftest, и С ОКНОМ (--quit-after); пропавшая
-# модель — код 1 у замера и --selftest; --overrides с относительным путём из чужой папки; номер выпуска по каждому случаю двери;
+# модель — код 1 у замера и --selftest; --overrides с относительным путём из чужой папки;
+# повтор боя без вида и с видом на 60 и 144 кадрах (с откатами); номер выпуска по каждому случаю двери;
 # «есть ли выпуск» на заглушке gh (с откатом на прежний «gh | grep -q»); выпуск
 # черновиком на заглушке gh с памятью (с откатом «без --draft»).
 set -u
@@ -163,6 +164,50 @@ if [[ $code -ne 0 ]] || ! grep -q '^SELFTEST ok: .*правок 1,' "$LOGS/selft
   fail "--overrides с относительным путём (код $code)"; show_tail "$LOGS/selftest_rel.log"
 fi
 rm -rf "$rel"
+
+# ── повтор боя (G1; архитектура, 2.9): запись — зерно + журнал команд + отпечаток на
+# последнем шаге. Показательный бой «Полигона» БЕЗ вида (--make-replay) проигрывается
+# С ВИДОМ на 60 и 144 кадрах (--fixed-fps): отпечатки обязаны совпасть до бита —
+# вид модель не меняет, а частота кадров на бой не влияет. Откаты: подменённый
+# отпечаток и запись без журнала — «РАЗОШЛОСЬ», чужая сборка — отказ словами; всё — код 1.
+say "── повтор боя: без вида и с видом на 60 и 144 кадрах"
+rep="$(mktemp -d)"
+timeout 120 "$GODOT" --headless --path "$PROJ" -- --make-replay="$rep/rec.json" >"$LOGS/replay_make.log" 2>&1
+code=$?
+grep -m1 '^REPLAY' "$LOGS/replay_make.log"
+if [[ $code -ne 0 ]] || [[ ! -s "$rep/rec.json" ]] || grep -q 'SCRIPT ERROR' "$LOGS/replay_make.log"; then
+  fail "--make-replay (код $code)"; show_tail "$LOGS/replay_make.log"
+fi
+replay_run() {  # replay_run <fps> <файл записи> <журнал> → код выхода
+  local c=0
+  timeout 300 "$GODOT" --headless --fixed-fps "$1" --path "$PROJ" -- --replay="$2" --replay-check >"$3" 2>&1 || c=$?
+  return $c
+}
+for fps in 60 144; do
+  replay_run "$fps" "$rep/rec.json" "$LOGS/replay_$fps.log"; code=$?
+  if [[ $code -ne 0 ]] || ! grep -q '^REPLAY совпало' "$LOGS/replay_$fps.log" || grep -q 'SCRIPT ERROR' "$LOGS/replay_$fps.log"; then
+    fail "повтор с видом на $fps кадрах (код $code)"; show_tail "$LOGS/replay_$fps.log"
+  else
+    say "   $fps кадров: $(grep -m1 '^REPLAY' "$LOGS/replay_$fps.log")"
+  fi
+done
+python3 - "$rep/rec.json" "$rep" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+a = dict(d); a['fp'] = '0000000000000000'; json.dump(a, open(sys.argv[2] + '/fp.json', 'w'))
+b = dict(d); b['build'] = 'capella-v0.0-чужая'; json.dump(b, open(sys.argv[2] + '/build.json', 'w'))
+c = dict(d); c['cmds'] = []; json.dump(c, open(sys.argv[2] + '/nocmds.json', 'w'))
+PY
+for case in "fp|РАЗОШЛОСЬ|подменённый отпечаток" "nocmds|РАЗОШЛОСЬ|повтор без журнала команд" "build|другой сборкой|чужая сборка"; do
+  IFS='|' read -r f want what <<<"$case"
+  replay_run 60 "$rep/$f.json" "$LOGS/replay_$f.log"; code=$?
+  if [[ $code -ne 1 ]] || ! grep -q "$want" "$LOGS/replay_$f.log"; then
+    fail "откат «$what»: повтор не отказал (код $code)"; show_tail "$LOGS/replay_$f.log"
+  else
+    say "   откат «$what» краснеет: код 1, $(LC_ALL=C.UTF-8 grep -m1 -o "$want.\{0,60\}" "$LOGS/replay_$f.log")"
+  fi
+done
+rm -rf "$rep"
 
 # ── номер выпуска (tools/release_tag.sh): каждый случай двери выпуска ──
 say "── номер выпуска"

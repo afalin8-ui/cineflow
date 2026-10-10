@@ -51,6 +51,11 @@ func _ready() -> void:
 	add_child(hint)
 
 
+## Подсказка клавиш — своя у каждого экрана («Полигон», «Стол»).
+func set_hint_text(text: String) -> void:
+	hint.text = text
+
+
 func toggle() -> void:
 	shown = not shown
 	panel.visible = shown

@@ -199,6 +199,23 @@ jobs:
             echo "::error::пропавшая модель: --selftest не отказал (код $code)"; exit 1
           fi
 
+      # повтор боя в ВЫПУСКНОЙ сборке (G1): показательный бой «Полигона» без вида →
+      # запись → проигрыш с видом на 60 кадрах; отпечатки обязаны совпасть до бита
+      - name: Linux-сборка, повтор боя (--make-replay → --replay-check)
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/rep"
+          code=0
+          timeout 120 godot/build/linux/capella.x86_64 --headless -- --make-replay="$RUNNER_TEMP/rep/rec.json" > "$RUNNER_TEMP/rep/make.log" 2>&1 || code=$?
+          cat "$RUNNER_TEMP/rep/make.log"
+          if [ $code -ne 0 ] || [ ! -s "$RUNNER_TEMP/rep/rec.json" ]; then echo "::error::--make-replay: код $code"; exit 1; fi
+          code=0
+          timeout 300 godot/build/linux/capella.x86_64 --headless --fixed-fps 60 -- --replay="$RUNNER_TEMP/rep/rec.json" --replay-check > "$RUNNER_TEMP/rep/play.log" 2>&1 || code=$?
+          cat "$RUNNER_TEMP/rep/play.log"
+          if [ $code -ne 0 ] || ! grep -q '^REPLAY совпало' "$RUNNER_TEMP/rep/play.log" || grep -q 'SCRIPT ERROR' "$RUNNER_TEMP/rep/play.log"; then
+            echo "::error::повтор боя в выгруженной сборке: код $code"; exit 1
+          fi
+
       - name: Архивы
         run: |
           set -euo pipefail
@@ -256,11 +273,17 @@ jobs:
           Write-Host $out
           Write-Host "код выхода: $code"
           if ($code -ne 0 -or $out -notmatch 'SELFTEST ok' -or $out -match 'SCRIPT ERROR') { Write-Host "::error::выгруженная Windows-сборка не прошла --selftest"; exit 1 }
-          # отпечаток данных Linux и Windows обязан совпасть (пока данные; бой — с G1)
+          # отпечаток данных и БОЯ (показательный бой «Полигона», 40 с, все приказы) Linux
+          # и Windows — сверка повторяемости между системами (архитектура, 2.11); пока
+          # предупреждением: разошлось — это находка, а не поломка сборки
           $fpW = [regex]::Match($out, 'SELFTEST ok: данные (\w+)').Groups[1].Value
           $fpL = [regex]::Match($env:LINUX_SELFTEST, 'данные (\w+)').Groups[1].Value
           Write-Host "отпечаток данных: Linux $fpL, Windows $fpW"
           if ($fpL -ne $fpW) { Write-Host "::warning::отпечаток данных Linux и Windows разный" }
+          $bW = [regex]::Match($out, 'бой (\w+)').Groups[1].Value
+          $bL = [regex]::Match($env:LINUX_SELFTEST, 'бой (\w+)').Groups[1].Value
+          Write-Host "отпечаток боя: Linux $bL, Windows $bW"
+          if ($bL -eq '' -or $bL -ne $bW) { Write-Host "::warning::отпечаток боя Linux и Windows разный: $bL / $bW" } else { Write-Host "бой Linux и Windows совпал до бита" }
           exit 0
       # путь, который увидит игрок: вид и счётчик (--selftest выходит раньше них)
       - name: Запуск выгруженной Windows-сборки с окном (--quit-after 60)
