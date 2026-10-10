@@ -1,0 +1,2380 @@
+{
+ "_meta": {
+  "what": "Модели кораблей «Капеллы» для Godot: файлы .glb, обмер и узлы. Выгрузка, руками не править.",
+  "generated_by": "godot/tools/export_ships.mjs",
+  "spec": "godot/spec/08-visuals.md, приложение П.3; godot/spec/plan.md, G0 п. 5",
+  "commit": "be42966",
+  "sources": {
+   "game/js/models.js": "e986dc3c328d6cba",
+   "game/js/data.js": "17d5abcf2092ff0e",
+   "game/textures/hull_diff.jpg": "cb2e5b8414c949c7",
+   "game/textures/hull_nor.jpg": "1c86446f0f89be36"
+  },
+  "how": "len = max(x, z) рамки всей геометрии (без эффектов) — то же правило, что visualLength игры; width — по x, height — по y, len_z — по z (нос к −z). pos узла — в координатах корабля; у точки с parent — тоже в координатах корабля, в .glb она лежит внутри узла-родителя. Узлы с surfaces > 0 — с геометрией (один меш, поверхность на материал), остальные — точки.",
+  "skin": {
+   "albedo": "res://view/ships/tex/hull_diff.jpg",
+   "normal": "res://view/ships/tex/hull_nor.jpg",
+   "uv_scale": 3,
+   "normal_scale": 0.8,
+   "materials": "имя начинается с skin_"
+  }
+ },
+ "ships": {
+  "troyden": {
+   "corvette": {
+    "file": "res://view/ships/troyden_corvette.glb",
+    "len": 41.993,
+    "len_z": 41.993,
+    "width": 27.225,
+    "height": 8.827,
+    "aabb": [
+     [
+      -13.613,
+      -4.207,
+      -25.163
+     ],
+     [
+      13.613,
+      4.62,
+      16.83
+     ]
+    ],
+    "tris": 2084,
+    "surfaces": 9,
+    "bytes": 219272,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_7a4a44",
+     "glow_ffe8b0_effcc70_i220",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150",
+     "skin_3f444c",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 7,
+      "tris": 1924
+     },
+     "engines": {
+      "pos": [
+       0,
+       -0.495,
+       16.479
+      ],
+      "surfaces": 2,
+      "tris": 160
+     },
+     "engine_0": {
+      "pos": [
+       -5.309,
+       -0.495,
+       16.479
+      ],
+      "parent": "engines",
+      "size": 7.012
+     },
+     "engine_1": {
+      "pos": [
+       5.309,
+       -0.495,
+       16.479
+      ],
+      "parent": "engines",
+      "size": 7.012
+     },
+     "pd_0": {
+      "pos": [
+       -7.425,
+       1.32,
+       0
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       7.425,
+       1.32,
+       0
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       0,
+       -1.98,
+       5.61
+      ],
+      "parent": null
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       2.475,
+       -15.428
+      ],
+      "parent": null
+     },
+     "bay": {
+      "pos": [
+       0,
+       -3.3,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "frigate": {
+    "file": "res://view/ships/troyden_frigate.glb",
+    "len": 54.59,
+    "len_z": 54.59,
+    "width": 35.393,
+    "height": 11.476,
+    "aabb": [
+     [
+      -17.696,
+      -5.47,
+      -32.711
+     ],
+     [
+      17.696,
+      6.006,
+      21.879
+     ]
+    ],
+    "tris": 2084,
+    "surfaces": 9,
+    "bytes": 219260,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_7a4a44",
+     "glow_ffe8b0_effcc70_i220",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150",
+     "skin_3f444c",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 7,
+      "tris": 1924
+     },
+     "engines": {
+      "pos": [
+       0,
+       -0.643,
+       21.423
+      ],
+      "surfaces": 2,
+      "tris": 160
+     },
+     "engine_0": {
+      "pos": [
+       -6.902,
+       -0.643,
+       21.423
+      ],
+      "parent": "engines",
+      "size": 9.116
+     },
+     "engine_1": {
+      "pos": [
+       6.902,
+       -0.643,
+       21.423
+      ],
+      "parent": "engines",
+      "size": 9.116
+     },
+     "pd_0": {
+      "pos": [
+       -9.652,
+       1.716,
+       0
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       9.652,
+       1.716,
+       0
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       0,
+       -2.574,
+       7.293
+      ],
+      "parent": null
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       3.217,
+       -20.056
+      ],
+      "parent": null
+     },
+     "bay": {
+      "pos": [
+       0,
+       -4.29,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "ecm": {
+    "file": "res://view/ships/troyden_ecm.glb",
+    "len": 55.361,
+    "len_z": 55.361,
+    "width": 37.662,
+    "height": 35.772,
+    "aabb": [
+     [
+      -18.831,
+      -10.296,
+      -31.39
+     ],
+     [
+      18.831,
+      25.476,
+      23.971
+     ]
+    ],
+    "tris": 2848,
+    "surfaces": 13,
+    "bytes": 298964,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_7a4a44",
+     "skin_3f444c",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 2488
+     },
+     "engines": {
+      "pos": [
+       0,
+       0.352,
+       22.669
+      ],
+      "surfaces": 2,
+      "tris": 240
+     },
+     "emitter": {
+      "pos": [
+       0,
+       -9.9,
+       1.32
+      ],
+      "surfaces": 3,
+      "tris": 120
+     },
+     "engine_0": {
+      "pos": [
+       -1.584,
+       -0.66,
+       23.443
+      ],
+      "parent": "engines",
+      "size": 10.56
+     },
+     "engine_1": {
+      "pos": [
+       1.584,
+       -0.66,
+       23.443
+      ],
+      "parent": "engines",
+      "size": 10.56
+     },
+     "engine_2": {
+      "pos": [
+       0,
+       2.376,
+       21.12
+      ],
+      "parent": "engines",
+      "size": 8.448
+     },
+     "pd_0": {
+      "pos": [
+       -9.504,
+       2.64,
+       6.732
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       9.504,
+       2.64,
+       6.732
+      ],
+      "parent": null
+     },
+     "bay": {
+      "pos": [
+       0,
+       -5.28,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "cruiser": {
+    "file": "res://view/ships/troyden_cruiser.glb",
+    "len": 112.86,
+    "len_z": 112.86,
+    "width": 74.745,
+    "height": 59.598,
+    "aabb": [
+     [
+      -37.373,
+      -16.038,
+      -69.3
+     ],
+     [
+      37.373,
+      43.56,
+      43.56
+     ]
+    ],
+    "tris": 5848,
+    "surfaces": 20,
+    "bytes": 610332,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_7a4a44",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_3f444c",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5312
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       14.256,
+       -21.384
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "engines": {
+      "pos": [
+       0,
+       0.528,
+       41.118
+      ],
+      "surfaces": 2,
+      "tris": 240
+     },
+     "pd_0": {
+      "pos": [
+       -13.781,
+       5.544,
+       -24.948
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_1": {
+      "pos": [
+       13.781,
+       5.544,
+       -24.948
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_2": {
+      "pos": [
+       -13.781,
+       5.544,
+       24.948
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "aux_0": {
+      "pos": [
+       -10.93,
+       8.118,
+       0
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       10.93,
+       8.118,
+       0
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "engine_0": {
+      "pos": [
+       -4.752,
+       -0.99,
+       42.57
+      ],
+      "parent": "engines",
+      "size": 19.8
+     },
+     "engine_1": {
+      "pos": [
+       4.752,
+       -0.99,
+       42.57
+      ],
+      "parent": "engines",
+      "size": 19.8
+     },
+     "engine_2": {
+      "pos": [
+       0,
+       3.564,
+       38.214
+      ],
+      "parent": "engines",
+      "size": 15.84
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       17.424,
+       -53.064
+      ],
+      "parent": "turret_0"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -7.92,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "carrier": {
+    "file": "res://view/ships/troyden_carrier.glb",
+    "len": 95.783,
+    "len_z": 94.396,
+    "width": 95.783,
+    "height": 66.33,
+    "aabb": [
+     [
+      -47.891,
+      -11.88,
+      -43.312
+     ],
+     [
+      47.891,
+      54.45,
+      51.084
+     ]
+    ],
+    "tris": 5480,
+    "surfaces": 11,
+    "bytes": 566960,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_7a4a44",
+     "skin_3f444c",
+     "glow_ffe8b0_effcc70_i220",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5308
+     },
+     "engines": {
+      "pos": [
+       0,
+       -1.485,
+       49.846
+      ],
+      "surfaces": 2,
+      "tris": 160
+     },
+     "bay": {
+      "pos": [
+       0,
+       1.98,
+       -43.56
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "engine_0": {
+      "pos": [
+       -17.375,
+       -1.485,
+       49.846
+      ],
+      "parent": "engines",
+      "size": 24.75
+     },
+     "engine_1": {
+      "pos": [
+       17.375,
+       -1.485,
+       49.846
+      ],
+      "parent": "engines",
+      "size": 24.75
+     },
+     "pd_0": {
+      "pos": [
+       -25.74,
+       8.415,
+       -19.008
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       25.74,
+       8.415,
+       -19.008
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       -25.74,
+       8.415,
+       19.008
+      ],
+      "parent": null
+     },
+     "pd_3": {
+      "pos": [
+       25.74,
+       8.415,
+       19.008
+      ],
+      "parent": null
+     },
+     "pd_4": {
+      "pos": [
+       0,
+       -8.415,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "capital": {
+    "file": "res://view/ships/troyden_capital.glb",
+    "len": 206.91,
+    "len_z": 206.91,
+    "width": 137.033,
+    "height": 109.263,
+    "aabb": [
+     [
+      -68.516,
+      -29.403,
+      -127.05
+     ],
+     [
+      68.516,
+      79.86,
+      79.86
+     ]
+    ],
+    "tris": 6248,
+    "surfaces": 30,
+    "bytes": 658280,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_7a4a44",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_3f444c",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5336
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       26.136,
+       -39.204
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "turret_1": {
+      "pos": [
+       0,
+       26.136,
+       -13.068
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "engines": {
+      "pos": [
+       0,
+       1.089,
+       73.144
+      ],
+      "surfaces": 2,
+      "tris": 320
+     },
+     "pd_0": {
+      "pos": [
+       -31.581,
+       10.164,
+       -45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_1": {
+      "pos": [
+       31.581,
+       10.164,
+       -45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_2": {
+      "pos": [
+       -31.581,
+       10.164,
+       0
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_3": {
+      "pos": [
+       31.581,
+       10.164,
+       0
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_4": {
+      "pos": [
+       -31.581,
+       10.164,
+       45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_5": {
+      "pos": [
+       31.581,
+       10.164,
+       45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "aux_0": {
+      "pos": [
+       -25.047,
+       14.883,
+       -22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       25.047,
+       14.883,
+       -22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_2": {
+      "pos": [
+       -25.047,
+       14.883,
+       22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_3": {
+      "pos": [
+       25.047,
+       14.883,
+       22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "engine_0": {
+      "pos": [
+       -40.837,
+       -3.63,
+       78.045
+      ],
+      "parent": "engines",
+      "size": 36.3
+     },
+     "engine_1": {
+      "pos": [
+       -22.869,
+       5.808,
+       68.244
+      ],
+      "parent": "engines",
+      "size": 29.04
+     },
+     "engine_2": {
+      "pos": [
+       40.837,
+       -3.63,
+       78.045
+      ],
+      "parent": "engines",
+      "size": 36.3
+     },
+     "engine_3": {
+      "pos": [
+       22.869,
+       5.808,
+       68.244
+      ],
+      "parent": "engines",
+      "size": 29.04
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       31.944,
+       -97.284
+      ],
+      "parent": "turret_0"
+     },
+     "muzzle_1": {
+      "pos": [
+       0,
+       31.944,
+       -71.148
+      ],
+      "parent": "turret_1"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -14.52,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "station": {
+    "file": "res://view/ships/troyden_station.glb",
+    "len": 121.836,
+    "len_z": 121.836,
+    "width": 121.836,
+    "height": 79.708,
+    "aabb": [
+     [
+      -60.918,
+      -34.32,
+      -60.918
+     ],
+     [
+      60.918,
+      45.388,
+      60.918
+     ]
+    ],
+    "tris": 6004,
+    "surfaces": 16,
+    "bytes": 623724,
+    "materials": [
+     "skin_a9b2bd",
+     "skin_3f444c",
+     "glow_5ac8e0_e5ac8e0_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_5ac8e0_e5ac8e0_i150"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 6,
+      "tris": 5616
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       37.666,
+       0
+      ],
+      "surfaces": 2,
+      "tris": 132
+     },
+     "aux_0": {
+      "pos": [
+       47.561,
+       11.583,
+       19.701
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       -19.701,
+       11.583,
+       47.561
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_2": {
+      "pos": [
+       -47.561,
+       11.583,
+       -19.701
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_3": {
+      "pos": [
+       19.701,
+       11.583,
+       -47.561
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "pd_0": {
+      "pos": [
+       51.48,
+       0,
+       0
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       36.402,
+       0,
+       36.402
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       0,
+       0,
+       51.48
+      ],
+      "parent": null
+     },
+     "pd_3": {
+      "pos": [
+       -36.402,
+       0,
+       36.402
+      ],
+      "parent": null
+     },
+     "pd_4": {
+      "pos": [
+       -51.48,
+       0,
+       0
+      ],
+      "parent": null
+     },
+     "pd_5": {
+      "pos": [
+       -36.402,
+       0,
+       -36.402
+      ],
+      "parent": null
+     },
+     "pd_6": {
+      "pos": [
+       0,
+       0,
+       -51.48
+      ],
+      "parent": null
+     },
+     "pd_7": {
+      "pos": [
+       36.402,
+       0,
+       -36.402
+      ],
+      "parent": null
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       41.785,
+       -41.184
+      ],
+      "parent": "turret_0"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -30.03,
+       0
+      ],
+      "parent": null
+     }
+    }
+   }
+  },
+  "plektor": {
+   "corvette": {
+    "file": "res://view/ships/plektor_corvette.glb",
+    "len": 41.993,
+    "len_z": 41.993,
+    "width": 27.225,
+    "height": 8.827,
+    "aabb": [
+     [
+      -13.613,
+      -4.207,
+      -25.163
+     ],
+     [
+      13.613,
+      4.62,
+      16.83
+     ]
+    ],
+    "tris": 2084,
+    "surfaces": 9,
+    "bytes": 219268,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "glow_ffe8b0_effcc70_i220",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "skin_3f444c",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 7,
+      "tris": 1924
+     },
+     "engines": {
+      "pos": [
+       0,
+       -0.495,
+       16.479
+      ],
+      "surfaces": 2,
+      "tris": 160
+     },
+     "engine_0": {
+      "pos": [
+       -5.309,
+       -0.495,
+       16.479
+      ],
+      "parent": "engines",
+      "size": 7.012
+     },
+     "engine_1": {
+      "pos": [
+       5.309,
+       -0.495,
+       16.479
+      ],
+      "parent": "engines",
+      "size": 7.012
+     },
+     "pd_0": {
+      "pos": [
+       -7.425,
+       1.32,
+       0
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       7.425,
+       1.32,
+       0
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       0,
+       -1.98,
+       5.61
+      ],
+      "parent": null
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       2.475,
+       -15.428
+      ],
+      "parent": null
+     },
+     "bay": {
+      "pos": [
+       0,
+       -3.3,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "frigate": {
+    "file": "res://view/ships/plektor_frigate.glb",
+    "len": 54.59,
+    "len_z": 54.59,
+    "width": 35.393,
+    "height": 11.476,
+    "aabb": [
+     [
+      -17.696,
+      -5.47,
+      -32.711
+     ],
+     [
+      17.696,
+      6.006,
+      21.879
+     ]
+    ],
+    "tris": 2084,
+    "surfaces": 9,
+    "bytes": 219256,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "glow_ffe8b0_effcc70_i220",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "skin_3f444c",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 7,
+      "tris": 1924
+     },
+     "engines": {
+      "pos": [
+       0,
+       -0.643,
+       21.423
+      ],
+      "surfaces": 2,
+      "tris": 160
+     },
+     "engine_0": {
+      "pos": [
+       -6.902,
+       -0.643,
+       21.423
+      ],
+      "parent": "engines",
+      "size": 9.116
+     },
+     "engine_1": {
+      "pos": [
+       6.902,
+       -0.643,
+       21.423
+      ],
+      "parent": "engines",
+      "size": 9.116
+     },
+     "pd_0": {
+      "pos": [
+       -9.652,
+       1.716,
+       0
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       9.652,
+       1.716,
+       0
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       0,
+       -2.574,
+       7.293
+      ],
+      "parent": null
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       3.217,
+       -20.056
+      ],
+      "parent": null
+     },
+     "bay": {
+      "pos": [
+       0,
+       -4.29,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "ecm": {
+    "file": "res://view/ships/plektor_ecm.glb",
+    "len": 55.361,
+    "len_z": 55.361,
+    "width": 37.662,
+    "height": 35.772,
+    "aabb": [
+     [
+      -18.831,
+      -10.296,
+      -31.39
+     ],
+     [
+      18.831,
+      25.476,
+      23.971
+     ]
+    ],
+    "tris": 2848,
+    "surfaces": 13,
+    "bytes": 298960,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "skin_3f444c",
+     "glow_e0b34e_ee0b34e_i110",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 2488
+     },
+     "engines": {
+      "pos": [
+       0,
+       0.352,
+       22.669
+      ],
+      "surfaces": 2,
+      "tris": 240
+     },
+     "emitter": {
+      "pos": [
+       0,
+       -9.9,
+       1.32
+      ],
+      "surfaces": 3,
+      "tris": 120
+     },
+     "engine_0": {
+      "pos": [
+       -1.584,
+       -0.66,
+       23.443
+      ],
+      "parent": "engines",
+      "size": 10.56
+     },
+     "engine_1": {
+      "pos": [
+       1.584,
+       -0.66,
+       23.443
+      ],
+      "parent": "engines",
+      "size": 10.56
+     },
+     "engine_2": {
+      "pos": [
+       0,
+       2.376,
+       21.12
+      ],
+      "parent": "engines",
+      "size": 8.448
+     },
+     "pd_0": {
+      "pos": [
+       -9.504,
+       2.64,
+       6.732
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       9.504,
+       2.64,
+       6.732
+      ],
+      "parent": null
+     },
+     "bay": {
+      "pos": [
+       0,
+       -5.28,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "cruiser": {
+    "file": "res://view/ships/plektor_cruiser.glb",
+    "len": 112.86,
+    "len_z": 112.86,
+    "width": 74.745,
+    "height": 59.598,
+    "aabb": [
+     [
+      -37.373,
+      -16.038,
+      -69.3
+     ],
+     [
+      37.373,
+      43.56,
+      43.56
+     ]
+    ],
+    "tris": 5848,
+    "surfaces": 20,
+    "bytes": 610328,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_3f444c",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5312
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       14.256,
+       -21.384
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "engines": {
+      "pos": [
+       0,
+       0.528,
+       41.118
+      ],
+      "surfaces": 2,
+      "tris": 240
+     },
+     "pd_0": {
+      "pos": [
+       -13.781,
+       5.544,
+       -24.948
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_1": {
+      "pos": [
+       13.781,
+       5.544,
+       -24.948
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_2": {
+      "pos": [
+       -13.781,
+       5.544,
+       24.948
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "aux_0": {
+      "pos": [
+       -10.93,
+       8.118,
+       0
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       10.93,
+       8.118,
+       0
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "engine_0": {
+      "pos": [
+       -4.752,
+       -0.99,
+       42.57
+      ],
+      "parent": "engines",
+      "size": 19.8
+     },
+     "engine_1": {
+      "pos": [
+       4.752,
+       -0.99,
+       42.57
+      ],
+      "parent": "engines",
+      "size": 19.8
+     },
+     "engine_2": {
+      "pos": [
+       0,
+       3.564,
+       38.214
+      ],
+      "parent": "engines",
+      "size": 15.84
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       17.424,
+       -53.064
+      ],
+      "parent": "turret_0"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -7.92,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "carrier": {
+    "file": "res://view/ships/plektor_carrier.glb",
+    "len": 95.783,
+    "len_z": 94.396,
+    "width": 95.783,
+    "height": 66.33,
+    "aabb": [
+     [
+      -47.891,
+      -11.88,
+      -43.312
+     ],
+     [
+      47.891,
+      54.45,
+      51.084
+     ]
+    ],
+    "tris": 5480,
+    "surfaces": 11,
+    "bytes": 566960,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "skin_3f444c",
+     "glow_ffe8b0_effcc70_i220",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5308
+     },
+     "engines": {
+      "pos": [
+       0,
+       -1.485,
+       49.846
+      ],
+      "surfaces": 2,
+      "tris": 160
+     },
+     "bay": {
+      "pos": [
+       0,
+       1.98,
+       -43.56
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "engine_0": {
+      "pos": [
+       -17.375,
+       -1.485,
+       49.846
+      ],
+      "parent": "engines",
+      "size": 24.75
+     },
+     "engine_1": {
+      "pos": [
+       17.375,
+       -1.485,
+       49.846
+      ],
+      "parent": "engines",
+      "size": 24.75
+     },
+     "pd_0": {
+      "pos": [
+       -25.74,
+       8.415,
+       -19.008
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       25.74,
+       8.415,
+       -19.008
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       -25.74,
+       8.415,
+       19.008
+      ],
+      "parent": null
+     },
+     "pd_3": {
+      "pos": [
+       25.74,
+       8.415,
+       19.008
+      ],
+      "parent": null
+     },
+     "pd_4": {
+      "pos": [
+       0,
+       -8.415,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "capital": {
+    "file": "res://view/ships/plektor_capital.glb",
+    "len": 206.91,
+    "len_z": 206.91,
+    "width": 137.033,
+    "height": 109.263,
+    "aabb": [
+     [
+      -68.516,
+      -29.403,
+      -127.05
+     ],
+     [
+      68.516,
+      79.86,
+      79.86
+     ]
+    ],
+    "tris": 6248,
+    "surfaces": 30,
+    "bytes": 658276,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_3f444c",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5336
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       26.136,
+       -39.204
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "turret_1": {
+      "pos": [
+       0,
+       26.136,
+       -13.068
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "engines": {
+      "pos": [
+       0,
+       1.089,
+       73.144
+      ],
+      "surfaces": 2,
+      "tris": 320
+     },
+     "pd_0": {
+      "pos": [
+       -31.581,
+       10.164,
+       -45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_1": {
+      "pos": [
+       31.581,
+       10.164,
+       -45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_2": {
+      "pos": [
+       -31.581,
+       10.164,
+       0
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_3": {
+      "pos": [
+       31.581,
+       10.164,
+       0
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_4": {
+      "pos": [
+       -31.581,
+       10.164,
+       45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_5": {
+      "pos": [
+       31.581,
+       10.164,
+       45.738
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "aux_0": {
+      "pos": [
+       -25.047,
+       14.883,
+       -22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       25.047,
+       14.883,
+       -22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_2": {
+      "pos": [
+       -25.047,
+       14.883,
+       22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_3": {
+      "pos": [
+       25.047,
+       14.883,
+       22.216
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "engine_0": {
+      "pos": [
+       -40.837,
+       -3.63,
+       78.045
+      ],
+      "parent": "engines",
+      "size": 36.3
+     },
+     "engine_1": {
+      "pos": [
+       -22.869,
+       5.808,
+       68.244
+      ],
+      "parent": "engines",
+      "size": 29.04
+     },
+     "engine_2": {
+      "pos": [
+       40.837,
+       -3.63,
+       78.045
+      ],
+      "parent": "engines",
+      "size": 36.3
+     },
+     "engine_3": {
+      "pos": [
+       22.869,
+       5.808,
+       68.244
+      ],
+      "parent": "engines",
+      "size": 29.04
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       31.944,
+       -97.284
+      ],
+      "parent": "turret_0"
+     },
+     "muzzle_1": {
+      "pos": [
+       0,
+       31.944,
+       -71.148
+      ],
+      "parent": "turret_1"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -14.52,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "sinho": {
+    "file": "res://view/ships/plektor_sinho.glb",
+    "len": 169.29,
+    "len_z": 169.29,
+    "width": 112.118,
+    "height": 89.397,
+    "aabb": [
+     [
+      -56.059,
+      -24.057,
+      -103.95
+     ],
+     [
+      56.059,
+      65.34,
+      65.34
+     ]
+    ],
+    "tris": 6108,
+    "surfaces": 26,
+    "bytes": 641452,
+    "materials": [
+     "skin_8d8676",
+     "skin_6d5a44",
+     "glow_ffe8b0_effcc70_i220",
+     "skin_3f444c",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150",
+     "mat_30231a"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 8,
+      "tris": 5312
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       21.384,
+       -32.076
+      ],
+      "surfaces": 3,
+      "tris": 132
+     },
+     "engines": {
+      "pos": [
+       0,
+       0.792,
+       61.677
+      ],
+      "surfaces": 2,
+      "tris": 240
+     },
+     "pd_0": {
+      "pos": [
+       -20.671,
+       8.316,
+       -37.422
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_1": {
+      "pos": [
+       20.671,
+       8.316,
+       -37.422
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_2": {
+      "pos": [
+       -20.671,
+       8.316,
+       0
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_3": {
+      "pos": [
+       20.671,
+       8.316,
+       0
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "pd_4": {
+      "pos": [
+       -20.671,
+       8.316,
+       37.422
+      ],
+      "surfaces": 1,
+      "tris": 12
+     },
+     "aux_0": {
+      "pos": [
+       -16.394,
+       12.177,
+       -18.176
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       16.394,
+       12.177,
+       -18.176
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_2": {
+      "pos": [
+       -16.394,
+       12.177,
+       18.176
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "launcher_0": {
+      "pos": [
+       0,
+       24.473,
+       -8.554
+      ],
+      "surfaces": 2,
+      "tris": 172
+     },
+     "engine_0": {
+      "pos": [
+       -7.128,
+       -1.485,
+       63.855
+      ],
+      "parent": "engines",
+      "size": 29.7
+     },
+     "engine_1": {
+      "pos": [
+       7.128,
+       -1.485,
+       63.855
+      ],
+      "parent": "engines",
+      "size": 29.7
+     },
+     "engine_2": {
+      "pos": [
+       0,
+       5.346,
+       57.321
+      ],
+      "parent": "engines",
+      "size": 23.76
+     },
+     "missile_0": {
+      "pos": [
+       0,
+       28.631,
+       -8.554
+      ],
+      "parent": "launcher_0"
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       26.136,
+       -79.596
+      ],
+      "parent": "turret_0"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -11.88,
+       0
+      ],
+      "parent": null
+     }
+    }
+   },
+   "station": {
+    "file": "res://view/ships/plektor_station.glb",
+    "len": 121.836,
+    "len_z": 121.836,
+    "width": 121.836,
+    "height": 79.708,
+    "aabb": [
+     [
+      -60.918,
+      -34.32,
+      -60.918
+     ],
+     [
+      60.918,
+      45.388,
+      60.918
+     ]
+    ],
+    "tris": 6004,
+    "surfaces": 16,
+    "bytes": 623720,
+    "materials": [
+     "skin_8d8676",
+     "skin_3f444c",
+     "glow_e0b34e_ee0b34e_i110",
+     "skin_8e97a3",
+     "mat_2a2e35",
+     "glow_e0b34e_ee0b34e_i150"
+    ],
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 6,
+      "tris": 5616
+     },
+     "turret_0": {
+      "pos": [
+       0,
+       37.666,
+       0
+      ],
+      "surfaces": 2,
+      "tris": 132
+     },
+     "aux_0": {
+      "pos": [
+       47.561,
+       11.583,
+       19.701
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_1": {
+      "pos": [
+       -19.701,
+       11.583,
+       47.561
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_2": {
+      "pos": [
+       -47.561,
+       11.583,
+       -19.701
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "aux_3": {
+      "pos": [
+       19.701,
+       11.583,
+       -47.561
+      ],
+      "surfaces": 2,
+      "tris": 64
+     },
+     "pd_0": {
+      "pos": [
+       51.48,
+       0,
+       0
+      ],
+      "parent": null
+     },
+     "pd_1": {
+      "pos": [
+       36.402,
+       0,
+       36.402
+      ],
+      "parent": null
+     },
+     "pd_2": {
+      "pos": [
+       0,
+       0,
+       51.48
+      ],
+      "parent": null
+     },
+     "pd_3": {
+      "pos": [
+       -36.402,
+       0,
+       36.402
+      ],
+      "parent": null
+     },
+     "pd_4": {
+      "pos": [
+       -51.48,
+       0,
+       0
+      ],
+      "parent": null
+     },
+     "pd_5": {
+      "pos": [
+       -36.402,
+       0,
+       -36.402
+      ],
+      "parent": null
+     },
+     "pd_6": {
+      "pos": [
+       0,
+       0,
+       -51.48
+      ],
+      "parent": null
+     },
+     "pd_7": {
+      "pos": [
+       36.402,
+       0,
+       -36.402
+      ],
+      "parent": null
+     },
+     "muzzle_0": {
+      "pos": [
+       0,
+       41.785,
+       -41.184
+      ],
+      "parent": "turret_0"
+     },
+     "bay": {
+      "pos": [
+       0,
+       -30.03,
+       0
+      ],
+      "parent": null
+     }
+    }
+   }
+  }
+ },
+ "strike": {
+  "troyden": {
+   "interceptor": {
+    "file": "res://view/ships/troyden_strike_interceptor.glb",
+    "len": 13.52,
+    "width": 10.92,
+    "height": 3.9,
+    "tris": 52,
+    "surfaces": 3,
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 3,
+      "tris": 52
+     },
+     "engine_0": {
+      "pos": [
+       0,
+       0,
+       4.94
+      ],
+      "parent": null,
+      "size": 3.224
+     }
+    }
+   },
+   "fighter": {
+    "file": "res://view/ships/troyden_strike_fighter.glb",
+    "len": 11.7,
+    "width": 8.06,
+    "height": 4.004,
+    "tris": 64,
+    "surfaces": 3,
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 3,
+      "tris": 64
+     },
+     "engine_0": {
+      "pos": [
+       0,
+       0,
+       4.94
+      ],
+      "parent": null,
+      "size": 3.224
+     }
+    }
+   },
+   "bomber": {
+    "file": "res://view/ships/troyden_strike_bomber.glb",
+    "len": 11.7,
+    "width": 10.4,
+    "height": 6.084,
+    "tris": 60,
+    "surfaces": 3,
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 3,
+      "tris": 60
+     },
+     "engine_0": {
+      "pos": [
+       0,
+       0,
+       4.94
+      ],
+      "parent": null,
+      "size": 3.224
+     }
+    }
+   }
+  },
+  "plektor": {
+   "interceptor": {
+    "file": "res://view/ships/plektor_strike_interceptor.glb",
+    "len": 13.52,
+    "width": 10.92,
+    "height": 3.9,
+    "tris": 52,
+    "surfaces": 3,
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 3,
+      "tris": 52
+     },
+     "engine_0": {
+      "pos": [
+       0,
+       0,
+       4.94
+      ],
+      "parent": null,
+      "size": 3.224
+     }
+    }
+   },
+   "fighter": {
+    "file": "res://view/ships/plektor_strike_fighter.glb",
+    "len": 11.7,
+    "width": 8.06,
+    "height": 4.004,
+    "tris": 64,
+    "surfaces": 3,
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 3,
+      "tris": 64
+     },
+     "engine_0": {
+      "pos": [
+       0,
+       0,
+       4.94
+      ],
+      "parent": null,
+      "size": 3.224
+     }
+    }
+   },
+   "bomber": {
+    "file": "res://view/ships/plektor_strike_bomber.glb",
+    "len": 11.7,
+    "width": 10.4,
+    "height": 6.084,
+    "tris": 60,
+    "surfaces": 3,
+    "nodes": {
+     "hull": {
+      "pos": [
+       0,
+       0,
+       0
+      ],
+      "surfaces": 3,
+      "tris": 60
+     },
+     "engine_0": {
+      "pos": [
+       0,
+       0,
+       4.94
+      ],
+      "parent": null,
+      "size": 3.224
+     }
+    }
+   }
+  }
+ }
+}

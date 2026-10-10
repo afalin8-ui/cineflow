@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Прогон всех проверок среза — здесь и в CI одинаково (архитектура, 8.2).
 #   godot/tools/run_tests.sh            ярусы sim и ui, проверки данных, --selftest
-#   godot/tools/run_tests.sh render     плюс ярус картинки под xvfb (G0b)
+#   godot/tools/run_tests.sh render     плюс ярус картинки под xvfb В ОБОИХ отрисовщиках
+#                                       (Forward+ и Compatibility); снимки «Стола» —
+#                                       в $LOGS/shots (смотреть глазами)
 # Godot берётся из $GODOT (по умолчанию `godot` из PATH).
 #
 # Каждое правило обёртки проверено пробами (архитектура, 8.2):
@@ -23,7 +25,7 @@ GODOT="${GODOT:-godot}"
 LOGS="${LOGS:-$(mktemp -d)}"
 mkdir -p "$LOGS"
 TIERS=(sim ui)
-if [[ "${1:-}" == "render" ]]; then TIERS+=(render); fi
+if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility); fi
 FAILED=0
 
 say() { printf '%s\n' "$*"; }
@@ -61,15 +63,17 @@ fi
 
 # ── 3–5. ярусы тестов ──
 run_tier() {
-  local tier="$1" log="$LOGS/tier_$1.log" code
+  local tier="$1" log="$LOGS/tier_${1/:/_}.log" code
   local cmd=("$GODOT" --headless --path "$PROJ" -s res://tests/run.gd -- "$tier")
-  if [[ "$tier" == "render" ]]; then
-    cmd=(xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$PROJ" -s res://tests/run.gd -- render)
+  if [[ "$tier" == render:* ]]; then
+    # картинка — с окном под xvfb, в заданном отрисовщике; снимки — в $LOGS/shots
+    mkdir -p "$LOGS/shots"
+    cmd=(env CAPELLA_SHOTS="$LOGS/shots" xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$PROJ" --rendering-method "${tier#render:}" -s res://tests/run.gd -- render)
   fi
   say "── ярус $tier"
-  timeout 600 "${cmd[@]}" >"$log" 2>&1
+  timeout 900 "${cmd[@]}" >"$log" 2>&1
   code=$?
-  grep -e '^test_' -e '^RESULT' -e "^$tier:" "$log"
+  grep -e '^test_' -e '^RESULT' -e "^${tier%%:*}:" -e '^    · ' "$log"
   if [[ $code -eq 124 ]]; then fail "ярус $tier: завис (timeout)"; show_tail "$log"; return; fi
   local result
   result="$(grep -E '^RESULT checks=[0-9]+ fails=[0-9]+$' "$log" | tail -1)"
@@ -77,6 +81,11 @@ run_tier() {
   if grep -q 'SCRIPT ERROR' "$log"; then fail "ярус $tier: SCRIPT ERROR"; grep -A3 'SCRIPT ERROR' "$log" | head -30 >&2; fi
   if [[ "$result" != *" fails=0" || "$result" == "RESULT checks=0 "* ]]; then fail "ярус $tier: $result"; grep -e 'ПРОВАЛ' "$log" | head -30 >&2; fi
   if [[ $code -ne 0 ]]; then fail "ярус $tier: код выхода $code"; fi
+  # откат на другой отрисовщик молчалив (fallback_to_opengl3): проверяем, ЧТО поднялось
+  case "$tier" in
+    render:forward_plus) grep -q -- '- Forward+ - Using Device' "$log" || fail "ярус $tier: поднялся не Forward+ (Vulkan не нашёлся?)" ;;
+    render:gl_compatibility) grep -q -- '- Compatibility - Using Device' "$log" || fail "ярус $tier: поднялся не Compatibility" ;;
+  esac
 }
 for t in "${TIERS[@]}"; do run_tier "$t"; done
 
@@ -97,6 +106,19 @@ grep -m1 '^Капелла: отрисовщик' "$LOGS/window.log"
 if [[ $code -ne 0 ]] || ! grep -q '^Капелла: отрисовщик' "$LOGS/window.log" || grep -q 'SCRIPT ERROR' "$LOGS/window.log"; then
   fail "окно (код $code)"; show_tail "$LOGS/window.log"
 fi
+
+# ── минута замера кадров из командной строки (G0b, п. 7): короткая, итог в выводе, файл ──
+say "── главная сцена -- --bench-render (2 с)"
+bout="$(mktemp -d)"
+timeout 180 "$GODOT" --headless --path "$PROJ" -- --bench-render --bench-seconds=2 --bench-out="$bout" >"$LOGS/bench.log" 2>&1
+code=$?
+grep -m3 '^BENCH' "$LOGS/bench.log"
+csv="$(ls "$bout"/capella_frames_*.csv 2>/dev/null | head -1)"
+if [[ $code -ne 0 ]] || ! grep -q '^BENCH Кадров: ' "$LOGS/bench.log" || ! grep -q '^BENCH Вызовов отрисовки' "$LOGS/bench.log" \
+   || grep -q 'SCRIPT ERROR' "$LOGS/bench.log" || [[ -z "$csv" ]] || [[ "$(grep -c '^[0-9]' "$csv")" -lt 10 ]]; then
+  fail "--bench-render (код $code, файл «$csv»)"; show_tail "$LOGS/bench.log"
+fi
+rm -rf "$bout"
 
 # ── --overrides с ОТНОСИТЕЛЬНЫМ путём — из чужой папки, как запустит человек ──
 # (архитектура, 7: «--overrides=tune.json»). Godot с --path уходит в папку проекта,
@@ -178,6 +200,12 @@ if command -v node >/dev/null; then
   tail -1 "$LOGS/doctrine.log"
   (cd "$ROOT" && node godot/tools/doctrine.mjs --selftest >"$LOGS/doctrine_self.log" 2>&1) || { fail "doctrine.mjs --selftest"; cat "$LOGS/doctrine_self.log" >&2; }
   tail -1 "$LOGS/doctrine_self.log"
+  # модели кораблей: файлы на месте, узлы закрывают doctrine.json → nodes, длины, исходники
+  # не менялись (сама выгрузка — с браузером, здесь только проверка и её откаты)
+  (cd "$ROOT" && node godot/tools/export_ships.mjs --check >"$LOGS/ships.log" 2>&1) || { fail "export_ships.mjs --check"; cat "$LOGS/ships.log" >&2; }
+  tail -1 "$LOGS/ships.log"
+  (cd "$ROOT" && node godot/tools/export_ships.mjs --selftest >"$LOGS/ships_self.log" 2>&1) || { fail "export_ships.mjs --selftest"; cat "$LOGS/ships_self.log" >&2; }
+  tail -1 "$LOGS/ships_self.log"
 else
   fail "нет node — проверки данных не прошли"
 fi

@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: 'выпустить ЧЕРНОВИКОМ под этим номером (capella-vX.Y); пусто — только тесты, без выпуска'
+        description: 'выпустить под этим номером (capella-vX.Y); пусто — только тесты, без выпуска'
         default: ''
 
 permissions:
@@ -76,8 +76,26 @@ jobs:
           echo "GODOT=$HOME/godot-bin/godot-${GODOT_VERSION}" >> "$GITHUB_ENV"
           ~/godot-bin/godot-${GODOT_VERSION} --version
 
-      - name: Тесты — импорт, разбор, модель, ввод, данные
-        run: LOGS="$RUNNER_TEMP/logs" godot/tools/run_tests.sh
+      # картинка — под xvfb в обоих отрисовщиках: Vulkan на lavapipe (mesa-vulkan-drivers)
+      # и OpenGL на llvmpipe; видеокарты на машине CI нет
+      - name: Программный Vulkan и xvfb для яруса картинки
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mesa-vulkan-drivers libgl1-mesa-dri xvfb xauth > /dev/null
+          vulkaninfo --summary 2>/dev/null | grep -i -m2 -e deviceName -e driverName || true
+
+      - name: Тесты — импорт, разбор, модель, ввод, картинка, данные
+        run: LOGS="$RUNNER_TEMP/logs" godot/tools/run_tests.sh render
+
+      # снимки «Стола» на 1920 и 1366 в обоих отрисовщиках — смотреть глазами
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capella-shots
+          path: ${{ runner.temp }}/logs/shots
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Выгрузка Linux и Windows
         run: |
@@ -132,6 +150,22 @@ jobs:
           if [ $code -ne 0 ] || ! grep -q '^SELFTEST ok: .*правок 1,' rel.log; then
             echo "::error::--overrides с относительным путём: код $code"; exit 1
           fi
+
+      # минута замера кадров (укороченная): файл ложится РЯДОМ С ПРОГРАММОЙ, номер
+      # сборки в итоге — из godot/RELEASE (он едет в выгрузку, include_filter)
+      - name: Linux-сборка, -- --bench-render (2 с), файл рядом с программой
+        run: |
+          set -uo pipefail
+          num=$(head -n1 godot/RELEASE | tr -d '\r[:space:]')
+          timeout 180 godot/build/linux/capella.x86_64 --headless -- --bench-render --bench-seconds=2 > "$RUNNER_TEMP/bench.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/bench.log"
+          csv=$(ls godot/build/linux/capella_frames_*.csv 2>/dev/null | head -1)
+          if [ $code -ne 0 ] || [ -z "$csv" ] || ! grep -q "^BENCH Капелла $num · замер кадров" "$RUNNER_TEMP/bench.log"; then
+            echo "::error::замер кадров выгруженной сборки: код $code, файл «$csv»"; exit 1
+          fi
+          head -12 "$csv"
+          rm -f godot/build/linux/capella_frames_*.csv
 
       - name: Архивы
         run: |
@@ -207,6 +241,19 @@ jobs:
           Write-Host "код выхода: $code"
           if ($code -ne 0 -or $out -notmatch 'Капелла: отрисовщик' -or $out -match 'SCRIPT ERROR') { Write-Host "::error::выгруженная Windows-сборка с окном не прошла"; exit 1 }
           exit 0
+      # замер кадров: файл — рядом с программой (папка распакованного архива)
+      - name: Windows-сборка, -- --bench-render (2 с), файл рядом с программой
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          cmd /c "win\capella.console.exe --headless -- --bench-render --bench-seconds=2 > bench.txt 2>&1"
+          $code = $LASTEXITCODE
+          $out = Get-Content bench.txt -Raw
+          Write-Host $out
+          $csv = Get-ChildItem win -Filter 'capella_frames_*.csv' | Select-Object -First 1
+          if ($code -ne 0 -or $null -eq $csv -or $out -notmatch 'BENCH Кадров:') { Write-Host "::error::замер кадров на Windows: код $code"; exit 1 }
+          Get-Content $csv.FullName -TotalCount 12
+          exit 0
       # относительный путь в cmd и PowerShell (PWD у них нет) — от папки программы:
       # tune.json рядом с exe, запуск из другой папки
       - name: Windows-сборка, --overrides=tune.json рядом с программой
@@ -235,17 +282,18 @@ jobs:
         with:
           path: dl
           merge-multiple: true
-      # ТОЛЬКО ЧЕРНОВИКОМ: репозиторий публичный, опубликованный выпуск видят все,
-      # а согласия на публичные выпуски пока нет. Черновик видит только владелец.
-      # У черновика метки нет, поэтому никакого --cleanup-tag при удалении.
-      - name: Черновик выпуска
+      # ОПУБЛИКОВАННЫЙ выпуск (с capella-v0.1): пользователь согласился на публичные
+      # выпуски — архивы скачиваются по ссылке без входа. Метку capella-vX.Y заводит сам
+      # gh от --target; метка от GITHUB_TOKEN новых прогонов не запускает.
+      # Проба доставки capella-v0.0.1 осталась черновиком — её не трогаем.
+      - name: Выпуск
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.test-build.outputs.release }}
         run: |
           set -euo pipefail
-          # «новый» — такого выпуска, в том числе черновика, ещё нет (черновики видны
-          # только с contents: write — потому проверка здесь, а не в test-build).
+          # «новый» — такого выпуска (и черновика с таким номером) ещё нет; черновики
+          # видны только с contents: write — потому проверка здесь, а не в test-build.
           # Не «gh | grep -q»: под pipefail он «не находит» и заводит второй черновик
           # (godot/tools/release_exists.sh; отказ gh роняет шаг, а не создаёт выпуск)
           state=$(godot/tools/release_exists.sh "$TAG")
@@ -259,5 +307,12 @@ jobs:
           printf '\n---\nСобрано из коммита %s, прогон %s/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> notes.md
           ls -la dl
           gh release create "$TAG" dl/capella-windows.zip dl/capella-linux.zip \
-            --draft --target "$GITHUB_SHA" --title "$title" --notes-file notes.md
-          gh release view "$TAG" --json isDraft,assets --jq '"черновик: \(.isDraft); файлы: \([.assets[] | "\(.name) \(.size)"] | join(", "))"'
+            --target "$GITHUB_SHA" --title "$title" --notes-file notes.md
+          gh release view "$TAG" --json isDraft,url,assets --jq '"черновик: \(.isDraft); \(.url); файлы: \([.assets[] | "\(.name) \(.size)"] | join(", "))"'
+          # архивы обязаны скачиваться по ссылке без входа (публичный выпуск)
+          for f in capella-windows.zip capella-linux.zip; do
+            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$f"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -L -r 0-1023 "$url")
+            echo "$f: $code ($url)"
+            case "$code" in 200|206) ;; *) echo "::error::$f не скачивается без входа: $code"; exit 1 ;; esac
+          done

@@ -4,16 +4,25 @@
 #   capella.x86_64 -- --selftest        проверка сборки: данные грузятся, числа сходятся; код 0/1
 #   capella.x86_64 -- --set путь=число  правка числа (одно на прогон), --overrides=файл — набор
 #                                       (относительный путь — от папки запуска, см. launch_dirs)
-# Без режима — окно: в G0a заглушка «космос» и счётчик кадров по F3.
+#   capella.x86_64 -- --bench-render    минута замера кадров на «Столе» и выход; итог — в вывод,
+#                                       файл с каждым кадром — рядом с программой (план G0, п. 7);
+#                                       --bench-seconds=N — короче, --bench-out=ПАПКА — куда файл
+# Без режима — окно «Стол» (G0b): 83 корабля «Генерального», авиация, огонь-заглушка;
+# F3 — счётчик кадров, F5 — минута замера, F11 — окно / полный экран.
 extends Node
 
 const Defs := preload("res://sim/defs.gd")
-const SpaceStub := preload("res://view/space_stub.gd")
+const Showcase := preload("res://tools/showcase.gd")
 const FpsCounter := preload("res://ui/fps_counter.gd")
+const FrameBench := preload("res://ui/frame_bench.gd")
+const BenchReport := preload("res://ui/bench_report.gd")
 
 var defs: Defs
-var view: SpaceStub
+var view: Showcase
 var fps: FpsCounter
+var bench: FrameBench
+var report: BenchReport
+var bench_cli := false
 
 
 func _ready() -> void:
@@ -30,12 +39,63 @@ func _ready() -> void:
 	if not defs.ok:
 		_show_errors()
 		return
-	view = SpaceStub.new()
+	view = Showcase.new()
+	view.name = "Showcase"
 	add_child(view)
-	view.setup(defs.doctrine)
+	view.setup(defs)
 	fps = FpsCounter.new()
 	add_child(fps)
+	report = BenchReport.new()
+	add_child(report)
+	bench = FrameBench.new()
+	add_child(bench)
+	bench.driver = view.drive
+	bench.title = "Капелла %s" % release_name()
+	bench.extra_line = "На столе: %d %s, %d %s; синхронизация с экраном на время замера выключена" % [
+		view.ship_count(), FrameBench.plural(view.ship_count(), "корабль", "корабля", "кораблей"),
+		view.craft_count(), FrameBench.plural(view.craft_count(), "машина", "машины", "машин")]
+	bench.finished.connect(_bench_done)
 	print("Капелла: отрисовщик %s · %s, видеокарта %s" % [RenderingServer.get_current_rendering_method(), RenderingServer.get_current_rendering_driver_name(), RenderingServer.get_video_adapter_name()])
+	for a in args:
+		if a.begins_with("--bench-seconds="):
+			bench.duration = maxf(a.get_slice("=", 1).to_float(), 0.5)
+		elif a.begins_with("--bench-out="):
+			bench.out_dir = a.substr("--bench-out=".length())
+	if "--bench-render" in args:
+		bench_cli = true
+		# секунда на прогрев: первые кадры — загрузка, а не отрисовка
+		await get_tree().create_timer(1.0).timeout
+		start_bench()
+
+
+## Номер сборки — первая строка godot/RELEASE (она едет в выгрузку, include_filter).
+static func release_name() -> String:
+	var t := FileAccess.get_file_as_string("res://RELEASE")
+	var first := t.get_slice("\n", 0).strip_edges()
+	return first if first != "" else "без номера"
+
+
+func start_bench() -> void:
+	if report != null:
+		report.hide_report()
+	view.rig.input_enabled = false
+	bench.start()
+
+
+func _process(_delta: float) -> void:
+	if bench != null and bench.running and report != null:
+		report.show_progress(bench.elapsed, bench.duration)
+
+
+func _bench_done(summary: String, file: String) -> void:
+	view.rig.input_enabled = true
+	report.hide_progress()
+	report.show_report(summary, file)
+	if bench_cli:
+		for l in summary.split("\n"):
+			print("BENCH ", l)
+		print("BENCH файл: ", file)
+		get_tree().quit(0)
 
 
 ## Откуда искать относительный путь --overrides (архитектура, 7). Godot меняет текущую
@@ -59,9 +119,20 @@ static func launch_dirs() -> PackedStringArray:
 
 func _input(event: InputEvent) -> void:
 	var k := event as InputEventKey
-	if k != null and k.pressed and not k.echo and k.physical_keycode == KEY_F11:
+	if k == null or not k.pressed or k.echo:
+		return
+	if k.physical_keycode == KEY_F11:
 		var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
+		get_viewport().set_input_as_handled()
+	elif k.physical_keycode == KEY_F5 and bench != null:
+		# F5 — минута замера; F5 во время замера — прервать
+		if bench.running:
+			bench.cancel()
+			view.rig.input_enabled = true
+			report.hide_progress()
+		else:
+			start_bench()
 		get_viewport().set_input_as_handled()
 
 

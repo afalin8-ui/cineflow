@@ -1,0 +1,6 @@
+GLTFExporter.js и TextureUtils.js — из three.js 0.160.0 (cdn.jsdelivr.net/npm/three@0.160.0/
+examples/jsm/exporters/GLTFExporter.js и examples/jsm/utils/TextureUtils.js), лицензия MIT,
+© 2010-2023 Three.js Authors. Версия — та же, что game/vendor/three.module.min.js (REVISION 160):
+модуль three на странице выгрузки обязан быть один с моделями игры.
+Импорт 'three' подменяет godot/tools/export_ships.mjs при отдаче страницы; сами файлы не правлены.
+В game/vendor экспортёра нет, а качать его при каждой выгрузке — значит зависеть от сети.

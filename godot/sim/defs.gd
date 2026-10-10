@@ -363,6 +363,7 @@ class Doctrine:
 	var line_shift_max: float
 	var line_turn_max_deg: float
 	var deploy_heavy_z: float
+	var deploy_station_back: float
 	var ai_corvette_intercept_take: float
 	var ai_corvette_intercept_drop: float
 	var ai_corvette_intercept_share: float
@@ -382,6 +383,7 @@ class Doctrine:
 	var camera_dist_max: float
 	var camera_dist_start: float
 	var camera_dist_work: float
+	var camera_start_look_z: float
 	var camera_edge_speed_k: float
 	var camera_wheel_step: float
 	var camera_rotate_speed: float

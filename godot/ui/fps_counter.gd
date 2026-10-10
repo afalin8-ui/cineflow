@@ -1,9 +1,10 @@
 # ui/fps_counter.gd — счётчик кадров по F3 (часть 07, ловушка 62; план G0 п. 7).
 # Кадры в секунду, худший кадр за последние 0,5 с, вызовы отрисовки за ВЕСЬ
-# кадр, какой отрисовщик поднялся, видеокарта и размер окна. В G0a — минимум;
-# замер F5 и итог текстом в буфер обмена — G0b.
+# кадр, какой отрисовщик поднялся, видеокарта и размер окна. Минута замера по F5
+# и итог текстом в буфер обмена — ui/frame_bench.gd и ui/bench_report.gd.
 extends CanvasLayer
 
+const FrameBench := preload("res://ui/frame_bench.gd")
 const WINDOW_S := 0.5
 
 var panel: PanelContainer
@@ -34,7 +35,7 @@ func _ready() -> void:
 	add_child(panel)
 	panel.visible = false
 	hint = Label.new()
-	hint.text = "F3 — счётчик кадров · F11 — окно / полный экран"
+	hint.text = "F3 — счётчик кадров · F5 — минута замера кадров · F11 — окно / полный экран\nкамера: колесо — ближе и дальше, Q/E или правая кнопка — повернуть, стрелки и край экрана — сдвинуть"
 	hint.add_theme_font_size_override("font_size", 14)
 	hint.modulate = Color(1, 1, 1, 0.55)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -85,9 +86,9 @@ func summary() -> String:
 	var size := get_viewport().get_visible_rect().size
 	return "\n".join(PackedStringArray([
 		"кадров в секунду: %d" % int(Engine.get_frames_per_second()),
-		"худший кадр за 0,5 с: %.1f мс" % worst_ms(),
+		"худший кадр за 0,5 с: %s мс" % ("%.1f" % worst_ms()).replace(".", ","),
 		"вызовов отрисовки за кадр: %d" % draws,
-		"отрисовщик: %s · %s" % [RenderingServer.get_current_rendering_method(), RenderingServer.get_current_rendering_driver_name()],
-		"видеокарта: %s" % RenderingServer.get_video_adapter_name(),
+		"отрисовщик: %s" % FrameBench.renderer_name(),
+		"видеокарта: %s" % FrameBench.gpu_name(),
 		"окно: %d × %d" % [int(size.x), int(size.y)],
 	]))
