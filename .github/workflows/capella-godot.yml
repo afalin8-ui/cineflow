@@ -15,7 +15,7 @@ on:
         description: 'черновик выпуска под этим номером (capella-vX.Y); пусто — только тесты, без выпуска'
         default: ''
       publish:
-        description: 'опубликовать для всех — ТОЛЬКО когда пользователь сам на это согласился; без галочки — черновик'
+        description: 'опубликовать для всех (пользователь согласился на публичные выпуски 10.10.2026); без галочки — черновик'
         type: boolean
         default: false
 
@@ -313,16 +313,15 @@ jobs:
         with:
           path: dl
           merge-multiple: true
-      # Выпуск — ЧЕРНОВИКОМ: черновик видит только владелец репозитория, а согласия
-      # пользователя на публичные выпуски в его собственных словах пока нет
-      # (godot/CLAUDE.md, 13). Черновик — кандидат: каждый зелёный прогон с тем же
-      # номером кладёт в него свежую сборку. Опубликовать — кнопкой «Publish release»
-      # на странице черновика или запуском этого файла с полем release и галочкой
-      # publish; опубликованный выпуск больше не трогается. Вся логика — в
+      # Пользователь САМ согласился на публичные выпуски 10.10.2026 (ответ в чате
+      # «Да, публиковать» на вопрос о публичных сборках; godot/CLAUDE.md, 13).
+      # Поэтому пуш с новым номером в godot/RELEASE и метка — ПУБЛИКУЮТ выпуск;
+      # кнопка (workflow_dispatch) — как скажет галочка publish (по умолчанию
+      # черновик). Опубликованный выпуск больше не трогается. Вся логика — в
       # godot/tools/release_publish.sh (её проверяет run_tests.sh на заглушке gh).
       - name: Выпуск
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.test-build.outputs.release }}
-          PUBLISH: ${{ github.event.inputs.publish == 'true' && 'true' || 'false' }}
+          PUBLISH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish || 'true' }}
         run: godot/tools/release_publish.sh "$TAG" dl
