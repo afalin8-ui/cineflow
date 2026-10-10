@@ -7,6 +7,9 @@
 #   сдвиг через кадр, на 144 — четыре кадра стоит, пятый прыгает;
 # - итог F5 лежит в буфере обмена (DisplayServer.clipboard_get под xvfb), «Скопировать
 #   ещё раз» кладёт его снова (откат — замер без записи в буфер краснеет);
+# - F9 на «Полигоне» кладёт запись боя в буфер обмена: в нём была «проба», стала
+#   запись (JSON, kind capella-replay), та же, что в файле, и она проигрывается
+#   (откат — запись без буфера: в буфере осталась «проба»);
 # - F11 — событием клавиши: режим окна до и после (откат — главная сцена не слушает
 #   клавиши: режим не меняется);
 # - снимки «Полигона» на 1920 и 1366 — в $CAPELLA_SHOTS; подсказка клавиш не лежит
@@ -19,6 +22,7 @@ const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
 const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
+const Battle := preload("res://sim/battle.gd")
 
 
 static func renderer() -> String:
@@ -174,6 +178,61 @@ func test_bench_result_in_clipboard() -> void:
 	var s2 := await _bench_once(main)
 	ok(DisplayServer.clipboard_get() != s2, "откат «итог не в буфер» краснеет: в буфере «%s»" % DisplayServer.clipboard_get())
 	bench.to_clipboard = true
+	main.queue_free()
+	await hooks.frames(3)
+
+
+## Буфер → запись боя: {} — в буфере не запись (не JSON или не объект).
+static func _parse_record(text: String) -> Dictionary:
+	var j := JSON.new()
+	if j.parse(text) != OK or typeof(j.data) != TYPE_DICTIONARY:
+		return {}
+	var d: Dictionary = j.data
+	return d
+
+
+## F9 — запись боя «Полигона» в буфер обмена (замечание к G1: это обещал текст
+## выпуска, а проверялся только файл, и без окна — откат «clipboard_set убран» был
+## зелёным во всех ярусах). Буфер под xvfb настоящий.
+func test_f9_record_in_clipboard() -> void:
+	await hooks.set_window_size(Vector2i(1366, 768))
+	var main := MainScene.instantiate()
+	tree.root.add_child(main)
+	await hooks.frames(10)            # бой идёт: в записи есть шаги
+	var poly: Node = main.get("polygon")
+	ok(poly != null, "главная сцена открыла «Полигон»")
+	var bench: FrameBench = main.get("bench")
+	bench.out_dir = ProjectSettings.globalize_path("user://record_clip")
+	DirAccess.make_dir_recursive_absolute(bench.out_dir)
+	DisplayServer.clipboard_set("проба буфера")
+	await hooks.key(KEY_F9)
+	var clip := DisplayServer.clipboard_get()
+	var rec := _parse_record(clip)
+	note("%s: F9 — в буфере %d знаков" % [renderer(), clip.length()])
+	ok(str(rec.get("kind", "")) == "capella-replay", "F9 — в буфере запись боя (kind capella-replay), а не «%s»" % clip.left(40))
+	var steps: float = rec.get("steps", 0.0)
+	ok(steps > 0.0 and str(rec.get("fp", "")) != "", "в записи шаги (%d) и отпечаток боя" % int(steps))
+	var path: String = main.get("last_record")
+	ok(path != "" and FileAccess.get_file_as_string(path) == clip, "в буфере — то же, что в файле записи %s" % path)
+	if path != "":
+		DirAccess.remove_absolute(path)
+	# запись из буфера проигрывается этой сборкой: заголовок сходится
+	var why := PackedStringArray()
+	var defs: Defs = main.get("defs")
+	var again := Battle.from_record(defs, rec, MainScript.release_name(), why) as Battle
+	ok(again != null, "запись из буфера проигрывается: %s" % "; ".join(why))
+	if again != null:
+		again.dispose()
+	# откат: запись без буфера — в буфере осталась «проба»
+	main.set("record_to_clipboard", false)
+	DisplayServer.clipboard_set("проба буфера")
+	await hooks.key(KEY_F9)
+	var stale := DisplayServer.clipboard_get()
+	ok(_parse_record(stale).is_empty(), "откат «запись не в буфер» краснеет: в буфере «%s»" % stale.left(40))
+	main.set("record_to_clipboard", true)
+	var p2: String = main.get("last_record")
+	if p2 != "":
+		DirAccess.remove_absolute(p2)
 	main.queue_free()
 	await hooks.frames(3)
 

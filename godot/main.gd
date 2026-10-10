@@ -53,6 +53,9 @@ var replay_check := false
 var error_text := ""
 ## Последняя запись боя по F9 — путь к файлу (тесты читают его).
 var last_record := ""
+## Запись F9 — ещё и в буфер обмена (её вставляют в чат). false — ТОЛЬКО откат
+## проверки tests/test_render_polygon.gd.
+var record_to_clipboard := true
 
 
 func _ready() -> void:
@@ -374,7 +377,7 @@ func save_record() -> String:
 	else:
 		path = ""
 	last_record = path
-	if DisplayServer.get_name() != "headless":
+	if record_to_clipboard and DisplayServer.get_name() != "headless":
 		DisplayServer.clipboard_set(text)
 	var cmds: Array = rec["cmds"]
 	polygon.hud.say("Запись боя (%d %s) — в буфере обмена%s" % [cmds.size(), FrameBench.plural(cmds.size(), "приказ", "приказа", "приказов"), (" и в файле " + path) if path != "" else ""])

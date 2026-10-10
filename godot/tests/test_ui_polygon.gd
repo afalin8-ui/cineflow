@@ -409,9 +409,13 @@ func test_picking_hull_then_nearest() -> void:
 	await _drop(p)
 
 
-## «Малый за факелом» (C29; 08, ловушка 10): корвет ниже и позади факела флагмана —
-## луч к центру корвета сперва проходит через факел. Кораблём считается корпус: выбор —
-## корвет. Откат — рамка всего нарисованного (с факелами) берёт флагман.
+## «Малый за факелом» (C29; 08, ловушка 10): корвет ниже и позади кормы флагмана, так
+## что луч к его центру проходит через КОНУС маршевого факела — и только через него:
+## мимо корпуса, сопел и всего прочего, что нарисовано у флагмана, и мимо его капсулы
+## (это проверяется до выбора — иначе откат краснел бы корпусом, а не факелом, как
+## было в первой версии: замечание к G1). Кораблём считается корпус: выбор — корвет.
+## Откат — рамка всего нарисованного (с факелами) берёт флагман; с погашенным факелом
+## тот же откат берёт корвет — значит, краснеет он именно от факела.
 func test_small_behind_plume() -> void:
 	var p := await _polygon()
 	var cap: Ship = null
@@ -424,9 +428,8 @@ func test_small_behind_plume() -> void:
 	Hooks.place_ship(cap, Vector2(0.0, 0.0))
 	cap.set_yaw(0.0)
 	cap.thrust_fwd = 1.0
-	Hooks.place_ship(cor, Vector2(0.0, 60.0))
+	Hooks.place_ship(cor, Vector2(0.0, 2000.0))      # пока в стороне: меряем флагман один
 	p.view._height[cap.uid] = 0.0
-	p.view._height[cor.uid] = -40.0
 	p.view._bob[cap.uid] = 0.0
 	p.view._bob[cor.uid] = 0.0
 	p.view.rig.set_view(Vector3(0.0, 0.0, 30.0), 0.0, 600.0, true)
@@ -434,19 +437,83 @@ func test_small_behind_plume() -> void:
 	p.view.draw_state()
 	await hooks.frames(2)
 	p.view.draw_state()
-	var at := _screen(p, cor)
-	var plume_on := false
-	for c in p.view.visual_of(cap).find_children("plume", "MeshInstance3D", true, false):
+	var vis := p.view.visual_of(cap)
+	var body := _drawn_without_plumes(vis)
+	# маршевый факел, который целиком позади всего остального нарисованного
+	var plume: MeshInstance3D = null
+	for c in vis.find_children("plume", "MeshInstance3D", true, false):
 		var mi := c as MeshInstance3D
-		plume_on = plume_on or mi.visible
-	ok(plume_on, "у флагмана горит маршевый факел")
+		if mi.visible and (mi.global_transform * mi.get_aabb()).get_center().z > body.end.z:
+			plume = mi
+			break
+	if not ok(plume != null, "у флагмана горит маршевый факел позади кормы"):
+		await _drop(p)
+		return
+	# корвет — на продолжении луча «камера → середина факела», на 60 ниже плоскости
+	var cam := p.view.rig.camera
+	var eye := cam.global_position
+	var mid := plume.global_transform.origin
+	var k := (eye.y + 60.0) / (eye.y - mid.y)
+	var at3 := eye + (mid - eye) * k
+	Hooks.place_ship(cor, Vector2(at3.x, at3.z))
+	p.view._height[cor.uid] = at3.y
+	p.view._prev.clear()
+	p.view.draw_state()
+	await hooks.frames(1)
+	var at := _screen(p, cor)
+	var o := cam.project_ray_origin(at)
+	var n := cam.project_ray_normal(at)
+	# что на луче у флагмана: факел — да; корпус, сопла и прочее — нет; капсула — нет
+	ok(_ray_hits_mesh(plume, o, n), "на луче к корвету — конус факела флагмана (сам меш, а не рамка)")
+	ok(body.intersects_ray(o, n) == null, "на луче нет ничего другого, что нарисовано у флагмана (корпус, сопла): рамка без факелов %s" % [body])
+	var cp: Array = p.view.capsule(cap)
+	var ca: Vector3 = cp[0]
+	var cb: Vector3 = cp[1]
+	var cr: float = cp[2]
+	ok(Picking.ray_capsule(o, n, ca, cb, cr) < 0.0, "капсула корпуса флагмана — не на луче")
 	var first := Picking.pick(p.view, at)
-	ok(first == cor, "малый за факелом — выбран малый (кораблём считается корпус): %s" % [first.name if first != null else "никто"])
+	ok(first == cor, "малый за факелом — выбран малый (кораблём считается корпус): %s" % _who(first))
 	Picking.rollback_drawn_box = true
 	var got := Picking.pick(p.view, at)
+	ok(got == cap, "откат «рамка всего нарисованного, с факелами»: выбран флагман — проверка краснеет (%s)" % _who(got))
+	# контроль: факел погашен — тот же откат берёт корвет, то есть краснел он от факела
+	cap.thrust_fwd = 0.0
+	p.view.draw_state()
+	ok(not plume.visible, "факел погашен")
+	var ctl := Picking.pick(p.view, at)
+	ok(ctl == cor, "контроль: без факела и откат берёт корвет — флагман брался факелом (%s)" % _who(ctl))
 	Picking.rollback_drawn_box = false
-	ok(got == cap, "откат «рамка всего нарисованного, с факелами»: выбран флагман — проверка краснеет (%s)" % [got.name if got != null else "никто"])
+	ok(Picking.pick(p.view, at) == cor, "без факела — корвет")
 	await _drop(p)
+
+
+static func _who(s: Ship) -> String:
+	return s.name if s != null else "никто"
+
+
+## Рамка всего, что нарисовано у корабля, КРОМЕ факелов (в мире).
+static func _drawn_without_plumes(v: Node3D) -> AABB:
+	var out := AABB(v.global_position, Vector3.ZERO)
+	var stack: Array[Node] = [v]
+	while not stack.is_empty():
+		var nd: Node = stack.pop_back()
+		var vi := nd as VisualInstance3D
+		if vi != null and vi.is_visible_in_tree() and nd.name != "plume":
+			out = out.merge(vi.global_transform * vi.get_aabb())
+		stack.append_array(nd.get_children())
+	return out
+
+
+## Луч попадает в сам меш (треугольники), а не только в его рамку.
+static func _ray_hits_mesh(mi: MeshInstance3D, o: Vector3, n: Vector3) -> bool:
+	var inv := mi.global_transform.affine_inverse()
+	var lo := inv * o
+	var ln := inv.basis * n
+	var f := mi.mesh.get_faces()
+	for i in range(0, f.size() - 2, 3):
+		if Geometry3D.ray_intersects_triangle(lo, ln, f[i], f[i + 1], f[i + 2]) != null:
+			return true
+	return false
 
 
 # ───────────────────────── вид: шаги, скорость, пауза, таймер ─────────────────────────

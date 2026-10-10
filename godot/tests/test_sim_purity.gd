@@ -15,7 +15,10 @@
 # значение (var l := load, var f := str_to_var, var r := randf), — та же дверь,
 # что её вызов; Expression вызывает их по строке. Случайное — только из rng
 # и fx_rng боя: генератор без зерна (RandomNumberGenerator.new() без .seed
-# следующей строкой, randomize()) — нарушение. Остальное ищется в коде без
+# следующей строкой, randomize()), Array.shuffle() и pick_random() (общий генератор
+# движка), Crypto — нарушение; порядок по номеру объекта (get_instance_id, hash(объект))
+# — тоже: номер зависит от того, сколько объектов завёл вид, а hash объекта — от адреса
+# в памяти, разного у каждого запуска. Остальное ищется в коде без
 # комментариев и строк: слово в пояснении или в тексте ошибки — не нарушение.
 extends "res://tests/case.gd"
 
@@ -51,6 +54,14 @@ const BANNED := [
 	# и вызов, и значение: var r := randf — та же глобальная случайность (проверено в 4.7.2)
 	["(?<![.\\w])(randf|randi|randf_range|randi_range|randfn|randomize|seed|rand_from_seed)\\b", "случайность — только rng и fx_rng боя"],
 	["\\.\\s*randomize\\s*\\(", "генератор без зерна: randomize() берёт зерно из часов — бой не повторится"],
+	# у Array.shuffle() и pick_random() свой генератор не передать: они берут ОБЩИЙ генератор
+	# движка (документация Godot: «use a common, global random seed») — с тем же зерном боя
+	# выйдет другой бой, и на Windows не тот, что на Linux (замечание к G1)
+	["\\.\\s*(?:shuffle|pick_random)\\s*\\(", "общий генератор движка, а не rng боя: тот же бой с тем же зерном выйдет другим — выбирать через rng.randi_range"],
+	# номер объекта — счётчик ВСЕХ созданных объектов: вид и интерфейс заводят свои раньше
+	# или позже модели, и порядок «по номеру» с видом и без вида разный; hash(объект) — от
+	# АДРЕСА в памяти, он разный даже у двух запусков подряд (проверено в 4.7.2)
+	["\\bget_instance_id\\b|(?<![.\\w])hash\\s*\\(", "номер объекта зависит от того, сколько объектов завели вид и интерфейс, а hash(объект) — от адреса в памяти (разный у каждого запуска): порядок по ним не повторится — у корабля свой uid, у строки — sha256_text()"],
 	["\\bsignal\\b|\\bSignal\\b|\\bemit_signal\\b|\\.emit\\s*\\(|\\.connect\\s*\\(", "сигналов из шага нет — события шага списком"],
 	["\\bawait\\b", "шаг модели не ждёт"],
 	["(?<![.\\w])(?:str_to_var|bytes_to_var_with_objects|dict_to_inst|instance_from_id)\\b|\\bto_native\\b",
@@ -62,6 +73,7 @@ const EXTRA_BANNED := {
 	"SceneTree": "дерево сцены", "MainLoop": "дерево сцены", "SceneTreeTimer": "дерево сцены",
 	"Tween": "анимация вида", "Thread": "потоки — отдельным решением с замером",
 	"Expression": "выражение строкой вызывает load, str_to_var и прочие глобальные функции в обход сторожа (проверено в 4.7.2)",
+	"Crypto": "случайность ОС (generate_random_bytes) — бой не повторится; случайное — только rng и fx_rng боя",
 }
 ## Ресурсы, без которых загрузчику не обойтись: JSON — разбор с номером строки.
 const ALLOWED_RESOURCES := ["JSON"]
@@ -408,6 +420,15 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"	rng = RandomNumberGenerator.new()\n	fx.seed = 5": "зерно чужому генератору",
 		"	var a := rand_from_seed(7)": "своя случайность мимо rng боя",
 		"	var e := Expression.new()": "выражение строкой — load и str_to_var по имени",
+		# замечание проверяющего к G1: общий генератор движка мимо rng боя и порядок по
+		# номеру объекта (на копии теста без правки — все зелёные, 0 нарушений, проверено)
+		"	ships.shuffle()": "перемешать общим генератором движка",
+		"	var s: Ship = ships.pick_random()": "выбрать общим генератором движка",
+		"	var t = targets . pick_random ()": "pick_random с пробелами",
+		"	var id := s.get_instance_id()": "номер объекта",
+		"	list.sort_custom(func(a: Ship, b: Ship) -> bool: return a.get_instance_id() < b.get_instance_id())": "порядок по номеру объекта",
+		"	var h := hash(s)": "hash объекта — адрес в памяти",
+		"	var c := Crypto.new()": "случайность ОС",
 	}
 	for line: String in dirty:
 		ok(violations(line).size() > 0, "грязная строка поймана (%s): %s" % [dirty[line], line])
@@ -483,6 +504,10 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"",
 		"	fx_rng.seed = battle_seed ^ 0x5bd1e995",
 		"var u := rng.randi_range(0, 3)",
+		"var pick: Ship = ships[rng.randi_range(0, ships.size() - 1)]",
+		"var key := name.hash() ^ ftext.sha256_text().hash()",
+		"var shuffled := 0",
+		"var hash_len := 16",
 		"const SHIP := preload(\"ship.gd\")",
 		"var label := \"урон/с\"",
 		"var unit := \"x.json\"",
