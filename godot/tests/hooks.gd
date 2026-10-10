@@ -10,6 +10,8 @@
 # - клавиши — по physical_keycode (русская раскладка: keycode 1088 «р» на месте H).
 extends RefCounted
 
+const Ship := preload("res://sim/ship.gd")
+
 var tree: SceneTree
 
 
@@ -78,3 +80,12 @@ func key(physical: Key, keycode: Key = KEY_NONE, echo: bool = false) -> void:
 	up.echo = false
 	Input.parse_input_event(up)
 	await tree.process_frame
+
+
+## Переставить корабль в проверке — ВМЕСТЕ с участком «Охраны» (ловушка 29 части 02):
+## «Охрана» тянет корабль к своей точке, и перенесённый без участка уходит назад
+## (так второй бой после «Ещё раз» в стенде JS не кончался).
+static func place_ship(s: Ship, pos: Vector2) -> void:
+	s.pos = pos
+	s.anchor = pos
+	s.vel = Vector2.ZERO

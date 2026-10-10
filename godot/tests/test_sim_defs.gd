@@ -101,8 +101,7 @@ func _cmp_obj(path: String, want: Dictionary, obj: Object, rename: Dictionary = 
 const SHIP_SKIP := {"cost": "кампания", "build": "кампания", "guns": "по ролям — ниже", "pd": "ПВО — ниже"}
 const FACTION_SKIP := {"doctrine": "кампания", "motto": "текст меню выбора клана", "desc": "текст меню выбора клана",
 	"perks": "текст меню выбора клана", "weakness": "текст меню выбора клана", "color_hex": "то же, что colorCss"}
-const QUICK_SKIP := {"_src": "места в коде JS", "sizes": "вход формулы составов — берём готовые fleets",
-	"scale": "правило формулы составов — берём готовые fleets", "summary": "сводка для части 01, бой не читает"}
+const QUICK_SKIP := {"_src": "места в коде JS", "summary": "сводка для части 01, бой не читает"}
 const CONST_RULES := ["deploy_cols", "flee_rule", "ecm_power_rate", "blind_lock", "ai_think_first", "ai_think_every"]
 const TOP_SKIP := {"_meta": "описание выгрузки"}
 
@@ -257,6 +256,34 @@ func compare(j: Dictionary, d: Defs) -> PackedStringArray:
 				for f: Variant in rs:
 					var l: Defs.Lineup = d.quick.reserve.get(StringName(str(f)))
 					_cmp_lineup("quick_battle.reserve." + str(f), rs[f], l.entries if l != null else ([] as Array[Defs.FleetEntry]))
+			"sizes":
+				# вход формулы составов (G1 собирает бой из них и сверяет с fleets)
+				var sz: Dictionary = q[k]
+				for size: Variant in sz:
+					var rows: Dictionary = sz[size]
+					var l: Defs.Lineup = d.quick.sizes.get(StringName(str(size)))
+					var got: Array[Defs.FleetEntry] = l.entries if l != null else ([] as Array[Defs.FleetEntry])
+					if rows.size() != got.size():
+						_bad.append("quick_battle.sizes.%s: в выгрузке %d строк, загружено %d" % [str(size), rows.size(), got.size()])
+						continue
+					var i := 0
+					for id: Variant in rows:
+						_cmp("quick_battle.sizes.%s.%s (вид)" % [str(size), str(id)], str(id), String(got[i].id))
+						_cmp("quick_battle.sizes.%s.%s" % [str(size), str(id)], rows[id], got[i].count)
+						i += 1
+			"scale":
+				var sc: Dictionary = q[k]
+				for f: Variant in sc:
+					if str(f) == "note":
+						continue
+					var m: Dictionary = sc[f]
+					var scd: Defs.ScaleDef = d.quick.scale.get(StringName(str(f)))
+					if scd == null:
+						_bad.append("quick_battle.scale.%s: не загружено" % str(f))
+						continue
+					_cmp("quick_battle.scale.%s.mul" % str(f), m["mul"], scd.mul)
+					_cmp("quick_battle.scale.%s.min" % str(f), m.get("min", 0.0), float(scd.at_least))
+					_cmp("quick_battle.scale.%s.round" % str(f), m.has("round"), scd.rounds)
 			_: _bad.append("quick_battle.%s: поле не загружено и не названо пропуском" % ks)
 	var bc2: Dictionary = j["battle_constants"]
 	var cprops := _props(d.consts)

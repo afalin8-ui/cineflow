@@ -4,13 +4,15 @@
 # критерий 3) стоят линиями по местам 09, 5; 240 машин кружат над серединой;
 # по линиям бегут лучи и вспышки из пула — нагрузка, похожая на бой.
 # Расстановка ВРЕМЕННАЯ: простая таблица мест 09, 5.1–5.5 без логики строя
-# (сжатого шага и второй шеренги нет — в П × П линия влезает и так); строй боя —
-# sim/formation.gd, пакет G4. Классы вида — те же, что пойдут в бой: ShipVisual,
+# (сжатого шага и второй шеренги нет — в П × П линия влезает и так); с G1 она живёт
+# в модели (sim/formation.gd, start_places) — по ней же встаёт «Полигон»; строй
+# боя целиком — пакет G4. Классы вида — те же, что пойдут в бой: ShipVisual,
 # CameraRig, CraftLayer, FxPool, SpaceEnv. Сценарий эффектов — по своим часам
 # и своему генератору с постоянным зерном: замер кадров повторяем.
 extends Node3D
 
 const Defs := preload("res://sim/defs.gd")
+const Formation := preload("res://sim/formation.gd")
 const SpaceEnv := preload("res://view/space_env.gd")
 const CameraRig := preload("res://view/camera_rig.gd")
 const ShipVisual := preload("res://view/ship_visual.gd")
@@ -93,7 +95,8 @@ func setup(p_defs: Defs, p_prewarm: bool = true) -> bool:
 	_place_side(attacker, 1)
 	_place_side(defender, -1)
 	# станция защитника — на station_back позади его линии старта
-	_add_ship(&"station", Vector3(0.0, 0.0, -(defs.doctrine.deploy_heavy_z + defs.doctrine.deploy_station_back)), -1)
+	var st := Formation.station_place(defs, -1.0)
+	_add_ship(&"station", Vector3(st.x, 0.0, st.y), -1)
 	crafts = CraftLayer.new()
 	crafts.name = "Crafts"
 	add_child(crafts)
@@ -154,77 +157,13 @@ static func _lineup(entries: Array[Defs.FleetEntry]) -> Array[StringName]:
 	return out
 
 
+## Места — из модели (sim/formation.gd): та же таблица мест 09, 5.1–5.5, по которой
+## встаёт «Полигон»; здесь только корабли вида на этих местах.
 func _place_side(ids: Array[StringName], side: int) -> void:
-	var d := defs.doctrine
-	var heavies: Array[Defs.ShipDef] = []
-	var corv: Array[Defs.ShipDef] = []
-	var frig: Array[Defs.ShipDef] = []
-	var ecm: Array[Defs.ShipDef] = []
-	var carr: Array[Defs.ShipDef] = []
-	for id in ids:
-		var s := defs.ship(FACTION, id)
-		if s.ecm:
-			ecm.append(s)
-		elif s.hangar > 0:
-			carr.append(s)
-		elif s.main != null:
-			heavies.append(s)
-		elif id == &"corvette":
-			corv.append(s)
-		else:
-			frig.append(s)
-	# L = 0,85 × наименьшая дальность главного калибра своей линии (09, 5.2)
-	var r_line := INF
-	for s in heavies:
-		r_line = minf(r_line, s.main.rng)
-	var L := d.line_L_k * r_line
-	var heavy_z := d.deploy_heavy_z
-	# тяжёлые: крупные в центре, шаг hull + hull + 60 (09, 5.3)
-	heavies.sort_custom(func(a: Defs.ShipDef, b: Defs.ShipDef) -> bool: return a.hull > b.hull)
-	var row: Array[Defs.ShipDef] = []
-	for i in heavies.size():
-		if i % 2 == 0:
-			row.append(heavies[i])
-		else:
-			row.push_front(heavies[i])
-	var xs := PackedFloat32Array()
-	var x := 0.0
-	for i in row.size():
-		if i > 0:
-			x += row[i - 1].hull + row[i].hull + d.line_step_heavy
-		xs.append(x)
-	var width := x
-	for i in row.size():
-		_add_ship(row[i].id, Vector3((xs[i] - width * 0.5) * side, 0.0, side * heavy_z), side)
-	# лёгкие шеренги той же ширины, что линия тяжёлых, но не уже 400; РЭБ — в середине
-	# шеренги фрегатов (09, 5.1, 5.3)
-	var rank_w := maxf(width, d.line_light_min_width)
-	_rank(corv, side * (heavy_z - d.line_corvette_k * L), rank_w, side)
-	var fr: Array[Defs.ShipDef] = []
-	fr.append_array(frig)
-	var mid := fr.size() >> 1
-	for e in ecm:
-		fr.insert(mid, e)
-	_rank(fr, side * (heavy_z - d.line_frigate_k * L), rank_w, side)
-	# носители — на carrier_back позади линии, по carrier_lat (260) вбок
-	for i in carr.size():
-		var cx := (float(i) - (carr.size() - 1) * 0.5) * d.deploy_carrier_lat
-		_add_ship(carr[i].id, Vector3(cx * side, 0.0, side * (heavy_z + d.line_carrier_back)), side)
-
-
-func _rank(list: Array[Defs.ShipDef], z: float, width: float, side: int) -> void:
-	var n := list.size()
-	if n == 0:
-		return
-	var step := 0.0
-	if n > 1:
-		var need := 0.0
-		for i in range(1, n):
-			need += list[i - 1].hull + list[i].hull + defs.doctrine.line_step_light
-		step = maxf(need, width) / (n - 1)
-	for i in n:
-		var cx := (float(i) - (n - 1) * 0.5) * step
-		_add_ship(list[i].id, Vector3(cx * side, 0.0, z), side)
+	for place: Array in Formation.start_places(defs, FACTION, ids, float(side)):
+		var id: StringName = place[0]
+		var p: Vector2 = place[1]
+		_add_ship(id, Vector3(p.x, 0.0, p.y), side)
 
 
 func _add_ship(id: StringName, pos: Vector3, side: int) -> void:

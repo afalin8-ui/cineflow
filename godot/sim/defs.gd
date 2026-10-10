@@ -231,7 +231,20 @@ class Lineup:
 	var entries: Array[FleetEntry] = []
 
 
+class ScaleDef:
+	## Множитель клана к строке состава быстрого боя (часть 01, 2.15): count × mul,
+	## округлить (rounds — «Math.round» выгрузки) и не меньше at_least. Нули
+	## выбрасываются ДО множителя (ловушка 19 части 01) — это делает бой, а не данные.
+	var mul: float = 1.0
+	var rounds: bool = false
+	var at_least: int = 0
+
+
 class QuickBattleDef:
+	## Масштабы до множителя клана (вход формулы составов): строки «вид → число»,
+	## в порядке выгрузки; «regiments» — наземная операция, бой на орбите её не берёт.
+	var sizes: Dictionary[StringName, Lineup] = {}
+	var scale: Dictionary[StringName, ScaleDef] = {}
 	var size_ids: Array[StringName] = []
 	var size_names: Dictionary[StringName, String] = {}
 	var default_mine: StringName
@@ -362,6 +375,7 @@ class Doctrine:
 	var line_rear: float
 	var line_shift_max: float
 	var line_turn_max_deg: float
+	var hyper_exit_free_max_s: float    # окно после выхода из гипера — не дольше (вопрос 1 части 02)
 	var deploy_heavy_z: float
 	var deploy_station_back: float
 	var deploy_carrier_lat: float
@@ -1061,6 +1075,34 @@ func _quick(q: Dictionary) -> QuickBattleDef:
 	var rs := _dict(_need(q, "reserve", "quick_battle"), "quick_battle.reserve")
 	for f: Variant in rs:
 		o.reserve[StringName(str(f))] = _lineup(rs[f], "quick_battle.reserve." + str(f))
+	var sz := _dict(_need(q, "sizes", "quick_battle"), "quick_battle.sizes")
+	for size: Variant in sz:
+		var path := "quick_battle.sizes." + str(size)
+		var rows := _dict(sz[size], path)
+		var l := Lineup.new()
+		for id: Variant in rows:
+			var e := FleetEntry.new()
+			e.id = StringName(str(id))
+			var n: Variant = _conv(rows[id], TYPE_INT, "%s.%s" % [path, str(id)])
+			if n != null:
+				e.count = n
+			l.entries.append(e)
+		o.sizes[StringName(str(size))] = l
+	var sc := _dict(_need(q, "scale", "quick_battle"), "quick_battle.scale")
+	for f: Variant in sc:
+		if str(f) == "note":
+			continue          # пояснение словами
+		var path := "quick_battle.scale." + str(f)
+		var m := _dict(sc[f], path)
+		var d := ScaleDef.new()
+		d.mul = _num(m, "mul", path)
+		if m.has("round"):
+			if str(m["round"]) != "Math.round":
+				_err(path + ".round", "известно только «Math.round», а пришло «%s»" % str(m["round"]))
+			d.rounds = true
+		if m.has("min"):
+			d.at_least = _int(m, "min", path)
+		o.scale[StringName(str(f))] = d
 	return o
 
 
