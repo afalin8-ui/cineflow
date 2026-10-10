@@ -1,0 +1,76 @@
+# Временная проба (arch-B): сборка Godot-проекта в GitHub Actions.
+# Живёт только в ветке claude/capella-godot-probe-B и удаляется вместе с ней.
+name: godot-probe-b
+on:
+  push:
+    branches: [claude/capella-godot-probe-B]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Godot 4.7.2 и шаблоны выгрузки
+        run: |
+          set -e
+          curl -sSfL --retry 3 -o godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q godot.zip && mv Godot_v4.7.2-stable_linux.x86_64 godot && chmod +x godot
+          curl -sSfL --retry 3 -o tpl.tpz https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+          T=$HOME/.local/share/godot/export_templates/4.7.2.stable
+          mkdir -p $T
+          unzip -q -j tpl.tpz templates/version.txt templates/linux_release.x86_64 templates/windows_release_x86_64.exe templates/windows_release_x86_64_console.exe -d $T
+          ls -la $T
+          ./godot --version
+      - name: Импорт и стенд интерфейса
+        run: |
+          set -e
+          ./godot --headless --path probe-b --import > import.log 2>&1 || true
+          ./godot --headless --path probe-b -s res://tests/ui_test.gd -- inject=push 2>&1 | tee ui.log
+          grep -q "RESULT checks=.* fails=0" ui.log
+          ! grep -q "SCRIPT ERROR" ui.log
+      - name: Шаг боя без отрисовки
+        run: |
+          ./godot --headless --path probe-b -s res://bench/bench.gd -- mode=steady steps=1800 fast 2>&1 | tee bench.log
+          ./godot --headless --path probe-b -s res://bench/bench.gd -- mode=battle fast seed=7 runs=4 2>&1 | tee -a bench.log
+          grep -q STEADY bench.log
+      - name: Выгрузка Linux и Windows
+        run: |
+          set -e
+          mkdir -p out/linux out/win
+          ./godot --headless --path probe-b --export-release Linux $PWD/out/linux/capella.x86_64
+          ./godot --headless --path probe-b --export-release Windows $PWD/out/win/capella.exe
+          ls -la out/linux out/win
+          ./out/linux/capella.x86_64 --headless -- bench steps=600 | tee linux_smoke.log
+          grep -q BENCH linux_smoke.log
+          (cd out/linux && zip -q -9 ../capella-linux.zip capella.x86_64)
+          (cd out/win && zip -q -9 ../capella-windows.zip *)
+          ls -la out/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capella-probe-b-linux
+          path: out/capella-linux.zip
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capella-probe-b-windows
+          path: out/win
+          retention-days: 1
+  smoke-windows:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: capella-probe-b-windows
+          path: win
+      - name: Запуск сборки Windows без окна
+        shell: pwsh
+        run: |
+          Get-ChildItem win
+          & .\win\capella.console.exe --headless -- bench steps=600 "out=$PWD\smoke.txt"
+          Write-Host "exit: $LASTEXITCODE"
+          Get-Content smoke.txt
+          if (-not (Select-String -Path smoke.txt -Pattern "BENCH")) { exit 1 }
