@@ -364,6 +364,7 @@ class Doctrine:
 	var line_turn_max_deg: float
 	var deploy_heavy_z: float
 	var deploy_station_back: float
+	var deploy_carrier_lat: float
 	var ai_corvette_intercept_take: float
 	var ai_corvette_intercept_drop: float
 	var ai_corvette_intercept_share: float
@@ -390,6 +391,8 @@ class Doctrine:
 	var camera_drag_k: float
 	var camera_near: float
 	var camera_far: float
+	var view_height_spread: float      # только картинка (09, 11.6)
+	var view_bob: float
 	# раскладываются по местам (DOCTRINE_SPECIAL), здесь — для справки и стенда
 	var sec_mounts: Dictionary[StringName, int] = {}
 	var ecm_main_slow_default: float

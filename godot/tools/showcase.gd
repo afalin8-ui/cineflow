@@ -18,15 +18,17 @@ const ShipVisualScene := preload("res://view/ship_visual.tscn")
 const CraftLayer := preload("res://view/craft_layer.gd")
 const FxPool := preload("res://view/fx_pool.gd")
 
+const ShipModels := preload("res://view/ship_models.gd")
+
 const FACTION := &"plektor"
 const SIZE := &"big"
 const CRAFT_ROLES: Array[StringName] = [&"interceptor", &"fighter", &"bomber"]
 const CRAFT_PER_ROLE := 80
 const SQUAD := 6
 const SEED := 20261010
-const HEIGHT_SPREAD := 40.0       # своя высота корабля ±40 (09, 11.6) — только картинка
-const BOB := 3.0                  # медленное покачивание ±3
-const CARRIER_STEP := 260.0       # носители по 260 вбок (09, 5.1)
+# Числа доктрины (высота-картинка ±40 и покачивание ±3 — 09, 11.6; носители по 260
+# вбок — 09, 5.1; расстояния камеры в пути замера — 09, 11.2) — из doctrine.json,
+# своих здесь нет. Здесь — только сценарий «Стола»: зерно, звенья, маршрут камеры.
 
 ## Цвета сторон (C43): свои — холодные, чужие — тёплые.
 const OWN_MAIN := Color(0.55, 0.85, 1.0)
@@ -53,30 +55,56 @@ var _squads: Array[Dictionary] = []
 var _craft_pos: PackedVector3Array = []
 var _pd_next := 0.0
 var _frame := 0
+var _path: Array[Array] = []
+
+## Беды сборки «Стола»: нет модели или файла обмера, в данных нет резерва. Главная
+## сцена показывает их на экране и в stderr, и замер кадров не начинается: замер на
+## облегчённой сцене обещал бы кадры, которых игрок на худшем бое не получит
+## (замечание к G0b; план, раздел 0, критерий 3).
+var problems := PackedStringArray()
 
 
-func setup(p_defs: Defs, p_prewarm: bool = true) -> void:
+## Собрать «Стол». false — есть беды (problems), и сцена неполная: модели кораблей
+## и машин проверяются ДО расстановки, пропавшая не даёт пустого места молча.
+func setup(p_defs: Defs, p_prewarm: bool = true) -> bool:
 	defs = p_defs
 	prewarm = p_prewarm
 	_rng.seed = SEED
+	problems.clear()
+	var sides := _fleets()
+	var attacker: Array[StringName] = sides[0]
+	var defender: Array[StringName] = sides[1]
+	var need: Array[StringName] = [&"station"]
+	for id: StringName in attacker + defender:
+		if id not in need:
+			need.append(id)
+	problems.append_array(ShipModels.problems(FACTION, need, CRAFT_ROLES))
+	if not problems.is_empty():
+		return false
 	env = SpaceEnv.new()
 	env.name = "SpaceEnv"
 	add_child(env)
 	rig = CameraRig.new()
 	rig.name = "CameraRig"
 	add_child(rig)
-	rig.setup(defs.doctrine)
+	rig.setup(defs.doctrine, defs.consts.field_half)
 	env._fit_stars()
-	_place_fleets()
+	_build_path()
+	_place_side(attacker, 1)
+	_place_side(defender, -1)
+	# станция защитника — на station_back позади его линии старта
+	_add_ship(&"station", Vector3(0.0, 0.0, -(defs.doctrine.deploy_heavy_z + defs.doctrine.deploy_station_back)), -1)
 	crafts = CraftLayer.new()
 	crafts.name = "Crafts"
 	add_child(crafts)
 	for r in CRAFT_ROLES:
-		crafts.add_kind(r, FACTION, r, CRAFT_PER_ROLE)
+		if not crafts.add_kind(r, FACTION, r, CRAFT_PER_ROLE):
+			problems.append("машины %s.%s не встали: модель не загрузилась" % [FACTION, r])
 	_make_squads()
 	if prewarm:
 		_make_fx()
 	_update_crafts()
+	return problems.is_empty()
 
 
 ## Пул эффектов. Создаётся сразу, вместе со всем остальным: его шейдеры обязаны
@@ -101,17 +129,21 @@ func craft_count() -> int:
 
 # ───────────────────────── расстановка (09, 5.1–5.5) ─────────────────────────
 
-func _place_fleets() -> void:
+## Составы сторон: [атакующий с резервом, защитник] — id по кораблю (станция
+## защитника — отдельно, у неё своё место).
+## Нет флота или резерва в данных — беда, а не «Стол» поменьше: без резерва вышло
+## бы 69 кораблей вместо 83, и замер мерил бы не худший бой.
+func _fleets() -> Array:
 	var attacker := _lineup(defs.quick.fleet(SIZE, FACTION))
 	var defender := _lineup(defs.quick.fleet(SIZE, FACTION))
+	if attacker.is_empty():
+		problems.append("в данных нет флота «%s» клана %s" % [SIZE, FACTION])
 	var l: Defs.Lineup = defs.quick.reserve.get(FACTION)
-	if l != null:
+	if l == null or l.entries.is_empty():
+		problems.append("в данных нет резерва клана %s — «Стол» вышел бы без резерва, не худший бой" % FACTION)
+	else:
 		attacker.append_array(_lineup(l.entries))      # резерв игрока — на свои места по ролям (09, 5.5)
-	_place_side(attacker, 1)
-	_place_side(defender, -1)
-	# станция защитника — на station_back позади его линии старта
-	var z := -(defs.doctrine.deploy_heavy_z + defs.doctrine.deploy_station_back)
-	_add_ship(&"station", Vector3(0.0, 0.0, z), -1)
+	return [attacker, defender]
 
 
 static func _lineup(entries: Array[Defs.FleetEntry]) -> Array[StringName]:
@@ -174,9 +206,9 @@ func _place_side(ids: Array[StringName], side: int) -> void:
 	for e in ecm:
 		fr.insert(mid, e)
 	_rank(fr, side * (heavy_z - d.line_frigate_k * L), rank_w, side)
-	# носители — на carrier_back позади линии, по 260 вбок
+	# носители — на carrier_back позади линии, по carrier_lat (260) вбок
 	for i in carr.size():
-		var cx := (float(i) - (carr.size() - 1) * 0.5) * CARRIER_STEP
+		var cx := (float(i) - (carr.size() - 1) * 0.5) * d.deploy_carrier_lat
 		_add_ship(carr[i].id, Vector3(cx * side, 0.0, side * (heavy_z + d.line_carrier_back)), side)
 
 
@@ -197,10 +229,15 @@ func _rank(list: Array[Defs.ShipDef], z: float, width: float, side: int) -> void
 
 func _add_ship(id: StringName, pos: Vector3, side: int) -> void:
 	var v := ShipVisualScene.instantiate() as ShipVisual
+	if not v.setup(FACTION, id):
+		# пустого места молча не бывает: корабль не встал — это беда «Стола»
+		problems.append("корабль %s.%s не встал: модель не загрузилась" % [FACTION, id])
+		v.free()
+		return
 	add_child(v)
 	v.name = "%s_%s_%d" % ["own" if side > 0 else "foe", id, ships.size()]
-	v.setup(FACTION, id)
-	var h := _rng.randf_range(-HEIGHT_SPREAD, HEIGHT_SPREAD)
+	var spread := defs.doctrine.view_height_spread
+	var h := _rng.randf_range(-spread, spread)
 	var p := Vector3(pos.x, h, pos.z)
 	v.position = p
 	# нос модели — к −z: атакующий (z > 0) смотрит на защитника как есть, защитник — повёрнут
@@ -331,6 +368,8 @@ func _target(side: int, kind: StringName) -> int:
 
 
 func _process(delta: float) -> void:
+	if crafts == null:
+		return           # «Стол» не собран (беды в problems) — двигать нечего
 	clock += delta
 	_frame += 1
 	if fx == null:
@@ -338,9 +377,10 @@ func _process(delta: float) -> void:
 			_make_fx()       # откат: эффекты впервые на 30-м кадре — их конвейеры соберутся посреди игры
 		else:
 			return
+	var bob := defs.doctrine.view_bob
 	for i in ships.size():
 		var p := base_pos[i]
-		ships[i].position = Vector3(p.x, p.y + sin(clock * 0.6 + bob_phase[i]) * BOB, p.z)
+		ships[i].position = Vector3(p.x, p.y + sin(clock * 0.6 + bob_phase[i]) * bob, p.z)
 	_update_crafts()
 	fx.set_time(clock)
 	_fire(delta)
@@ -348,33 +388,62 @@ func _process(delta: float) -> void:
 
 # ───────────────────────── путь камеры для замера кадров ─────────────────────────
 
-## Ключи пути: (секунда, точка взгляда x, z, поворот, расстояние). В пути и рабочий
-## вид 2400, и дальний предел 5000 (план G0, п. 7): на 5000 в кадре весь «стол».
-const PATH: Array[Array] = [
-	[0.0, 0.0, 470.0, 0.0, 3990.0],
-	[8.0, 0.0, 180.0, 0.0, 2400.0],
-	[18.0, -650.0, 60.0, 0.45, 2400.0],
-	[28.0, 650.0, -120.0, -0.5, 2400.0],
-	[36.0, 0.0, 0.0, -0.5, 5000.0],
-	[48.0, 0.0, 0.0, 2.0, 5000.0],
-	[55.0, 0.0, -300.0, 3.1, 2400.0],
-	[60.0, 0.0, 470.0, TAU, 3990.0],
+## Маршрут замера: (секунда, точка взгляда x, z, поворот, расстояние). Расстояния
+## — ключи доктрины (camera.dist_start 3990, dist_work 2400, dist_max 5000: в пути
+## и рабочий вид, и дальний предел — план G0, п. 7; на 5000 в кадре весь «стол»),
+## z = &"start" — стартовая точка взгляда camera.start_look_z (470). Числа здесь —
+## только сам маршрут: когда и куда смотреть.
+const PATH_PLAN: Array[Array] = [
+	[0.0, 0.0, &"start", 0.0, &"start"],
+	[8.0, 0.0, 180.0, 0.0, &"work"],
+	[18.0, -650.0, 60.0, 0.45, &"work"],
+	[28.0, 650.0, -120.0, -0.5, &"work"],
+	[36.0, 0.0, 0.0, -0.5, &"max"],
+	[48.0, 0.0, 0.0, 2.0, &"max"],
+	[55.0, 0.0, -300.0, 3.1, &"work"],
+	[60.0, 0.0, &"start", TAU, &"start"],
 ]
 const PATH_LEN := 60.0
+
+
+## Маршрут с числами доктрины: [секунда, x, z, поворот, расстояние].
+func _build_path() -> void:
+	var d := defs.doctrine
+	var dist: Dictionary[StringName, float] = {&"start": d.camera_dist_start, &"work": d.camera_dist_work, &"max": d.camera_dist_max}
+	_path.clear()
+	for row: Array in PATH_PLAN:
+		var t: float = row[0]
+		var x: float = row[1]
+		var zv: Variant = row[2]
+		var z := d.camera_start_look_z
+		if typeof(zv) != TYPE_STRING_NAME:
+			z = zv
+		var yaw: float = row[3]
+		var dk: StringName = row[4]
+		_path.append([t, x, z, yaw, dist[dk]])
+
+
+## Расстояния маршрута по порядку — для проверок (рабочий вид и дальний предел в пути).
+func path_dists() -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+	for row in _path:
+		var dd: float = row[4]
+		out.append(dd)
+	return out
 
 
 ## Поставить камеру в точку пути на секунде t (0…60) — сразу, без сглаживания.
 func drive(t: float) -> void:
 	var tt := clampf(t, 0.0, PATH_LEN)
 	var i := 0
-	while i < PATH.size() - 2:
-		var nxt: Array = PATH[i + 1]
+	while i < _path.size() - 2:
+		var nxt: Array = _path[i + 1]
 		var tn: float = nxt[0]
 		if tt <= tn:
 			break
 		i += 1
-	var a: Array = PATH[i]
-	var b: Array = PATH[i + 1]
+	var a: Array = _path[i]
+	var b: Array = _path[i + 1]
 	var t0: float = a[0]
 	var t1: float = b[0]
 	var k := smoothstep(0.0, 1.0, (tt - t0) / maxf(t1 - t0, 0.001))

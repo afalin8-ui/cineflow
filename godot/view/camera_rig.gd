@@ -14,27 +14,29 @@ extends Node3D
 
 const Defs := preload("res://sim/defs.gd")
 
-const FIELD := 2600.0            # точка взгляда заперта в ±FIELD (06, 2.1)
 const SMOOTH_KEEP := 0.0012      # доля, что остаётся за секунду (06, 2.2.2)
 const EDGE_PX := 10.0            # полоса края экрана (06, 2.1)
 const DRAG_SLOP := 6.0           # порог «щёлкнул / потянул» (06, 2.1)
 
 var camera: Camera3D
-var tilt_deg := 55.0
-var dist_min := 500.0
-var dist_max := 5000.0
-var edge_k := 0.44
-var wheel_step := 0.12
-var rotate_speed := 1.3
-var drag_k := 0.005
+# Числа камеры — из доктрины (doctrine.json → camera.*) и поля боя (space_data →
+# battle_constants.field_half), их ставит setup(); своих здесь нет.
+var field := 0.0                 # точка взгляда заперта в ±field (06, 2.1)
+var tilt_deg := 0.0
+var dist_min := 0.0
+var dist_max := 0.0
+var edge_k := 0.0
+var wheel_step := 0.0
+var rotate_speed := 0.0
+var drag_k := 0.0
 
 ## Куда камера хочет смотреть и откуда — выбор игрока.
 var look := Vector3.ZERO
-var dist := 3990.0
+var dist := 0.0
 var yaw := 0.0
 ## Где камера сейчас (догоняет look и dist).
 var s_look := Vector3.ZERO
-var s_dist := 3990.0
+var s_dist := 0.0
 
 ## false — ввод не трогает камеру (замер кадров ведёт её сам по пути).
 var input_enabled := true
@@ -49,8 +51,9 @@ var _drag_from := Vector2.ZERO
 var _drag_moved := false
 
 
-func setup(d: Defs.Doctrine) -> void:
+func setup(d: Defs.Doctrine, field_half: float) -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	field = field_half
 	camera = Camera3D.new()
 	camera.fov = d.camera_fov_deg
 	camera.near = d.camera_near
@@ -84,7 +87,7 @@ func set_view(p_look: Vector3, p_yaw: float, p_dist: float, instant: bool) -> vo
 
 
 func _clamp_look(p: Vector3) -> Vector3:
-	return Vector3(clampf(p.x, -FIELD, FIELD), 0.0, clampf(p.z, -FIELD, FIELD))
+	return Vector3(clampf(p.x, -field, field), 0.0, clampf(p.z, -field, field))
 
 
 ## Положение камеры для точки взгляда и расстояния (06, 2.2.1, наклон постоянный).

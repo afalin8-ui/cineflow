@@ -11,6 +11,9 @@
 #   растут после первых кадров (откат — эффекты впервые на 30-м кадре);
 # - сканер кнопок (07, ловушка 10): щелчок в центр каждой видимой кнопки доходит
 #   до неё (откат — прозрачная панель STOP поверх);
+# - строка «Замер кадров…» не ложится ни на подсказку, ни на счётчик F3 — на 1920
+#   и 1366 (замечание к G0b: на 1366 она минуту лежала на подсказке; откат —
+#   подсказка на месте);
 # - снимки «Стола» на 1920 и 1366 — в $CAPELLA_SHOTS для глаз; плюс замеры:
 #   корабли видны, звёзды — точки, а не пятна (откат — звезда вчетверо шире).
 # Минута замера кадров (F5) — укороченной: файл и итог текстом.
@@ -21,6 +24,8 @@ const Showcase := preload("res://tools/showcase.gd")
 const SpaceEnv := preload("res://view/space_env.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
+const FpsCounter := preload("res://ui/fps_counter.gd")
+const MainScene := preload("res://main.tscn")
 
 const MAGENTA := Color(1, 0, 1)
 
@@ -128,7 +133,7 @@ static func halo_problems(img: Image, disk: Variant, tag: String) -> Array:
 
 
 ## Девять снимков на дальнем пределе 5000 (09, 11.7): центр, край (0, 0, 2600),
-## угол (2600, 0, 2600) × поворот 0, π/2, π. Отдаёт [беды, сколько раз диск в кадре].
+## угол (2600, 0, 2600) × поворот 0, π/2, π (2600 — field_half выгрузки). Отдаёт [беды, сколько раз диск в кадре].
 func _nine(sc: Showcase, magenta_sky: bool) -> Array:
 	var bad := PackedStringArray()
 	var seen := 0
@@ -136,7 +141,8 @@ func _nine(sc: Showcase, magenta_sky: bool) -> Array:
 	# карта окружения (отражения) пересчитывается за несколько кадров: без ожидания
 	# океан планеты ещё отражает прежнее, пурпурное небо (замечено в Compatibility)
 	await hooks.frames(12)
-	for look: Vector3 in [Vector3.ZERO, Vector3(0, 0, 2600), Vector3(2600, 0, 2600)]:
+	var fh := _defs.consts.field_half
+	for look: Vector3 in [Vector3.ZERO, Vector3(0, 0, fh), Vector3(fh, 0, fh)]:
 		for yaw: float in [0.0, PI * 0.5, PI]:
 			sc.rig.set_view(look, yaw, 5000.0, true)
 			var img := await _shot()
@@ -206,7 +212,8 @@ func test_halo_nine_shots() -> void:
 	# и числом: всё, что в кадре, ближе дальней плоскости — корабли у края поля и планета
 	var far := sc.rig.camera.far
 	var worst := 0.0
-	for look: Vector3 in [Vector3.ZERO, Vector3(0, 0, 2600), Vector3(2600, 0, 2600), Vector3(-2600, 0, -2600)]:
+	var fh := _defs.consts.field_half
+	for look: Vector3 in [Vector3.ZERO, Vector3(0, 0, fh), Vector3(fh, 0, fh), Vector3(-fh, 0, -fh)]:
 		for yaw: float in [0.0, PI * 0.5, PI, PI * 1.5]:
 			sc.rig.set_view(look, yaw, 5000.0, true)
 			var eye := sc.rig.camera.global_position
@@ -421,6 +428,68 @@ func test_bench_and_buttons() -> void:
 	report.queue_free()
 	bench.queue_free()
 	await _drop(sc)
+
+
+# ───────────────────────── строка замера и подсказка ─────────────────────────
+
+static func _rect_of(c: Control) -> Rect2:
+	return c.get_global_rect() if c.is_visible_in_tree() else Rect2()
+
+
+func test_bench_progress_layout() -> void:
+	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
+		await hooks.set_window_size(size)
+		var main := MainScene.instantiate()
+		tree.root.add_child(main)
+		await hooks.frames(3)
+		var fps: FpsCounter = main.get("fps")
+		var report: BenchReport = main.get("report")
+		var bench: FrameBench = main.get("bench")
+		if not ok(fps != null and report != null and bench != null, "%d×%d: главная сцена завела счётчик, замер и итог" % [size.x, size.y]):
+			main.queue_free()
+			await hooks.frames(2)
+			continue
+		var tag := "%d×%d" % [size.x, size.y]
+		ok(fps.hint.is_visible_in_tree(), "%s: в покое подсказка видна" % tag)
+		var hint_rect := fps.hint.get_global_rect()
+		await hooks.key(KEY_F5)
+		await hooks.frames(2)
+		ok(bench.running, "%s: F5 начал замер" % tag)
+		var vis := tree.root.get_visible_rect()
+		var pr := _rect_of(report.progress)
+		ok(pr.has_area() and vis.encloses(pr), "%s: строка замера целиком на экране (%s)" % [tag, pr])
+		ok(not fps.hint.is_visible_in_tree(), "%s: на время замера подсказка спрятана" % tag)
+		ok(not pr.intersects(_rect_of(fps.hint)), "%s: строка замера не на подсказке" % tag)
+		# откат: подсказка осталась на месте — на 1366 строка ложится прямо на неё
+		var hit := pr.intersects(hint_rect)
+		if size.x == 1366:
+			ok(hit, "%s: откат «подсказка на месте» краснеет: строка %s, подсказка %s" % [tag, pr, hint_rect])
+		# счётчик F3 открыт посреди замера — строка уходит под него, а не на него.
+		# Название видеокарты бывает длинным («AMD Radeon RX 7900 XTX (Advanced Micro
+		# Devices, Inc.)»), и счётчик шире, чем у llvmpipe здесь: ширина — как у такого
+		await hooks.key(KEY_F3)
+		fps.panel.custom_minimum_size.x = 560.0
+		await hooks.frames(3)
+		ok(fps.panel.is_visible_in_tree(), "%s: F3 открыл счётчик посреди замера" % tag)
+		var pr2 := _rect_of(report.progress)
+		var pan := _rect_of(fps.panel)
+		ok(not pr2.intersects(pan), "%s: строка замера не на счётчике (строка %s, счётчик %s)" % [tag, pr2, pan])
+		ok(vis.encloses(pr2), "%s: строка замера и под счётчиком целиком на экране" % tag)
+		note("%s %s: строка замера %s, подсказка %s, счётчик %s, строка при счётчике %s" % [renderer(), tag, pr, hint_rect, pan, pr2])
+		await hooks.key(KEY_F3)
+		await hooks.frames(2)
+		ok(not fps.hint.is_visible_in_tree(), "%s: F3 закрыт, замер идёт — подсказка всё ещё спрятана" % tag)
+		await hooks.key(KEY_F5)
+		await hooks.frames(2)
+		ok(not bench.running and not report.progress.visible, "%s: F5 прервал замер, строки нет" % tag)
+		ok(fps.hint.is_visible_in_tree(), "%s: замер прерван — подсказка вернулась" % tag)
+		main.queue_free()
+		await _drop_main()
+
+
+func _drop_main() -> void:
+	RenderingServer.set_default_clear_color(Color(0.012, 0.014, 0.025))
+	await hooks.frames(3)
 
 
 # ───────────────────────── снимки «Стола» ─────────────────────────

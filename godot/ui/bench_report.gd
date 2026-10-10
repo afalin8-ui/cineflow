@@ -6,6 +6,8 @@
 # FOCUS_NONE (иначе Пробел жмёт последнюю нажатую ещё раз), окно — STOP целиком.
 extends CanvasLayer
 
+const TOP := 14.0          # строка замера — у верхнего края, по центру
+
 var panel: PanelContainer
 var text_label: Label
 var file_label: Label
@@ -29,8 +31,7 @@ func _ready() -> void:
 	progress.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	progress.add_theme_font_size_override("font_size", 18)
 	progress.add_theme_color_override("font_color", Color(1, 0.9, 0.6))
-	progress.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	progress.position.y = 14
+	progress.position.y = TOP
 	progress.visible = false
 	add_child(progress)
 
@@ -89,11 +90,18 @@ func _button(row: HBoxContainer, text: String, cb: Callable) -> Button:
 	return b
 
 
-func show_progress(t: float, total: float) -> void:
+## Строка «Замер кадров: N с из 60» — вверху по центру; если там уже что-то стоит
+## (счётчик кадров F3 слева сверху на узком окне), строка уходит под него.
+## Подсказку на время замера прячет сам счётчик (fps_counter.block_hint): на 1366
+## строка ложилась прямо на неё (замечание к G0b).
+func show_progress(t: float, total: float, avoid: Array[Rect2] = []) -> void:
 	progress.visible = true
 	progress.text = "Замер кадров: %d с из %d · не трогайте мышь и клавиши · F5 — прервать" % [int(t), int(total)]
 	progress.reset_size()
-	progress.position.x = (get_viewport().get_visible_rect().size.x - progress.size.x) * 0.5
+	progress.position = Vector2(((get_viewport().get_visible_rect().size.x - progress.size.x) * 0.5), TOP)
+	for r in avoid:
+		if r.intersects(progress.get_global_rect()):
+			progress.position.y = maxf(progress.position.y, r.end.y + 8.0)
 
 
 func hide_progress() -> void:

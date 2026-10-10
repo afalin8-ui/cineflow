@@ -10,21 +10,35 @@ const DATA_PATH := "res://data/ship_models.json"
 const SKIN_ALBEDO := preload("res://view/ships/tex/hull_diff.jpg")
 const SKIN_NORMAL := preload("res://view/ships/tex/hull_nor.jpg")
 
+static var _path := DATA_PATH
 static var _data: Dictionary = {}
 static var _error := ""
 static var _scenes: Dictionary[String, PackedScene] = {}
 
 
+## Обмер из другого файла — для проверок «пропал файл моделей», «пропала одна
+## .glb» (`-- --ship-models=ФАЙЛ`, tests/test_ui_table.gd). Пусто — обычный. Кэш
+## сбрасывается.
+static func use_file(path: String) -> void:
+	_path = path if path != "" else DATA_PATH
+	_data = {}
+	_error = ""
+	_scenes.clear()
+
+
 ## Весь файл обмера. Битый или пропавший — пустой словарь и текст беды в error().
 static func data() -> Dictionary:
 	if _data.is_empty() and _error == "":
-		var text := FileAccess.get_file_as_string(DATA_PATH)
+		var text := FileAccess.get_file_as_string(_path)
 		if text == "":
-			_error = "нет файла %s" % DATA_PATH
+			_error = "нет файла %s" % _path
 			return _data
 		var j := JSON.new()
 		if j.parse(text) != OK:
-			_error = "%s: строка %d — %s" % [DATA_PATH, j.get_error_line() + 1, j.get_error_message()]
+			_error = "%s: строка %d — %s" % [_path, j.get_error_line() + 1, j.get_error_message()]
+			return _data
+		if typeof(j.data) != TYPE_DICTIONARY:
+			_error = "%s: ждали объект JSON" % _path
 			return _data
 		var d: Dictionary = j.data
 		_data = d
@@ -33,6 +47,31 @@ static func data() -> Dictionary:
 
 static func error() -> String:
 	return _error
+
+
+## Чего не хватает, чтобы показать эти корабли и машины, — беды словами (пусто —
+## всё на месте). Спрашивать ДО сцены: пропавшая модель иначе молча дала бы пустое
+## место на «Столе», а замер кадров мерил бы облегчённую сцену и честно писал бы
+## «83 корабля» (замечание к G0b). Обмер — тоже данные, отказ у него громкий.
+static func problems(faction: StringName, ship_ids: Array[StringName], craft_roles: Array[StringName]) -> PackedStringArray:
+	var out := PackedStringArray()
+	data()
+	if _error != "":
+		out.append("обмер моделей: " + _error)
+		return out
+	for id in ship_ids:
+		_need(out, ship(faction, id), "корабля %s.%s" % [faction, id])
+	for r in craft_roles:
+		_need(out, craft(faction, r), "машины %s.%s" % [faction, r])
+	return out
+
+
+static func _need(out: PackedStringArray, rec: Dictionary, what: String) -> void:
+	var file: String = rec.get("file", "")
+	if file == "":
+		out.append("нет модели %s в %s" % [what, _path])
+	elif not ResourceLoader.exists(file):
+		out.append("нет файла модели %s: %s" % [what, file])
 
 
 ## Запись корабля: file, len, width, height, nodes {имя: {pos, parent, surfaces…}}.

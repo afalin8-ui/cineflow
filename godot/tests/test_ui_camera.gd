@@ -6,7 +6,9 @@
 # - стрелка «вверх» везёт вглубь со скоростью dist × 0,44;
 # - протяжка ПКМ вбок вертит (0,005 рад на точку), отпускание где угодно её кончает;
 # - пределы 500…5000, наклон постоянный;
-# - край экрана не тянет карту, пока мыши в окне не было (откат — тянет).
+# - край экрана не тянет карту, пока мыши в окне не было (откат — тянет);
+# - точка взгляда заперта в ±field_half поля из выгрузки, а не в своё число
+#   (поле 1800 правкой — точка встаёт на 1800; откат — прежняя константа 2600).
 # Плюс F5 в главной сцене: замер начинается, камера отдана пути, F5 — прервать.
 extends "res://tests/case.gd"
 
@@ -22,7 +24,7 @@ func _rig() -> CameraRig:
 		_defs = Defs.load_default({}) as Defs
 	var rig := CameraRig.new()
 	tree.root.add_child(rig)
-	rig.setup(_defs.doctrine)
+	rig.setup(_defs.doctrine, _defs.consts.field_half)
 	rig.edge_enabled = false
 	await hooks.frames(1)
 	return rig
@@ -112,12 +114,13 @@ func test_keys_rotate_and_pan() -> void:
 	await hooks.frames(3)
 	eq(rig.yaw, y2, "повтор Q (echo) камеру не вертит")
 	# стрелка вверх везёт вглубь (−z при повороте 0)
-	rig.set_view(Vector3(0, 0, 470), 0.0, 3990.0, true)
+	var d := _defs.doctrine
+	rig.set_view(Vector3(0, 0, d.camera_start_look_z), 0.0, d.camera_dist_start, true)
 	var t0 := Time.get_ticks_usec()
 	await _hold(KEY_UP, 8)
 	var sec := (Time.get_ticks_usec() - t0) / 1e6
-	ok(rig.look.z < 470.0, "стрелка вверх — вглубь стола: z %.1f" % rig.look.z)
-	ok(470.0 - rig.look.z <= 3990.0 * _defs.doctrine.camera_edge_speed_k * sec * 1.05 + 1.0, "скорость не больше dist × 0,44 в секунду")
+	ok(rig.look.z < d.camera_start_look_z, "стрелка вверх — вглубь стола: z %.1f" % rig.look.z)
+	ok(d.camera_start_look_z - rig.look.z <= d.camera_dist_start * d.camera_edge_speed_k * sec * 1.05 + 1.0, "скорость не больше dist × 0,44 в секунду")
 	# русская раскладка: клавиша по месту (06, ловушка 49) — «й» на месте Q
 	var y3 := rig.yaw
 	var ev := InputEventKey.new()
@@ -212,3 +215,19 @@ func test_f5_starts_and_cancels_bench() -> void:
 	ok(rig.input_enabled, "после прерывания камера снова у игрока")
 	main.queue_free()
 	await hooks.frames(2)
+
+
+func test_look_clamped_to_field_from_data() -> void:
+	var d2 := Defs.load_default({"space.battle_constants.field_half.value": 1800.0}) as Defs
+	if not ok(d2.ok, "правка поля боя принята: %s" % "; ".join(d2.errors)):
+		return
+	var rig := CameraRig.new()
+	tree.root.add_child(rig)
+	rig.setup(d2.doctrine, d2.consts.field_half)
+	rig.edge_enabled = false
+	rig.set_view(Vector3(9000.0, 0, -9000.0), 0.0, rig.dist, true)
+	eq(rig.look, Vector3(1800.0, 0, -1800.0), "точка взгляда заперта в ±field_half из данных (1800 правкой)")
+	rig.move_screen(1.0, 0.0, 5000.0)
+	ok(absf(rig.look.x) <= 1800.0, "сдвиг краем не выводит за поле: x %.0f" % rig.look.x)
+	rig.queue_free()
+	await hooks.frames(1)

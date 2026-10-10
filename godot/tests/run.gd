@@ -2,7 +2,8 @@
 #   godot --headless --path godot -s res://tests/run.gd -- sim     модель, данные
 #   godot --headless --path godot -s res://tests/run.gd -- ui      ввод и интерфейс без окна
 #   xvfb-run … -s res://tests/run.gd -- render                     картинка (G0b)
-# Четвёртым словом можно дать часть имени файла: `-- sim defs`.
+# Вторым словом можно дать часть имени файла, третьим — часть имени функции:
+# `-- sim defs`, `-- render table bench_progress` (для отладки одной проверки).
 # Последняя строка вывода — RESULT checks=N fails=M; её нет — прогон провален
 # (tools/run_tests.sh). Ни одной проверки — тоже провал: тест, который ничего
 # не проверил, ничего и не охраняет.
@@ -18,6 +19,7 @@ var _checks := 0
 var _fails := 0
 var _files := 0
 var _test: Case
+var _fn_only := ""
 
 
 func _initialize() -> void:
@@ -28,6 +30,7 @@ func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	var tier := args[0] if args.size() > 0 else "sim"
 	var only := args[1] if args.size() > 1 else ""
+	_fn_only = args[2] if args.size() > 2 else ""
 	var names: PackedStringArray = []
 	for f in DirAccess.get_files_at("res://tests"):
 		if f.begins_with("test_%s_" % tier) and f.ends_with(".gd") and (only == "" or f.contains(only)):
@@ -62,7 +65,7 @@ func _run_file(f: String) -> void:
 	_test.started = Time.get_ticks_msec()
 	for m: Dictionary in script.get_script_method_list():
 		var mname: String = m["name"]
-		if mname.begins_with("test_"):
+		if mname.begins_with("test_") and (_fn_only == "" or mname.contains(_fn_only)):
 			_test.current = "%s · %s" % [f.get_basename(), mname]
 			await _test.call(mname)
 	print("%-34s проверок %4d, провалов %d, %d мс" % [f.get_basename(), _test.checks, _test.fails, Time.get_ticks_msec() - _test.started])

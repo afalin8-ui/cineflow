@@ -5,16 +5,24 @@
 extends CanvasLayer
 
 const FrameBench := preload("res://ui/frame_bench.gd")
-const WINDOW_S := 0.5
+const WINDOW_US := 500000             # окно «худшего кадра» — 0,5 с НАСТОЯЩЕГО времени
 
 var panel: PanelContainer
 var label: Label
 var hint: Label
 var shown := false
-var _times: PackedFloat64Array = []   # длительности кадров за окно
-var _ages: PackedFloat64Array = []
-var _clock := 0.0
-var _refresh := 0.0
+## Подсказка спрятана на время минуты замера: строка «Замер кадров…» вверху по центру
+## на 1366 ложилась прямо на неё (замечание к G0b), а мышь и клавиши тогда всё равно
+## не нужны.
+var hint_blocked := false
+# Длительность кадра — по часам Time.get_ticks_usec(), как в ui/frame_bench.gd,
+# а НЕ по delta из _process: Godot урезает delta до 8 шагов физики (8/60 ≈ 133 мс),
+# и рывок в 400 мс (сборка шейдера, откат отрисовщика) счётчик показал бы как 133
+# (замечание к G0b: на одном экране F3 писал 149 мс, а файл замера — 861).
+var _times: PackedFloat64Array = []   # длительности кадров за окно, мс
+var _ends: PackedInt64Array = []      # когда кадр кончился, мкс
+var _last_us := 0
+var _refresh_us := 0
 
 
 func _ready() -> void:
@@ -46,8 +54,14 @@ func _ready() -> void:
 func toggle() -> void:
 	shown = not shown
 	panel.visible = shown
-	hint.visible = not shown
-	_refresh = 0.0
+	hint.visible = not shown and not hint_blocked
+	_refresh_us = 0
+
+
+## Спрятать подсказку на время замера кадров и вернуть после.
+func block_hint(on: bool) -> void:
+	hint_blocked = on
+	hint.visible = not shown and not hint_blocked
 
 
 func _input(event: InputEvent) -> void:
@@ -58,27 +72,27 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-func _process(delta: float) -> void:
-	_clock += delta
-	_times.append(delta)
-	_ages.append(_clock)
-	while _ages.size() > 0 and _clock - _ages[0] > WINDOW_S:
-		_ages.remove_at(0)
+func _process(_delta: float) -> void:
+	var now := Time.get_ticks_usec()
+	if _last_us > 0:
+		_times.append((now - _last_us) / 1000.0)
+		_ends.append(now)
+	_last_us = now
+	while _ends.size() > 0 and now - _ends[0] > WINDOW_US:
+		_ends.remove_at(0)
 		_times.remove_at(0)
-	if not shown:
+	if not shown or now < _refresh_us:
 		return
-	_refresh -= delta
-	if _refresh > 0.0:
-		return
-	_refresh = 0.25
+	_refresh_us = now + 250000
 	label.text = summary()
 
 
+## Худший кадр за последние 0,5 с настоящего времени, мс.
 func worst_ms() -> float:
 	var w := 0.0
 	for t in _times:
 		w = maxf(w, t)
-	return w * 1000.0
+	return w
 
 
 func summary() -> String:

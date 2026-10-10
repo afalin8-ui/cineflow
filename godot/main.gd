@@ -7,6 +7,10 @@
 #   capella.x86_64 -- --bench-render    минута замера кадров на «Столе» и выход; итог — в вывод,
 #                                       файл с каждым кадром — рядом с программой (план G0, п. 7);
 #                                       --bench-seconds=N — короче, --bench-out=ПАПКА — куда файл
+#   capella.x86_64 -- --ship-models=ФАЙЛ обмер моделей из другого файла (проверки громкого
+#                                       отказа: пропал файл моделей или одна .glb)
+# Беда в данных или в моделях — текст на экране и в stderr, «Стол» и замер не
+# начинаются; в режимах --selftest и --bench-render — ещё и код выхода 1.
 # Без режима — окно «Стол» (G0b): 83 корабля «Генерального», авиация, огонь-заглушка;
 # F3 — счётчик кадров, F5 — минута замера, F11 — окно / полный экран.
 extends Node
@@ -16,6 +20,7 @@ const Showcase := preload("res://tools/showcase.gd")
 const FpsCounter := preload("res://ui/fps_counter.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
+const ShipModels := preload("res://view/ship_models.gd")
 
 var defs: Defs
 var view: Showcase
@@ -23,6 +28,8 @@ var fps: FpsCounter
 var bench: FrameBench
 var report: BenchReport
 var bench_cli := false
+## Текст беды на экране (данные или модели с ошибкой) — его же читают тесты.
+var error_text := ""
 
 
 func _ready() -> void:
@@ -33,16 +40,26 @@ func _ready() -> void:
 	defs = Defs.load_default(ov_values) as Defs
 	defs.errors.append_array(ov_errors)
 	defs.ok = defs.errors.is_empty()
+	for a in args:
+		if a.begins_with("--ship-models="):
+			ShipModels.use_file(a.substr("--ship-models=".length()))
 	if "--selftest" in args:
 		_selftest()
 		return
 	if not defs.ok:
-		_show_errors()
+		_fail("Игра не запустилась: данные боя с ошибкой.", "ДАННЫЕ", defs.errors, args)
 		return
 	view = Showcase.new()
 	view.name = "Showcase"
 	add_child(view)
-	view.setup(defs)
+	if not view.setup(defs):
+		# пустого места на «Столе» молча не бывает: замер на облегчённой сцене
+		# обещал бы кадры, которых на худшем бое нет (замечание к G0b)
+		var problems := view.problems
+		view.free()
+		view = null
+		_fail("Игра не запустилась: модели кораблей с ошибкой.", "МОДЕЛИ", problems, args)
+		return
 	fps = FpsCounter.new()
 	add_child(fps)
 	report = BenchReport.new()
@@ -79,16 +96,21 @@ func start_bench() -> void:
 	if report != null:
 		report.hide_report()
 	view.rig.input_enabled = false
+	fps.block_hint(true)
 	bench.start()
 
 
 func _process(_delta: float) -> void:
 	if bench != null and bench.running and report != null:
-		report.show_progress(bench.elapsed, bench.duration)
+		var avoid: Array[Rect2] = []
+		if fps.panel.visible:
+			avoid.append(fps.panel.get_global_rect())
+		report.show_progress(bench.elapsed, bench.duration, avoid)
 
 
 func _bench_done(summary: String, file: String) -> void:
 	view.rig.input_enabled = true
+	fps.block_hint(false)
 	report.hide_progress()
 	report.show_report(summary, file)
 	if bench_cli:
@@ -130,28 +152,44 @@ func _input(event: InputEvent) -> void:
 		if bench.running:
 			bench.cancel()
 			view.rig.input_enabled = true
+			fps.block_hint(false)
 			report.hide_progress()
 		else:
 			start_bench()
 		get_viewport().set_input_as_handled()
 
 
-## Отказ данных — словами на экране и в stderr: молча бой не начинаем.
-func _show_errors() -> void:
-	for e in defs.errors:
-		printerr("ДАННЫЕ: ", e)
+## Отказ — словами на экране и в stderr: молча «Стол» не начинаем. В режиме замера
+## из командной строки — код выхода 1: замер на неполной сцене никому не нужен.
+func _fail(head: String, tag: String, list: PackedStringArray, args: PackedStringArray) -> void:
+	for e in list:
+		printerr("%s: %s" % [tag, e])
 	var layer := CanvasLayer.new()
+	layer.name = "Errors"
 	var lab := Label.new()
-	lab.text = "Игра не запустилась: данные боя с ошибкой.\n\n" + "\n".join(defs.errors.slice(0, 20))
+	error_text = head + "\n\n" + "\n".join(list.slice(0, 20))
+	lab.text = error_text
 	lab.position = Vector2(24, 24)
 	lab.add_theme_font_size_override("font_size", 16)
 	layer.add_child(lab)
 	add_child(layer)
+	if "--bench-render" in args:
+		print("BENCH ОТКАЗ: ", head)
+		get_tree().quit(1)
 
 
 ## --selftest: то, что выгруженная сборка обязана уметь сама (CI запускает обе).
 func _selftest() -> void:
 	var fails: PackedStringArray = []
+	# модели кораблей и машин срезовых кланов доехали в сборку (обмер и .glb):
+	# пропавшая модель иначе дала бы пустое место на «Столе» молча
+	var roles: Array[StringName] = [&"interceptor", &"fighter", &"bomber"]
+	for f: StringName in [&"troyden", &"plektor"]:
+		var ids: Array[StringName] = [&"station"]
+		var fd: Defs.FactionDef = defs.factions.get(f)
+		if fd != null:
+			ids.append_array(fd.ship_order)
+		fails.append_array(ShipModels.problems(f, ids, roles))
 	if not defs.ok:
 		fails.append_array(defs.errors)
 	else:

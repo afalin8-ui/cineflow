@@ -12,8 +12,12 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: 'выпустить под этим номером (capella-vX.Y); пусто — только тесты, без выпуска'
+        description: 'черновик выпуска под этим номером (capella-vX.Y); пусто — только тесты, без выпуска'
         default: ''
+      publish:
+        description: 'опубликовать для всех — ТОЛЬКО когда пользователь сам на это согласился; без галочки — черновик'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -167,6 +171,31 @@ jobs:
           head -12 "$csv"
           rm -f godot/build/linux/capella_frames_*.csv
 
+      # пропавшая модель — громкий отказ и в ВЫПУСКНОЙ сборке: замер не начинается,
+      # код 1, беда называет корабль (раньше — пустое место молча и «83 корабля» в итоге)
+      - name: Linux-сборка, пропавшая модель — замер и --selftest отказывают (код 1)
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/lost"
+          python3 - godot/data/ship_models.json "$RUNNER_TEMP/lost/ship_models.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          d['ships']['plektor']['cruiser']['file'] = 'res://view/ships/plektor_cruiser_lost.glb'
+          json.dump(d, open(sys.argv[2], 'w'))
+          PY
+          timeout 120 godot/build/linux/capella.x86_64 --headless -- --bench-render --bench-seconds=2 --ship-models="$RUNNER_TEMP/lost/ship_models.json" > "$RUNNER_TEMP/lost/bench.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/lost/bench.log"
+          if [ $code -ne 1 ] || ! grep -q 'МОДЕЛИ: .*plektor\.cruiser' "$RUNNER_TEMP/lost/bench.log" || ls godot/build/linux/capella_frames_*.csv >/dev/null 2>&1; then
+            echo "::error::пропавшая модель: замер не отказал громко (код $code)"; exit 1
+          fi
+          timeout 120 godot/build/linux/capella.x86_64 --headless -- --selftest --ship-models="$RUNNER_TEMP/lost/ship_models.json" > "$RUNNER_TEMP/lost/self.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/lost/self.log"
+          if [ $code -ne 1 ] || ! grep -q '^SELFTEST ПРОВАЛ' "$RUNNER_TEMP/lost/self.log"; then
+            echo "::error::пропавшая модель: --selftest не отказал (код $code)"; exit 1
+          fi
+
       - name: Архивы
         run: |
           set -euo pipefail
@@ -282,37 +311,16 @@ jobs:
         with:
           path: dl
           merge-multiple: true
-      # ОПУБЛИКОВАННЫЙ выпуск (с capella-v0.1): пользователь согласился на публичные
-      # выпуски — архивы скачиваются по ссылке без входа. Метку capella-vX.Y заводит сам
-      # gh от --target; метка от GITHUB_TOKEN новых прогонов не запускает.
-      # Проба доставки capella-v0.0.1 осталась черновиком — её не трогаем.
+      # Выпуск — ЧЕРНОВИКОМ: черновик видит только владелец репозитория, а согласия
+      # пользователя на публичные выпуски в его собственных словах пока нет
+      # (godot/CLAUDE.md, 13). Черновик — кандидат: каждый зелёный прогон с тем же
+      # номером кладёт в него свежую сборку. Опубликовать — кнопкой «Publish release»
+      # на странице черновика или запуском этого файла с полем release и галочкой
+      # publish; опубликованный выпуск больше не трогается. Вся логика — в
+      # godot/tools/release_publish.sh (её проверяет run_tests.sh на заглушке gh).
       - name: Выпуск
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.test-build.outputs.release }}
-        run: |
-          set -euo pipefail
-          # «новый» — такого выпуска (и черновика с таким номером) ещё нет; черновики
-          # видны только с contents: write — потому проверка здесь, а не в test-build.
-          # Не «gh | grep -q»: под pipefail он «не находит» и заводит второй черновик
-          # (godot/tools/release_exists.sh; отказ gh роняет шаг, а не создаёт выпуск)
-          state=$(godot/tools/release_exists.sh "$TAG")
-          echo "есть ли выпуск $TAG: $state"
-          if [ "$state" = yes ]; then
-            echo "выпуск $TAG уже есть — нового не будет"; exit 0
-          fi
-          title=$(sed -n 2p godot/RELEASE)
-          if [ "$(head -n1 godot/RELEASE | tr -d '\r[:space:]')" != "$TAG" ]; then title="Капелла $TAG"; fi
-          sed -n '4,$p' godot/RELEASE > notes.md
-          printf '\n---\nСобрано из коммита %s, прогон %s/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> notes.md
-          ls -la dl
-          gh release create "$TAG" dl/capella-windows.zip dl/capella-linux.zip \
-            --target "$GITHUB_SHA" --title "$title" --notes-file notes.md
-          gh release view "$TAG" --json isDraft,url,assets --jq '"черновик: \(.isDraft); \(.url); файлы: \([.assets[] | "\(.name) \(.size)"] | join(", "))"'
-          # архивы обязаны скачиваться по ссылке без входа (публичный выпуск)
-          for f in capella-windows.zip capella-linux.zip; do
-            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$f"
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -L -r 0-1023 "$url")
-            echo "$f: $code ($url)"
-            case "$code" in 200|206) ;; *) echo "::error::$f не скачивается без входа: $code"; exit 1 ;; esac
-          done
+          PUBLISH: ${{ github.event.inputs.publish == 'true' && 'true' || 'false' }}
+        run: godot/tools/release_publish.sh "$TAG" dl

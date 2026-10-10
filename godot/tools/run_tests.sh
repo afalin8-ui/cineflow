@@ -15,9 +15,10 @@
 #    даёт код 0;
 # 6. вывод прогона — в файл, хвост — в stderr: при обрыве stdout теряется;
 # 7. процессы — только по PID (никакого pkill -f: он убивает чужие прогоны).
-# Плюс: главная сцена и в режиме --selftest, и С ОКНОМ (--quit-after); --overrides
-# с относительным путём из чужой папки; номер выпуска по каждому случаю двери;
-# «есть ли выпуск» на заглушке gh (с откатом на прежний «gh | grep -q»).
+# Плюс: главная сцена и в режиме --selftest, и С ОКНОМ (--quit-after); пропавшая
+# модель — код 1 у замера и --selftest; --overrides с относительным путём из чужой папки; номер выпуска по каждому случаю двери;
+# «есть ли выпуск» на заглушке gh (с откатом на прежний «gh | grep -q»); выпуск
+# черновиком на заглушке gh с памятью (с откатом «без --draft»).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROJ="$ROOT/godot"
@@ -120,6 +121,34 @@ if [[ $code -ne 0 ]] || ! grep -q '^BENCH Кадров: ' "$LOGS/bench.log" || !
 fi
 rm -rf "$bout"
 
+# ── пропала модель — громкий отказ (замечание к G0b): обмер, где у крейсера Плэктора
+# файла нет. Замер не начинается и выходит с кодом 1, --selftest — тоже 1, и оба
+# называют корабль. Раньше «Стол» молча рисовал пустое место, а итог писал «83 корабля».
+say "── пропавшая модель: --bench-render и --selftest выходят с кодом 1"
+bad_models="$(mktemp -d)"
+python3 - "$PROJ/data/ship_models.json" "$bad_models/ship_models.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d['ships']['plektor']['cruiser']['file'] = 'res://view/ships/plektor_cruiser_lost.glb'
+json.dump(d, open(sys.argv[2], 'w'))
+PY
+timeout 180 "$GODOT" --headless --path "$PROJ" -- --bench-render --bench-seconds=2 --bench-out="$bad_models" --ship-models="$bad_models/ship_models.json" >"$LOGS/bench_lost.log" 2>&1
+code=$?
+if [[ $code -ne 1 ]] || ! grep -q 'МОДЕЛИ: .*plektor\.cruiser' "$LOGS/bench_lost.log" || grep -q '^BENCH Кадров' "$LOGS/bench_lost.log" \
+   || ls "$bad_models"/capella_frames_*.csv >/dev/null 2>&1; then
+  fail "пропавшая модель: замер не отказал громко (код $code)"; show_tail "$LOGS/bench_lost.log"
+else
+  say "   замер: код 1, $(grep -m1 'МОДЕЛИ:' "$LOGS/bench_lost.log")"
+fi
+timeout 120 "$GODOT" --headless --path "$PROJ" -- --selftest --ship-models="$bad_models/ship_models.json" >"$LOGS/selftest_lost.log" 2>&1
+code=$?
+if [[ $code -ne 1 ]] || ! grep -q '^SELFTEST ПРОВАЛ' "$LOGS/selftest_lost.log" || ! grep -q 'plektor\.cruiser' "$LOGS/selftest_lost.log"; then
+  fail "пропавшая модель: --selftest не отказал (код $code)"; show_tail "$LOGS/selftest_lost.log"
+else
+  say "   --selftest: код 1"
+fi
+rm -rf "$bad_models"
+
 # ── --overrides с ОТНОСИТЕЛЬНЫМ путём — из чужой папки, как запустит человек ──
 # (архитектура, 7: «--overrides=tune.json»). Godot с --path уходит в папку проекта,
 # и без launch_dirs «tune.json» искался бы там. Выгруженные сборки — то же в CI.
@@ -162,14 +191,17 @@ say "── есть ли выпуск"
 ghstub="$(mktemp -d)"
 cat >"$ghstub/gh" <<'EOF'
 #!/usr/bin/env bash
+# как настоящий gh: с isDraft в --json — «номер true|false», без него — только номер
+fmt() { if [[ "$*" == *isDraft* ]]; then sed "s/\$/ $1/"; else cat; fi; }
 case "${GH_STUB:-}" in
-  first) echo capella-v0.1; seq -f 'capella-v9.%g' 1 50000 ;;
+  first) { echo capella-v0.1; seq -f 'capella-v9.%g' 1 50000; } | fmt false "$@" ;;
+  draft) { echo capella-v0.1; } | fmt true "$@"; seq -f 'capella-v9.%g' 1 50000 | fmt false "$@" ;;
   empty) ;;
   fail) echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
 esac
 EOF
 chmod +x "$ghstub/gh"
-exists_case() {  # exists_case <скрипт> <режим заглушки> <номер> → yes / no / ERR (отказ)
+exists_case() {  # exists_case <скрипт> <режим заглушки> <номер> → yes / draft / no / ERR (отказ)
   local out
   out="$(PATH="$ghstub:$PATH" GH_STUB="$2" GITHUB_REPOSITORY=afalin8-ui/cineflow bash "$1" "$3" 2>/dev/null)" || out=ERR
   printf '%s' "$out"
@@ -177,6 +209,7 @@ exists_case() {  # exists_case <скрипт> <режим заглушки> <н�
 exists_ok() {  # все случаи верны → 0; первый неверный печатается
   local s="$1" c got want
   for c in "first capella-v0.1 yes" "first capella-v9.50000 yes" "first capella-v0.2 no" \
+           "draft capella-v0.1 draft" "draft capella-v9.7 yes" "first capella-v0.1.1 no" \
            "empty capella-v0.1 no" "fail capella-v0.1 ERR"; do
     set -- $c
     got="$(exists_case "$s" "$1" "$2")"; want="$3"
@@ -191,6 +224,75 @@ if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '
 EOF
 if why="$(exists_ok "$ghstub/old.sh")"; then fail "откат: «gh | grep -q» прошёл проверку — проверка ничего не ловит"; else say "   откат «gh | grep -q» краснеет: $why"; fi
 rm -rf "$ghstub"
+
+# ── выпуск черновиком (tools/release_publish.sh): заглушка gh с памятью ──
+# Согласия пользователя на публичные выпуски в его собственных словах нет —
+# выпуск по умолчанию ЧЕРНОВИК; опубликованный не трогается; черновик получает
+# свежую сборку и теряет метку, оставшуюся от публикации; публикация — только
+# с PUBLISH=true. Откат: прежний «gh release create» без --draft — краснеет.
+say "── выпуск черновиком"
+pubstub="$(mktemp -d)"
+cat >"$pubstub/gh" <<'STUB'
+#!/usr/bin/env bash
+# заглушка gh: состояние выпуска — $PUB/state (no|draft|yes), метка — $PUB/tagref,
+# архивы — $PUB/store, вызовы — $PUB/calls
+echo "gh $*" >>"$PUB/calls"
+st="$(cat "$PUB/state")"
+case "$1 $2" in
+  "release list") [[ "$st" == no ]] || echo "capella-v0.1 $([[ "$st" == draft ]] && echo true || echo false)" ;;
+  "release create")
+    if [[ " $* " == *" --draft "* ]]; then echo draft >"$PUB/state"; else echo yes >"$PUB/state"; fi
+    for a in "$@"; do if [[ -f "$a" && "$a" == *.zip ]]; then cp "$a" "$PUB/store/"; fi; done ;;
+  "release upload") for a in "$@"; do if [[ -f "$a" && "$a" == *.zip ]]; then cp "$a" "$PUB/store/"; fi; done ;;
+  "release edit") if [[ " $* " == *" --draft=false "* ]]; then echo yes >"$PUB/state"; fi ;;
+  "release view") if [[ "$st" == draft ]]; then echo true; else echo false; fi ;;
+  "release download") all="$*"; d="${all##*-D }"; d="${d%% *}"; cp "$PUB"/store/*.zip "$d/" ;;
+  "api -X") rm -f "$PUB/tagref" ;;
+  api\ repos/*) [[ -f "$PUB/tagref" ]] ;;
+  *) echo "заглушка gh не знает: $*" >&2; exit 2 ;;
+esac
+STUB
+cat >"$pubstub/curl" <<'STUB'
+#!/usr/bin/env bash
+# без входа скачивается только опубликованное
+if [[ "$(cat "$PUB/state")" == yes ]]; then echo 200; else echo 404; fi
+STUB
+chmod +x "$pubstub/gh" "$pubstub/curl"
+mkdir -p "$pubstub/dl"
+head -c 3000 /dev/urandom >"$pubstub/dl/capella-windows.zip"
+head -c 2000 /dev/urandom >"$pubstub/dl/capella-linux.zip"
+pub_case() {  # pub_case <скрипт> <было> <метка 0|1> <PUBLISH> → «код стало метка писал|не-писал»
+  local pub code
+  pub="$(mktemp -d)"; mkdir -p "$pub/store"; echo "$2" >"$pub/state"; : >"$pub/calls"
+  if [[ "$3" == 1 ]]; then touch "$pub/tagref"; fi
+  if [[ "$2" != no ]]; then printf 'old' >"$pub/store/capella-linux.zip"; printf 'old' >"$pub/store/capella-windows.zip"; fi
+  PUB="$pub" PATH="$pubstub:$PATH" PUBLISH="$4" RELEASE_FILE="$PROJ/RELEASE" GITHUB_REPOSITORY=afalin8-ui/cineflow GITHUB_SHA=abc123 \
+    bash "$1" capella-v0.1 "$pubstub/dl" >"$pub/out" 2>&1
+  code=$?
+  printf '%s %s %s' "$code" "$(cat "$pub/state")" "$(if [[ -f "$pub/tagref" ]]; then echo метка; else echo без-метки; fi)"
+  if grep -q -e 'release create' -e 'release upload' -e 'release edit' -e 'api -X' "$pub/calls"; then printf ' писал'; else printf ' не-писал'; fi
+  rm -rf "$pub"
+}
+pub_ok() {  # все случаи верны → 0; первый неверный печатается
+  local before tagref publish want got
+  while IFS='|' read -r before tagref publish want; do
+    got="$(pub_case "$1" "$before" "$tagref" "$publish")"
+    if [[ "$got" != "$want" ]]; then echo "было «$before», метка $tagref, PUBLISH=$publish: получили «$got», ждали «$want»"; return 1; fi
+  done <<'CASES'
+no|0|false|0 draft без-метки писал
+draft|1|false|0 draft без-метки писал
+draft|0|false|0 draft без-метки писал
+yes|1|false|0 yes метка не-писал
+no|0|true|0 yes без-метки писал
+draft|1|true|0 yes без-метки писал
+CASES
+}
+if ! why="$(pub_ok "$PROJ/tools/release_publish.sh")"; then fail "release_publish.sh: $why"; else say "   случаев: 6 (новый номер и черновик — черновиком, опубликованный не трогается, публикация — только с PUBLISH)"; fi
+# откат: выпуск без --draft — новый номер опубликовался бы сам, без согласия
+cp "$PROJ/tools/release_exists.sh" "$pubstub/release_exists.sh"
+sed 's/ --draft --target/ --target/' "$PROJ/tools/release_publish.sh" >"$pubstub/old.sh"
+if why="$(pub_ok "$pubstub/old.sh")"; then fail "откат: выпуск без --draft прошёл проверку — проверка ничего не ловит"; else say "   откат «без --draft» краснеет: $why"; fi
+rm -rf "$pubstub"
 
 # ── данные: выгрузка не устарела, доктрина цела и её проверка краснеет на порче ──
 say "── данные"
