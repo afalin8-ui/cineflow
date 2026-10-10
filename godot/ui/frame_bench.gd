@@ -129,7 +129,10 @@ static func gpu_name() -> String:
 	var v := RenderingServer.get_video_adapter_vendor()
 	if n == "":
 		return "не определилась"
-	return n if v == "" or n.containsn(v) else "%s (%s)" % [n, v]
+	# «Unknown» у lavapipe и у части драйверов — не производитель, а пустое место
+	if v == "" or v == "Unknown" or n.containsn(v):
+		return n
+	return "%s (%s)" % [n, v]
 
 
 static func renderer_name() -> String:
