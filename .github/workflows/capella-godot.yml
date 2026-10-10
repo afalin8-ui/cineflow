@@ -127,11 +127,13 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      # Новый номер в godot/RELEASE (дверь 3, основная), метка capella-v* или кнопка
-      - name: Нужен ли выпуск
+      # Новый номер в godot/RELEASE (дверь 3, основная), метка capella-v* или кнопка.
+      # Есть ли уже такой выпуск, здесь НЕ проверяем: у этого задания права только
+      # на чтение, а черновики видны лишь с правом записи — gh release list их не
+      # покажет, и каждый пуш плодил бы новый черновик (поймано вторым прогоном).
+      - name: Номер выпуска
         id: rel
         env:
-          GH_TOKEN: ${{ github.token }}
           INPUT_RELEASE: ${{ github.event.inputs.release }}
         run: |
           set -euo pipefail
@@ -139,12 +141,8 @@ jobs:
           elif [ -n "${INPUT_RELEASE:-}" ]; then tag="$INPUT_RELEASE"; why="кнопка"
           else tag=$(head -n1 godot/RELEASE | tr -d '\r[:space:]'); why="godot/RELEASE"; fi
           if ! [[ "$tag" =~ ^capella-v[0-9]+(\.[0-9]+)+$ ]]; then echo "номер «$tag» не вида capella-vX.Y — выпуска нет"; exit 0; fi
-          # «новый» — такого выпуска (в том числе черновика) ещё нет
-          if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | grep -qx "$tag"; then
-            echo "выпуск $tag уже есть — нового не будет"; exit 0
-          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "выпуск $tag ($why)"
+          echo "номер выпуска $tag ($why); новый ли он — решит задание release"
 
   windows-run:
     needs: test-build
@@ -198,6 +196,11 @@ jobs:
           TAG: ${{ needs.test-build.outputs.release }}
         run: |
           set -euo pipefail
+          # «новый» — такого выпуска, в том числе черновика, ещё нет (черновики видны
+          # только с contents: write — потому проверка здесь, а не в test-build)
+          if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | grep -qx "$TAG"; then
+            echo "выпуск $TAG уже есть — нового не будет"; exit 0
+          fi
           title=$(sed -n 2p godot/RELEASE)
           if [ "$(head -n1 godot/RELEASE | tr -d '\r[:space:]')" != "$TAG" ]; then title="Капелла $TAG"; fi
           sed -n '4,$p' godot/RELEASE > notes.md
