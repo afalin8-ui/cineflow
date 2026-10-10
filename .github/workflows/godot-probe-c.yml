@@ -36,6 +36,7 @@ jobs:
       - name: Экспорт Linux и Windows
         run: |
           set -e
+          mkdir -p probe-c/out/export
           $HOME/gd --headless --path probe-c/proj --export-release "Linux" ../out/export/capella.x86_64
           $HOME/gd --headless --path probe-c/proj --export-release "Windows" ../out/export/capella.exe
           cd probe-c/out/export && ls -la && zip -9 -q capella-linux.zip capella.x86_64 && zip -9 -q capella-windows.zip capella.exe && ls -la *.zip
