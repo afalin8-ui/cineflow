@@ -1,0 +1,15 @@
+{
+  "_what": "Проба архитектуры C: числа доктрины (godot/spec/09, приложение). В настоящем файле у каждого числа будет why.",
+  "main_dead_k": 0.4, "escort_weight": 0.6,
+  "sec_base": {"dmg": 24, "cd": 2.5}, "sec_range_k": 0.45,
+  "sec_by_id": {"cruiser": {"mounts": 2}, "sinho": {"mounts": 3}, "capital": {"mounts": 4}, "station": {"mounts": 4}},
+  "gun_mod": {"troyden": {"gunMod": 1.1, "cdMod": 0.9}, "plektor": {"gunMod": 0.78, "cdMod": 1.0},
+              "reez": {"gunMod": 1.2, "cdMod": 1.0}, "devian": {"gunMod": 0.9, "cdMod": 1.0}},
+  "space_dmg_sec": {"capital": 0.3, "carrier": 0.45, "escort": 1.0, "strike": 0, "torpedo": 0},
+  "space_dmg_pd_torpedo": 0.7, "torp_speed": 130,
+  "main_slow_default": 2.0, "main_slow": {"devian": 2.5},
+  "belt_work_k": 0.8, "belt_far_k": 0.92, "belt_back_off_k": 0.5, "belt_clear_k": 0.45,
+  "retreat_futile_s": 4, "retreat_futile_gain": 20,
+  "leash_capital_k": 0.5, "leash_frigate_ai": 100,
+  "line_L_k": 0.85, "line_frigate_k": 0.2, "line_corvette_k": 0.35, "line_shift_max": 120
+}
