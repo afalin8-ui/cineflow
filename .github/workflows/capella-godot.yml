@@ -1,0 +1,208 @@
+# Капелла в Godot: тесты, выгрузка Linux и Windows, запуск обеих сборок, выпуск.
+# Архитектура — godot/spec/00-architecture.md, раздел 9; заметки — godot/CLAUDE.md.
+# Срабатывает ТОЛЬКО на ветки claude/capella-godot* и только на правки godot/**
+# и этого файла: сайт CineFlow (master, GitHub Pages) этот файл не трогает.
+name: capella-godot
+
+on:
+  push:
+    branches: ['claude/capella-godot', 'claude/capella-godot-*']
+    tags: ['capella-v*']            # метки — в on.push.tags (ключа push-tags нет)
+    paths: ['godot/**', '.github/workflows/capella-godot.yml']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'выпустить ЧЕРНОВИКОМ под этим номером (capella-vX.Y; пусто — нет)'
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capella-godot-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: '4.7.2'
+  # SHA512 из SHA512-SUMS.txt выпуска 4.7.2-stable: скачанное сверяется до распаковки
+  GODOT_ZIP_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+  GODOT_TPZ_SHA512: ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      release: ${{ steps.rel.outputs.tag }}
+      selftest: ${{ steps.linux.outputs.selftest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Godot и шаблоны выгрузки — 1,28 ГБ; в кэше только нужное (~217 МБ)
+      - name: Кэш Godot 4.7.2
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-4.7.2-stable-lin-win-v1
+
+      - name: Скачать Godot 4.7.2 и шаблоны (с проверкой SHA512)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/godot-dl && cd ~/godot-dl
+          base=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          curl -sSfL --retry 3 -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -sSfL --retry 3 -o tpl.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "$GODOT_ZIP_SHA512  godot.zip" | sha512sum -c -
+          echo "$GODOT_TPZ_SHA512  tpl.tpz" | sha512sum -c -
+          mkdir -p tpl
+          unzip -q -j tpl.tpz templates/version.txt templates/linux_release.x86_64 \
+            templates/windows_release_x86_64.exe templates/windows_release_x86_64_console.exe -d tpl
+          rm tpl.tpz
+
+      # Имя «godot» в корне репозитория занято папкой проекта — программа живёт в ~/godot-bin
+      - name: Установить Godot
+        run: |
+          set -euo pipefail
+          mkdir -p ~/godot-bin ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          unzip -o -q ~/godot-dl/godot.zip -d ~/godot-bin
+          mv ~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot-bin/godot-${GODOT_VERSION}
+          cp ~/godot-dl/tpl/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          echo "GODOT=$HOME/godot-bin/godot-${GODOT_VERSION}" >> "$GITHUB_ENV"
+          ~/godot-bin/godot-${GODOT_VERSION} --version
+
+      - name: Тесты — импорт, разбор, модель, ввод, данные
+        run: LOGS="$RUNNER_TEMP/logs" godot/tools/run_tests.sh
+
+      - name: Выгрузка Linux и Windows
+        run: |
+          set -euo pipefail
+          # папку сборки — заранее (иначе «export path doesn't exist»); .gdignore — чтобы
+          # Godot не принял выгруженное за ресурсы проекта
+          mkdir -p godot/build/linux godot/build/windows && touch godot/build/.gdignore
+          $GODOT --headless --path godot --export-release Linux build/linux/capella.x86_64 > "$RUNNER_TEMP/export_linux.log" 2>&1 || { tail -40 "$RUNNER_TEMP/export_linux.log"; exit 1; }
+          $GODOT --headless --path godot --export-release Windows build/windows/capella.exe > "$RUNNER_TEMP/export_windows.log" 2>&1 || { tail -40 "$RUNNER_TEMP/export_windows.log"; exit 1; }
+          ls -la godot/build/linux godot/build/windows
+          test -x godot/build/linux/capella.x86_64
+          test -f godot/build/windows/capella.console.exe
+
+      - name: Запуск выгруженной Linux-сборки (-- --selftest)
+        id: linux
+        run: |
+          set -uo pipefail
+          timeout 120 godot/build/linux/capella.x86_64 --headless -- --selftest > "$RUNNER_TEMP/selftest.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/selftest.log"
+          line=$(grep -m1 '^SELFTEST' "$RUNNER_TEMP/selftest.log" || true)
+          echo "selftest=$line" >> "$GITHUB_OUTPUT"
+          # выпускная сборка падает там, где редактор только ругается (вызов у null — код 139)
+          if [ $code -ne 0 ] || ! grep -q '^SELFTEST ok' "$RUNNER_TEMP/selftest.log" || grep -q 'SCRIPT ERROR' "$RUNNER_TEMP/selftest.log"; then
+            echo "::error::выгруженная Linux-сборка: код $code"; exit 1
+          fi
+
+      - name: Архивы
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd godot/build/linux && zip -9 -q ../../../out/capella-linux.zip capella.x86_64)
+          (cd godot/build/windows && zip -9 -q ../../../out/capella-windows.zip capella.exe capella.console.exe)
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capella-linux
+          path: out/capella-linux.zip
+          retention-days: 7
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capella-windows
+          path: out/capella-windows.zip
+          retention-days: 7
+          compression-level: 0
+
+      # Новый номер в godot/RELEASE (дверь 3, основная), метка capella-v* или кнопка
+      - name: Нужен ли выпуск
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE: ${{ github.event.inputs.release }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then tag="$GITHUB_REF_NAME"; why="метка"
+          elif [ -n "${INPUT_RELEASE:-}" ]; then tag="$INPUT_RELEASE"; why="кнопка"
+          else tag=$(head -n1 godot/RELEASE | tr -d '\r[:space:]'); why="godot/RELEASE"; fi
+          if ! [[ "$tag" =~ ^capella-v[0-9]+(\.[0-9]+)+$ ]]; then echo "номер «$tag» не вида capella-vX.Y — выпуска нет"; exit 0; fi
+          # «новый» — такого выпуска (в том числе черновика) ещё нет
+          if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | grep -qx "$tag"; then
+            echo "выпуск $tag уже есть — нового не будет"; exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "выпуск $tag ($why)"
+
+  windows-run:
+    needs: test-build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: capella-windows
+      - name: Запуск выгруженной Windows-сборки (консольная обёртка, -- --selftest)
+        shell: pwsh
+        env:
+          LINUX_SELFTEST: ${{ needs.test-build.outputs.selftest }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Expand-Archive capella-windows.zip -DestinationPath win
+          Get-ChildItem win
+          # консольная обёртка: у программы Windows без неё нет вывода в консоль
+          cmd /c "win\capella.console.exe --headless -- --selftest > selftest.txt 2>&1"
+          $code = $LASTEXITCODE
+          $out = Get-Content selftest.txt -Raw
+          Write-Host $out
+          Write-Host "код выхода: $code"
+          if ($code -ne 0 -or $out -notmatch 'SELFTEST ok' -or $out -match 'SCRIPT ERROR') { Write-Host "::error::выгруженная Windows-сборка не прошла --selftest"; exit 1 }
+          # отпечаток данных Linux и Windows обязан совпасть (пока данные; бой — с G1)
+          $fpW = [regex]::Match($out, 'SELFTEST ok: данные (\w+)').Groups[1].Value
+          $fpL = [regex]::Match($env:LINUX_SELFTEST, 'данные (\w+)').Groups[1].Value
+          Write-Host "отпечаток данных: Linux $fpL, Windows $fpW"
+          if ($fpL -ne $fpW) { Write-Host "::warning::отпечаток данных Linux и Windows разный" }
+          exit 0
+
+  release:
+    needs: [test-build, windows-run]
+    if: needs.test-build.outputs.release != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+          merge-multiple: true
+      # ТОЛЬКО ЧЕРНОВИКОМ: репозиторий публичный, опубликованный выпуск видят все,
+      # а согласия на публичные выпуски пока нет. Черновик видит только владелец.
+      # У черновика метки нет, поэтому никакого --cleanup-tag при удалении.
+      - name: Черновик выпуска
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.test-build.outputs.release }}
+        run: |
+          set -euo pipefail
+          title=$(sed -n 2p godot/RELEASE)
+          if [ "$(head -n1 godot/RELEASE | tr -d '\r[:space:]')" != "$TAG" ]; then title="Капелла $TAG"; fi
+          sed -n '4,$p' godot/RELEASE > notes.md
+          printf '\n---\nСобрано из коммита %s, прогон %s/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> notes.md
+          ls -la dl
+          gh release create "$TAG" dl/capella-windows.zip dl/capella-linux.zip \
+            --draft --target "$GITHUB_SHA" --title "$title" --notes-file notes.md
+          gh release view "$TAG" --json isDraft,assets --jq '"черновик: \(.isDraft); файлы: \([.assets[] | "\(.name) \(.size)"] | join(", "))"'
