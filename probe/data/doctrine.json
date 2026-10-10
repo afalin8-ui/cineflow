@@ -1,0 +1,17 @@
+{
+  "_what": "Проба архитектуры: подмножество чисел 09-doctrine.md (приложение). Не настоящий doctrine.json.",
+  "main": {"dead_k": 0.4, "escort_weight": 0.6, "why": "09, 1.2"},
+  "sec": {"mounts": {"cruiser": 2, "sinho": 3, "capital": 4}, "dmg": 24, "cd": 2.5, "range_k": 0.45, "why": "09, 1.3"},
+  "clan_gun_mod": {"troyden": {"gun": 1.1, "cd": 0.9}, "plektor": {"gun": 0.8, "cd": 1.0}, "reez": {"gun": 1.2, "cd": 1.0}, "devian": {"gun": 0.9, "cd": 1.0}},
+  "space_dmg": {
+    "sec": {"capital": 0.3, "carrier": 0.45, "escort": 1.0, "strike": 0, "torpedo": 0},
+    "pd": {"torpedo": 0.7}
+  },
+  "torp": {"speed": 130},
+  "belt": {"work_k": 0.8, "far_k": 0.92, "back_off_k": 0.5, "clear_k": 0.45},
+  "retreat": {"window": 4.0, "gain": 20.0, "forget": 15.0, "edge": 200},
+  "line": {"L_k": 0.85, "corvette_k": 0.35, "frigate_k": 0.2, "carrier": -440, "shift_max": 120, "turn_max_deg": 15, "rear": 150},
+  "leash": {"capital_k": 0.5, "corvette": 240, "frigate": 100},
+  "deploy": {"heavy_z": 650},
+  "air": {"patrol_k": 0.15}
+}

@@ -1,0 +1,46 @@
+# Проба (arch-A): собирается ли срез Godot в GitHub Actions. Ветка временная.
+name: godot-probe
+on:
+  push:
+    branches: [claude/capella-godot-probe-A]
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-4.7.2-stable-v1
+      - name: Download Godot 4.7.2
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-dl && cd ~/godot-dl
+          curl -sSfLO https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          curl -sSfL https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz -o tpl.tpz
+          unzip -q -j tpl.tpz templates/linux_release.x86_64 templates/windows_release_x86_64.exe templates/version.txt -d tpl
+          rm tpl.tpz
+      - name: Install
+        run: |
+          cd ~/godot-dl && unzip -o -q Godot_v4.7.2-stable_linux.x86_64.zip
+          mkdir -p ~/.local/share/godot/export_templates/4.7.2.stable
+          cp tpl/* ~/.local/share/godot/export_templates/4.7.2.stable/
+      - name: Import, AI-vs-AI smoke, export
+        run: |
+          G=~/godot-dl/Godot_v4.7.2-stable_linux.x86_64
+          cd probe
+          $G --headless --import || true
+          $G --headless -s res://tools/bench.gd -- --load mid --n 3 --seed 1 | tail -1
+          mkdir -p ../build
+          $G --headless --export-release "Linux" ../build/capella.x86_64
+          $G --headless --export-release "Windows" ../build/capella.exe
+          ../build/capella.x86_64 --headless -- --bench --load mid --n 2 --seed 1 | tail -1
+          ls -la ../build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capella-probe
+          path: build/
+          retention-days: 1
