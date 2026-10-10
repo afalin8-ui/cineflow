@@ -204,6 +204,54 @@ function check(doc, space, spec, say = () => {}) {
   }
   if (rows < 40) bad(`приложение 09: прочитано ключей ${rows} — таблица не разобралась`);
 
+  // ── ЗНАЧЕНИЯ строк приложения 09 против записей (хвост G0: опечатка в числе
+  //    обязана краснеть, а не только пропавший ключ) ──
+  // Числа ячейки «число» по порядку против чисел записей строки по порядку (ключи —
+  // как в ячейке «ключ», записи — в порядке файла; ref разворачивается). Числа
+  // в «(было …)» — против поля was. Знак не сравниваем: «−440» в таблице — это
+  // «440 позади» в записи. Слова с числами, которые не значения записей, — в CELL_WORDS,
+  // у каждого причина.
+  const CELL_WORDS = {
+    'retreat.no_forward': [['составляющая к противнику — 0', 'составляющая к противнику — нет'],
+      'ноль — правило «вперёд не отходить», а не число записи'],
+    'leash.frigate_ai': [['(корветы — 240)', ''],
+      'поводок корветов 240 — из выгрузки (space_stances.guard.leash), не запись доктрины'],
+    'ai.air': [['max(1, мест/2)', 'мест × 0,5, но не меньше 1'],
+      '«мест/2» — это множитель 0,5 (ai.air_bomber_slots_k) и нижний предел 1'],
+    'air.bomber_flank': [['и `L`', 'и `1 L`'], 'вторая точка — на целой L (1,0)'],
+  };
+  const NUM_RE = /\d+(?:,\d+)?/g;
+  const nums = t => [...t.matchAll(NUM_RE)].map(m => Number(m[0].replace(',', '.')));
+  const valuesOf = e => 'ref' in e ? [num(e.ref)] : numbersIn(e.v ?? null);
+  const fmt = a => '[' + a.join(', ') + ']';
+  let valueRows = 0;
+  for (const line of app.split('\n')) {
+    if (!line.startsWith('| `')) continue;
+    const cells = line.split('|').map(x => x.trim());
+    const keys = [...cells[1].matchAll(/`([^`]+)`/g)].map(m => m[1]);
+    const prefix = keys[0].includes('.') ? keys[0].slice(0, keys[0].indexOf('.') + 1) : '';
+    const full = keys.map(k => k.includes('.') ? k : prefix + k);
+    let cell = cells[2];
+    const fix = CELL_WORDS[full[0]];
+    if (fix) {
+      if (!cell.includes(fix[0][0])) bad(`приложение 09, ${full[0]}: в ячейке нет «${fix[0][0]}» — правило CELL_WORDS устарело (${fix[1]})`);
+      cell = cell.replace(fix[0][0], fix[0][1]);
+    }
+    const wasText = [...cell.matchAll(/было[^)]*/g)].map(m => m[0]).join(' ');
+    const nowText = cell.replace(/было[^)]*/g, ' ');
+    const want = nums(nowText), wantWas = nums(wasText);
+    const list = [];
+    for (const k of full) for (const [p, e] of Object.entries(entries)) if (p === k || e.row === k) if (!list.includes(e)) list.push(e);
+    if (!list.length) continue;            // пропавший ключ — уже беда выше
+    const got = list.flatMap(valuesOf).map(Math.abs);
+    const gotWas = list.flatMap(e => numbersIn(e.was ?? null)).map(Math.abs);
+    valueRows++;
+    const same = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 1e-9);
+    if (!same(got, want)) bad(`значение: ${full.join(' / ')} — в doctrine.json ${fmt(got)}, а в приложении 09 «${cells[2]}» → ${fmt(want)}`);
+    if (!same(gotWas, wantWas)) bad(`значение «было»: ${full.join(' / ')} — в doctrine.json was ${fmt(gotWas)}, а в приложении 09 ${fmt(wantWas)}`);
+  }
+  if (valueRows < 40) bad(`приложение 09: сверено значений строк ${valueRows} — таблица не разобралась`);
+
   // ── батарея по кланам: формула data.js (Math.round, toFixed) ──
   const base = { dmg: num('sec.dmg'), cd: num('sec.cd') };
   const NAME = { cruiser: 'крейсер', sinho: '«Синхо»', capital: 'флагман' };
@@ -264,6 +312,12 @@ function selftest() {
     ['строка приложения', d => { delete d.air.patrol_k; }, 'air.patrol_k'],
     ['таблица батареи', d => { d.clan.v.troyden.gunMod = 1.2; }, 'батарея Тройден'],
     ['узлы и батарея', d => { delete d.nodes.v.cruiser.sec_1; }, 'nodes.cruiser'],
+    // хвост G0: прежняя проверка ловила только пропавший КЛЮЧ, опечатку в числе — нет
+    ['опечатка в числе', d => { d.belt.far_k.v = 0.93; }, 'значение: belt.far_k'],
+    ['опечатка в таблице', d => { d.sec.mounts.v.cruiser = 3; }, 'значение: sec.mounts'],
+    ['опечатка в ref', d => { d.main.dead_k.v = 0.41; }, 'значение: belt.back_on'],
+    ['опечатка в «было»', d => { d.torp.speed.was = 80; }, 'значение «было»: torp.speed'],
+    ['число из нескольких записей', d => { d.retreat.futile_gain.v = 25; }, 'значение: retreat.futile'],
   ];
   let fails = 0;
   const clean = check(doc, space, spec);

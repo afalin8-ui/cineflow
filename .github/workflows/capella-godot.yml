@@ -38,6 +38,7 @@ jobs:
     timeout-minutes: 40
     outputs:
       release: ${{ steps.rel.outputs.tag }}
+      publish: ${{ steps.rel.outputs.publish }}
       selftest: ${{ steps.linux.outputs.selftest }}
     steps:
       - uses: actions/checkout@v4
@@ -229,6 +230,7 @@ jobs:
         id: rel
         env:
           INPUT_RELEASE: ${{ github.event.inputs.release }}
+          INPUT_PUBLISH: ${{ github.event.inputs.publish }}
         run: godot/tools/release_tag.sh godot/RELEASE >> "$GITHUB_OUTPUT"
 
   windows-run:
@@ -315,13 +317,14 @@ jobs:
           merge-multiple: true
       # Пользователь САМ согласился на публичные выпуски 10.10.2026 (ответ в чате
       # «Да, публиковать» на вопрос о публичных сборках; godot/CLAUDE.md, 13).
-      # Поэтому пуш с новым номером в godot/RELEASE и метка — ПУБЛИКУЮТ выпуск;
-      # кнопка (workflow_dispatch) — как скажет галочка publish (по умолчанию
-      # черновик). Опубликованный выпуск больше не трогается. Вся логика — в
-      # godot/tools/release_publish.sh (её проверяет run_tests.sh на заглушке gh).
+      # Публиковать ли — решает godot/tools/release_tag.sh (каждый случай проверяет
+      # run_tests.sh): пуш с новым номером в godot/RELEASE в САМУ ветку
+      # claude/capella-godot и метка — публикуют; пробная claude/capella-godot-* —
+      # только черновик; кнопка — как скажет галочка publish. Опубликованный выпуск
+      # больше не трогается. Остальное — godot/tools/release_publish.sh.
       - name: Выпуск
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.test-build.outputs.release }}
-          PUBLISH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish || 'true' }}
+          PUBLISH: ${{ needs.test-build.outputs.publish }}
         run: godot/tools/release_publish.sh "$TAG" dl

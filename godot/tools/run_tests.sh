@@ -167,21 +167,38 @@ rm -rf "$rel"
 # ── номер выпуска (tools/release_tag.sh): каждый случай двери выпуска ──
 say "── номер выпуска"
 relf="$(mktemp)"
-tag_case() {  # tag_case <ждём> <событие> <тип ref> <имя ref> <поле release> <первая строка RELEASE>
-  local want="$1" got
+tag_out() {  # tag_out <скрипт> <событие> <тип ref> <имя ref> <поле release> <первая строка RELEASE> <галочка> → «номер публикация»
   printf '%s\nзаголовок\n---\n' "$6" >"$relf"
-  got="$(GITHUB_EVENT_NAME="$2" GITHUB_REF_TYPE="$3" GITHUB_REF_NAME="$4" INPUT_RELEASE="$5" \
-    "$PROJ/tools/release_tag.sh" "$relf" 2>/dev/null | sed -n 's/^tag=//p')"
-  if [[ "$got" != "$want" ]]; then fail "номер выпуска: $2 $3 «$5» RELEASE «$6» — получили «$got», ждали «$want»"; fi
+  GITHUB_EVENT_NAME="$2" GITHUB_REF_TYPE="$3" GITHUB_REF_NAME="$4" INPUT_RELEASE="$5" INPUT_PUBLISH="$7" \
+    bash "$1" "$relf" 2>/dev/null | sed -n 's/^tag=//p; s/^publish=//p' | tr '\n' ' ' | sed 's/ $//'
 }
-tag_case capella-v0.2 push branch claude/capella-godot "" capella-v0.2
-tag_case ""           push branch claude/capella-godot "" v0.2
-tag_case capella-v0.4 push tag capella-v0.4 "" capella-v0.2
-tag_case capella-v0.3 workflow_dispatch branch claude/capella-godot capella-v0.3 capella-v0.2
-tag_case ""           workflow_dispatch branch claude/capella-godot "" capella-v0.2
-tag_case ""           workflow_dispatch branch claude/capella-godot "0.3" capella-v0.2
-rm -f "$relf"
-say "   случаев: 6"
+tag_ok() {  # все случаи верны → 0; первый неверный печатается
+  local s="$1" want got
+  while IFS='|' read -r want ev rt rn field first pub; do
+    got="$(tag_out "$s" "$ev" "$rt" "$rn" "$field" "$first" "$pub")"
+    if [[ "$got" != "$want" ]]; then echo "$ev $rt $rn «$field» RELEASE «$first» галочка «$pub» — получили «$got», ждали «$want»"; return 1; fi
+  done <<'CASES'
+capella-v0.2 true|push|branch|claude/capella-godot||capella-v0.2|
+capella-v0.2 false|push|branch|claude/capella-godot-probe||capella-v0.2|
+capella-v0.2 false|push|branch|claude/capella-godot-g1||capella-v0.2|
+|push|branch|claude/capella-godot||v0.2|
+capella-v0.4 true|push|tag|capella-v0.4||capella-v0.2|
+capella-v0.3 false|workflow_dispatch|branch|claude/capella-godot|capella-v0.3|capella-v0.2|false
+capella-v0.3 true|workflow_dispatch|branch|claude/capella-godot|capella-v0.3|capella-v0.2|true
+|workflow_dispatch|branch|claude/capella-godot||capella-v0.2|true
+|workflow_dispatch|branch|claude/capella-godot|0.3|capella-v0.2|false
+CASES
+}
+if ! why="$(tag_ok "$PROJ/tools/release_tag.sh")"; then fail "номер выпуска: $why"; else say "   случаев: 9 (публикует только пуш в саму claude/capella-godot, метка и кнопка с галочкой)"; fi
+# откат: «публиковать любой пуш» (как было до G1 — PUBLISH=true у любой claude/capella-godot*)
+sed 's/\[\[ "\${GITHUB_REF_NAME:-}" == "\$main_branch" \]\] && publish=true/publish=true/' "$PROJ/tools/release_tag.sh" >"$relf.old"
+if why="$(tag_ok "$relf.old")"; then fail "откат: пробная ветка публикует, а проверка зелёная"; else say "   откат «публиковать любой пуш» краснеет: $why"; fi
+# задание release берёт решение из release_tag.sh, а не своё выражение
+if ! grep -q 'PUBLISH: \${{ needs.test-build.outputs.publish }}' "$ROOT/.github/workflows/capella-godot.yml" \
+   || ! grep -q 'publish: \${{ steps.rel.outputs.publish }}' "$ROOT/.github/workflows/capella-godot.yml"; then
+  fail "задание release решает «публиковать» не по release_tag.sh"
+fi
+rm -f "$relf" "$relf.old"
 
 # ── есть ли выпуск (tools/release_exists.sh): заглушка gh вместо GitHub ──
 # Номер стоит ПЕРВЫМ, за ним ещё строки (настоящий gh пишет строка за строкой). Хвост —
@@ -293,6 +310,28 @@ cp "$PROJ/tools/release_exists.sh" "$pubstub/release_exists.sh"
 sed 's/ --draft --target/ --target/' "$PROJ/tools/release_publish.sh" >"$pubstub/old.sh"
 if why="$(pub_ok "$pubstub/old.sh")"; then fail "откат: выпуск без --draft прошёл проверку — проверка ничего не ловит"; else say "   откат «без --draft» краснеет: $why"; fi
 rm -rf "$pubstub"
+
+# ── ловушки 09, 9.5 в godot/CLAUDE.md — дословно (архитектура, 10.3 п. 4): правка
+# одной стороны без другой — провал. Откат встроен: копия без пятой ловушки краснеет.
+say "── ловушки 09, 9.5 в CLAUDE.md"
+traps_check() {  # traps_check <CLAUDE.md> → 0, если раздел 9.5 части 09 стоит там знак в знак
+  python3 - "$PROJ/spec/09-doctrine.md" "$1" <<'PY'
+import sys
+spec = open(sys.argv[1], encoding='utf-8').read()
+a = spec.index('### 9.5 Ловушки, которые доктрина делает опасными')
+body = spec[a:spec.index('\n---\n', a)].split('\n', 1)[1].strip('\n')
+notes = open(sys.argv[2], encoding='utf-8').read()
+items = sum(1 for l in body.split('\n') if l.split('.', 1)[0].isdigit())
+if items < 21 or body not in notes:
+    print('раздел 9.5 части 09 (%d ловушек) не стоит в CLAUDE.md дословно' % items); sys.exit(1)
+print('дословно: %d ловушек, %d строк' % (items, body.count('\n') + 1))
+PY
+}
+if why="$(traps_check "$PROJ/CLAUDE.md")"; then say "   $why"; else fail "ловушки 09, 9.5: $why"; fi
+trapcopy="$(mktemp)"
+python3 -c "import sys; s=open(sys.argv[1],encoding='utf-8').read(); i=s.index('5. **Где главный калибр'); j=s.index('6. **Ноль', i); open(sys.argv[2],'w',encoding='utf-8').write(s[:i]+s[j:])" "$PROJ/CLAUDE.md" "$trapcopy"
+if traps_check "$trapcopy" >/dev/null; then fail "откат: CLAUDE.md без пятой ловушки прошёл сверку — она ничего не ловит"; else say "   откат «без пятой ловушки» краснеет"; fi
+rm -f "$trapcopy"
 
 # ── данные: выгрузка не устарела, доктрина цела и её проверка краснеет на порче ──
 say "── данные"

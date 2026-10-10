@@ -5,11 +5,18 @@
 #
 # Двери — по правилу «можно только своё», а не «нельзя вот это»: путь из preload/
 # load/ResourceLoader.load/extends разворачивается так же, как его разворачивает
-# Godot (относительный — от папки самого файла, «..» и «./» схлопываются), и обязан
-# лежать в res://sim/. Путь не одной строкой (константа, переменная, склейка) —
-# дверь: не видно, куда он ведёт. Любая строка-путь в модели — только в sim/ или
-# data/ (так закрыта константа-путь, отданная в load). Остальное ищется в коде
-# без комментариев и строк: слово в пояснении или в тексте ошибки — не нарушение.
+# Godot, и обязан лежать в res://sim/. Разворачивают они ПО-РАЗНОМУ (проверено
+# в 4.7.2, G1): у preload и extends относительный путь — от папки самого файла,
+# а у load() и ResourceLoader.load — от res:// («view/x.gd» из sim/ — это
+# res://view/x.gd, «./ui/…» — res://ui/…); «..», «./» и обратные косые
+# схлопываются. Путь не одной строкой (константа, переменная, склейка) — дверь:
+# не видно, куда он ведёт. Любая строка-путь в модели — только в sim/ или data/
+# (так закрыта константа-путь, отданная в load). Глобальная функция, взятая как
+# значение (var l := load, var f := str_to_var, var r := randf), — та же дверь,
+# что её вызов; Expression вызывает их по строке. Случайное — только из rng
+# и fx_rng боя: генератор без зерна (RandomNumberGenerator.new() без .seed
+# следующей строкой, randomize()) — нарушение. Остальное ищется в коде без
+# комментариев и строк: слово в пояснении или в тексте ошибки — не нарушение.
 extends "res://tests/case.gd"
 
 ## Куда модель может грузить и от чего наследовать: только своё.
@@ -22,9 +29,17 @@ const PROBE_FILE := "res://sim/probe.gd"
 ## Метки на месте строкового литерала в коде: \u0001N\u0002, N — номер литерала.
 const LIT_OPEN := "\u0001"
 const LIT_CLOSE := "\u0002"
-## Загрузка: preload(…), load(…), ResourceLoader.load*(…); группа 1 — номер литерала,
-## если путь отдан ОДНОЙ строкой (дальше — «,» или «)»), иначе пусто.
-const LOADER := "(?:(?<![\\w.])(?:preload|load)|\\bResourceLoader\\s*\\.\\s*load\\w*)\\s*\\((?:\\s*\\x01(\\d+)\\x02\\s*[,)])?"
+## Загрузка: preload(…), load(…), ResourceLoader.load*(…); группа 1 — «preload»,
+## «load» или пусто (ResourceLoader), группа 2 — номер литерала, если путь отдан
+## ОДНОЙ строкой (дальше — «,» или «)»), иначе пусто.
+const LOADER := "(?:(?<![\\w.])(preload|load)|\\bResourceLoader\\s*\\.\\s*load\\w*)\\s*\\((?:\\s*\\x01(\\d+)\\x02\\s*[,)])?"
+## load как значение (без скобок следом): var l := load — дальше l.call(путь), и путь
+## уже не виден сторожу.
+const LOAD_VALUE := "(?<![\\w.])load\\b(?!\\s*\\()"
+## Генератор: «X := RandomNumberGenerator.new()» — зерно обязано стоять следующей
+## строкой кода («X.seed = …»), иначе Godot берёт его из часов, и бой не повторится.
+const RNG_NEW := "RandomNumberGenerator\\s*\\.\\s*new\\s*\\("
+const RNG_LINE := "^\\s*(?:var\\s+)?([\\w.]+)\\s*(?::\\s*\\w+\\s*)?:?=\\s*RandomNumberGenerator\\s*\\.\\s*new\\s*\\(\\s*\\)\\s*$"
 ## Наследование от пути (от имени класса — см. foreign_classes).
 const EXTENDS_PATH := "\\bextends\\s+\\x01(\\d+)\\x02"
 ## Путь res:// внутри строки (в том числе посреди текста).
@@ -33,22 +48,27 @@ const RES_IN_TEXT := "res://[^\\s\"'<>|?*]*"
 ## Запрещённое по образцу (текст без строк): образец → почему.
 const BANNED := [
 	["get_tree\\s*\\(", "дерево сцены"],
-	["(?<![.\\w])(randf|randi|randf_range|randi_range|randfn|randomize|seed)\\s*\\(", "случайность — только battle.rng"],
+	# и вызов, и значение: var r := randf — та же глобальная случайность (проверено в 4.7.2)
+	["(?<![.\\w])(randf|randi|randf_range|randi_range|randfn|randomize|seed|rand_from_seed)\\b", "случайность — только rng и fx_rng боя"],
+	["\\.\\s*randomize\\s*\\(", "генератор без зерна: randomize() берёт зерно из часов — бой не повторится"],
 	["\\bsignal\\b|\\bSignal\\b|\\bemit_signal\\b|\\.emit\\s*\\(|\\.connect\\s*\\(", "сигналов из шага нет — события шага списком"],
 	["\\bawait\\b", "шаг модели не ждёт"],
-	["(?<![.\\w])(?:str_to_var|bytes_to_var_with_objects|dict_to_inst|instance_from_id)\\s*\\(|\\bto_native\\s*\\(",
-		"объект по строке или номеру — в обход сторожа узлов: str_to_var(\"Object(Node3D…)\") создаёт узел (проверено)"],
+	["(?<![.\\w])(?:str_to_var|bytes_to_var_with_objects|dict_to_inst|instance_from_id)\\b|\\bto_native\\b",
+		"объект по строке или номеру — в обход сторожа узлов: str_to_var(\"Object(Node3D…)\") создаёт узел (проверено); взятая как значение (var f := str_to_var) — та же дверь"],
 ]
 
 ## Классы движка, которые модели НЕ узлы и не ресурсы, но всё равно чужие.
 const EXTRA_BANNED := {
 	"SceneTree": "дерево сцены", "MainLoop": "дерево сцены", "SceneTreeTimer": "дерево сцены",
 	"Tween": "анимация вида", "Thread": "потоки — отдельным решением с замером",
+	"Expression": "выражение строкой вызывает load, str_to_var и прочие глобальные функции в обход сторожа (проверено в 4.7.2)",
 }
 ## Ресурсы, без которых загрузчику не обойтись: JSON — разбор с номером строки.
 const ALLOWED_RESOURCES := ["JSON"]
 ## Синглтоны движка, которые модели можно: чистая геометрия и кодировки.
 const ALLOWED_SINGLETONS := ["Geometry2D", "Geometry3D", "Marshalls"]
+## Расширения, которые load() превращает в код, сцену или ресурс.
+const CODE_EXT: Array[String] = ["gd", "gdc", "tscn", "scn", "tres", "res", "gdshader", "glb", "gltf"]
 ## Раскрытие escape-последовательностей в строке GDScript (\u и \U — отдельно).
 const ESCAPES := {"n": "\n", "t": "\t", "r": "\r", "a": "\u0007", "b": "\u0008", "f": "\u000c", "v": "\u000b"}
 
@@ -143,12 +163,16 @@ static func code_only(text: String) -> String:
 	return RegEx.create_from_string("\\x01\\d+\\x02").sub(code, " ", true)
 
 
-## Путь так, как его развернёт Godot: относительный — от папки файла, «..» и «./»
-## схлопнуты (String.simplify_path, как в разборе preload).
-static func resolve(path: String, file: String) -> String:
-	if path.is_relative_path():
-		return file.get_base_dir().path_join(path).simplify_path()
-	return path.simplify_path()
+## Путь так, как его развернёт Godot (проверено в 4.7.2): у preload и extends
+## относительный — от папки файла; у load() и ResourceLoader.load (from_root) —
+## от res:// («view/x.gd» из sim/a.gd — res://view/x.gd). «..», «./» и обратные
+## косые схлопнуты (String.simplify_path).
+static func resolve(path: String, file: String, from_root: bool = false) -> String:
+	var p := path.replace("\\", "/")
+	if p.is_relative_path():
+		var base := "res://" if from_root else file.get_base_dir()
+		return base.path_join(p).simplify_path()
+	return p.simplify_path()
 
 
 static func inside(path: String, roots: Array[String]) -> bool:
@@ -158,11 +182,12 @@ static func inside(path: String, roots: Array[String]) -> bool:
 	return false
 
 
-## Почему путь из preload/load/extends — дверь ("" — свой).
-static func script_door(path: String, file: String) -> String:
+## Почему путь из preload/load/extends — дверь ("" — свой). from_root — путь отдан
+## load() или ResourceLoader.load: относительный разворачивается от res://.
+static func script_door(path: String, file: String, from_root: bool = false) -> String:
 	if path.begins_with("uid://"):
 		return "путь по uid — не видно, в какой слой он ведёт"
-	var full := resolve(path, file)
+	var full := resolve(path, file, from_root)
 	if not inside(full, OWN_SCRIPTS):
 		return "модель грузит и наследует только своё (sim/), а этот путь — %s" % full
 	if full.get_extension() != "gd":
@@ -179,11 +204,30 @@ static func literal_door(v: String, file: String) -> String:
 		var full := m.get_string().simplify_path()
 		if not inside(full, OWN_LITERALS):
 			return "путь вне sim/ и data/ (%s) — даже строкой: load() с ним — дверь" % full
-	if v.begins_with("./") or v.begins_with("../") or v.begins_with(".\\") or v.begins_with("..\\"):
-		var full := resolve(v, file)
-		if not inside(full, OWN_LITERALS):
-			return "относительный путь ведёт в %s — вне sim/ и data/" % full
+	# относительная строка: куда она поведёт, зависит от того, кто её возьмёт —
+	# preload (от папки файла) или load (от res://); дверь, если хоть одна дорога
+	# выводит из sim/ и data/
+	if _looks_relative(v):
+		for from_root: bool in [false, true]:
+			var full := resolve(v, file, from_root)
+			if not inside(full, OWN_LITERALS):
+				return "относительный путь ведёт в %s — вне sim/ и data/ (load разворачивает его от res://)" % full
 	return ""
+
+
+## Строка похожа на относительный путь к файлу проекта: начинается с ./ или ../,
+## кончается расширением скрипта, сцены или ресурса, или её первая часть — папка
+## проекта («view/…», «ui\\…»). Обычный текст («урон/с», «x.json») — не путь.
+static func _looks_relative(v: String) -> bool:
+	if v.contains(" ") or v.contains("://") or v.is_empty():
+		return false
+	var p := v.replace("\\", "/")
+	if p.begins_with("./") or p.begins_with("../"):
+		return true
+	if p.get_extension() in CODE_EXT:
+		return true
+	var first := p.get_slice("/", 0)
+	return p.contains("/") and first != "" and DirAccess.dir_exists_absolute("res://" + first)
 
 
 ## Почему слово с заглавной буквы запрещено в модели ("" — можно). Узлы и ресурсы
@@ -228,23 +272,47 @@ static func violations(text: String, foreign: Dictionary = {}, file: String = PR
 	var lits: PackedStringArray = s["lits"]
 	var at: PackedInt32Array = s["at"]
 	# двери: загрузка и наследование — одной строкой и только в sim/
+	var judged := {}          # литералы, уже судимые как путь preload/load/extends
 	for m in RegEx.create_from_string(LOADER).search_all(code):
-		var k := m.get_string(1)
+		var k := m.get_string(2)
+		var by_load := m.get_string(1) != "preload"      # load( и ResourceLoader.load — от res://
 		var why := "путь не одной строкой (константа, переменная, склейка) — не видно, куда ведёт; в модели только preload(\"res://sim/…\")"
 		if k != "":
-			why = script_door(lits[k.to_int()], file)
+			why = script_door(lits[k.to_int()], file, by_load)
+			judged[k.to_int()] = true
 		if why != "":
-			out.append("строка %d: дверь: загрузка — %s" % [_line_at(code, m.get_start()), why])
+			out.append("строка %d: дверь: %s — %s" % [_line_at(code, m.get_start()), "загрузка load()" if by_load else "загрузка", why])
 	for m in RegEx.create_from_string(EXTENDS_PATH).search_all(code):
 		var why := script_door(lits[m.get_string(1).to_int()], file)
+		judged[m.get_string(1).to_int()] = true
 		if why != "":
 			out.append("строка %d: дверь: extends — %s" % [_line_at(code, m.get_start()), why])
 	# строки-пути: только своё и данные
 	for k in lits.size():
+		if judged.has(k):
+			continue
 		var why := literal_door(lits[k], file)
 		if why != "":
 			out.append("строка %d: дверь: «%s» — %s" % [at[k], lits[k], why])
 	var lines := RegEx.create_from_string("\\x01\\d+\\x02").sub(code, " ", true).split("\n")
+	# load, взятый как значение: дальше вызов через Callable, и путь сторожу не виден
+	var lv := RegEx.create_from_string(LOAD_VALUE)
+	for n in lines.size():
+		if lv.search(lines[n]) != null:
+			out.append("строка %d: дверь: load как значение (var l := load; l.call(путь)) — путь не виден" % (n + 1))
+	# генератор: зерно — следующей строкой кода, иначе зерно из часов
+	var rl := RegEx.create_from_string(RNG_LINE)
+	var rn := RegEx.create_from_string(RNG_NEW)
+	for n in lines.size():
+		if rn.search(lines[n]) == null:
+			continue
+		var m := rl.search(lines[n])
+		var nxt := n + 1
+		while nxt < lines.size() and lines[nxt].strip_edges() == "":
+			nxt += 1
+		var seeded := m != null and nxt < lines.size() and RegEx.create_from_string("^\\s*" + m.get_string(1).replace(".", "\\.") + "\\.(seed|state)\\s*=").search(lines[nxt]) != null
+		if not seeded:
+			out.append("строка %d: генератор без зерна — RandomNumberGenerator.new() и сразу следующей строкой X.seed = …; случайное — только rng и fx_rng боя" % (n + 1))
 	for pat: Array in BANNED:
 		var re := RegEx.create_from_string(str(pat[0]))
 		for n in lines.size():
@@ -329,6 +397,17 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"	var o := dict_to_inst(d)": "объект из словаря с путём",
 		"	var o := instance_from_id(id)": "объект по номеру",
 		"	var o := JSON.to_native(d, true)": "объекты из JSON",
+		# хвосты G0, найденные к G1 (на копии теста без правки — все зелёные, проверено)
+		"	var f := str_to_var": "str_to_var как значение (f.call(…))",
+		"	var r := randf": "randf как значение",
+		"	var x := r.call() if r != null else randi_range": "randi_range как значение",
+		"	randomize()": "зерно из часов",
+		"	rng.randomize()": "зерно генератора из часов",
+		"	var g := RandomNumberGenerator.new()": "генератор без зерна",
+		"	var g := RandomNumberGenerator.new()\n	var k := 3\n	g.seed = 5": "зерно не следующей строкой",
+		"	rng = RandomNumberGenerator.new()\n	fx.seed = 5": "зерно чужому генератору",
+		"	var a := rand_from_seed(7)": "своя случайность мимо rng боя",
+		"	var e := Expression.new()": "выражение строкой — load и str_to_var по имени",
 	}
 	for line: String in dirty:
 		ok(violations(line).size() > 0, "грязная строка поймана (%s): %s" % [dirty[line], line])
@@ -359,6 +438,15 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"const P := \"uid://b3k2x\"": "uid строкой",
 		"var s := \"Engine.stop() и res://view/x.gd в строке\"": "путь в чужой слой даже в тексте",
 		"const V := preload(\n\t\"../view/space_stub.gd\"\n)": "preload на трёх строках",
+		# хвосты G0 (замечание к G0): у load() относительный путь — от res://, а не от
+		# папки файла; прежний тест разворачивал его как у preload и пропускал
+		"	var s := load(\"view/space_stub.gd\")": "load(\"view/…\") — это res://view",
+		"	var s := load(\"./ui/fps_counter.gd\")": "load(\"./ui/…\") — это res://ui",
+		"	var s := ResourceLoader.load(\"ui\\\\fps_counter.gd\")": "ResourceLoader.load с обратной косой",
+		"	var l := load": "load как значение",
+		"	var c: Callable = load": "load как значение с типом",
+		"const P := \"view/space_stub.gd\"": "строка-путь в view/ без ./ (load(P) уведёт туда)",
+		"const P := \"main.gd\"": "строка-путь к скрипту вне sim/ (load(P) — res://main.gd)",
 	}
 	for line: String in door_lines:
 		ok(doors(violations(line)) > 0, "дверь поймана (%s): %s" % [door_lines[line], line])
@@ -390,6 +478,14 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"var msg := \"нет «%s» в doctrine.json, см. ../data\" % k",
 		"var r := rng.randf()",
 		"var rng := RandomNumberGenerator.new()",
+		"rng.seed = battle_seed",
+		"	fx_rng = RandomNumberGenerator.new()",
+		"",
+		"	fx_rng.seed = battle_seed ^ 0x5bd1e995",
+		"var u := rng.randi_range(0, 3)",
+		"const SHIP := preload(\"ship.gd\")",
+		"var label := \"урон/с\"",
+		"var unit := \"x.json\"",
 		"var j := JSON.new()",
 		"var f := FileAccess.open(p, FileAccess.READ)",
 		"var hit := Geometry3D.segment_intersects_sphere(a, b, c, r)",
