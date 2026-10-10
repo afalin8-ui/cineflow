@@ -1,16 +1,9 @@
 # Ввод без окна (ярус ui): помощники hooks.gd доходят до интерфейса, окно-заглушка
-# отвечает на F3. Архитектура, 8.3.
+# отвечает на F3. Архитектура, 8.3. Размер окна — tests/test_ui_window.gd.
 extends "res://tests/case.gd"
 
 const MainScene := preload("res://main.tscn")
 const FpsCounter := preload("res://ui/fps_counter.gd")
-
-
-func test_window_size_after_first_frame() -> void:
-	var got := await hooks.set_window_size(Vector2i(1366, 768))
-	eq(got, Vector2i(1366, 768), "размер окна задан после первого кадра")
-	await hooks.frames(3)
-	eq(tree.root.size, Vector2i(1366, 768), "и удержался через три кадра")
 
 
 func test_click_reaches_button() -> void:

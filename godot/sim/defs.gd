@@ -507,7 +507,11 @@ func _load(space_text: String, doctrine_text: String, overrides: Dictionary, spa
 ## Пути: доктрина — как в doctrine.json (main.escort_weight, sec.mounts.cruiser,
 ## clan.troyden.gunMod); выгрузка — с приставкой space. и id вместо номера в списке
 ## (space.ships.plektor.cruiser.hp).
-static func overrides_from_args(args: PackedStringArray) -> Dictionary:
+## bases — папки, от которых ищется ОТНОСИТЕЛЬНЫЙ путь файла правок (`--overrides=tune.json`).
+## Их даёт вызывающий (main.gd: launch_dirs): Godot меняет текущую папку процесса —
+## выгруженная сборка уходит в папку программы, редактор с --path в папку проекта, —
+## и «tune.json» молча искался бы не там, откуда запустили. Модель ОС не спрашивает.
+static func overrides_from_args(args: PackedStringArray, bases: PackedStringArray = []) -> Dictionary:
 	var out: Dictionary = {}
 	var errs: PackedStringArray = []
 	var sets: Array[String] = []
@@ -527,9 +531,14 @@ static func overrides_from_args(args: PackedStringArray) -> Dictionary:
 			files.append(a.substr(12))
 		i += 1
 	for f in files:
-		var text := FileAccess.get_file_as_string(f)
+		var tried := override_candidates(f, bases)
+		var text := ""
+		for c in tried:
+			text = FileAccess.get_file_as_string(c)
+			if not text.is_empty():
+				break
 		if text.is_empty():
-			errs.append("--overrides=%s: файл не прочитан (%s)" % [f, error_string(FileAccess.get_open_error())])
+			errs.append("--overrides=%s: файл не прочитан (%s; искали: %s) — надёжнее полный путь" % [f, error_string(FileAccess.get_open_error()), ", ".join(tried)])
 			continue
 		var j := JSON.new()
 		if j.parse(text) != OK:
@@ -553,6 +562,21 @@ static func overrides_from_args(args: PackedStringArray) -> Dictionary:
 			continue
 		out[s.substr(0, eq).strip_edges()] = val.to_float()
 	return {"overrides": out, "errors": errs}
+
+
+## Где искать файл правок: полный путь, res:// и user:// — как есть; относительный —
+## от каждой папки bases по порядку, последним — как есть (от текущей папки процесса).
+static func override_candidates(path: String, bases: PackedStringArray) -> PackedStringArray:
+	if path.is_absolute_path():
+		return PackedStringArray([path])
+	var out := PackedStringArray()
+	for b in bases:
+		var c := b.path_join(path)
+		if b != "" and c not in out:
+			out.append(c)
+	if path not in out:
+		out.append(path)
+	return out
 
 
 func _apply_override(space: Dictionary, doc: Dictionary, path: String, value: float) -> String:

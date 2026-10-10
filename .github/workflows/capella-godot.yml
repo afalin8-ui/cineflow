@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: 'выпустить ЧЕРНОВИКОМ под этим номером (capella-vX.Y; пусто — нет)'
+        description: 'выпустить ЧЕРНОВИКОМ под этим номером (capella-vX.Y); пусто — только тесты, без выпуска'
         default: ''
 
 permissions:
@@ -105,6 +105,34 @@ jobs:
             echo "::error::выгруженная Linux-сборка: код $code"; exit 1
           fi
 
+      # --selftest выходит ДО вида и счётчика — путь, который увидит игрок, гоняем
+      # отдельно: вызов родного метода у null в выпускной сборке — код 139, а в
+      # --selftest его не видно (проверено откатом)
+      - name: Запуск выгруженной Linux-сборки с окном (--quit-after 60)
+        run: |
+          set -uo pipefail
+          timeout 120 godot/build/linux/capella.x86_64 --headless --quit-after 60 > "$RUNNER_TEMP/window.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/window.log"
+          if [ $code -ne 0 ] || ! grep -q '^Капелла: отрисовщик' "$RUNNER_TEMP/window.log" || grep -q 'SCRIPT ERROR' "$RUNNER_TEMP/window.log"; then
+            echo "::error::выгруженная Linux-сборка с окном: код $code"; exit 1
+          fi
+
+      # относительный путь — от папки, ИЗ КОТОРОЙ запустили (PWD): сборка сама уходит
+      # в папку программы, и без launch_dirs «tune.json» искался бы там
+      - name: Linux-сборка, --overrides=tune.json из чужой папки
+        run: |
+          set -uo pipefail
+          exe="$GITHUB_WORKSPACE/godot/build/linux/capella.x86_64"
+          mkdir -p "$RUNNER_TEMP/rel" && cd "$RUNNER_TEMP/rel"
+          printf '{"main.dead_k": 0.43}\n' > tune.json
+          timeout 120 "$exe" --headless -- --selftest --overrides=tune.json > rel.log 2>&1
+          code=$?
+          cat rel.log
+          if [ $code -ne 0 ] || ! grep -q '^SELFTEST ok: .*правок 1,' rel.log; then
+            echo "::error::--overrides с относительным путём: код $code"; exit 1
+          fi
+
       - name: Архивы
         run: |
           set -euo pipefail
@@ -127,22 +155,16 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      # Новый номер в godot/RELEASE (дверь 3, основная), метка capella-v* или кнопка.
-      # Есть ли уже такой выпуск, здесь НЕ проверяем: у этого задания права только
-      # на чтение, а черновики видны лишь с правом записи — gh release list их не
-      # покажет, и каждый пуш плодил бы новый черновик (поймано вторым прогоном).
+      # Новый номер в godot/RELEASE (дверь 3, основная), метка capella-v* или кнопка
+      # с заполненным полем; кнопка с ПУСТЫМ полем — только тесты (godot/tools/release_tag.sh,
+      # каждый случай проверяет run_tests.sh). Есть ли уже такой выпуск, здесь НЕ проверяем:
+      # у этого задания права только на чтение, а черновики видны лишь с правом записи —
+      # gh release list их не покажет, и каждый пуш плодил бы новый черновик.
       - name: Номер выпуска
         id: rel
         env:
           INPUT_RELEASE: ${{ github.event.inputs.release }}
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then tag="$GITHUB_REF_NAME"; why="метка"
-          elif [ -n "${INPUT_RELEASE:-}" ]; then tag="$INPUT_RELEASE"; why="кнопка"
-          else tag=$(head -n1 godot/RELEASE | tr -d '\r[:space:]'); why="godot/RELEASE"; fi
-          if ! [[ "$tag" =~ ^capella-v[0-9]+(\.[0-9]+)+$ ]]; then echo "номер «$tag» не вида capella-vX.Y — выпуска нет"; exit 0; fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "номер выпуска $tag ($why); новый ли он — решит задание release"
+        run: godot/tools/release_tag.sh godot/RELEASE >> "$GITHUB_OUTPUT"
 
   windows-run:
     needs: test-build
@@ -172,6 +194,32 @@ jobs:
           $fpL = [regex]::Match($env:LINUX_SELFTEST, 'данные (\w+)').Groups[1].Value
           Write-Host "отпечаток данных: Linux $fpL, Windows $fpW"
           if ($fpL -ne $fpW) { Write-Host "::warning::отпечаток данных Linux и Windows разный" }
+          exit 0
+      # путь, который увидит игрок: вид и счётчик (--selftest выходит раньше них)
+      - name: Запуск выгруженной Windows-сборки с окном (--quit-after 60)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          cmd /c "win\capella.console.exe --headless --quit-after 60 > window.txt 2>&1"
+          $code = $LASTEXITCODE
+          $out = Get-Content window.txt -Raw
+          Write-Host $out
+          Write-Host "код выхода: $code"
+          if ($code -ne 0 -or $out -notmatch 'Капелла: отрисовщик' -or $out -match 'SCRIPT ERROR') { Write-Host "::error::выгруженная Windows-сборка с окном не прошла"; exit 1 }
+          exit 0
+      # относительный путь в cmd и PowerShell (PWD у них нет) — от папки программы:
+      # tune.json рядом с exe, запуск из другой папки
+      - name: Windows-сборка, --overrides=tune.json рядом с программой
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Set-Content -Path win\tune.json -Value '{"main.dead_k": 0.43}' -Encoding ascii
+          cmd /c "win\capella.console.exe --headless -- --selftest --overrides=tune.json > rel.txt 2>&1"
+          $code = $LASTEXITCODE
+          $out = Get-Content rel.txt -Raw
+          Write-Host $out
+          Write-Host "код выхода: $code"
+          if ($code -ne 0 -or $out -notmatch 'SELFTEST ok: .*правок 1,') { Write-Host "::error::--overrides с относительным путём на Windows"; exit 1 }
           exit 0
 
   release:

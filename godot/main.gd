@@ -3,6 +3,7 @@
 # после «--» (архитектура, 8.6; 10.1):
 #   capella.x86_64 -- --selftest        проверка сборки: данные грузятся, числа сходятся; код 0/1
 #   capella.x86_64 -- --set путь=число  правка числа (одно на прогон), --overrides=файл — набор
+#                                       (относительный путь — от папки запуска, см. launch_dirs)
 # Без режима — окно: в G0a заглушка «космос» и счётчик кадров по F3.
 extends Node
 
@@ -17,7 +18,7 @@ var fps: FpsCounter
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
-	var ov: Dictionary = Defs.overrides_from_args(args)
+	var ov: Dictionary = Defs.overrides_from_args(args, launch_dirs())
 	var ov_errors: PackedStringArray = ov["errors"]
 	var ov_values: Dictionary = ov["overrides"]
 	defs = Defs.load_default(ov_values) as Defs
@@ -35,6 +36,25 @@ func _ready() -> void:
 	fps = FpsCounter.new()
 	add_child(fps)
 	print("Капелла: отрисовщик %s · %s, видеокарта %s" % [RenderingServer.get_current_rendering_method(), RenderingServer.get_current_rendering_driver_name(), RenderingServer.get_video_adapter_name()])
+
+
+## Откуда искать относительный путь --overrides (архитектура, 7). Godot меняет текущую
+## папку процесса: выгруженная сборка уходит в папку программы, редактор с --path —
+## в папку проекта. Поэтому первой — папка, ИЗ КОТОРОЙ запустили: её отдаёт PWD
+## (оболочки Linux, macOS, Git Bash); в cmd и PowerShell PWD нет — тогда путь от папки
+## программы. Дальше — текущая папка процесса и, у выгруженной сборки, папка программы.
+static func launch_dirs() -> PackedStringArray:
+	var out := PackedStringArray()
+	var pwd := OS.get_environment("PWD")
+	if pwd != "" and DirAccess.dir_exists_absolute(pwd):
+		out.append(pwd)
+	var here := DirAccess.open(".")
+	if here != null and here.get_current_dir() not in out:
+		out.append(here.get_current_dir())
+	var exe_dir := OS.get_executable_path().get_base_dir()
+	if OS.has_feature("template") and exe_dir not in out:
+		out.append(exe_dir)
+	return out
 
 
 func _input(event: InputEvent) -> void:

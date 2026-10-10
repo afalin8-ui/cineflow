@@ -13,6 +13,8 @@
 #    даёт код 0;
 # 6. вывод прогона — в файл, хвост — в stderr: при обрыве stdout теряется;
 # 7. процессы — только по PID (никакого pkill -f: он убивает чужие прогоны).
+# Плюс: главная сцена и в режиме --selftest, и С ОКНОМ (--quit-after); --overrides
+# с относительным путём из чужой папки; номер выпуска по каждому случаю двери.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROJ="$ROOT/godot"
@@ -85,6 +87,49 @@ grep -m1 '^SELFTEST' "$LOGS/selftest.log"
 if [[ $code -ne 0 ]] || ! grep -q '^SELFTEST ok' "$LOGS/selftest.log" || grep -q 'SCRIPT ERROR' "$LOGS/selftest.log"; then
   fail "--selftest (код $code)"; show_tail "$LOGS/selftest.log"
 fi
+
+# ── главная сцена С ОКНОМ: тот путь, что увидит игрок (--selftest выходит раньше вида) ──
+say "── главная сцена с окном (--quit-after 60)"
+timeout 120 "$GODOT" --headless --path "$PROJ" --quit-after 60 >"$LOGS/window.log" 2>&1
+code=$?
+grep -m1 '^Капелла: отрисовщик' "$LOGS/window.log"
+if [[ $code -ne 0 ]] || ! grep -q '^Капелла: отрисовщик' "$LOGS/window.log" || grep -q 'SCRIPT ERROR' "$LOGS/window.log"; then
+  fail "окно (код $code)"; show_tail "$LOGS/window.log"
+fi
+
+# ── --overrides с ОТНОСИТЕЛЬНЫМ путём — из чужой папки, как запустит человек ──
+# (архитектура, 7: «--overrides=tune.json»). Godot с --path уходит в папку проекта,
+# и без launch_dirs «tune.json» искался бы там. Выгруженные сборки — то же в CI.
+say "── --overrides=tune.json из папки запуска"
+rel="$(mktemp -d)"
+printf '{"main.dead_k": 0.43}\n' >"$rel/tune.json"
+godot_bin="$(command -v "$GODOT" || echo "$GODOT")"
+(cd "$rel" && timeout 120 "$godot_bin" --headless --path "$PROJ" -- --selftest --overrides=tune.json) >"$LOGS/selftest_rel.log" 2>&1
+code=$?
+grep -m1 '^SELFTEST' "$LOGS/selftest_rel.log"
+if [[ $code -ne 0 ]] || ! grep -q '^SELFTEST ok: .*правок 1,' "$LOGS/selftest_rel.log"; then
+  fail "--overrides с относительным путём (код $code)"; show_tail "$LOGS/selftest_rel.log"
+fi
+rm -rf "$rel"
+
+# ── номер выпуска (tools/release_tag.sh): каждый случай двери выпуска ──
+say "── номер выпуска"
+relf="$(mktemp)"
+tag_case() {  # tag_case <ждём> <событие> <тип ref> <имя ref> <поле release> <первая строка RELEASE>
+  local want="$1" got
+  printf '%s\nзаголовок\n---\n' "$6" >"$relf"
+  got="$(GITHUB_EVENT_NAME="$2" GITHUB_REF_TYPE="$3" GITHUB_REF_NAME="$4" INPUT_RELEASE="$5" \
+    "$PROJ/tools/release_tag.sh" "$relf" 2>/dev/null | sed -n 's/^tag=//p')"
+  if [[ "$got" != "$want" ]]; then fail "номер выпуска: $2 $3 «$5» RELEASE «$6» — получили «$got», ждали «$want»"; fi
+}
+tag_case capella-v0.2 push branch claude/capella-godot "" capella-v0.2
+tag_case ""           push branch claude/capella-godot "" v0.2
+tag_case capella-v0.4 push tag capella-v0.4 "" capella-v0.2
+tag_case capella-v0.3 workflow_dispatch branch claude/capella-godot capella-v0.3 capella-v0.2
+tag_case ""           workflow_dispatch branch claude/capella-godot "" capella-v0.2
+tag_case ""           workflow_dispatch branch claude/capella-godot "0.3" capella-v0.2
+rm -f "$relf"
+say "   случаев: 6"
 
 # ── данные: выгрузка не устарела, доктрина цела и её проверка краснеет на порче ──
 say "── данные"

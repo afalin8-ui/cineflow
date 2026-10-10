@@ -534,6 +534,30 @@ func test_overrides() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://g0a_overrides.json"))
 
 
+## Относительный путь файла правок — от папок запуска (архитектура, 7: «--overrides=tune.json»).
+## Откат: overrides_from_args без bases — «файл не прочитан». Целиком, с настоящей
+## сменой папки процесса, это гоняют run_tests.sh (редактор с --path) и CI (выгрузки).
+func test_overrides_relative_path() -> void:
+	var dir := ProjectSettings.globalize_path("user://g0a_rel")
+	DirAccess.make_dir_recursive_absolute(dir)
+	var f := FileAccess.open(dir.path_join("tune.json"), FileAccess.WRITE)
+	f.store_string("{\"main.dead_k\": 0.43}")
+	f.close()
+	var nowhere := dir.path_join("нет_такой_папки")
+	var ov: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides=tune.json"]), PackedStringArray([nowhere, dir]))
+	ok(strs(ov["errors"]).is_empty(), "относительный путь найден во второй папке запуска: %s" % " ".join(strs(ov["errors"])))
+	var d := Defs.load_default(dict(ov["overrides"])) as Defs
+	near(d.doctrine.main_dead_k, 0.43, EPS, "правка из относительного файла применена")
+	var miss: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides", "tune.json"]), PackedStringArray([nowhere]))
+	var e := " ".join(strs(miss["errors"]))
+	ok(e.contains(nowhere.path_join("tune.json")) and e.contains("полный путь"), "не нашёлся — отказ называет, где искали: %s" % e)
+	eq(Defs.override_candidates("user://x.json", PackedStringArray([dir])), PackedStringArray(["user://x.json"]), "user:// — как есть")
+	eq(Defs.override_candidates("/abs/x.json", PackedStringArray([dir])), PackedStringArray(["/abs/x.json"]), "полный путь — как есть")
+	eq(Defs.override_candidates("sub/x.json", PackedStringArray(["/a", "", "/a"])), PackedStringArray(["/a/sub/x.json", "sub/x.json"]), "папки по порядку без повторов, последним — как есть")
+	DirAccess.remove_absolute(dir.path_join("tune.json"))
+	DirAccess.remove_absolute(dir)
+
+
 # ───────────── оружие по ролям и узлы (09, 1.1; 10.1) ─────────────
 
 func test_weapons_by_role_and_nodes() -> void:
