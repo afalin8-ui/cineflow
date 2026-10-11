@@ -8,6 +8,7 @@ const Defs := preload("res://sim/defs.gd")
 const Battle := preload("res://sim/battle.gd")
 const Ship := preload("res://sim/ship.gd")
 const Proj := preload("res://sim/proj.gd")
+const Craft := preload("res://sim/craft.gd")
 const Weapons := preload("res://sim/weapons.gd")
 const Ecm := preload("res://sim/ecm.gd")
 const GroundGun := preload("res://sim/ground_gun.gd")
@@ -969,9 +970,12 @@ func _m7(rollback: bool) -> Dictionary:
 	# из списка в конце шага. Раньше здесь стоял demo_battle(…, 0) — НОЛЬ шагов приказов:
 	# бой без единого приказа, и ракет «Синхо» в нём не было вовсе (замечание к G2)
 	var seen: Dictionary[int, Proj] = {}
+	var seen_c: Dictionary[int, Craft] = {}
 	var grab := func(bb: Battle) -> void:
 		for p in bb.projs:
 			seen[p.uid] = p
+		for c in bb.crafts:
+			seen_c[c.uid] = c
 	var b := Polygon.demo_battle(_defs(), "capella-проверка", Polygon.DEMO_STEPS, grab)
 	for i in roundi(150.0 / Battle.STEP) - Polygon.DEMO_STEPS:
 		b.step()
@@ -982,16 +986,22 @@ func _m7(rollback: bool) -> Dictionary:
 	var lost_projs := 0.0
 	for u: int in seen:
 		lost_projs += seen[u].max_hp - seen[u].hp
+	var lost_craft := 0.0
+	for u: int in seen_c:
+		lost_craft += seen_c[u].max_hp - seen_c[u].hp
 	var by_key := 0.0
 	var proj_book := 0.0
+	var craft_book := 0.0
 	var keys := {}
 	for side in 2:
 		proj_book += b.metrics.to_projs(side)
+		craft_book += b.metrics.to_craft(side)
 		for k: StringName in b.metrics.dmg[side]:
 			var v := b.metrics.to_ships(side, k)
 			by_key += v
 			keys[k] = num(keys.get(k, 0.0)) + v
 	var out := {"ships": lost_ships, "book": by_key, "projs": lost_projs, "proj_book": proj_book, "keys": keys,
+		"craft": lost_craft, "craft_book": craft_book,
 		"first_gun": b.metrics.first_gun, "first_hit": b.metrics.first_hit, "shares": b.metrics.shares_text(Ship.ATTACKER) + " | " + b.metrics.shares_text(Ship.DEFENDER),
 		"idle": b.metrics.idle_text(Ship.ATTACKER) + " | " + b.metrics.idle_text(Ship.DEFENDER)}
 	b.dispose()
@@ -1003,10 +1013,16 @@ func test_m7_damage_without_remainder() -> void:
 	var r := _m7(false)
 	near(num(r["book"]), num(r["ships"]), 1e-6, "М7: урон по кораблям по ключам (%.1f) = потерянной прочности (%.1f)" % [num(r["book"]), num(r["ships"])])
 	near(num(r["proj_book"]), num(r["projs"]), 1e-6, "урон по ракетам — отдельно, и тоже без остатка (%.1f)" % num(r["projs"]))
+	near(num(r["craft_book"]), num(r["craft"]), 1e-6, "урон по машинам — отдельно, и тоже без остатка (%.1f)" % num(r["craft"]))
+	ok(num(r["craft_book"]) > 0.0, "авиацию сбивали (G3)")
 	var keys: Dictionary = r["keys"]
-	for k: StringName in [&"heavy", &"sec", &"light", &"missile", &"planet"]:
+	# ключ ракет «Синхо» с G3 не обязателен: его ракеты встречают ещё и свои перехватчики
+	# (04, 2.6: перехватчик бьёт ракеты ≤ 800); урон ракет владельцу — отдельной проверкой
+	# (test_missile_damage_to_owner)
+	for k: StringName in [&"heavy", &"sec", &"light", &"planet", &"torp"]:
 		ok(num(keys.get(k, 0.0)) > 0.0, "в «Перестрелке» за 150 с урон есть у ключа %s (%.0f)" % [k, num(keys.get(k, 0.0))])
-	ok(num(r["proj_book"]) > 0.0, "ПВО сбивало ракеты «Синхо»")
+	ok(num(keys.get(&"gunInt", 0.0)) + num(keys.get(&"gunFig", 0.0)) > 0.0, "и у пушек или ракет машин (%s)" % str(keys))
+	ok(num(r["proj_book"]) > 0.0, "ПВО и перехватчики сбивали ракеты «Синхо» и торпеды")
 	ok(num(r["first_gun"]) > 0.0 and num(r["first_gun"]) <= 90.0, "первый выстрел главного калибра на %.1f с (М11: ≤ 90)" % num(r["first_gun"]))
 	note("Перестрелка 150 с: урон %s; молчание главного калибра: %s" % [str(r["shares"]), str(r["idle"])])
 	var o := _m7(true)
@@ -1323,3 +1339,81 @@ func test_skirmish_repeats() -> void:
 	var a := Polygon.make_record(_defs(), "capella-проверка", 2400)
 	var c := Polygon.make_record(_defs(), "capella-проверка", 2400)
 	eq(str(a["fp"]), str(c["fp"]), "показательная «Перестрелка» (80 с) дважды — один отпечаток")
+
+
+# ───────────────────────── хвосты G2: цель батареи и ракет «Синхо» ─────────────────────────
+
+## Батарея — цель фокуса, если она в её дальности (09, 1.3 и 6.3): крейсер с фокусом на
+## фрегате в 250 и корветом в 150 (ближе) — батарея бьёт фрегата. Откат «батарея берёт
+## ближайшего» — бьёт корвета.
+func _sec_focus(no_focus: bool) -> Dictionary:
+	Weapons.rollback_sec_no_focus = no_focus
+	var b := _lab()
+	var cr := _put(b, Ship.ATTACKER, &"cruiser", Vector2.ZERO, Vector2(0, -300))
+	cr.switch_off(&"engines", BIG)
+	cr.main_cd = PackedFloat64Array()
+	cr.sec_cd = PackedFloat64Array([0.0, 0.0])
+	var fr := _dummy(_put(b, Ship.DEFENDER, &"frigate", Vector2(0, -250)))
+	var cv := _dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -150)))
+	b.queue({"op": &"focus", "ids": PackedInt32Array([cr.uid]), "target": fr.uid})
+	var on_fr := 0
+	var on_cv := 0
+	for i in 60:
+		b.step()
+		for e in b.events:
+			if e[0] == &"fire" and e[3] == &"sec":
+				var tu: int = e[2]
+				if tu == fr.uid:
+					on_fr += 1
+				elif tu == cv.uid:
+					on_cv += 1
+	var out := {"fr": on_fr, "cv": on_cv, "sec_t": cr.sec_target == fr}
+	Weapons.rollback_sec_no_focus = false
+	b.dispose()
+	return out
+
+
+func test_battery_takes_focus_target() -> void:
+	var r := _sec_focus(false)
+	ok(flag(r["sec_t"]) and whole(r["fr"]) > 0 and whole(r["cv"]) == 0, "батарея бьёт цель фокуса в своей дальности (по фрегату %d, по ближнему корвету %d)" % [whole(r["fr"]), whole(r["cv"])])
+	var o := _sec_focus(true)
+	ok(whole(o["cv"]) > 0 and whole(o["fr"]) == 0, "откат «батарея берёт ближайшего»: бьёт корвета (%d), а не фокус — проверка краснеет" % whole(o["cv"]))
+
+
+## Ракеты «Синхо» — сначала по цели главного калибра, если она ближе дальности пакета
+## (09, 1.6): цель главного калибра — крейсер в 500 (пояс), рядом корвет в 380 (эскорт —
+## счёт лёгкого орудия ставит его выше). Откат «пакет выбирает сам» — ракеты на корвета.
+func _sinho_pick(own: bool) -> Dictionary:
+	Weapons.rollback_missile_own_pick = own
+	var b := _lab(&"plektor", &"troyden")
+	var sh := _put(b, Ship.ATTACKER, &"sinho", Vector2.ZERO, Vector2(0, -500))
+	sh.switch_off(&"engines", BIG)
+	sh.main_cd = PackedFloat64Array([BIG])
+	sh.sec_cd = PackedFloat64Array()
+	sh.pd_cd = PackedFloat64Array()
+	sh.mis_cd = PackedFloat64Array([0.0])
+	var cr := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -500)))
+	var cv := _dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(120, -380)))
+	b.queue({"op": &"focus", "ids": PackedInt32Array([sh.uid]), "target": cr.uid})
+	var at_cr := 0
+	var at_cv := 0
+	for i in 20:
+		b.step()
+		for p in b.projs:
+			if p.jumped_at_step == b.steps:
+				if p.target == cr:
+					at_cr += 1
+				elif p.target == cv:
+					at_cv += 1
+	var out := {"main": sh.target == cr, "cr": at_cr, "cv": at_cv}
+	Weapons.rollback_missile_own_pick = false
+	b.dispose()
+	return out
+
+
+func test_sinho_missiles_follow_main_target() -> void:
+	var r := _sinho_pick(false)
+	ok(flag(r["main"]), "цель главного калибра «Синхо» — крейсер в поясе")
+	ok(whole(r["cr"]) > 0 and whole(r["cv"]) == 0, "ракеты «Синхо» — по цели главного калибра (%d), а не по корвету (%d)" % [whole(r["cr"]), whole(r["cv"])])
+	var o := _sinho_pick(true)
+	ok(whole(o["cv"]) > 0 and whole(o["cr"]) == 0, "откат «пакет выбирает сам»: ракеты ушли на корвета (%d) — проверка краснеет" % whole(o["cv"]))

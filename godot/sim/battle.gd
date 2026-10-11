@@ -16,6 +16,8 @@ const Weapons := preload("res://sim/weapons.gd")
 const Ecm := preload("res://sim/ecm.gd")
 const GroundGun := preload("res://sim/ground_gun.gd")
 const Vision := preload("res://sim/vision.gd")
+const Air := preload("res://sim/air.gd")
+const Hangar := preload("res://sim/hangar.gd")
 
 const ROMAN: Array[String] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
 # space.js:836 dropIn: разброс места выхода ±15 по x (по высоте — нет: бой плоский)
@@ -27,6 +29,8 @@ const GUARD_RING_A0 := 0.4
 const LEAD_A_STEP := 2.3
 const LEAD_A0 := 2.6
 const LEAD_PAD := 70.0
+# space.js:3206 moveGroup: шаг строя не меньше 90 — звенья в точке приказа встают рядом
+const SQUAD_STEP := 90.0
 
 ## ТОЛЬКО для проверок отката (хвосты G1): в игре всегда false.
 ## «Идти» — каждый своей скоростью, а не по самому медленному (ловушка 6 части 02, C70).
@@ -38,6 +42,9 @@ static var rollback_fp_positions := false
 ## ТОЛЬКО для проверки отката (02, ловушка 20): безоружный на «Охоте» к главному
 ## вооружённому не пристраивается — держит свой участок посреди боя. В бою всегда false.
 static var rollback_hunt_no_lead := false
+## ТОЛЬКО для проверки отката (09, 4.6; 04, ловушка 2): тяжёлый по приказу на звено
+## ИДЁТ к нему, «чтобы достало ПВО», как в JS, — уходит из пояса в свалку.
+static var rollback_heavy_to_squad := false
 
 
 ## Бой из состава быстрого боя (часть 01, 2.15). setup:
@@ -71,7 +78,10 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	b.mp.guard_leash = gs.leash if gs != null else 0.0
 	b.mp.amove_resume = p_defs.doctrine.amove_resume_s
 	b.mp.clear_k = p_defs.doctrine.belt_clear_k
+	b.mp.craft_cap_k = c.craft_speed_cap_k
 	b.old_ecm = p_setup.get("old_ecm", false)
+	b.bomber_direct = p_setup.get("bomber_direct", false)
+	b.patrol_mid = p_setup.get("patrol_mid", false)
 	var att := StringName(str(p_setup.get("attacker", p_defs.quick.default_mine)))
 	var dfn := StringName(str(p_setup.get("defender", p_defs.quick.default_foe)))
 	var size := StringName(str(p_setup.get("size", p_defs.quick.default_size)))
@@ -118,6 +128,20 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 				s.has_amove = true
 				s.amove = s.pos + Vector2(0.0, -b.sides[foe].sign_z * adv)
 				s.amove_quiet = p_defs.doctrine.amove_resume_s
+	# сценарий «Полигона» до ИИ (G5): противник поднимает звенья по кругу ролей — это
+	# расстановка с заданием, как foe_amove: в журнал команд не пишется, едет в setup
+	var fa: Variant = p_setup.get("foe_air", {})
+	if typeof(fa) == TYPE_DICTIONARY:
+		var fad: Dictionary = fa
+		var roles: Variant = fad.get("roles", [])
+		if typeof(roles) == TYPE_ARRAY:
+			var ra: Array = roles
+			for r: Variant in ra:
+				b.foe_air_roles.append(StringName(str(r)))
+		var ev: float = fad.get("every", 0.0)
+		var first: float = fad.get("first", 0.0)
+		b.foe_air_every = ev
+		b.foe_air_next = first
 	var with_reserve: bool = p_setup.get("reserve", true)
 	if with_reserve:
 		b.sides[Ship.ATTACKER].reserve = compose(p_defs, &"small", att)
@@ -189,6 +213,12 @@ func spawn(side: int, def: Defs.ShipDef, pos: Vector2) -> Ship:
 	s.set_yaw(0.0 if sd.sign_z > 0.0 else PI)          # нос к противнику
 	s.hp = def.hp
 	s.max_hp = def.hp
+	s.kind = Body.SHIP
+	s.cls_i = def.cls_i
+	s.hit_r = def.radius                                 # радиус КЛАССА, не модели (01, ловушка 8)
+	s.armor = def.armor
+	if def.hangar > 0:
+		s.hangar = Hangar.make(def.hangar)              # ангар (04, 2.2): носитель и станция
 	var c := defs.consts
 	s.length = def.model_len if def.model_len > 0.0 else def.radius * c.len_fallback_k
 	# корпус — от длины МОДЕЛИ, а не от радиуса класса (C87, C88; ловушка 6 части 01)
@@ -213,7 +243,7 @@ func queue(c: Dictionary) -> void:
 
 
 # space.js:3925 simStep · часть 05, 2.2; архитектура, 2.4. Пустые пока модули —
-# на своих местах порядка: ИИ обеих сторон по ОДНОМУ снимку — G5; машины — G3.
+# на своих местах порядка: ИИ обеих сторон по ОДНОМУ снимку — G5.
 func step() -> void:
 	steps += 1
 	time = float(steps) * STEP            # часы — от числа шагов: без накопления ошибки
@@ -226,17 +256,22 @@ func step() -> void:
 	Vision.update(self)                   # кто кого видит; seen_pos — ДО ИИ (05, ловушка 39)
 	_arrive_reinforcements()              # прибывшие — до ИИ
 	# ИИ: orders по одному снимку начала шага, потом применить — G5
+	_foe_air()                            # сценарий «Полигона» до ИИ: пуски противника
 	for s in ships:
 		if not s.dead:
 			_update_ship(s)               # гипер → ион → цели → движение → оружие → ПВО
-	# Air.update_craft — G3
+	Air.prepare(self)                     # линии и оси для патруля и обхода — раз на шаг
+	for c in crafts:
+		if not c.dead:
+			Air.update_craft(self, c)     # машины — после кораблей (04, 2.4; 04, ловушка 20)
 	for p in projs:
 		if not p.dead:
 			Weapons.update_proj(self, p)  # снаряд, пущенный на этом шаге, летит уже сейчас (03, 2.1)
-	_clean_projs()                        # ангары — G3
+	_clean_projs()
+	Hangar.tick(self)                     # места ангаров, уборка, звенья (04, 2.2)
 	# _check_teeth() — G5 («нечем бить» — ДО конца боя)
 	_check_end()
-	# metrics.sample(self) — G5
+	_sample_air()                         # metrics.sample(self) целиком — G5; здесь М5
 
 
 # space.js:1211 updateShip · часть 03, 2.1 (порядок внутри)
@@ -263,6 +298,43 @@ func _update_ship(s: Ship) -> void:
 		var nf := sqrt(space.near_d2[s.si]) if s.si >= 0 else INF
 		Movement.update(s, push, STEP, time, mp, nf)
 	Weapons.fire(self, s)                 # оружие — ПОСЛЕ движения этого шага (03, 2.1 п. 6)
+
+
+## Сценарий «Полигона» до ИИ (G5): противник раз в foe_air_every с поднимает с каждого
+## носителя со свободным местом по звену — роли по кругу. Без ИИ в «Полигоне» иначе
+## не было бы чужих звеньев: перехватчикам некого встречать, ПВО — некого сбивать.
+func _foe_air() -> void:
+	if foe_air_roles.is_empty() or time < foe_air_next:
+		return
+	foe_air_next += foe_air_every
+	var foe := 1 - player_side
+	for s in ships:
+		if s.dead or s.side != foe or s.hangar == null or s.charging() or s.hangar.free <= 0:
+			continue
+		var role := foe_air_roles[foe_air_i % foe_air_roles.size()]
+		foe_air_i += 1
+		Hangar.launch(self, s, role)      # по одному звену с носителя за раз — как ИИ (04, 2.14)
+
+
+## М5 (09, 8.2) за шаг: машины в воздухе, без взлёта и посадки, — доля в середине.
+func _sample_air() -> void:
+	if crafts.is_empty() or air_geo.size() != 2:
+		return
+	var g0 := Air.geo_of(self, 0)
+	var g1 := Air.geo_of(self, 1)
+	var home_r := metrics.M5_HOME
+	for c in crafts:
+		if c.dead or c.leaving:
+			continue
+		var g := g0 if c.side == 0 else g1
+		if not g.ok:
+			continue
+		var q := c.squad as Squad
+		if q != null:
+			var home := q.home as Ship
+			if home != null and not home.dead and c.pos.distance_squared_to(home.pos) < home_r * home_r:
+				continue
+		metrics.sample_craft(c.side, (c.pos - g.p).dot(g.ax), g.d, STEP)
 
 
 ## Мёртвые снаряды — из списка в конце шага (space.js:3950).
@@ -430,6 +502,7 @@ func _apply(c: Dictionary) -> void:
 			var x: float = c.get("x", 0.0)
 			var z: float = c.get("z", 0.0)
 			_cmd_move(_mine(c), Vector2(x, z))
+			_cmd_squads_move(_mine_squads(c), Vector2(x, z))
 		&"stance":
 			var st: StringName = c.get("stance", &"guard")
 			_set_stance(_mine(c), st)
@@ -455,30 +528,151 @@ func _apply(c: Dictionary) -> void:
 			cancel_retreat(cs)
 		&"focus":
 			var tu: int = c.get("target", 0)
-			_cmd_focus(_mine(c), ship_by_uid(tu))
+			var ts := ship_by_uid(tu)
+			if ts != null:
+				_cmd_focus(_mine(c), ts)
+				_cmd_squads_attack(_mine_squads(c), ts)
+			else:
+				var tq := squad_by_uid(tu)
+				_cmd_focus_squad(_mine(c), tq)
+				_cmd_squads_attack(_mine_squads(c), tq)
 		&"amove":
 			var ax: float = c.get("x", 0.0)
 			var az: float = c.get("z", 0.0)
 			_cmd_move(_mine(c), Vector2(ax, az), true)
+			_cmd_squads_move(_mine_squads(c), Vector2(ax, az))
 		&"guard":
 			var wu: int = c.get("target", 0)
-			_cmd_guard(_mine(c), ship_by_uid(wu))
+			var ward := ship_by_uid(wu)
+			_cmd_guard(_mine(c), ward)
+			if ward != null and not ward.dead:
+				_cmd_squads_move(_mine_squads(c), ward.pos)    # звенья — к точке, где он СЕЙЧАС (04, 2.13)
 		&"ecm":
 			var mode: StringName = c.get("mode", &"jam")
 			_cmd_ecm(_mine(c), mode)
+		&"launch":
+			var role: StringName = c.get("role", &"")
+			_cmd_launch(_mine(c, true), role)
+		&"recall":
+			_cmd_recall(_mine_squads(c))
 
 
 ## Корабли команды: живые, СВОИ (сторона игрока; space.js:3092 mineSelected), не станции.
 ## ОТЛИЧИЕ: станция в приказы движения не берётся (вопрос 20 части 02): щелчком её
 ## можно было выделить, и тогда скорость строя пропадала у всей группы.
-func _mine(c: Dictionary) -> Array[Ship]:
+## with_station — станцию тоже (пуск звена: ангар есть и у станции, 04, 1.1).
+func _mine(c: Dictionary, with_station: bool = false) -> Array[Ship]:
 	var out: Array[Ship] = []
 	var ids: PackedInt32Array = c.get("ids", PackedInt32Array())
 	for u in ids:
 		var s := ship_by_uid(u)
-		if s != null and not s.dead and s.side == player_side and not s.station:
+		if s != null and not s.dead and s.side == player_side and (with_station or not s.station):
 			out.append(s)
 	return out
+
+
+## Звенья команды: живые и свои (выбор держит uid звена — один счётчик с кораблями).
+func _mine_squads(c: Dictionary) -> Array[Squad]:
+	var out: Array[Squad] = []
+	var ids: PackedInt32Array = c.get("ids", PackedInt32Array())
+	for u in ids:
+		var q := squad_by_uid(u)
+		if q != null and not q.dead and q.side == player_side:
+			out.append(q)
+	return out
+
+
+# space.js:3556 (кнопки Z/X/C) · часть 04, 1.1 и 2.3
+## Поднять ОДНО звено роли с первого из выделенных носителей, у которого есть место.
+func _cmd_launch(list: Array[Ship], role: StringName) -> void:
+	var carriers := 0
+	for s in list:
+		if s.hangar == null:
+			continue
+		carriers += 1
+		var q := Hangar.launch(self, s, role)
+		if q != null:
+			var rd: Defs.StrikeRoleDef = defs.strike_roles.get(role)
+			toast("%s: звено «%s» в воздухе · свободно мест %d" % [Weapons.short_name(s), rd.label if rd != null else str(role), s.hangar.free])
+			return
+	if carriers == 0:
+		toast("Звенья поднимает носитель — выдели его")
+	else:
+		toast("Мест в ангаре нет: место вернётся, когда звено сядет (V) или отстроится")
+
+
+# space.js:3570 (V) · часть 04, 2.13 — «На посадку»
+func _cmd_recall(list: Array[Squad]) -> void:
+	if list.is_empty():
+		return
+	for q in list:
+		Air.order_recall(q)
+	toast("Звенья идут на посадку: место в ангаре вернётся, как только сядет последняя машина")
+
+
+# space.js:3097–3128 issueOrder (по звену) · часть 04, 2.12; ДОКТРИНА 09, 4.6
+## Приказ кораблям «бить звено»: лёгкие — бить его МАШИНЫ (C14), тяжёлые НЕ принимают
+## (их оружие авиацию не берёт, а идти к звену — уйти из пояса в свалку), безоружные —
+## держатся (C100).
+func _cmd_focus_squad(list: Array[Ship], q: Squad) -> void:
+	if list.is_empty() or q == null or q.dead or q.side == player_side:
+		return
+	var lights := 0
+	var heavies := 0
+	var held := 0
+	for s in list:
+		if not s.can_hurt():
+			held += 1
+			continue
+		if not Weapons.hits_strike(self, s):
+			heavies += 1
+			if rollback_heavy_to_squad:
+				# откат: как в JS — идёт к звену, фокус и цель сняты (04, 2.12)
+				s.has_move = true
+				s.move_to = q.pos
+				s.forced = null
+				s.target = null
+			continue
+		s.forced = q
+		s.target = Hangar.live_craft(q, s.pos)
+		s.jam_shot = null
+		s.has_move = false
+		s.has_amove = false
+		s.group_speed = 0.0
+		lights += 1
+	if lights > 0:
+		toast("Цель — звено %s: лёгкие бьют его машины, вблизи бьёт ПВО" % q.def.name)
+	if heavies > 0:
+		toast("Тяжёлые держат дистанцию — авиацию бьют ПВО и звенья")
+	if held > 0:
+		toast("Носитель и РЭБ безоружны — держатся позади")
+
+
+## Звенья бьют цель — корабль или чужое звено (04, 2.13); бомбардировщики по авиации
+## не стреляют — отказ словом.
+func _cmd_squads_attack(list: Array[Squad], t: RefCounted) -> void:
+	if list.is_empty() or t == null:
+		return
+	var took := 0
+	var bombers := 0
+	for q in list:
+		if Air.order_attack(q, t):
+			took += 1
+		else:
+			bombers += 1
+	if bombers > 0:
+		toast("Бомбардировщики по авиации не стреляют")
+	if took > 0:
+		var ts := t as Ship
+		toast("Звенья атакуют %s" % (Weapons.short_name(ts) if ts != null else "чужое звено"))
+
+
+## Звенья летят в точку (ПКМ по полю, A + щелчок — у звена то же, что «идти», 04, 2.13):
+## рядом, по 90 вбок друг от друга (space.js:3206 moveGroup, шаг не меньше 90).
+func _cmd_squads_move(list: Array[Squad], at: Vector2) -> void:
+	var n := list.size()
+	for i in n:
+		Air.order_move(list[i], at + Vector2((float(i) - float(n - 1) * 0.5) * SQUAD_STEP, 0.0))
 
 
 # space.js:3206 moveGroup (строй — G4)
@@ -732,12 +926,31 @@ func fingerprint() -> String:
 		a.append_array([1.0 if over else 0.0, float(winner)])
 		if gun != null:
 			a.append_array([gun.next, 1.0 if gun.warned else 0.0, gun.aim.x, gun.aim.y])
+		# авиация (G3): машины, звенья, ангары, пуски сценария
+		for c in crafts:
+			a.append_array([float(c.uid), c.pos.x, c.pos.y, c.vel.x, c.vel.y, c.yaw, c.hp, c.cd, float(c.ammo),
+				float(c.reloads), c.reloading, float(String(c.phase).hash()), c.break_until, float(c.leg),
+				float(c.back), 1.0 if c.leaving else 0.0, c.leave_t, _uid_of(c.target)])
+		for q in squads:
+			a.append_array([float(q.uid), 1.0 if q.dead else 0.0, 1.0 if q.recall else 0.0, 1.0 if q.has_move else 0.0,
+				q.move_to.x, q.move_to.y, _uid_of(q.target), _uid_of(q.home), float(q.craft.size())])
+		for s in ships:
+			if s.hangar != null:
+				a.append_array([float(s.hangar.free), float(s.hangar.launched.size())])
+				a.append_array(s.hangar.rebuild)
+		for sd in sides:
+			a.append_array([float(sd.sq_up), float(sd.sq_lost)])
+		a.append_array([foe_air_next, float(foe_air_i)])
 	return a.to_byte_array().hex_encode().sha256_text().substr(0, 16)
 
 
+## Номер цели в отпечатке: корабль, машина, снаряд или звено; 0 — нет.
 static func _uid_of(o: RefCounted) -> float:
-	var s := o as Ship
-	return float(s.uid) if s != null else 0.0
+	var bo := o as Body
+	if bo != null:
+		return float(bo.uid)
+	var q := o as Squad
+	return float(q.uid) if q != null else 0.0
 
 
 ## Запись боя для повтора: заголовок (сборка, отпечаток данных, зерно) и журнал команд.
@@ -767,8 +980,16 @@ static func from_record(p_defs: Defs, rec: Dictionary, p_build: String, why: Pac
 
 ## Разорвать кольца ссылок после боя: RefCounted их не собирает (архитектура, 2.12).
 func dispose() -> void:
+	for q in squads:
+		q.unlink()
+	squads.clear()
+	for c in crafts:
+		c.unlink()
+	crafts.clear()
 	for s in ships:
 		s.unlink()
+		if s.hangar != null:
+			s.hangar.launched.clear()
 	ships.clear()
 	for p in projs:
 		p.unlink()

@@ -202,9 +202,12 @@ func _replay_checked(good: bool, text: String) -> void:
 		get_tree().quit(0 if good else 1)
 
 
-## Флажки боя из командной строки: `--old-ecm` — откат 09, 1.7 (tools/polygon.gd).
+## Флажки боя из командной строки (tools/polygon.gd): `--old-ecm` — откат 09, 1.7;
+## `--bomber-direct` и `--patrol-mid` — откаты авиации 09, 8.4 (G3).
 static func apply_flags(args: PackedStringArray) -> void:
 	Polygon.old_ecm = "--old-ecm" in args
+	Polygon.bomber_direct = "--bomber-direct" in args
+	Polygon.patrol_mid = "--patrol-mid" in args
 
 
 ## Запись боя из файла (JSON). Относительный путь — от папок запуска (как --overrides).

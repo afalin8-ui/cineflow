@@ -12,6 +12,7 @@ extends RefCounted
 
 const Ship := preload("res://sim/ship.gd")
 const Defs := preload("res://sim/defs.gd")
+const Body := preload("res://sim/body.gd")
 
 # Числа JS, перенесённые как есть (часть 02, 2.7–2.12); числа доктрины — в doctrine.json.
 const ARRIVE_STOP := 0.5          # space.js:1171: ближе 0,5 к точке — стоим
@@ -40,6 +41,10 @@ const STATION_SLOP := 10.0        # space.js:1206: ближе 10 к точке �
 const FIGHT_K := 1.3              # space.js:1272: атака с ходу лёгкого — встречный ближе 1,3 дальности
 const LOOK_K := 1.5               # space.js:1347: нос на цель ближе 1,5 дальности
 const LOOK_UNARMED := 400.0       # …у безоружного — 400
+# space.js:1184 approach к МАШИНЕ (приказ на звено, C14): по авиации бьёт ПВО, поэтому
+# рабочая дистанция — min(0,68 дальности, 0,7 ПВО), без ПВО — 0,5 дальности
+const CRAFT_PD_K := 0.7
+const CRAFT_NO_PD_K := 0.5
 
 
 ## ТОЛЬКО для проверки отката (09, 10.4; 09, 9.5 п. 4): тормозной путь — от тяги
@@ -67,6 +72,7 @@ class Params:
 	var guard_leash: float        # space_stances.guard.leash — поводок «Охраны» лёгкого (240)
 	var amove_resume: float       # doctrine amove.resume_s — тяжёлый идёт дальше через 3 с без встречи
 	var clear_k: float            # doctrine belt.clear_k — «путь чист»: никого ближе 0,45 R
+	var craft_cap_k: float        # battle_constants.craft_speed_cap_k — предел машины 1,15 × maxSpeed
 
 
 # space.js:1116 face · часть 02, 2.3
@@ -151,10 +157,12 @@ static func arrive(s: Ship, goal: Vector2, vmax: float, rev: float, brake_k: flo
 # space.js:1180 approach · часть 03, 2.13 — ТОЛЬКО у лёгких (09, 6.1: «как сейчас»)
 ## К рабочей дистанции 0,68 своей дальности (под помехами — 0,8 lockRange): дальше
 ## полосы покоя — подходит, ближе — отходит на полскорости, в полосе эскорт облетает
-## цель вбок. Подход к звену — G3.
-static func approach(s: Ship, t: Ship, range0: float, vmax: float, p: Params) -> Vector2:
+## цель вбок. Цель — машина звена (C14): на дальность ПВО, а не орудия.
+static func approach(s: Ship, t: Body, range0: float, vmax: float, p: Params) -> Vector2:
 	var want := range0 * LIGHT_WANT_K
-	if s.jam != null:
+	if t.kind == Body.CRAFT:
+		want = minf(range0 * LIGHT_WANT_K, s.def.pd.rng * CRAFT_PD_K if s.def.pd != null else range0 * CRAFT_NO_PD_K)
+	elif s.jam != null:
 		var jp: Defs.EcmDef = s.jam
 		want = jp.lock_range * JAM_WANT_K        # под помехами наводится только вблизи
 	var v := t.pos - s.pos
@@ -175,9 +183,9 @@ static func approach(s: Ship, t: Ship, range0: float, vmax: float, p: Params) ->
 # space.js:1197 guardStation · часть 03, 2.13 — ТОЛЬКО у лёгких
 ## «Охрана» с целью: встать на рабочую дистанцию от неё, но не дальше поводка от
 ## своего участка. Ушла за поводок — бьём, пока достаём; догонять не идём.
-static func guard_station(s: Ship, t: Ship, range0: float, p: Params) -> Vector2:
+static func guard_station(s: Ship, t: Body, range0: float, p: Params) -> Vector2:
 	var want := range0 * LIGHT_WANT_K
-	if s.jam != null:
+	if s.jam != null and t.kind == Body.SHIP:
 		var jp: Defs.EcmDef = s.jam
 		want = jp.lock_range * JAM_WANT_K
 	var v := s.pos - t.pos
@@ -218,7 +226,7 @@ static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params, nea
 	var goal_on := false
 	var goal := Vector2.ZERO
 	var heavy := s.heavy()
-	var t := s.target as Ship
+	var t := s.target as Body              # корабль или машина звена-цели (C14)
 	if t != null and t.dead:
 		t = null
 	var range0 := s.range0()

@@ -15,7 +15,11 @@
 # - ПВО (pd) — сначала ракеты, потом машины (03, ловушка 22), без конуса, без сложности.
 # Перезарядка идёт ВСЕГДА, после выстрела — ровно cd (03, ловушка 19; 09, 9.5 п. 8).
 # Каждый выстрел раскрывает (09, 9.5 п. 7). Ноль в таблице урона проверяется везде:
-# в выборе цели, выстреле и damage (09, 9.5 п. 6; машины — G3).
+# в выборе цели, выстреле, damage и попадании по машине (09, 9.5 п. 6).
+#
+# С G3 целью бывает не только корабль (sim/body.gd): ПВО бьёт и машины, лёгкий корабль
+# по приказу на звено — его машины (C14: звено — не цель, а приказ бить машины; урон
+# «по звену» отбрасывается — у звена нет прочности, и оно не Body).
 #
 # Тяжёлые в G2 приказы огня принимают как ВЫБОР ЦЕЛИ и с места не сходят (план G2,
 # п. 4): пояс, подход и отход — G4. Прежнего подхода «на 0,68 R» у тяжёлых нет нигде.
@@ -28,6 +32,11 @@ const Proj := preload("res://sim/proj.gd")
 const Ecm := preload("res://sim/ecm.gd")
 const Vision := preload("res://sim/vision.gd")
 const Movement := preload("res://sim/movement.gd")
+const Metrics := preload("res://sim/metrics.gd")
+const Body := preload("res://sim/body.gd")
+const Craft := preload("res://sim/craft.gd")
+const Squad := preload("res://sim/squad.gd")
+const Hangar := preload("res://sim/hangar.gd")
 
 # Числа JS, перенесённые как есть (часть 03); числа доктрины — в doctrine.json.
 const RETARGET_MIN := 0.8          # space.js:1244: пересмотр цели раз в 0,8–1,6 с
@@ -79,6 +88,15 @@ static var rollback_jam_shot_sticks := false
 static var rollback_jammer_not_first := false
 ## «Охрана» идёт к глушителю, даже если не дотянется с поводка (03, ловушка 6).
 static var rollback_guard_jam_any := false
+## Приказ на звено — целью ставится САМО звено, а не его машина (C14; 04, ловушка 1:
+## «флот стреляет в пустоту»).
+static var rollback_squad_as_target := false
+## Батарея не берёт цель фокуса первой — только прежнюю и ближайшую (09, 1.3 и 6.3:
+## фокус в дальности батареи — её цель).
+static var rollback_sec_no_focus := false
+## Ракетный пакет «Синхо» сам выбирает цель по счёту, не глядя на цель главного калибра
+## (09, 1.6: «сначала — цель главного калибра, если она ближе дальности пакета»).
+static var rollback_missile_own_pick := false
 
 
 ## Таймеры оружия при появлении (space.js:337 spawnShip · часть 03, 2.2): у каждой
@@ -136,26 +154,38 @@ static func aim_of(b: State, side: int) -> float:
 ## лёгкое у лёгкого), батарея, ракетный пакет; помехи над кораблём.
 static func think(b: State, s: Ship) -> void:
 	s.retarget -= State.STEP
-	var t := s.target as Ship
-	if t != null and (t.dead or not Vision.sees(b, s.side, t)):
+	var t := s.target as Body
+	if t != null and (t.dead or not Vision.sees_body(b, s.side, t)):
 		s.target = null              # C18: цель ушла — приказ снят
 	var fz := s.forced as Ship
 	if fz != null and (fz.dead or not Vision.sees(b, s.side, fz)):
 		s.forced = null
 		if s.guard_of == null:
 			s.anchor = s.pos         # цель фокуса погибла — участок там, где стоим (03, ловушка 13)
+	# приказ на звено держится, пока у звена есть живая видимая машина (space.js:1231)
+	var fq := s.forced as Squad
+	if fq != null and Hangar.live_craft(fq, s.pos) == null:
+		s.forced = null
+		fq = null
+		if s.guard_of == null:
+			s.anchor = s.pos
+	if rollback_squad_as_target and fq != null:
+		s.target = fq                # откат C14: «цель — звено», стрелять не во что
+		return
 	s.jam = Ecm.profile(b, s.pos, s.side) if s.can_hurt() else null
 	if s.jam_shot != null and s.jam_shot != s.target:
 		s.jam_shot = null            # цель сменили приказом — «под помехами» уже не та
 	var want := _forced_primary(s)
+	# space.js:1240: цель по приказу на звено — пересмотр по таймеру (ближайшая машина),
+	# а не каждый шаг; по кораблю фокуса — сразу
 	if s.target == null or s.retarget <= 0.0 or (want != null and s.target != want and s.jam_shot == null):
-		s.target = want if want != null else acquire(b, s)
+		s.target = _primary(b, s, want, fq)
 		s.jam_shot = null
 		s.retarget = b.rng.randf_range(RETARGET_MIN, RETARGET_MAX)
 	if s.jam_shot != null and s.jam == null and not rollback_jam_shot_sticks:
 		# вышли из-под купола или глушитель сбит — к своей цели (03, ловушка 7)
 		s.jam_shot = null
-		s.target = want if want != null else acquire(b, s)
+		s.target = _primary(b, s, want, fq)
 	var lock := 0.0
 	if s.jam != null:
 		var jp: Defs.EcmDef = s.jam
@@ -163,8 +193,10 @@ static func think(b: State, s: Ship) -> void:
 	# ДОКТРИНА 09, 1.7: «первым — глушитель» — только у лёгких; тяжёлый к глушителю не
 	# идёт (это в упор, глубоко в мёртвой зоне), его главный калибр бьёт и под помехами
 	if not s.heavy() and s.jam != null and s.jam_shot == null:
+		# space.js:1248: по машине под помехами глушителя не ищут — только когда цели нет
+		# или цель-корабль дальше lockRange
 		var cur := s.target as Ship
-		if cur == null or s.pos.distance_to(cur.pos) > lock:
+		if s.target == null or (cur != null and s.pos.distance_to(cur.pos) > lock):
 			var j := jam_pick(b, s)
 			if j != null:
 				s.target = j
@@ -186,6 +218,18 @@ static func _forced_primary(s: Ship) -> Ship:
 	if s.heavy() and main_reach(s, s.pos.distance_to(fz.pos)) != 0 and not Movement.rollback_heavy_approach:
 		return null
 	return fz
+
+
+## Главная цель: фокус-корабль (если годится главному орудию), машина звена-цели
+## (C14: ближайшая живая), иначе своя по роли.
+static func _primary(b: State, s: Ship, want: Ship, fq: Squad) -> Body:
+	if want != null:
+		return want
+	if fq != null:
+		var c := Hangar.live_craft(fq, s.pos)
+		if c != null:
+			return c
+	return acquire(b, s)
 
 
 static func acquire(b: State, s: Ship) -> Ship:
@@ -366,7 +410,7 @@ static func sec_pick(b: State, s: Ship) -> Ship:
 	var w := s.def.sec
 	var r := _lock(b, s, w.rng)
 	var fz := s.forced as Ship
-	if fz != null and not fz.dead and s.pos.distance_to(fz.pos) <= r and b.defs.dmg_mult(w.key, fz.def.cls_i) > 0.0:
+	if fz != null and not fz.dead and s.pos.distance_to(fz.pos) <= r and b.defs.dmg_mult(w.key, fz.def.cls_i) > 0.0 and not rollback_sec_no_focus:
 		return fz
 	var cur := s.sec_target as Ship
 	if cur != null and not cur.dead and Vision.sees(b, s.side, cur) and s.pos.distance_to(cur.pos) <= r:
@@ -391,7 +435,7 @@ static func sec_pick(b: State, s: Ship) -> Ship:
 static func missile_pick(b: State, s: Ship) -> Ship:
 	var w := s.def.missile
 	var t := s.target as Ship
-	if t != null and not t.dead and s.pos.distance_to(t.pos) <= w.rng:
+	if t != null and not t.dead and s.pos.distance_to(t.pos) <= w.rng and not rollback_missile_own_pick:
 		return t
 	var best: Ship = null
 	var bs := -INF
@@ -548,14 +592,15 @@ static func _fire_light(b: State, s: Ship) -> void:
 	var w := s.def.light
 	if w == null:
 		return
-	var t := s.target as Ship
+	# цель — корабль или, по приказу на звено, машина (C14): лёгкие бьют машины × 0,2
+	var t := s.target as Body
 	if not (rollback_freeze_cd and (t == null or t.dead)):
 		for i in s.light_cd.size():
 			s.light_cd[i] -= State.STEP       # перезарядка идёт ВСЕГДА, и без цели (03, ловушка 19)
 	if t == null or t.dead:
 		return
 	var d := s.pos.distance_to(t.pos)
-	if d > w.rng or b.defs.dmg_mult(w.key, t.def.cls_i) <= 0.0:
+	if d > w.rng or b.defs.dmg_mult(w.key, t.cls_i) <= 0.0:
 		return
 	if s.dir.dot((t.pos - s.pos) / maxf(d, 1e-6)) < _arc(b, s):
 		return
@@ -602,10 +647,12 @@ static func _fire_missile(b: State, s: Ship) -> void:
 
 
 # space.js:531 spawnProjectile · часть 03, 2.11
-static func spawn_proj(b: State, owner: Ship, t: Ship, dmg: float, key: StringName, speed: float, hp: float, dir: Vector2) -> Proj:
+## owner — корабль или машина (ракеты истребителя, торпеды): урон — ему (07, ловушка 57).
+static func spawn_proj(b: State, owner: Body, t: Body, dmg: float, key: StringName, speed: float, hp: float, dir: Vector2) -> Proj:
 	var c := b.defs.consts
 	var p := Proj.new()
 	p.uid = b.next_uid()
+	p.kind = Body.PROJ
 	p.side = owner.side
 	p.owner = owner
 	p.target = t
@@ -616,7 +663,7 @@ static func spawn_proj(b: State, owner: Ship, t: Ship, dmg: float, key: StringNa
 	p.hp = hp
 	p.max_hp = hp
 	p.armor = c.projectile_armor
-	p.radius = c.projectile_radius
+	p.hit_r = c.projectile_radius
 	p.life = c.projectile_life
 	p.cls_i = Defs.CLASSES.find(c.projectile_cls)
 	p.pos = owner.pos
@@ -663,8 +710,10 @@ static func _fire_pd(b: State, s: Ship) -> void:
 		s.pd_cd[i] -= State.STEP
 		if s.pd_cd[i] > 0.0:
 			continue
-		# сначала ракеты и торпеды, потом машины (03, ловушка 22; машины — G3)
-		var t := nearest_proj(b, s.pos, w.rng, s.side)
+		# сначала ракеты и торпеды, потом машины (03, ловушка 22; 04, 2.12)
+		var t: Body = nearest_proj(b, s.pos, w.rng, s.side)
+		if t == null:
+			t = nearest_craft(b, s.pos, w.rng, s.side)
 		if t == null:
 			s.pd_cd[i] = c.pd_retarget_idle
 			continue
@@ -677,6 +726,20 @@ static func _fire_pd(b: State, s: Ship) -> void:
 			Vision.reveal(b, s)               # выстрел ПВО тоже раскрывает (03, ловушка 25)
 		b.events.append([&"pd", s.uid, i, t.pos, t.uid])
 		damage(b, t, w.dmg * pen, w.key, s, (t.pos - s.pos).normalized())
+
+
+# space.js:1012 nearest (по машинам) — ближайшая чужая видимая машина СТРОГО ближе r
+static func nearest_craft(b: State, from: Vector2, r: float, side: int) -> Craft:
+	var best: Craft = null
+	var bd := r * r
+	for x in b.crafts:
+		if x.dead or x.side == side or not Vision.sees_body(b, side, x):
+			continue
+		var d2 := from.distance_squared_to(x.pos)
+		if d2 < bd:
+			bd = d2
+			best = x
+	return best
 
 
 # space.js:1012 nearest (по снарядам) — ближайший чужой СТРОГО ближе r
@@ -703,7 +766,7 @@ static func update_proj(b: State, p: Proj) -> void:
 		p.dead = true
 		b.events.append([&"proj_end", p.uid, p.pos])
 		return
-	var t := p.target as Ship
+	var t := p.target as Body               # корабль или машина (ракета истребителя)
 	if t != null and t.dead:
 		p.target = null
 		t = null                              # дальше летит прямо до конца жизни
@@ -718,8 +781,9 @@ static func update_proj(b: State, p: Proj) -> void:
 		if nd.length_squared() > 1e-12:
 			p.dir = nd.normalized()
 	p.pos += p.dir * (p.speed * dt)
-	# попадание только в СВОЮ цель и по радиусу КЛАССА + 5 (03, ловушка 23; 01, ловушка 8)
-	if t != null and p.pos.distance_to(t.pos) < t.def.radius + HIT_PAD:
+	# попадание только в СВОЮ цель и по радиусу КЛАССА + 5 (03, ловушка 23; 01, ловушка 8):
+	# корабль — radius класса, машина — 2,6 (+5 = 7,6)
+	if t != null and p.pos.distance_to(t.pos) < t.hit_r + HIT_PAD:
 		b.events.append([&"proj_hit", p.uid, p.pos])
 		p.dead = true
 		damage(b, t, p.dmg, p.key, p, p.dir)
@@ -728,50 +792,48 @@ static func update_proj(b: State, p: Proj) -> void:
 # ───────────────────────────── урон (часть 03, 2.5) ─────────────────────────────
 
 # space.js:896 damage · часть 03, 2.5; ДОКТРИНА 09, 10.2 (с направлением), М7
-## Одна дверь урона. t — корабль или снаряд; src — корабль, снаряд (урон — его
-## владельцу) или null у планеты (тогда book = &"planet"). → нанесённое (без
-## переубийства). Ноль в таблице — урона нет (09, 9.5 п. 6); цель без прочности
-## (звено — G3) урона не принимает (C14).
+## Одна дверь урона. t — корабль, машина или снаряд (Body); src — корабль, машина,
+## снаряд (урон — его владельцу) или null у планеты (тогда book = &"planet"). →
+## нанесённое (без переубийства). Ноль в таблице — урона нет (09, 9.5 п. 6); цель без
+## прочности — звено — урона не принимает (C14: звено не Body).
 static func damage(b: State, t: RefCounted, amount: float, key: StringName, src: RefCounted, from_dir: Vector2, book: StringName = &"") -> float:
 	if t == null or not (amount > 0.0):
 		return 0.0
-	var ship := t as Ship
-	var proj := t as Proj
-	if ship == null and proj == null:
+	var body := t as Body
+	if body == null or body.dead:
 		return 0.0
-	var cls_i := ship.def.cls_i if ship != null else proj.cls_i
-	if (ship.dead if ship != null else proj.dead):
-		return 0.0
+	var cls_i := body.cls_i
 	var mult := b.defs.dmg_mult(key, cls_i)
 	if mult <= 0.0:
 		return 0.0
-	var armor := ship.armor_toward(from_dir) if ship != null else proj.armor_toward(from_dir)
-	var before := ship.hp if ship != null else proj.hp
-	var after := before - amount * mult * (1.0 - armor)
+	var before := body.hp
+	var after := before - amount * mult * (1.0 - body.armor_toward(from_dir))
 	var dealt := before - maxf(0.0, after)
 	var who := src
 	var sp := src as Proj
 	if sp != null:
 		who = null if rollback_proj_no_owner else sp.owner   # урон снаряда — его владельцу (07, ловушка 57)
-	var by := who as Ship
-	if ship != null:
-		ship.hp = maxf(0.0, after)
-	else:
-		proj.hp = maxf(0.0, after)
+	var by := who as Body
+	body.hp = maxf(0.0, after)
 	_credit(b, by, dealt, book if book != &"" else key, cls_i)
+	var ship := t as Ship
 	if ship != null:
 		_under_fire(b, ship)
 	if after <= 0.0:
 		if ship != null:
 			destroy_ship(b, ship, by)
+		elif body.kind == Body.CRAFT:
+			Hangar.destroy_craft(b, t as Craft, by)
 		else:
-			proj.dead = true
-			b.events.append([&"proj_end", proj.uid, proj.pos])
+			body.dead = true
+			b.events.append([&"proj_end", body.uid, body.pos])
 	return dealt
 
 
 # space.js:912 credit · часть 03, 2.5; ДОКТРИНА 09, М7 — учёт по КЛЮЧУ и классу цели
-static func _credit(b: State, by: Ship, dealt: float, book: StringName, cls_i: int) -> void:
+## Урон машины засчитывается её звену (итоги «больше всех урона», 04, ловушка 10), а в
+## учёт М7 — по ключу оружия (gunInt, gunFig, torp), как у всех (09, 9.3).
+static func _credit(b: State, by: Body, dealt: float, book: StringName, cls_i: int) -> void:
 	if not (dealt > 0.0):
 		return
 	var side := -1
@@ -781,9 +843,15 @@ static func _credit(b: State, by: Ship, dealt: float, book: StringName, cls_i: i
 		side = 1 - b.gun.side if b.gun != null else Ship.DEFENDER   # планета — оборона защитника
 	elif by != null:
 		side = by.side
-		by.dealt += dealt
-		if b.metrics.first_hit <= 0.0:
-			b.metrics.first_hit = b.time      # первое попадание НЕ с планеты (М11)
+		var bs := by as Ship
+		var bc := by as Craft
+		if bs != null:
+			bs.dealt += dealt
+		elif bc != null and bc.squad != null:
+			var q := bc.squad as Squad
+			q.dealt += dealt
+		if b.metrics.first_hit <= 0.0 and cls_i != Metrics.TORPEDO_CLS and cls_i != Metrics.STRIKE_CLS:
+			b.metrics.first_hit = b.time      # первое попадание по КОРАБЛЮ не с планеты (М11)
 	if side >= 0:
 		b.metrics.book(side, book, cls_i, dealt)
 
@@ -800,13 +868,19 @@ static func _under_fire(b: State, t: Ship) -> void:
 
 
 # space.js:936 destroy (корабль) · часть 03, 2.5
-static func destroy_ship(b: State, e: Ship, by: Ship) -> void:
+static func destroy_ship(b: State, e: Ship, by: Body) -> void:
 	if e.dead:
 		return
 	e.dead = true
 	e.hp = 0.0
-	if by != null:
-		by.kills += 1
+	var bs := by as Ship
+	var bc := by as Craft
+	if bs != null:
+		bs.kills += 1
+	elif bc != null and bc.squad != null:
+		var q := bc.squad as Squad
+		q.kills += 1                          # добитые КОРАБЛИ — звену (04, 2.11)
+	Hangar.orphan(e)                          # звенья носителя остаются без дома (space.js:954)
 	b.events.append([&"destroyed", e.uid, by.uid if by != null else 0])
 	# свой или чужой — словом (03, ловушка 31); имя с номером
 	var nm := e.name.substr(0, 1).to_lower() + e.name.substr(1)

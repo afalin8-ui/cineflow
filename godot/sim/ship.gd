@@ -7,33 +7,25 @@
 # Бой плоский (09, 11.6): положение и скорость — Vector2(x, z) плоскости боя,
 # высота — только у вида. Нос — местная −Z (как в Godot и в JS): курс yaw — угол
 # поворота вокруг вертикали, dir = (−sin yaw, −cos yaw) в осях (x, z).
-extends RefCounted
+extends "res://sim/body.gd"
 
 const Defs := preload("res://sim/defs.gd")
+const Squad := preload("res://sim/squad.gd")
 
 ## Стороны: 0 — атакующий (z > 0, знак +1), 1 — защитник (z < 0, знак −1).
 const ATTACKER := 0
 const DEFENDER := 1
 
-var uid: int
+# uid, side, pos, vel, dead, hp, max_hp, hit_r, cls_i, jumped_at_step — в sim/body.gd
 var si := -1                 # номер в снимке шага (sim/space.gd); −1 — не в снимке
-var side: int
 var sign_z: float            # +1 у атакующего, −1 у защитника (space.js:289)
 var def: Defs.ShipDef
 var name: String             # с номером: «Рэш II» (ловушка 11 части 01)
 var station: bool
 
-var pos := Vector2.ZERO      # (x, z) плоскости боя
-var vel := Vector2.ZERO
 var yaw := 0.0               # курс носа; 0 — нос в −Z
 var dir := Vector2(0.0, -1.0)
-## Положение на прошлом шаге и шаг, на котором корабль появился или прыгнул:
-## на этом шаге вид не смешивает прошлое с нынешним (архитектура, 3: телепорт).
-var jumped_at_step := -1
 
-var hp: float
-var max_hp: float
-var dead := false
 var fled := false            # ушёл в гипер (а не погиб)
 
 ## Полуразмер корпуса — расталкивание и строй (C87): max(1,6 × radius, 0,36 × len),
@@ -58,8 +50,12 @@ var guard_off := Vector2.ZERO
 var amove_quiet := 0.0
 
 # ── цели по ролям оружия (09, 1.1; 03, 2.7–2.9; ловушка 1 09, 9.5: не guns[0]) ──
-var target: RefCounted       # цель главного калибра у тяжёлого, лёгкого орудия — у лёгкого (Ship)
-var forced: RefCounted       # фокус огня (Ship): сильнее тактики, тактику не стирает (03, ловушка 16)
+## Цель главного калибра у тяжёлого (Ship), лёгкого орудия — у лёгкого: корабль или,
+## по приказу на звено, его машина (Craft; C14, 04, 2.12) — поэтому тип общий (Body).
+var target: RefCounted
+## Фокус огня: корабль (Ship) или звено (Squad, только у лёгких — 09, 4.6); сильнее
+## тактики, тактику не стирает (03, ловушка 16).
+var forced: RefCounted
 var sec_target: RefCounted   # цель батареи (Ship): фокус в её дальности, иначе ближайший
 var mis_target: RefCounted   # цель ракетного пакета «Синхо» (09, 1.6)
 var retarget := 0.0          # пересмотр цели раз в 0,8–1,6 с (space.js:1244)
@@ -109,6 +105,10 @@ var thrust_rev := 0.0        # доля тяги против носа (реве
 ## и тормозной путь обязаны меняться вместе, потому что оба берут thrust().
 var engine_k := 1.0
 
+## Ангар носителя и станции (04, 2.2): места, постройка, поднятые звенья; null — нет.
+## Отдельной частью корабля, а не флагами (04, 7.4: потом выбитый ангар — меньше bays).
+var hangar: Squad.Hangar
+
 ## Выключатели узлов со сроком (архитектура, 2.8; 09, 10.3): ион с планеты —
 ## «двигатели выключены на 10 с». Выбитый узел потом — тот же выключатель без срока.
 var off_until: Dictionary[StringName, float] = {}
@@ -143,16 +143,13 @@ func max_speed() -> float:
 	return def.max_speed
 
 
-func hp_frac() -> float:
-	return hp / max_hp if max_hp > 0.0 else 0.0
-
-
 func armor_toward(_from_dir: Vector2) -> float:
 	return def.armor
 
 
-## Вооружён ли: «нечем бить» и безоружные приказы спрашивают это, а не длину
-## списка орудий (09, 10.4). Ангар — с G3.
+## Вооружён ли: безоружные приказы спрашивают это, а не длину списка орудий (09, 10.4).
+## Ангар оружием корабля не считается: носитель приказ «атаковать» не принимает (C100);
+## «нечем бить» стороны (G5) спросит ангар отдельно (04, 2.15).
 func can_hurt() -> bool:
 	return def.main != null or def.sec != null or def.light != null or def.missile != null
 

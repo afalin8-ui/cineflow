@@ -9,6 +9,7 @@
 extends RefCounted
 
 const Defs := preload("res://sim/defs.gd")
+const Ship := preload("res://sim/ship.gd")
 
 
 ## Места стороны на старте: список [id, Vector2(x, z)] в порядке расстановки.
@@ -93,3 +94,48 @@ static func _rank(out: Array, list: Array[Defs.ShipDef], z: float, width: float,
 ## Станция защитника — на deploy.station_back позади его линии старта (09, 5.5).
 static func station_place(defs: Defs, sign_z: float) -> Vector2:
 	return Vector2(0.0, sign_z * (defs.doctrine.deploy_heavy_z + defs.doctrine.deploy_station_back))
+
+
+## Линия стороны (09, 5.1): центр её тяжёлых в строю — живых, без станции, не копящих
+## гипер; тяжёлых нет — центр всех её кораблей (как F части 05, 2.7). ОДНА функция
+## для авиации (G3: патруль, обход с фланга) и строя (G4) — «пока строя нет, линия
+## считается по центрам тяжёлых той же функцией, что потом» (план G3, п. 2).
+class Line:
+	var has := false             # у стороны есть хоть один корабль
+	var heavy := false           # центр — по тяжёлым
+	var center := Vector2.ZERO
+
+
+static func line_of(ships: Array[Ship], side: int) -> Line:
+	var out := Line.new()
+	var sum := Vector2.ZERO
+	var n := 0
+	var all := Vector2.ZERO
+	var m := 0
+	for s in ships:
+		if s.dead or s.side != side or s.station:
+			continue
+		all += s.pos
+		m += 1
+		if s.heavy() and not s.charging():
+			sum += s.pos
+			n += 1
+	if n > 0:
+		out.has = true
+		out.heavy = true
+		out.center = sum / float(n)
+	elif m > 0:
+		out.has = true
+		out.center = all / float(m)
+	return out
+
+
+## Полуширина строя стороны поперёк оси (09, 4.4: «самая широкая из его шеренг и
+## линии»): тяжёлые и лёгкие, без носителей и станции, — от центра линии вдоль lat.
+static func half_width(ships: Array[Ship], side: int, center: Vector2, lat: Vector2) -> float:
+	var w := 0.0
+	for s in ships:
+		if s.dead or s.side != side or s.station or s.def.hangar > 0:
+			continue
+		w = maxf(w, absf((s.pos - center).dot(lat)))
+	return w

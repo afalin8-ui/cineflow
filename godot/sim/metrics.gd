@@ -7,8 +7,12 @@
 # - журнал «почему главный калибр не выстрелил» (03, 7.5; план G2, п. 8): у готового
 #   главного калибра каждый шаг без выстрела — с причиной; это первый шаг порядка
 #   поиска ошибки доктрины (09, 8.4: «кто почему не стрелял»);
-# - темп: первое попадание (не с планеты) и первый выстрел главного калибра по
-#   кораблю (М11; 03, ловушка 34).
+# - темп: первое попадание по кораблю (не с планеты) и первый выстрел главного
+#   калибра по кораблю (М11; 03, ловушка 34);
+# - авиация (G3; 09, 4.7 и 8.2): урон машин по ключам gunInt / gunFig / torp (М7),
+#   урон по кораблям на поднятое звено и доля сбитых звеньев (М8), «машина-секунды»
+#   в середине (М5: проекция машины на ось своей стороны −100 ≤ p ≤ L + 100, без
+#   взлёта и посадки — 250 от своего носителя).
 # М1–М13 целиком — G5 (стенд).
 extends RefCounted
 
@@ -25,6 +29,14 @@ const KEY_TEXT := {
 	&"pd": "ПВО", &"gunInt": "перехватчики", &"gunFig": "истребители", &"torp": "торпеды", &"planet": "планета",
 }
 const TORPEDO_CLS := 4                 # столбец «torpedo» в таблице урона (Defs.CLASSES)
+const STRIKE_CLS := 3                  # столбец «strike» — машины
+## Ключи урона авиации (М7, М8).
+const AIR_KEYS: Array[StringName] = [&"gunInt", &"gunFig", &"torp"]
+## М5 (09, 8.2): «в середине» — от 100 позади своей линии до 100 за чужой; машины ближе
+## 250 к своему носителю — взлёт и посадка, не считаются.
+const M5_BACK := 100.0
+const M5_OVER := 100.0
+const M5_HOME := 250.0
 
 ## Урон по [сторона-источник][ключ] → по классу цели (5 столбцов Defs.CLASSES).
 ## Планета — сторона защитника (она его оборона), ключ &"planet".
@@ -35,6 +47,9 @@ var idle: Array[Dictionary] = [{}, {}]
 var main_shots: PackedInt32Array = PackedInt32Array([0, 0])
 var first_hit := 0.0
 var first_gun := 0.0
+## М5: машина-секунды в воздухе (без взлёта и посадки) и из них — в середине; [сторона].
+var craft_s := PackedFloat64Array([0.0, 0.0])
+var craft_mid_s := PackedFloat64Array([0.0, 0.0])
 
 
 func book(side: int, key: StringName, cls_i: int, dealt: float) -> void:
@@ -50,13 +65,23 @@ func idle_step(side: int, reason: StringName, dt: float) -> void:
 	d[reason] = v + dt
 
 
-## Урон стороны по кораблям (без снарядов) по ключу.
+## Урон стороны по КОРАБЛЯМ (без машин и снарядов) по ключу.
 func to_ships(side: int, key: StringName) -> float:
 	var row: PackedFloat64Array = dmg[side].get(key, PackedFloat64Array())
 	var t := 0.0
 	for i in row.size():
-		if i != TORPEDO_CLS:
+		if i != TORPEDO_CLS and i != STRIKE_CLS:
 			t += row[i]
+	return t
+
+
+## Урон по машинам (сбитая авиация) — отдельно от урона по кораблям, как и по снарядам
+## (09, М7: «отдельно — урон по машинам и ракетам»).
+func to_craft(side: int) -> float:
+	var t := 0.0
+	for key: StringName in dmg[side]:
+		var row: PackedFloat64Array = dmg[side][key]
+		t += row[STRIKE_CLS]
 	return t
 
 
@@ -110,3 +135,25 @@ func idle_text(side: int) -> String:
 		if v > 0.0:
 			parts.append("%s %d%%" % [REASON_TEXT[r], roundi(v * 100.0 / all)])
 	return " · ".join(parts)
+
+
+## М5 за шаг: машина в воздухе (не ближе M5_HOME к своему носителю) и её проекция p на
+## ось своей стороны от своей линии; «в середине» — −M5_BACK ≤ p ≤ d + M5_OVER, где d —
+## расстояние между линиями (в строю G4 — L). Геометрию даёт sim/air.gd (prepare).
+func sample_craft(side: int, p: float, d: float, dt: float) -> void:
+	craft_s[side] += dt
+	if p >= -M5_BACK and p <= d + M5_OVER:
+		craft_mid_s[side] += dt
+
+
+## Доля машина-секунд в середине (М5); −1 — машин в воздухе не было.
+func mid_share(side: int) -> float:
+	return craft_mid_s[side] / craft_s[side] if craft_s[side] > 0.0 else -1.0
+
+
+## Урон авиации стороны по КОРАБЛЯМ (М7, М8).
+func air_to_ships(side: int) -> float:
+	var t := 0.0
+	for k in AIR_KEYS:
+		t += to_ships(side, k)
+	return t

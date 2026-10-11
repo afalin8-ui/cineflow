@@ -10,6 +10,9 @@ extends RefCounted
 const Defs := preload("res://sim/defs.gd")
 const Ship := preload("res://sim/ship.gd")
 const Proj := preload("res://sim/proj.gd")
+const Body := preload("res://sim/body.gd")
+const Craft := preload("res://sim/craft.gd")
+const Squad := preload("res://sim/squad.gd")
 const Space := preload("res://sim/space.gd")
 const Movement := preload("res://sim/movement.gd")
 const Commands := preload("res://sim/commands.gd")
@@ -32,8 +35,12 @@ class SideState:
 	var jumped: Array[StringName] = []
 	var name_n: Dictionary[StringName, int] = {}
 	## Множитель урона по сложности (space.js:309 aiMul): у игрока 1, у ИИ — aim
-	## сложности. Главный калибр, батарея, лёгкие, ракетный пакет; НЕ ПВО и не планета.
+	## сложности. Главный калибр, батарея, лёгкие, ракетный пакет, пушки перехватчика;
+	## НЕ ПВО, не планета и не ракеты машин (04, 2.8).
 	var aim := 1.0
+	## Звенья: поднято и потеряно (не севших) — итоги и М8 (04, 2.11; 09, 4.7).
+	var sq_up := 0
+	var sq_lost := 0
 
 
 ## Поле помех РЭБ на этом шаге (space.js:552 updateEcm · часть 04, 2.16). Бой
@@ -69,6 +76,10 @@ var time := 0.0
 var steps := 0
 var ships: Array[Ship] = []
 var projs: Array[Proj] = []
+## Машины в воздухе (по порядку пуска) и звенья (04, 2.1). Мёртвые уходят из списков
+## в конце шага (sim/hangar.gd → tick).
+var crafts: Array[Craft] = []
+var squads: Array[Squad] = []
 var sides: Array[SideState] = []
 var player_side := Ship.ATTACKER
 var over := false
@@ -84,6 +95,22 @@ var gun: GunState
 var old_ecm := false
 ## Лента «Наш … под помехами РЭБ» — одна на весь флот, не чаще раза в 25 с (space.js:2171).
 var jam_feed_at := -99.0
+## ТОЛЬКО флажки отката 09, 8.4 (ключи состава боя, запись их помнит; в игре false):
+## «заход бомбардировщиков прямо на цель» (`--bomber-direct`) — без обхода с фланга
+## (09, 4.4); «патруль перехватчиков над серединой» (`--patrol-mid`) — на 0,5 отрезка
+## между линиями вместо air.patrol_k (09, 4.2). Их замеры — М7, М8 (стенд G5) и
+## проверки G3 (tests/test_sim_air.gd).
+var bomber_direct := false
+var patrol_mid := false
+## Геометрия строя для авиации на ЭТОМ шаге (sim/air.gd → prepare): центры линий
+## тяжёлых, ось, полуширина строя. Считается один раз на шаг, до машин.
+var air_geo: Array = []
+## Сценарий «Полигона» до ИИ (G5): противник поднимает звенья по кругу ролей
+## (setup "foe_air"); [роли, период, первый пуск]. Пусто — нет.
+var foe_air_roles: Array[StringName] = []
+var foe_air_every := 0.0
+var foe_air_next := 0.0
+var foe_air_i := 0
 
 ## События ЭТОГО шага: вид забирает их после каждого шага (архитектура, 2.10).
 ## [&"spawn", uid], [&"hyper", uid], [&"unhyper", uid], [&"jump_out", uid],
@@ -94,7 +121,10 @@ var jam_feed_at := -99.0
 ## [&"proj_hit", uid снаряда, Vector2]; [&"proj_end", uid снаряда, Vector2];
 ## [&"destroyed", uid, uid виновника или 0]; орудие планеты (sim/ground_gun.gd):
 ## [&"gun_warn", вид, Vector2 наводки, радиус, предупреждение с], [&"gun_fire", вид,
-## Vector2 точки, PackedInt32Array задетых].
+## Vector2 точки, PackedInt32Array задетых]; авиация (sim/hangar.gd, sim/air.gd, G3):
+## [&"launch", uid звена], [&"craft_dead", uid машины, Vector2], [&"craft_gone",
+## uid машины] (села или ушла с поля), [&"craft_fire", uid машины, uid цели] —
+## очередь перехватчика, [&"reload", uid машины] — новый комплект ракет.
 var events: Array[Array] = []
 ## Долгие журналы с игровым временем: лента и полоски их только показывают, тесты
 ## читают их, а не экран (часть 05, ловушка 38; часть 07, ловушка 42; 02, ловушка 30).
@@ -108,7 +138,7 @@ var metrics := Metrics.new()
 var _uid := 1
 
 
-## Номер сущности боя: корабли и снаряды — из одного счётчика.
+## Номер сущности боя: корабли, звенья, машины и снаряды — из одного счётчика.
 func next_uid() -> int:
 	var u := _uid
 	_uid += 1
@@ -119,6 +149,34 @@ func ship_by_uid(u: int) -> Ship:
 	for s in ships:
 		if s.uid == u:
 			return s
+	return null
+
+
+func squad_by_uid(u: int) -> Squad:
+	for q in squads:
+		if q.uid == u:
+			return q
+	return null
+
+
+func craft_by_uid(u: int) -> Craft:
+	for c in crafts:
+		if c.uid == u:
+			return c
+	return null
+
+
+## Всё, во что целятся, по номеру: корабль, машина или снаряд (null — нет).
+func body_by_uid(u: int) -> Body:
+	var s := ship_by_uid(u)
+	if s != null:
+		return s
+	var c := craft_by_uid(u)
+	if c != null:
+		return c
+	for p in projs:
+		if p.uid == u:
+			return p
 	return null
 
 

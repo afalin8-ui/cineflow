@@ -33,6 +33,10 @@ const DEMO_STEPS := 1800
 const EXTRA := [[1, "sinho", 0.0, -820.0]]
 ## Насколько вперёд противник идёт атакой с ходу на первом шаге.
 const FOE_ADVANCE := 900.0
+## Авиация противника до ИИ (G5): его носители поднимают звенья по кругу ролей —
+## бомбардировщики (их встречает ПВО), перехватчики и истребители (их встречают свои
+## перехватчики); с 8-й секунды, по звену с носителя раз в 6 с, пока есть места.
+const FOE_AIR := {"roles": ["bomber", "interceptor", "bomber", "fighter"], "every": 6.0, "first": 8.0}
 
 var defs: Defs
 var battle: Battle
@@ -56,9 +60,13 @@ var replay_text := ""
 ## с первого шага идёт атакой с ходу на FOE_ADVANCE вперёд (ИИ — G5).
 static func setup_dict(seed_n: int) -> Dictionary:
 	var d := {"attacker": ATTACKER, "defender": DEFENDER, "size": SIZE, "seed": seed_n, "reserve": true,
-		"ground_gun": "defender", "extra": EXTRA, "foe_amove": FOE_ADVANCE}
+		"ground_gun": "defender", "extra": EXTRA, "foe_amove": FOE_ADVANCE, "foe_air": FOE_AIR}
 	if old_ecm:
 		d["old_ecm"] = true
+	if bomber_direct:
+		d["bomber_direct"] = true
+	if patrol_mid:
+		d["patrol_mid"] = true
 	return d
 
 
@@ -67,6 +75,11 @@ static func setup_dict(seed_n: int) -> Dictionary:
 ## Это другой бой: ключ уходит в состав боя, и запись F9 его помнит. Замер, который
 ## этот флажок проваливает, — стенд G5.
 static var old_ecm := false
+## Флажки отката 09, 8.4 для авиации (G3): `-- --bomber-direct` — бомбардировщики идут
+## прямо на цель, сквозь шеренги (как в старой игре); `-- --patrol-mid` — перехватчики
+## патрулируют над серединой, а не над своей лёгкой линией. Тоже ключи состава боя.
+static var bomber_direct := false
+static var patrol_mid := false
 
 
 ## Собрать «Полигон». rec — запись боя для повтора (пусто — новый бой).
@@ -96,8 +109,9 @@ func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}) -> bool:
 	hud.view = view
 	# коротко: на 1366 строка справа сверху встаёт рядом с подсказкой клавиш слева
 	# (tests/test_render_skirmish.gd меряет, что они не наезжают)
-	hud.title = "«Перестрелка»: %s × %s%s" % [_clan_name(ATTACKER), _clan_name(DEFENDER),
-		(" · повтор записи" if not replay.is_empty() else "") + (" · РЭБ по-старому (--old-ecm)" if battle.old_ecm else "")]
+	hud.title = "«Авиация»: %s × %s%s" % [_clan_name(ATTACKER), _clan_name(DEFENDER),
+		(" · повтор записи" if not replay.is_empty() else "") + (" · РЭБ по-старому (--old-ecm)" if battle.old_ecm else "")
+		+ (" · бомбардировщики напрямик" if battle.bomber_direct else "") + (" · патруль над серединой" if battle.patrol_mid else "")]
 	add_child(hud)
 	input = BattleInput.new()
 	input.name = "Input"
@@ -194,6 +208,7 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 	var frigate: int = by_cls.get(&"frigate", all[0])
 	var capital: int = by_cls.get(&"capital", all[0])
 	var ecm: int = by_cls.get(&"ecm", all[0])
+	var carrier: int = by_cls.get(&"carrier", all[0])
 	var foe_cruiser := 0
 	var foe_sinho := 0
 	for s in b.side_ships(Ship.DEFENDER):
@@ -227,6 +242,27 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 				b.queue({"op": &"ecm", "ids": PackedInt32Array([ecm]), "mode": &"shield"})
 			660:
 				b.queue({"op": &"guard", "ids": PackedInt32Array([light[light.size() - 1]]), "target": capital})
+			# авиация (G3): звенья с носителя — Z/X/C, приказы звеньям, перехват чужого
+			# звена лёгкими (приказ бить его машины, C14) и посадка V
+			30:
+				b.queue({"op": &"launch", "ids": PackedInt32Array([carrier]), "role": &"bomber"})
+			45:
+				b.queue({"op": &"launch", "ids": PackedInt32Array([carrier]), "role": &"interceptor"})
+			60:
+				b.queue({"op": &"launch", "ids": PackedInt32Array([carrier]), "role": &"fighter"})
+			720:
+				var foe_q := _squad_of(b, Ship.DEFENDER, &"")
+				var own_int := _squad_of(b, Ship.ATTACKER, &"interceptor")
+				if foe_q > 0 and own_int > 0:
+					b.queue({"op": &"focus", "ids": PackedInt32Array([own_int]), "target": foe_q})
+			780:
+				var foe_q2 := _squad_of(b, Ship.DEFENDER, &"")
+				if foe_q2 > 0:
+					b.queue({"op": &"focus", "ids": PackedInt32Array([light[0]]), "target": foe_q2})
+			900:
+				var own_fig := _squad_of(b, Ship.ATTACKER, &"fighter")
+				if own_fig > 0:
+					b.queue({"op": &"recall", "ids": PackedInt32Array([own_fig])})
 		if i == steps_n - 2:
 			# последний приказ — ЖИВОМУ кораблю и с новой стойкой: его потерю в повторе
 			# обязан увидеть отпечаток (run_tests.sh, откат «потерян последний приказ»);
@@ -239,3 +275,11 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 		if each.is_valid():
 			each.call(b)
 	return b
+
+
+## Первое живое звено стороны (роли role; &"" — любой); 0 — нет.
+static func _squad_of(b: Battle, side: int, role: StringName) -> int:
+	for q in b.squads:
+		if not q.dead and q.side == side and (role == &"" or q.role == role):
+			return q.uid
+	return 0

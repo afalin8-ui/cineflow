@@ -11,10 +11,17 @@ extends RefCounted
 
 const State := preload("res://sim/state.gd")
 const Ship := preload("res://sim/ship.gd")
+const Body := preload("res://sim/body.gd")
 
 
 ## Видит ли сторона корабль. В срезе — «да» (скрытности нет).
 static func sees(_b: State, _side: int, _s: Ship) -> bool:
+	return true
+
+
+## То же для машины и снаряда (C18; 04, ловушка 24: скрытая машина прячется так же,
+## как корабль). В срезе — «да»; точка входа — здесь, у каждого выбора цели машинами.
+static func sees_body(_b: State, _side: int, _x: Body) -> bool:
 	return true
 
 
