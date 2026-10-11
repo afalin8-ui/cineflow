@@ -13,6 +13,8 @@
 extends CanvasLayer
 
 const Ship := preload("res://sim/ship.gd")
+const Weapons := preload("res://sim/weapons.gd")
+const Defs := preload("res://sim/defs.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
 
 ## Сколько игровых секунд живёт полоска модели и сколько настоящих — своя.
@@ -154,6 +156,13 @@ func _status_text(b: Object) -> String:
 			var c: int = e.get("count")
 			n += c
 		lines.append("В резерве %d %s · B — вызвать" % [n, FrameBench.plural(n, "корабль", "корабля", "кораблей")])
+	# часы «Давления Земли» (03, 2.17): «залп», если осталось меньше секунды
+	var gun: Object = b.get("gun")
+	if gun != null:
+		var gd: Defs.GroundGunDef = gun.get("def")
+		var nxt: float = gun.get("next")
+		var left := nxt - t
+		lines.append("Планета (%s): %s" % [gd.name, "залп" if left < 1.0 else "%d с" % ceili(left)])
 	return "\n".join(lines)
 
 
@@ -212,11 +221,12 @@ func _sel_text(b: Object) -> String:
 	if not act_list.is_empty():
 		line += "\n" + ", ".join(act_list)
 	if own > 0:
-		line += "\nПКМ — лететь · H или S — встать · G — гипер · D — дрифт · B — подкрепление · Пробел — пауза"
+		line += "\nПКМ — лететь, по врагу — бить его · A — атака с ходу · H/S — стоять · Y — охрана · T — охота · G — гипер · D — дрифт"
 	return line
 
 
-## Чем занят свой корабль — одной строкой.
+## Чем занят свой корабль — одной строкой (07, 7.2 п. 2; 09, 6.7: слово «бьёт» — только
+## когда выстрел возможен).
 static func doing(s: Ship) -> String:
 	if s.charging():
 		return "копит гипер %d с" % ceili(s.hyper_left)
@@ -224,6 +234,37 @@ static func doing(s: Ship) -> String:
 		return "дрейф"
 	if s.has_move:
 		return "идёт в точку"
+	var t := s.target as Ship
+	var sec := s.sec_target as Ship
+	var fz := s.forced as Ship
+	var jam := ""
+	if s.jam != null and s.heavy():
+		var jp: Defs.EcmDef = s.jam
+		jam = " · под помехами — главный калибр в %s раза реже" % Weapons._times(jp.main_slow)
+	if s.heavy():
+		var bat := (" · батареей по %s" % Weapons.short_name(sec)) if sec != null and not sec.dead and s.pos.distance_to(sec.pos) <= s.def.sec.rng else ""
+		if s.idle_reason == &"dead_zone":
+			return "враг вплотную — главный калибр не бьёт%s%s" % [bat if bat != "" else " · бьёт батарея", jam]
+		if t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
+			return "главным по %s (%d)%s%s" % [Weapons.short_name(t), roundi(s.pos.distance_to(t.pos)), bat, jam]
+		if fz != null and not fz.dead:
+			return "цель %s вне пояса (%d) — стоит%s%s" % [Weapons.short_name(fz), roundi(s.pos.distance_to(fz.pos)), bat, jam]
+		if s.has_amove:
+			return "идёт с боем%s" % jam
+		if bat != "":
+			return "держит позицию%s%s" % [bat, jam]
+	elif t != null and not t.dead:
+		var d := s.pos.distance_to(t.pos)
+		if s.has_amove or s.forced != null or s.stance == &"hunt":
+			return ("бьёт %s" if s.def.light != null and d <= s.def.light.rng else "идёт на %s") % Weapons.short_name(t)
+		return ("бьёт %s" if s.def.light != null and d <= s.def.light.rng else "охрана · видит %s") % Weapons.short_name(t)
+	if s.has_amove:
+		return "идёт с боем"
 	if s.vel.length() > 3.0:
 		return "тормозит" if s.stance == &"hold" else "идёт на участок"
-	return "стоит"
+	match s.stance:
+		&"hunt":
+			return "охота · целей не видно"
+		&"hold":
+			return "стоит%s" % jam
+	return "стоит%s" % jam

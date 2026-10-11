@@ -197,7 +197,10 @@ rm -rf "$rel"
 # последнем шаге. Показательный бой «Полигона» БЕЗ вида (--make-replay) проигрывается
 # С ВИДОМ на 60 и 144 кадрах (--fixed-fps): отпечатки обязаны совпасть до бита —
 # вид модель не меняет, а частота кадров на бой не влияет. Откаты: подменённый
-# отпечаток и запись без журнала — «РАЗОШЛОСЬ», чужая сборка — отказ словами; всё — код 1.
+# отпечаток, запись без журнала и запись без ПОСЛЕДНЕГО приказа (G2, хвост G1: стойка
+# «Охрана» живому кораблю за шаг до конца; её видит отпечаток с приказами и стойками —
+# откат «отпечаток по положениям» в tests/test_sim_flight.gd) — «РАЗОШЛОСЬ», чужая
+# сборка — отказ словами; всё — код 1.
 say "── повтор боя: без вида и с видом на 60 и 144 кадрах"
 rep="$(mktemp -d)"
 timeout 120 "$GODOT" --headless --path "$PROJ" -- --make-replay="$rep/rec.json" >"$LOGS/replay_make.log" 2>&1
@@ -225,8 +228,9 @@ d = json.load(open(sys.argv[1]))
 a = dict(d); a['fp'] = '0000000000000000'; json.dump(a, open(sys.argv[2] + '/fp.json', 'w'))
 b = dict(d); b['build'] = 'capella-v0.0-чужая'; json.dump(b, open(sys.argv[2] + '/build.json', 'w'))
 c = dict(d); c['cmds'] = []; json.dump(c, open(sys.argv[2] + '/nocmds.json', 'w'))
+e = dict(d); e['cmds'] = d['cmds'][:-1]; json.dump(e, open(sys.argv[2] + '/lastcmd.json', 'w'))
 PY
-for case in "fp|РАЗОШЛОСЬ|подменённый отпечаток" "nocmds|РАЗОШЛОСЬ|повтор без журнала команд" "build|другой сборкой|чужая сборка"; do
+for case in "fp|РАЗОШЛОСЬ|подменённый отпечаток" "nocmds|РАЗОШЛОСЬ|повтор без журнала команд" "lastcmd|РАЗОШЛОСЬ|потерян последний приказ" "build|другой сборкой|чужая сборка"; do
   IFS='|' read -r f want what <<<"$case"
   replay_run 60 "$rep/$f.json" "$LOGS/replay_$f.log"; code=$?
   if [[ $code -ne 1 ]] || ! grep -q "$want" "$LOGS/replay_$f.log"; then

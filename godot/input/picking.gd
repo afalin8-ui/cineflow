@@ -90,6 +90,31 @@ static func pick(view: Node3D, screen: Vector2) -> Ship:
 	return nearest(view, screen, NEAR_PX)
 
 
+## Чей корпус ТОЧНО под точкой: только капсула, без «ближайшего в 30 точках» (охрана
+## своего — только прямым попаданием, 03, ловушка 14: щедрая зона заведена ради врага).
+static func pick_hull(view: Node3D, screen: Vector2) -> Ship:
+	var cam := _cam(view)
+	if cam == null:
+		return null
+	var o := cam.project_ray_origin(screen)
+	var n := cam.project_ray_normal(screen)
+	var my_side: int = view.get("my_side")
+	var best: Ship = null
+	var best_t := INF
+	for s in _ships(view.get("battle")):
+		if not shown(s, my_side):
+			continue
+		var cap: Array = view.call("capsule", s)
+		var ca: Vector3 = cap[0]
+		var cb: Vector3 = cap[1]
+		var cr: float = cap[2]
+		var t := ray_capsule(o, n, ca, cb, cr)
+		if t >= 0.0 and t < best_t:
+			best_t = t
+			best = s
+	return best
+
+
 ## Ближайший центр в px точках экрана (перед камерой).
 static func nearest(view: Node3D, screen: Vector2, px: float) -> Ship:
 	var cam := _cam(view)

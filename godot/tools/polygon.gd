@@ -55,8 +55,18 @@ var replay_text := ""
 ## он не попадает, а без его ракет ПВО на экране нечего сбивать) и сценарий: противник
 ## с первого шага идёт атакой с ходу на FOE_ADVANCE вперёд (ИИ — G5).
 static func setup_dict(seed_n: int) -> Dictionary:
-	return {"attacker": ATTACKER, "defender": DEFENDER, "size": SIZE, "seed": seed_n, "reserve": true,
+	var d := {"attacker": ATTACKER, "defender": DEFENDER, "size": SIZE, "seed": seed_n, "reserve": true,
 		"ground_gun": "defender", "extra": EXTRA, "foe_amove": FOE_ADVANCE}
+	if old_ecm:
+		d["old_ecm"] = true
+	return d
+
+
+## Флажок отката 09, 1.7 (`-- --old-ecm`, план G2): помехи у главного калибра — как
+## в старой игре (стреляет только ближе lockRange), а не «перезарядка вдвое медленнее».
+## Это другой бой: ключ уходит в состав боя, и запись F9 его помнит. Замер, который
+## этот флажок проваливает, — стенд G5.
+static var old_ecm := false
 
 
 ## Собрать «Полигон». rec — запись боя для повтора (пусто — новый бой).
@@ -84,8 +94,10 @@ func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}) -> bool:
 	hud = PolygonHud.new()
 	hud.name = "Hud"
 	hud.view = view
-	hud.title = "Полигон · «Перестрелка» («%s»): %s × %s%s" % [defs.quick.size_names.get(SIZE, "Сражение"),
-		_clan_name(ATTACKER), _clan_name(DEFENDER), " · повтор записи" if not replay.is_empty() else ""]
+	# коротко: на 1366 строка справа сверху встаёт рядом с подсказкой клавиш слева
+	# (tests/test_render_skirmish.gd меряет, что они не наезжают)
+	hud.title = "«Перестрелка»: %s × %s%s" % [_clan_name(ATTACKER), _clan_name(DEFENDER),
+		(" · повтор записи" if not replay.is_empty() else "") + (" · РЭБ по-старому (--old-ecm)" if battle.old_ecm else "")]
 	add_child(hud)
 	input = BattleInput.new()
 	input.name = "Input"
@@ -208,6 +220,12 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 			660:
 				b.queue({"op": &"guard", "ids": PackedInt32Array([light[light.size() - 1]]), "target": capital})
 		if i == steps_n - 2:
-			b.queue({"op": &"stance", "ids": PackedInt32Array([corvette]), "stance": &"guard"})
+			# последний приказ — ЖИВОМУ кораблю и с новой стойкой: его потерю в повторе
+			# обязан увидеть отпечаток (run_tests.sh, откат «потерян последний приказ»);
+			# корвет к концу боя бывает уже сбит, и приказ мёртвому не меняет ничего
+			for s in b.side_ships(Ship.ATTACKER):
+				if not s.dead and s.stance != &"guard":
+					b.queue({"op": &"stance", "ids": PackedInt32Array([s.uid]), "stance": &"guard"})
+					break
 		b.step()
 	return b

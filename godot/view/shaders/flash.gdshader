@@ -19,7 +19,9 @@ void vertex() {
 	float life = max(INSTANCE_CUSTOM.y, 0.001);
 	float k = clamp(age / life, 0.0, 1.0);
 	vec3 c = (VIEW_MATRIX * vec4(MODEL_MATRIX[3].xyz, 1.0)).xyz;
-	float px = 2.0 * max(-c.z, 1.0) / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
+	// abs: [1][1] здесь ОТРИЦАТЕЛЕН в обоих отрисовщиках (4.7.2, проверено в G2) — без него
+	// px < 0, и «не меньше min_px точек» не действовало вовсе (с G0b)
+	float px = 2.0 * max(-c.z, 1.0) / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float size = max(INSTANCE_CUSTOM.z * (0.35 + 0.65 * sqrt(k)), min_px * px);
 	bool alive = age >= 0.0 && age <= life;
 	v_fade = alive ? (1.0 - k) * (1.0 - k) * INSTANCE_CUSTOM.w : 0.0;

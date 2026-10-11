@@ -26,6 +26,7 @@ const ShipVisual := preload("res://view/ship_visual.gd")
 const ShipVisualScene := preload("res://view/ship_visual.tscn")
 const FxPool := preload("res://view/fx_pool.gd")
 const Picking := preload("res://input/picking.gd")
+const BattleFx := preload("res://view/battle_fx.gd")
 
 ## 4× при 30 кадрах — 4 шага; больше — бой замедляется, а не дробит шаг (архитектура, 3).
 const MAX_STEPS := 8
@@ -39,12 +40,19 @@ const PLUME := Color(0.55, 0.8, 1.0)
 const PLUME_FOE := Color(1.0, 0.68, 0.38)
 ## Линия скорости выбранного — «скорость × 3 с» (06, 1.2).
 const VEL_LINE_S := 3.0
+## Линия к цели фокуса — красная, к точке атаки с ходу — оранжевая (03, 2.14–2.15).
+const FOCUS_LINE := Color(1.0, 0.48, 0.35)
+const AMOVE_LINE := Color(1.0, 0.66, 0.38)
 
 var defs: Defs
 var battle: Battle
 var env: SpaceEnv
 var rig: CameraRig
 var fx: FxPool
+## Огонь, снаряды, купола, пояса, орудие планеты — игровыми часами (с G2).
+var bfx: BattleFx
+## Корабль под курсором (uid, 0 — никого): его пояс и полный купол (09, 6.7; 04, ловушка 17).
+var hover_uid := 0
 ## Сторона, за которую смотрит игрок (её корабли — «свои»).
 var my_side := Ship.ATTACKER
 
@@ -118,6 +126,10 @@ func setup(p_defs: Defs, p_battle: Battle, with_env: bool = true) -> void:
 	_lines.material_override = _lines_mat
 	_lines.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_lines)
+	bfx = BattleFx.new()
+	bfx.name = "BattleFx"
+	add_child(bfx)
+	bfx.setup(battle, my_side, point_of, visual_of)
 	for s in battle.ships:
 		_add_visual(s)
 	draw_state()
@@ -310,12 +322,15 @@ func _remember_prev() -> void:
 	for s in battle.ships:
 		if not s.dead:
 			_prev[s.uid] = Vector3(s.pos.x, s.pos.y, s.yaw)
+	bfx.remember()
 
 
-## События ЭТОГО шага (архитектура, 2.10): новые корабли, гипер, выход, итог.
+## События ЭТОГО шага (архитектура, 2.10): новые корабли, гипер, выход, итог; огонь
+## и снаряды — в BattleFx.
 func _consume(events: Array[Array]) -> void:
 	for e in events:
 		var kind: StringName = e[0]
+		bfx.consume(e)
 		match kind:
 			&"spawn":
 				var u: int = e[1]
@@ -341,6 +356,11 @@ func _blend(s: Ship, a: float) -> Vector3:
 		return cur                       # телепорт: без смешивания (архитектура, 3)
 	var p: Vector3 = _prev[s.uid]
 	return Vector3(lerpf(p.x, cur.x, a), lerpf(p.y, cur.y, a), lerp_angle(p.z, cur.z, a))
+
+
+## Точка корабля в мире на доле шага a (с высотой-картинкой).
+func point_of(s: Ship, a: float) -> Vector3:
+	return _point(s, a)
 
 
 ## Точка корабля в мире на этом кадре (с высотой-картинкой).
@@ -375,6 +395,8 @@ func draw_state() -> void:
 		_draw_plumes(s)
 	_draw_lines(a)
 	fx.set_time(clock)
+	# игровые часы на этом кадре: начало шага + доля шага (на паузе стоят)
+	bfx.draw(a, battle.time - Battle.STEP + a * Battle.STEP, selection, hover_uid)
 
 
 func _draw_plumes(s: Ship) -> void:
@@ -415,6 +437,15 @@ func _draw_lines(a: float) -> void:
 		if s.side == my_side and s.has_move:
 			pts.append_array([p, Vector3(s.move_to.x, 0.0, s.move_to.y)])
 			cols.append_array([go, go])
+		if s.side == my_side and s.has_amove:
+			var am := Color(AMOVE_LINE.r, AMOVE_LINE.g, AMOVE_LINE.b, 0.55)
+			pts.append_array([p, Vector3(s.amove.x, 0.0, s.amove.y)])
+			cols.append_array([am, am])
+		var fz := s.forced as Ship
+		if s.side == my_side and fz != null and not fz.dead and Picking.shown(fz, my_side):
+			var fc := Color(FOCUS_LINE.r, FOCUS_LINE.g, FOCUS_LINE.b, 0.6)
+			pts.append_array([p, _point(fz, a)])
+			cols.append_array([fc, fc])
 		if s.vel.length_squared() > 1.0:
 			pts.append_array([p, p + Vector3(s.vel.x, 0.0, s.vel.y) * VEL_LINE_S])
 			cols.append_array([vel, vel])
@@ -499,6 +530,16 @@ func set_speed(n: int) -> void:
 ## Вспышка в точке приказа (06, 1.4): мятная — идти.
 func order_flash(p: Vector3) -> void:
 	fx.flash(p + Vector3(0.0, 2.0, 0.0), ORDER_FLASH, 46.0, 0.45, 1.6)
+
+
+## Оранжевая — атака с ходу (03, 2.15).
+func amove_flash(p: Vector3) -> void:
+	fx.flash(p + Vector3(0.0, 2.0, 0.0), AMOVE_LINE, 46.0, 0.45, 1.6)
+
+
+## Красная — на цели фокуса (03, 2.14).
+func target_flash(s: Ship) -> void:
+	fx.flash(ship_point(s), FOCUS_LINE, maxf(s.def.radius * 3.0, 24.0), 0.5, 1.8)
 
 
 ## Выбор без мёртвых и ушедших (06, 2.5: «выбор чистится сам»).

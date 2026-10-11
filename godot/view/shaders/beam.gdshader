@@ -28,7 +28,9 @@ void vertex() {
 	vec3 vp = mix(va, vb, VERTEX.x);
 	vec3 side = cross(vb - va, vp);
 	side = length(side) > 1e-6 ? normalize(side) : vec3(1.0, 0.0, 0.0);
-	float px = 2.0 * max(-vp.z, 1.0) / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
+	// abs: [1][1] здесь ОТРИЦАТЕЛЕН в обоих отрисовщиках (4.7.2, проверено в G2) — без него
+	// px < 0, и «не меньше min_px точек» не действовало вовсе (с G0b)
+	float px = 2.0 * max(-vp.z, 1.0) / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float w = max(INSTANCE_CUSTOM.z, min_px * px);
 	v_across = VERTEX.y;
 	vp += side * VERTEX.y * w;

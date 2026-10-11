@@ -11,25 +11,36 @@ extends Node3D
 
 const BEAM_SHADER := preload("res://view/shaders/beam.gdshader")
 const FLASH_SHADER := preload("res://view/shaders/flash.gdshader")
+const TRACER_SHADER := preload("res://view/shaders/tracer.gdshader")
 
 var beams: MultiMeshInstance3D
 var flashes: MultiMeshInstance3D
+## Летящие отрезки (с G2): трассы ПВО и очереди батареи (08, ловушка 18). 0 слотов —
+## пула нет («Стол» обходится лучами и вспышками).
+var tracers: MultiMeshInstance3D
 var beam_mat: ShaderMaterial
 var flash_mat: ShaderMaterial
+var tracer_mat: ShaderMaterial
 var now := 0.0
 var _beam_next := 0
 var _flash_next := 0
+var _tracer_next := 0
 var beams_written := 0
 var flashes_written := 0
+var tracers_written := 0
 
 
-func setup(beam_slots: int, flash_slots: int) -> void:
+func setup(beam_slots: int, flash_slots: int, tracer_slots: int = 0) -> void:
 	beam_mat = ShaderMaterial.new()
 	beam_mat.shader = BEAM_SHADER
 	flash_mat = ShaderMaterial.new()
 	flash_mat.shader = FLASH_SHADER
 	beams = _pool(_quad(0.0, 1.0), beam_slots, beam_mat, "beams")
 	flashes = _pool(_quad(-0.5, 0.5), flash_slots, flash_mat, "flashes")
+	if tracer_slots > 0:
+		tracer_mat = ShaderMaterial.new()
+		tracer_mat.shader = TRACER_SHADER
+		tracers = _pool(_quad(0.0, 1.0), tracer_slots, tracer_mat, "tracers")
 
 
 ## Квад: x от x0 до x1 (вдоль луча или вширь вспышки), y — от −0,5 до 0,5.
@@ -86,8 +97,25 @@ func flash(p: Vector3, color: Color, size: float, life: float, power: float = 1.
 	flashes_written += 1
 
 
+## Летящий отрезок от a к b: голова проходит путь за dist / speed, хвост — seg позади;
+## delay — родиться позже (очередь батареи: росчерк за росчерком). Слот — самый старый.
+func tracer(a: Vector3, b: Vector3, color: Color, width: float, speed: float, seg: float, power: float = 1.0, delay: float = 0.0) -> void:
+	if tracers == null:
+		return
+	var mm := tracers.multimesh
+	var i := _tracer_next
+	_tracer_next = (_tracer_next + 1) % mm.instance_count
+	var d := maxf(a.distance_to(b), 1e-3)
+	var frac := minf(seg / d, 1.0)
+	mm.set_instance_transform(i, Transform3D(Basis(b - a, Vector3(frac, 0.0, 0.0), Vector3(color.r, color.g, color.b)), a))
+	mm.set_instance_custom_data(i, Color(now + delay, d / maxf(speed, 1.0), width, power))
+	tracers_written += 1
+
+
 ## Часы эффектов: зовёт хозяин каждый кадр.
 func set_time(t: float) -> void:
 	now = t
 	beam_mat.set_shader_parameter("now", t)
 	flash_mat.set_shader_parameter("now", t)
+	if tracer_mat != null:
+		tracer_mat.set_shader_parameter("now", t)

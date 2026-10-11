@@ -1,4 +1,4 @@
-# input/battle_input.gd — мышь и клавиши боя, ядро части 06 (2.3; план G1, п. 6).
+# input/battle_input.gd — мышь и клавиши боя, ядро части 06 (2.3; план G1, п. 6; G2, п. 10).
 # Бой меняется ТОЛЬКО командой battle.queue (архитектура, 1): вид и интерфейс в модель
 # не пишут. Клавиша и кнопка зовут одну команду.
 # - ЛКМ: щелчок — выбор (Shift — добавить или убрать), протяжка — рамка; щелчок
@@ -6,18 +6,21 @@
 #   рамка — только если обе стороны больше 8; щелчок — короче 900 мс (06, 2.3.5).
 # - ПКМ: приказ — на ОТПУСКАНИИ и только если мышь не уехала дальше 6 точек по
 #   любой оси; уехала — это был поворот камеры (его ведёт CameraRig), приказа нет
-#   (06, ловушка 1). Предела по времени у ПКМ нет.
+#   (06, ловушка 1). Предела по времени у ПКМ нет. ПКМ по врагу — фокус огня (G2);
+#   ТОЧНО в корпус своего невыделенного — охранять его (03, 2.16, ловушка 14); иначе —
+#   идти, сохраняя взаимное расположение (строй по ролям — G4).
+# - A — атака с ходу: следующий щелчок ЛКМ — точка (amove) или враг (фокус); Esc —
+#   отмена, ПКМ во время ожидания — обычный приказ (03, 2.15).
 # - Жест, начатый на поле, дослушивается в _input (архитектура, 6.5): движение
 #   и отпускание над панелью до поля не доходят, и без этого протяжка «залипла» бы.
 #   Начинается жест только на поле: нажатие ловим в _unhandled_input — нажатие
 #   по панели (STOP) сюда не придёт.
 # - Клавиши — по МЕСТУ (physical_keycode), а не по букве: в русской раскладке
 #   H — это «р» (06, ловушка 49); повтор (echo) — не нажатие.
-#   H и S — «Держать» (приказ встать, 09, 9.5 п. 2), G — гипер (повторно — отмена),
-#   D — дрифт, B — подкрепление, Пробел — пауза (скорость прежняя), 1 / 2 / 4 —
-#   скорость, Esc — снять выбор.
-# ПКМ по полю пока ведёт выделенных, СОХРАНЯЯ их взаимное расположение (строй по
-# ролям — G4); фокус по врагу и охрана своего — G2/G6.
+#   H и S — «Держать» (приказ встать, 09, 9.5 п. 2), Y — «Охрана», T — «Охота»,
+#   A — атака с ходу, G — гипер (повторно — отмена), D — дрифт, B — подкрепление,
+#   Пробел — пауза (скорость прежняя), 1 / 2 / 4 — скорость, Esc — снять выбор.
+# - Под курсором — корабль (hover): у чужого тяжёлого рисуется его пояс (09, 6.7).
 extends Node
 
 const Ship := preload("res://sim/ship.gd")
@@ -43,6 +46,16 @@ var box_changed: Callable
 ## ТОЛЬКО для проверки отката (06, ловушка 2): порог «потянул» по расстоянию, а не
 ## по каждой оси. В игре всегда false.
 static var rollback_slop_by_distance := false
+## ТОЛЬКО для проверок отката (план G2, п. 10): в игре всегда false.
+## ПКМ — всегда «идти», как в G1 (фокуса по врагу и охраны своего нет).
+static var rollback_rmb_move_only := false
+## Охрана своего — по «ближайшему в 30 точках», а не только прямым попаданием в корпус
+## (03, ловушка 14: «подвинь флот чуть вперёд» превращалось в «встаньте кольцом»).
+static var rollback_guard_by_near := false
+## Esc при ожидании A снимает выбор, а не только ожидание.
+static var rollback_esc_clears := false
+## Курсор не отслеживается: пояса чужого тяжёлого по наведению нет (09, 6.7).
+static var rollback_no_hover := false
 
 var _lmb := false
 var _lmb_from := Vector2.ZERO
@@ -52,6 +65,8 @@ var _lmb_shift := false
 var _rmb := false
 var _rmb_from := Vector2.ZERO
 var _rmb_moved := false
+## A нажата — ждём щелчка: точка — атака с ходу, враг — фокус (03, 2.15).
+var amove_armed := false
 
 
 func _ready() -> void:
@@ -123,6 +138,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _input(event: InputEvent) -> void:
 	var mm := event as InputEventMouseMotion
 	if mm != null:
+		_hover(mm.position)
 		if _lmb:
 			if not _lmb_moved and _far(mm.position, _lmb_from):
 				_lmb_moved = true
@@ -148,10 +164,14 @@ func release(mb: InputEventMouseButton) -> void:
 			if r.size.x > BOX_MIN and r.size.y > BOX_MIN:
 				_box(r, _lmb_shift or mb.shift_pressed)
 		elif Time.get_ticks_msec() - _lmb_t0 < CLICK_MS:
-			_click(mb.position, _lmb_shift or mb.shift_pressed)
+			if amove_armed:
+				amove_at(mb.position)
+			else:
+				_click(mb.position, _lmb_shift or mb.shift_pressed)
 	elif mb.button_index == MOUSE_BUTTON_RIGHT and _rmb:
 		_rmb = false
 		if not _rmb_moved:
+			amove_armed = false             # ПКМ во время ожидания — обычный приказ
 			order_at(mb.position)
 
 
@@ -220,12 +240,36 @@ func _box(r: Rect2, shift: bool) -> void:
 		_set_sel(got)
 
 
-## ПКМ по полю: выделенные свои идут в точку плоскости y = 0 под курсором (06, 2.4.7),
-## сохраняя взаимное расположение. Нет своих выделенных — ничего (06, 2.6).
+## Кто под курсором — для пояса чужого тяжёлого и полного купола (09, 6.7).
+func _hover(at: Vector2) -> void:
+	if rollback_no_hover:
+		return
+	var s := Picking.pick(view, at)
+	view.set("hover_uid", s.uid if s != null else 0)
+
+
+## ПКМ (03, 2.14, 2.16; 06, 2.4.7): по врагу — фокус огня; ТОЧНО в корпус своего
+## невыделенного — охранять его; иначе — выделенные свои идут в точку плоскости y = 0
+## под курсором, сохраняя взаимное расположение. Нет своих выделенных — ничего (06, 2.6).
 func order_at(at: Vector2) -> bool:
 	var ids := own_selected()
 	if ids.is_empty():
 		return false
+	var my_side: int = view.get("my_side")
+	var foe := Picking.pick(view, at) if not rollback_rmb_move_only else null
+	if foe != null and foe.side != my_side:
+		_queue({"op": &"focus", "ids": ids, "target": foe.uid})
+		if orders_enabled:
+			view.call("target_flash", foe)
+		return true
+	var ward: Ship = null
+	if not rollback_rmb_move_only:
+		ward = Picking.pick(view, at) if rollback_guard_by_near else Picking.pick_hull(view, at)
+	if ward != null and ward.side == my_side and not ward.station and ward.uid not in _sel():
+		_queue({"op": &"guard", "ids": ids, "target": ward.uid})
+		if orders_enabled:
+			view.call("order_flash", view.call("ship_point", ward))
+		return true
 	var rig: CameraRig = view.get("rig")
 	var hit: Variant = rig.ground_at(at, false)
 	if hit == null:
@@ -237,6 +281,30 @@ func order_at(at: Vector2) -> bool:
 	return true
 
 
+## Щелчок после A (03, 2.15): по врагу — фокус, иначе — атака с ходу в точку.
+func amove_at(at: Vector2) -> bool:
+	amove_armed = false
+	var ids := own_selected()
+	if ids.is_empty():
+		return false
+	var my_side: int = view.get("my_side")
+	var foe := Picking.pick(view, at)
+	if foe != null and foe.side != my_side:
+		_queue({"op": &"focus", "ids": ids, "target": foe.uid})
+		if orders_enabled:
+			view.call("target_flash", foe)
+		return true
+	var rig: CameraRig = view.get("rig")
+	var hit: Variant = rig.ground_at(at, false)
+	if hit == null:
+		return false
+	var p: Vector3 = hit
+	_queue({"op": &"amove", "ids": ids, "x": p.x, "z": p.z})
+	if orders_enabled:
+		view.call("amove_flash", p)
+	return true
+
+
 # ───────────────────────── клавиши ─────────────────────────
 
 ## → true, если клавиша наша (по месту, physical_keycode).
@@ -244,12 +312,23 @@ func _key(k: InputEventKey) -> bool:
 	if k.ctrl_pressed or k.meta_pressed or k.alt_pressed:
 		return false                    # Ctrl / ⌘ / Alt с буквой — не нам (06, 1.5)
 	match k.physical_keycode:
-		KEY_H, KEY_S:
+		KEY_H, KEY_S, KEY_Y, KEY_T:
 			var ids := own_selected()
 			if ids.is_empty():
 				_say("Сначала выбери свои корабли")
 			else:
-				_queue({"op": &"stance", "ids": ids, "stance": &"hold"})
+				var st := &"hold"
+				if k.physical_keycode == KEY_Y:
+					st = &"guard"
+				elif k.physical_keycode == KEY_T:
+					st = &"hunt"
+				_queue({"op": &"stance", "ids": ids, "stance": st})
+		KEY_A:
+			if own_selected().is_empty():
+				_say("Атака с ходу: сначала выбери свои корабли")
+			else:
+				amove_armed = true
+				_say("Атака с ходу: щёлкни точку или цель · Esc — отмена")
 		KEY_G:
 			var ids2 := own_selected()
 			if not ids2.is_empty():     # без выбора G — молча (06, 1.5)
@@ -272,7 +351,12 @@ func _key(k: InputEventKey) -> bool:
 		KEY_4:
 			view.call("set_speed", 4)
 		KEY_ESCAPE:
-			_set_sel([])
+			if amove_armed and not rollback_esc_clears:
+				amove_armed = false         # сначала — отмена ожидания A, выбор цел
+				_say("Атака с ходу отменена")
+			else:
+				amove_armed = false
+				_set_sel([])
 		_:
 			return false
 	return true

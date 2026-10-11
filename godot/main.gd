@@ -16,6 +16,8 @@
 #                                       сверить отпечаток на последнем шаге и выйти (код 0/1).
 #                                       Частоту кадров задаёт --fixed-fps движка: бой с видом
 #                                       на любой частоте и без вида обязан совпасть до бита
+#   capella.x86_64 -- --old-ecm         «Полигон» с помехами по-старому (откат 09, 1.7: главный
+#                                       калибр под куполом бьёт только ближе lockRange)
 # Беда в данных или в моделях — текст на экране и в stderr, сцена и замер не
 # начинаются; в режимах --selftest, --bench-render и --replay-check — ещё и код выхода 1.
 # Без режима — «Полигон» (G1): два флота «Сражения», полёт по приказам. «Стол» (G0b) —
@@ -75,6 +77,7 @@ func _ready() -> void:
 	if not defs.ok:
 		_fail("Игра не запустилась: данные боя с ошибкой.", "ДАННЫЕ", defs.errors, args)
 		return
+	apply_flags(args)
 	for a in args:
 		if a.begins_with("--make-replay="):
 			_make_replay(a.substr("--make-replay=".length()))
@@ -197,6 +200,11 @@ func _replay_checked(good: bool, text: String) -> void:
 	print("REPLAY %s" % text)
 	if replay_check:
 		get_tree().quit(0 if good else 1)
+
+
+## Флажки боя из командной строки: `--old-ecm` — откат 09, 1.7 (tools/polygon.gd).
+static func apply_flags(args: PackedStringArray) -> void:
+	Polygon.old_ecm = "--old-ecm" in args
 
 
 ## Запись боя из файла (JSON). Относительный путь — от папок запуска (как --overrides).
