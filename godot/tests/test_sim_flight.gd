@@ -713,3 +713,98 @@ func test_memory_after_battles() -> void:
 	ok(r[4] > r[0], "откат «без dispose()»: объекты копятся (%d → %d) — проверка краснеет" % [r[0], r[4]])
 	for b in keep:
 		b.dispose()
+
+
+# ───────────────────────── хвосты G1: строй «идти» и отпечаток ─────────────────────────
+
+## ПКМ по полю: выделенные идут со скоростью самого медленного (ловушка 6 части 02,
+## C70) и СОХРАНЯЯ взаимное расположение (строй по ролям — G4). Было закрыто в коде,
+## но не проверкой. Откаты — «каждый своей скоростью» и «все в одну точку».
+func _march(own_speed: bool, one_point: bool) -> Dictionary:
+	Battle.rollback_move_own_speed = own_speed
+	Battle.rollback_move_one_point = one_point
+	var b := _lab()
+	var list: Array[Ship] = [_one(b, &"corvette", Vector2(-150, 0)), _one(b, &"cruiser", Vector2(0, 60)), _one(b, &"capital", Vector2(170, -20))]
+	var ids := PackedInt32Array()
+	var center := Vector2.ZERO
+	var slow := INF
+	for s in list:
+		ids.append(s.uid)
+		center += s.pos
+		slow = minf(slow, s.max_speed())
+	center /= 3.0
+	var click := Vector2(40.0, -900.0)
+	var before: Array[Vector2] = [list[0].pos, list[1].pos, list[2].pos]
+	b.queue({"op": &"move", "ids": ids, "x": click.x, "z": click.y})
+	b.step()
+	var layout_err := 0.0
+	for k in 3:
+		layout_err = maxf(layout_err, list[k].move_to.distance_to(click + (before[k] - center)))
+	var fastest := 0.0
+	var arrive: Array[float] = [-1.0, -1.0, -1.0]
+	for i in roundi(90.0 / Battle.STEP):
+		b.step()
+		fastest = maxf(fastest, list[0].vel.length())
+		for k in 3:
+			if arrive[k] < 0.0 and not list[k].has_move:
+				arrive[k] = b.time
+	var spread := 0.0
+	for k in 3:
+		for j in 3:
+			spread = maxf(spread, absf(arrive[k] - arrive[j]))
+	var out := {"layout": layout_err, "fastest": fastest, "slow": slow, "spread": spread, "all": arrive.min() > 0.0,
+		"gap": list[0].pos.distance_to(list[2].pos)}
+	b.dispose()
+	Battle.rollback_move_own_speed = false
+	Battle.rollback_move_one_point = false
+	return out
+
+
+func test_move_group_slowest_and_layout() -> void:
+	var r := _march(false, false)
+	ok(num(r["layout"]) < 1e-6, "ПКМ по полю: каждому — точка «клик + своё место относительно центра группы» (расхождение %.6f)" % num(r["layout"]))
+	ok(num(r["fastest"]) <= num(r["slow"]) + 0.5, "корвет в строю не быстрее самого медленного: %.1f при %.1f (ловушка 6 части 02)" % [num(r["fastest"]), num(r["slow"])])
+	ok(flag(r["all"]) and num(r["spread"]) < 6.0, "строй пришёл вместе: разброс прихода %.1f с" % num(r["spread"]))
+	var own := _march(true, false)
+	ok(num(own["fastest"]) > num(own["slow"]) * 1.3, "откат «каждый своей скоростью»: корвет %.1f при самом медленном %.1f — проверка краснеет" % [num(own["fastest"]), num(own["slow"])])
+	var one := _march(false, true)
+	ok(num(one["layout"]) > 100.0, "откат «все в одну точку»: расстановка разошлась на %.0f — проверка краснеет" % num(one["layout"]))
+
+
+## Отпечаток боя видит и ПРИКАЗЫ, и состояние СТОРОН (хвост G1): повтор, потерявший
+## приказ, который ещё не успел сдвинуть ни один корабль, обязан дать «не совпало».
+## Откат — прежний отпечаток (положения и прочность): он такой повтор не замечает.
+func _lost_order(kind: String) -> Array:
+	var make := func(with_last: bool) -> Battle:
+		var b := _fresh(31)
+		var mine := b.side_ships(Ship.ATTACKER)
+		for i in 300:
+			if i == 299 and with_last:
+				match kind:
+					"stance":
+						b.queue({"op": &"stance", "ids": [mine[0].uid], "stance": &"hunt"})
+					"reserve":
+						b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
+					"drift":
+						b.queue({"op": &"drift", "ids": [mine[1].uid]})
+			b.step()
+		b.step()
+		return b
+	var full: Battle = make.call(true)
+	var lost: Battle = make.call(false)
+	var new_fp := [full.fingerprint(), lost.fingerprint()]
+	Battle.rollback_fp_positions = true
+	var old_fp := [full.fingerprint(), lost.fingerprint()]
+	Battle.rollback_fp_positions = false
+	full.dispose()
+	lost.dispose()
+	return [new_fp, old_fp]
+
+
+func test_fingerprint_sees_orders_and_sides() -> void:
+	for kind: String in ["stance", "reserve", "drift"]:
+		var r := _lost_order(kind)
+		var nf: Array = r[0]
+		var of: Array = r[1]
+		ok(str(nf[0]) != str(nf[1]), "повтор без последнего приказа (%s) — «не совпало»: %s против %s" % [kind, str(nf[0]), str(nf[1])])
+		ok(str(of[0]) == str(of[1]), "откат «отпечаток по положениям» (%s): потерянный приказ не виден (%s = %s) — проверка краснеет" % [kind, str(of[0]), str(of[1])])

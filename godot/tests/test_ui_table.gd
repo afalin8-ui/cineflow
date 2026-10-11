@@ -167,7 +167,7 @@ func test_missing_models_are_loud() -> void:
 	var plek := dict(ships["plektor"])
 	var cr := dict(plek["cruiser"])
 	cr["file"] = "res://view/ships/plektor_cruiser_пропал.glb"
-	var broken := _write("user://ship_models_broken.json", JSON.stringify(data))
+	var broken := _write(tmp("ship_models_broken.json"), JSON.stringify(data))
 	var r2 := await _main_with(broken)
 	var t2: String = r2["text"]
 	ok(not flag(r2["view"]) and not flag(r2["bench"]), "пропала одна .glb: «Стола» и замера нет")
@@ -185,7 +185,7 @@ func test_missing_models_are_loud() -> void:
 	await hooks.frames(1)
 	ShipModels.use_file("")
 	# 3) обмер битый — беда с номером строки
-	var bad := _write("user://ship_models_bad.json", "{\n  \"ships\": {\n    \"plektor\": [\n")
+	var bad := _write(tmp("ship_models_bad.json"), "{\n  \"ships\": {\n    \"plektor\": [\n")
 	var r3 := await _main_with(bad)
 	var t3: String = r3["text"]
 	ok(not flag(r3["view"]) and t3.contains("строка"), "битый обмер: беда с номером строки — «%s»" % t3.replace("\n", " / "))

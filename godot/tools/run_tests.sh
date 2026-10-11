@@ -26,6 +26,11 @@ PROJ="$ROOT/godot"
 GODOT="${GODOT:-godot}"
 LOGS="${LOGS:-$(mktemp -d)}"
 mkdir -p "$LOGS"
+# временные файлы тестов (кадры Movie Maker, пробы, файлы замера) — в папке ЭТОГО
+# прогона, а не в общем user://: два прогона на одной машине иначе стирали друг другу
+# кадры (хвост G1; tests/case.gd → tmp). Проверка с откатом — ниже, «своя папка прогона».
+export CAPELLA_TMP="$LOGS/tmp"
+mkdir -p "$CAPELLA_TMP"
 TIERS=(sim ui)
 if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility); fi
 FAILED=0
@@ -62,6 +67,29 @@ if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   missing=$(git -C "$ROOT" ls-files 'godot/*.gd' | while read -r f; do git -C "$ROOT" ls-files --error-unmatch "$f.uid" >/dev/null 2>&1 || echo "$f"; done)
   if [[ -n "$missing" ]]; then fail "в git нет .uid у скриптов: $(echo $missing)"; fi
 fi
+
+# ── своя папка прогона (хвост G1): два прогона разом не трут друг другу файлы ──
+# Два процесса пробы — как два прогона обёртки: у каждого свой CAPELLA_TMP, оба чистят
+# папку, пишут свои файлы и, дождавшись друг друга, читают — каждый обязан увидеть
+# только своё. Откат «общая папка» (shared — user://test_tmp, как было) обязан дать
+# чужие файлы хоть одному. И ни один тест не пишет в user:// мимо tests/case.gd → tmp.
+say "── своя папка прогона: два прогона разом"
+tmp_pair() {  # tmp_pair <shared|-> → «код_a код_b»
+  local meet ta tb pa pb ca=0 cb=0
+  meet="$(mktemp -d)"; ta="$(mktemp -d)"; tb="$(mktemp -d)"
+  CAPELLA_TMP="$ta" timeout 120 "$GODOT" --headless --path "$PROJ" -s res://tests/probe_tmp.gd -- "$meet" a $1 >"$LOGS/probe_tmp_a.log" 2>&1 & pa=$!
+  CAPELLA_TMP="$tb" timeout 120 "$GODOT" --headless --path "$PROJ" -s res://tests/probe_tmp.gd -- "$meet" b $1 >"$LOGS/probe_tmp_b.log" 2>&1 & pb=$!
+  wait "$pa" || ca=$?
+  wait "$pb" || cb=$?
+  rm -rf "$meet" "$ta" "$tb"
+  echo "$ca $cb"
+}
+got="$(tmp_pair -)"
+if [[ "$got" != "0 0" ]]; then fail "своя папка прогона: пробы дали «$got»"; cat "$LOGS"/probe_tmp_*.log >&2; else say "   $(grep -h '^PROBE_TMP' "$LOGS"/probe_tmp_*.log | tr '\n' ' ')"; fi
+got="$(tmp_pair shared)"
+if [[ "$got" == "0 0" ]]; then fail "откат «общая папка»: оба прогона увидели только своё — проверка ничего не ловит"; else say "   откат «общая папка» краснеет: коды $got, $(grep -h '^PROBE_TMP clash' "$LOGS"/probe_tmp_*.log | head -1)"; fi
+stray="$(grep -n 'user://' "$PROJ"/tests/*.gd | grep -v -e '/tests/case.gd:' -e 'get_process_id' -e '# путь, не файл' -e '^[^:]*:[0-9]*:\s*#' || true)"
+if [[ -n "$stray" ]]; then fail "тесты пишут в общий user:// мимо tests/case.gd → tmp: $stray"; fi
 
 # ── 3–5. ярусы тестов ──
 run_tier() {

@@ -70,7 +70,7 @@ static func lum(c: Color) -> float:
 func _shots_dir() -> String:
 	var d := OS.get_environment("CAPELLA_SHOTS")
 	if d == "":
-		d = ProjectSettings.globalize_path("user://shots")
+		d = tmp("shots")
 	DirAccess.make_dir_recursive_absolute(d)
 	return d
 
@@ -280,7 +280,7 @@ const PROBE_WAIT_MS := 240000
 
 ## Проба прогрева в своём процессе (tests/probe_warmup.gd): тот же отрисовщик.
 func _warm_probe(mode: String) -> Dictionary:
-	var out := ProjectSettings.globalize_path("user://probe_warmup_%s.json" % mode)
+	var out := tmp("probe_warmup_%s.json" % mode)
 	DirAccess.remove_absolute(out)
 	var args := PackedStringArray(["--path", ProjectSettings.globalize_path("res://"), "--rendering-method", renderer(),
 		"-s", "res://tests/probe_warmup.gd", "--", mode, out])
@@ -373,7 +373,7 @@ func test_bench_and_buttons() -> void:
 	tree.root.add_child(report)
 	var bench := FrameBench.new()
 	tree.root.add_child(bench)
-	var out := ProjectSettings.globalize_path("user://bench_test")
+	var out := tmp("bench_test")
 	DirAccess.make_dir_recursive_absolute(out)
 	bench.out_dir = out
 	bench.duration = 1.5

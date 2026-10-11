@@ -26,9 +26,13 @@ const ATTACKER := &"troyden"
 const DEFENDER := &"plektor"
 const SIZE := &"mid"
 const SEED := 1010
-## Показательная запись (--make-replay): столько шагов (40 с) — успевает и
-## подкрепление (32 с после вызова).
-const DEMO_STEPS := 1200
+## Показательная запись (--make-replay): столько шагов (60 с) — успевают подкрепление
+## (32 с после вызова), залп планеты (23,8 с) и первые выстрелы главного калибра.
+const DEMO_STEPS := 1800
+## «Синхо» Плэктора во второй линии: [сторона, id, x, z].
+const EXTRA := [[1, "sinho", 0.0, -820.0]]
+## Насколько вперёд противник идёт атакой с ходу на первом шаге.
+const FOE_ADVANCE := 900.0
 
 var defs: Defs
 var battle: Battle
@@ -46,8 +50,13 @@ var replay_ok := false
 var replay_text := ""
 
 
+## «Перестрелка» (G2): «Сражение» быстрого боя как есть — резерв игрока, орудие планеты
+## защитника (01, ловушка 16), — плюс «Синхо» у Плэктора во второй линии (в быстрый бой
+## он не попадает, а без его ракет ПВО на экране нечего сбивать) и сценарий: противник
+## с первого шага идёт атакой с ходу на FOE_ADVANCE вперёд (ИИ — G5).
 static func setup_dict(seed_n: int) -> Dictionary:
-	return {"attacker": ATTACKER, "defender": DEFENDER, "size": SIZE, "seed": seed_n, "reserve": true}
+	return {"attacker": ATTACKER, "defender": DEFENDER, "size": SIZE, "seed": seed_n, "reserve": true,
+		"ground_gun": "defender", "extra": EXTRA, "foe_amove": FOE_ADVANCE}
 
 
 ## Собрать «Полигон». rec — запись боя для повтора (пусто — новый бой).
@@ -75,7 +84,7 @@ func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}) -> bool:
 	hud = PolygonHud.new()
 	hud.name = "Hud"
 	hud.view = view
-	hud.title = "Полигон · «%s»: %s × %s%s" % [defs.quick.size_names.get(SIZE, "Сражение"),
+	hud.title = "Полигон · «Перестрелка» («%s»): %s × %s%s" % [defs.quick.size_names.get(SIZE, "Сражение"),
 		_clan_name(ATTACKER), _clan_name(DEFENDER), " · повтор записи" if not replay.is_empty() else ""]
 	add_child(hud)
 	input = BattleInput.new()
@@ -110,6 +119,10 @@ static func models_problems(p_defs: Defs) -> PackedStringArray:
 					ids.append(e.id)
 		if SIZE in p_defs.quick.station_on and clan == DEFENDER:
 			ids.append(&"station")
+		if clan == DEFENDER:
+			for e: Array in EXTRA:
+				if StringName(str(e[1])) not in ids:
+					ids.append(StringName(str(e[1])))
 		out.append_array(ShipModels.problems(clan, ids, []))
 	return out
 
@@ -131,26 +144,49 @@ func _process(_delta: float) -> void:
 # ───────────────────────── показательная запись ─────────────────────────
 
 ## Показательный бой без вида: все приказы «Полигона» по журналу — идти, дрифт,
-## гипер, «Держать», подкрепление. → запись с отпечатком на последнем шаге («fp»).
-## Её проигрывает --replay с видом: отпечатки обязаны совпасть.
+## гипер, «Держать», подкрепление, фокус, атака с ходу, «Охота», охрана своего, РЭБ
+## и в самом конце — «Охрана» одному корвету (её применяет последний шаг: такой приказ
+## ещё не сдвинул ни одного корабля, и потерю его ловит только отпечаток с приказами).
+## → запись с отпечатком на последнем шаге («fp»). Её проигрывает --replay с видом:
+## отпечатки обязаны совпасть.
 static func make_record(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS) -> Dictionary:
+	var b := demo_battle(p_defs, p_build, steps_n)
+	var rec := b.record()
+	rec["fp"] = b.fingerprint()
+	b.dispose()
+	return rec
+
+
+## Тот же показательный бой — сам бой после steps_n шагов (проверки читают его замеры;
+## dispose() — за тем, кто позвал).
+static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS) -> Battle:
 	var b := Battle.create(p_defs, setup_dict(SEED), p_build) as Battle
 	var own := b.side_ships(Ship.ATTACKER)
 	var all := PackedInt32Array()
 	var heavy := PackedInt32Array()
+	var light := PackedInt32Array()
 	var by_cls: Dictionary[StringName, int] = {}
 	for s in own:
 		all.append(s.uid)
 		if s.def.main != null:
 			heavy.append(s.uid)
+		elif s.def.light != null:
+			light.append(s.uid)
 		if not by_cls.has(s.def.id):
 			by_cls[s.def.id] = s.uid
 	var corvette: int = by_cls.get(&"corvette", all[0])
 	var frigate: int = by_cls.get(&"frigate", all[0])
+	var capital: int = by_cls.get(&"capital", all[0])
+	var ecm: int = by_cls.get(&"ecm", all[0])
+	var foe_cruiser := 0
+	for s in b.side_ships(Ship.DEFENDER):
+		if s.def.id == &"cruiser":
+			foe_cruiser = s.uid
+			break
 	for i in steps_n:
 		match b.steps:
 			0:
-				b.queue({"op": &"move", "ids": all, "x": 0.0, "z": 180.0})
+				b.queue({"op": &"move", "ids": all, "x": 0.0, "z": 600.0})
 			90:
 				b.queue({"op": &"drift", "ids": PackedInt32Array([corvette])})
 			150:
@@ -161,10 +197,17 @@ static func make_record(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 				b.queue({"op": &"stance", "ids": heavy, "stance": &"hold"})
 			360:
 				b.queue({"op": &"move", "ids": PackedInt32Array([corvette]), "x": -420.0, "z": 300.0})
+			420:
+				b.queue({"op": &"focus", "ids": heavy, "target": foe_cruiser})
+			480:
+				b.queue({"op": &"amove", "ids": light, "x": 0.0, "z": 150.0})
+			540:
+				b.queue({"op": &"stance", "ids": light, "stance": &"hunt"})
 			600:
-				b.queue({"op": &"move", "ids": heavy, "x": 300.0, "z": 420.0})
+				b.queue({"op": &"ecm", "ids": PackedInt32Array([ecm]), "mode": &"shield"})
+			660:
+				b.queue({"op": &"guard", "ids": PackedInt32Array([light[light.size() - 1]]), "target": capital})
+		if i == steps_n - 2:
+			b.queue({"op": &"stance", "ids": PackedInt32Array([corvette]), "stance": &"guard"})
 		b.step()
-	var rec := b.record()
-	rec["fp"] = b.fingerprint()
-	b.dispose()
-	return rec
+	return b

@@ -36,7 +36,7 @@ static func lum(c: Color) -> float:
 ## Кадры Movie Maker в отдельном процессе → x середины корабля на каждом кадре (в
 ## точках исходного кадра; −1 — корабля нет).
 func _movie(mode: String, fps: int, frames: int) -> PackedFloat64Array:
-	var dir := ProjectSettings.globalize_path("user://movie_%s_%s_%d" % [renderer(), mode, fps])
+	var dir := tmp("movie_%s_%s_%d" % [renderer(), mode, fps])
 	DirAccess.make_dir_recursive_absolute(dir)
 	for f in DirAccess.get_files_at(dir):
 		DirAccess.remove_absolute(dir.path_join(f))
@@ -147,7 +147,7 @@ func _bench_once(main: Node) -> String:
 	var bench: FrameBench = main.get("bench")
 	var report: BenchReport = main.get("report")
 	bench.duration = 1.0
-	bench.out_dir = ProjectSettings.globalize_path("user://bench_clip")
+	bench.out_dir = tmp("bench_clip")
 	await hooks.key(KEY_F5)
 	var t0 := Time.get_ticks_msec()
 	while not report.is_open() and Time.get_ticks_msec() - t0 < 60000:
@@ -202,7 +202,7 @@ func test_f9_record_in_clipboard() -> void:
 	var poly: Node = main.get("polygon")
 	ok(poly != null, "главная сцена открыла «Полигон»")
 	var bench: FrameBench = main.get("bench")
-	bench.out_dir = ProjectSettings.globalize_path("user://record_clip")
+	bench.out_dir = tmp("record_clip")
 	DirAccess.make_dir_recursive_absolute(bench.out_dir)
 	DisplayServer.clipboard_set("проба буфера")
 	await hooks.key(KEY_F9)

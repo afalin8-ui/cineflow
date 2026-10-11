@@ -568,28 +568,31 @@ func test_overrides() -> void:
 	var follow := Defs.load_default({"main.dead_k": 0.35}) as Defs
 	near(follow.doctrine.belt_back_on_k, 0.35, EPS, "ref: правка мёртвой зоны двигает и порог отхода")
 	near(follow.ship(&"troyden", &"cruiser").main.dead, 273.0, EPS, "мёртвая зона крейсера 0,35 × 780")
-	var f := FileAccess.open("user://g0a_overrides.json", FileAccess.WRITE)
+	# путь user:// проверяется КАК путь (правки принимают и его), а файл — свой на процесс:
+	# два прогона разом не трут друг другу файлы (хвост G1)
+	var upath := "user://g0a_overrides_%d.json" % OS.get_process_id()
+	var f := FileAccess.open(upath, FileAccess.WRITE)
 	f.store_string("{\"main.dead_k\": 0.42,\n \"belt.clear_k\": 0.46}")
 	f.close()
-	var ov2: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides=user://g0a_overrides.json", "--set", "belt.clear_k=0.47"]))
+	var ov2: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides=" + upath, "--set", "belt.clear_k=0.47"]))
 	var d2 := Defs.load_default(dict(ov2["overrides"])) as Defs
 	near(d2.doctrine.main_dead_k, 0.42, EPS, "--overrides=файл")
 	near(d2.doctrine.belt_clear_k, 0.47, EPS, "--set после файла побеждает")
-	f = FileAccess.open("user://g0a_overrides.json", FileAccess.WRITE)
+	f = FileAccess.open(upath, FileAccess.WRITE)
 	f.store_string("{\"main.dead_k\": 0.42,,}")
 	f.close()
-	var ov3: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides=user://g0a_overrides.json"]))
+	var ov3: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides=" + upath]))
 	ok(strs(ov3["errors"]).size() == 1 and strs(ov3["errors"])[0].contains("строка 1"), "битый файл правок — отказ со строкой")
 	var ov4: Dictionary = Defs.overrides_from_args(PackedStringArray(["--set", "main.dead_k=много"]))
 	ok(strs(ov4["errors"]).size() == 1, "--set без числа — отказ")
-	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://g0a_overrides.json"))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(upath))
 
 
 ## Относительный путь файла правок — от папок запуска (архитектура, 7: «--overrides=tune.json»).
 ## Откат: overrides_from_args без bases — «файл не прочитан». Целиком, с настоящей
 ## сменой папки процесса, это гоняют run_tests.sh (редактор с --path) и CI (выгрузки).
 func test_overrides_relative_path() -> void:
-	var dir := ProjectSettings.globalize_path("user://g0a_rel")
+	var dir := tmp("g0a_rel")
 	DirAccess.make_dir_recursive_absolute(dir)
 	var f := FileAccess.open(dir.path_join("tune.json"), FileAccess.WRITE)
 	f.store_string("{\"main.dead_k\": 0.43}")
@@ -602,7 +605,7 @@ func test_overrides_relative_path() -> void:
 	var miss: Dictionary = Defs.overrides_from_args(PackedStringArray(["--overrides", "tune.json"]), PackedStringArray([nowhere]))
 	var e := " ".join(strs(miss["errors"]))
 	ok(e.contains(nowhere.path_join("tune.json")) and e.contains("полный путь"), "не нашёлся — отказ называет, где искали: %s" % e)
-	eq(Defs.override_candidates("user://x.json", PackedStringArray([dir])), PackedStringArray(["user://x.json"]), "user:// — как есть")
+	eq(Defs.override_candidates("user://x.json", PackedStringArray([dir])), PackedStringArray(["user://x.json"]), "user:// — как есть")  # путь, не файл
 	eq(Defs.override_candidates("/abs/x.json", PackedStringArray([dir])), PackedStringArray(["/abs/x.json"]), "полный путь — как есть")
 	eq(Defs.override_candidates("sub/x.json", PackedStringArray(["/a", "", "/a"])), PackedStringArray(["/a/sub/x.json", "sub/x.json"]), "папки по порядку без повторов, последним — как есть")
 	DirAccess.remove_absolute(dir.path_join("tune.json"))

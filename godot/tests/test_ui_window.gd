@@ -10,7 +10,7 @@ const PROBE_WAIT_MS := 30000
 
 ## Запустить канарейку в своём процессе и вернуть её итог (пусто — не дождались).
 func _probe(mode: String) -> Dictionary:
-	var out := ProjectSettings.globalize_path("user://probe_window_%s.json" % mode)
+	var out := tmp("probe_window_%s.json" % mode)
 	DirAccess.remove_absolute(out)
 	var args := PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
 		"-s", "res://tests/probe_window.gd", "--", mode, out])

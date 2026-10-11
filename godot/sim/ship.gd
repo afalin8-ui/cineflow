@@ -51,10 +51,46 @@ var amove := Vector2.ZERO
 var group_speed := 0.0       # скорость строя приказа (C70); 0 — своя
 var arrive_t := 0.0
 var drift := false
-var guard_of: RefCounted     # охраняемый корабль (Ship) — с G2/G6
+var guard_of: RefCounted     # охраняемый корабль (Ship): ПКМ точно в корпус своего (03, 2.16)
 var guard_off := Vector2.ZERO
-var target: RefCounted       # цель (Ship) — с G2
-var forced: RefCounted       # фокус огня — с G2
+## Атака с ходу у тяжёлого: сколько секунд без встречи (09, 6.5 — марш дальше через
+## amove.resume_s без цели, и если путь чист). Ставится приказом в resume_s: идёт сразу.
+var amove_quiet := 0.0
+
+# ── цели по ролям оружия (09, 1.1; 03, 2.7–2.9; ловушка 1 09, 9.5: не guns[0]) ──
+var target: RefCounted       # цель главного калибра у тяжёлого, лёгкого орудия — у лёгкого (Ship)
+var forced: RefCounted       # фокус огня (Ship): сильнее тактики, тактику не стирает (03, ловушка 16)
+var sec_target: RefCounted   # цель батареи (Ship): фокус в её дальности, иначе ближайший
+var mis_target: RefCounted   # цель ракетного пакета «Синхо» (09, 1.6)
+var retarget := 0.0          # пересмотр цели раз в 0,8–1,6 с (space.js:1244)
+## Профиль помех над кораблём на этом шаге (null — помех нет); только у вооружённых
+## (space.js:1236). ПВО спрашивает помехи сам — штраф и у безоружных (04, 2.17).
+var jam: RefCounted          # Defs.EcmDef
+var jam_shot: RefCounted     # цель «под помехами» — временная (03, ловушка 7); только у лёгких
+## Почему готовый главный калибр молчит на этом шаге (&"" — выстрелил или не готов);
+## строка «чем занят» и журнал причин (03, 7.5).
+var idle_reason: StringName = &""
+
+# ── оружие: таймер на установку (ствол), старт случайный (space.js:337) ──
+var main_cd := PackedFloat64Array()
+var sec_cd := PackedFloat64Array()
+var light_cd := PackedFloat64Array()
+var mis_cd := PackedFloat64Array()
+var pd_cd := PackedFloat64Array()
+var dealt := 0.0             # итоги боя: нанесённый урон и добитые (03, 2.5)
+var kills := 0
+var alarm_at := -99.0        # тревога «под огнём» (03, 2.5 underFire)
+
+# ── скрытность (03, 2.6; sim/vision.gd): в срезе всех видно, но выстрел раскрывает
+# уже сейчас (ловушка 25 части 03) — и где видели в последний раз пишется ──
+var stealth := false
+var reveal_until := 0.0
+var seen_pos := Vector2.ZERO
+var seen_at := 0.0
+
+# ── РЭБ (04, 2.16): режим и мощность купола; только у корабля с излучателем ──
+var ecm_mode: StringName = &"jam"
+var ecm_power := 0.0
 
 # ── гипер (часть 02, 2.17, 2.19) ──
 var hyper_left := 0.0        # > 0 — копит переход
@@ -121,17 +157,23 @@ func can_hurt() -> bool:
 	return def.main != null or def.sec != null or def.light != null or def.missile != null
 
 
-## Урон — одна дверь с направлением (архитектура, 2.8; 09, 10.2). G2 наполнит её
-## бронёй, учётом М7 и событиями; здесь — заготовка: прочность и гибель.
-func damage(amount: float, _key: StringName, _source: RefCounted, from_dir: Vector2) -> float:
-	if dead:
-		return 0.0
-	var got := amount * (1.0 - armor_toward(from_dir))
-	hp -= got
-	if hp <= 0.0:
-		hp = 0.0
-		dead = true
-	return got
+## Вооружён главным калибром — «тяжёлый» для правил доктрины (09, 1.1: роль, а не класс).
+func heavy() -> bool:
+	return def.main != null
+
+
+## Дальность «своего» оружия: главный калибр у тяжёлого, лёгкое орудие у лёгкого;
+## безоружный — 0 (09, 1.1: всё, что брало «дальность первого орудия», берёт её по роли).
+func range0() -> float:
+	if def.main != null:
+		return def.main.rng
+	if def.light != null:
+		return def.light.rng
+	return 0.0
+
+
+## Урон — одна дверь: sim/weapons.gd → damage(…, from_dir) (бронь armor_toward,
+## учёт М7, события). Ship хранит только состояние.
 
 
 func set_yaw(a: float) -> void:
@@ -149,3 +191,7 @@ func unlink() -> void:
 	guard_of = null
 	target = null
 	forced = null
+	sec_target = null
+	mis_target = null
+	jam = null
+	jam_shot = null

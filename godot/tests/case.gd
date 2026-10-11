@@ -34,6 +34,25 @@ func note(msg: String) -> void:
 	printerr("    · ", msg)
 
 
+## ТОЛЬКО для проверки отката (хвост G1): все прогоны пишут в ОДНУ общую папку
+## user://test_tmp, как было до правки. В тестах всегда false.
+static var rollback_shared_tmp := false
+
+
+## Папка ЭТОГО прогона для временных файлов (кадры Movie Maker, файлы замера, пробы):
+## run_tests.sh даёт каждому прогону свою ($CAPELLA_TMP = $LOGS/tmp). Раньше тесты
+## писали в общий user://, и два прогона на одной машине стирали друг другу кадры
+## (хвост G1). Без $CAPELLA_TMP (тест запущен руками) — своя папка на процесс.
+static func tmp(name: String) -> String:
+	var base := OS.get_environment("CAPELLA_TMP")
+	if rollback_shared_tmp:
+		base = ProjectSettings.globalize_path("user://test_tmp")
+	elif base.is_empty():
+		base = ProjectSettings.globalize_path("user://test_tmp_%d" % OS.get_process_id())
+	DirAccess.make_dir_recursive_absolute(base)
+	return base.path_join(name)
+
+
 # Помощники для данных JSON: в проекте нетипизированное — ошибка, а значения
 # словаря JSON — Variant. Присваивание Variant типизированной переменной разрешено
 # (и проверяется при работе), приведение `as` и int(Variant) — нет.

@@ -9,64 +9,32 @@
 #
 # Случайность — два генератора с первого дня (архитектура, 2.11): rng — только бой
 # (зерно на бой), fx_rng — только картинка. Исход боя не зависит от того, рисуется ли он.
-extends RefCounted
+extends "res://sim/state.gd"
 
-const Defs := preload("res://sim/defs.gd")
-const Ship := preload("res://sim/ship.gd")
-const Space := preload("res://sim/space.gd")
-const Movement := preload("res://sim/movement.gd")
-const Commands := preload("res://sim/commands.gd")
 const Formation := preload("res://sim/formation.gd")
+const Weapons := preload("res://sim/weapons.gd")
+const Ecm := preload("res://sim/ecm.gd")
+const GroundGun := preload("res://sim/ground_gun.gd")
+const Vision := preload("res://sim/vision.gd")
 
-const STEP := 1.0 / 30.0
 const ROMAN: Array[String] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
 # space.js:836 dropIn: разброс места выхода ±15 по x (по высоте — нет: бой плоский)
 const DROP_JITTER := 15.0
+# space.js:3153: охрана своего — кольцом вокруг него, r = hull + hull + 50
+const GUARD_RING_PAD := 50.0
+const GUARD_RING_A0 := 0.4
+# space.js:3184: безоружный на «Охоте» — при главном вооружённом (P5)
+const LEAD_A_STEP := 2.3
+const LEAD_A0 := 2.6
+const LEAD_PAD := 70.0
 
-
-## Сторона боя: клан, знак оси, резерв, отход.
-class SideState:
-	var clan: StringName
-	var sign_z: float               # +1 атакующий (z > 0), −1 защитник
-	var reserve: Array[Defs.FleetEntry] = []
-	var reinforce_at := 0.0         # > 0 — резерв вызван и выйдет в этот миг
-	var retreat := false
-	## ОТЛИЧИЕ: «сдалась» — у каждой стороны своё, а не одно на бой (вопрос 22 части 02):
-	## в JS после ухода носителя ИИ уход носителя игрока уже не уводил его флот,
-	## хотя правило C17 обещает обратное.
-	var conceded := false
-	var jumped: Array[StringName] = []
-	var name_n: Dictionary[StringName, int] = {}
-
-
-var defs: Defs
-var setup: Dictionary = {}
-var build := ""
-var battle_seed := 0
-var rng: RandomNumberGenerator
-var fx_rng: RandomNumberGenerator
-
-var time := 0.0
-var steps := 0
-var ships: Array[Ship] = []
-var sides: Array[SideState] = []
-var player_side := Ship.ATTACKER
-var over := false
-var winner := -1                     # −1 — нет (или ничья)
-
-## События ЭТОГО шага: вид забирает их после каждого шага (архитектура, 2.10).
-## [&"spawn", uid], [&"hyper", uid], [&"unhyper", uid], [&"jump_out", uid],
-## [&"jump_in", uid], [&"over", победитель]
-var events: Array[Array] = []
-## Долгие журналы с игровым временем: лента и полоски их только показывают, тесты
-## читают их, а не экран (часть 05, ловушка 38; часть 07, ловушка 42; 02, ловушка 30).
-var feed_log: Array[Dictionary] = []
-var toast_log: Array[Dictionary] = []
-
-var cmds := Commands.new()
-var space := Space.new()
-var mp := Movement.Params.new()
-var _uid := 1
+## ТОЛЬКО для проверок отката (хвосты G1): в игре всегда false.
+## «Идти» — каждый своей скоростью, а не по самому медленному (ловушка 6 части 02, C70).
+static var rollback_move_own_speed := false
+## «Идти» — все в одну точку, без сохранения взаимного расположения.
+static var rollback_move_one_point := false
+## Отпечаток боя — только положения и прочность, как в G1: приказов и сторон не видит.
+static var rollback_fp_positions := false
 
 
 ## Бой из состава быстрого боя (часть 01, 2.15). setup:
@@ -96,13 +64,21 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	b.mp.brake_k = c.brake_k
 	b.mp.cap_k = c.ship_speed_cap_k
 	b.mp.field = c.field_half
+	var gs: Defs.StanceDef = p_defs.stances.get(&"guard")
+	b.mp.guard_leash = gs.leash if gs != null else 0.0
+	b.mp.amove_resume = p_defs.doctrine.amove_resume_s
+	b.mp.clear_k = p_defs.doctrine.belt_clear_k
+	b.old_ecm = p_setup.get("old_ecm", false)
 	var att := StringName(str(p_setup.get("attacker", p_defs.quick.default_mine)))
 	var dfn := StringName(str(p_setup.get("defender", p_defs.quick.default_foe)))
 	var size := StringName(str(p_setup.get("size", p_defs.quick.default_size)))
+	# сложность — только у ИИ (03, ловушка 27): игрок — атакующий (план, раздел 1)
+	var dif: Defs.DifficultyDef = p_defs.difficulty.get(StringName(str(p_setup.get("difficulty", p_defs.quick.default_difficulty))))
 	for i in 2:
 		var s := SideState.new()
 		s.clan = att if i == Ship.ATTACKER else dfn
 		s.sign_z = 1.0 if i == Ship.ATTACKER else -1.0
+		s.aim = 1.0 if i == b.player_side or dif == null else dif.aim
 		b.sides.append(s)
 	for i in 2:
 		var s := b.sides[i]
@@ -113,9 +89,42 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 			b.spawn(i, p_defs.ship(s.clan, id), p)
 	if size in p_defs.quick.station_on:
 		b.spawn(Ship.DEFENDER, p_defs.station, Formation.station_place(p_defs, -1.0))
+	var extra: Variant = p_setup.get("extra", [])
+	if typeof(extra) == TYPE_ARRAY:
+		# добавочные корабли сценария («Перестрелка»: «Синхо» у Плэктора — по нему видно
+		# ПВО против ракет): [сторона, id, x, z]
+		var ex: Array = extra
+		for e: Variant in ex:
+			var row: Array = e
+			var sd_f: float = row[0]
+			var sd_i := roundi(sd_f)
+			var x: float = row[2]
+			var z: float = row[3]
+			var def := p_defs.ship(b.sides[sd_i].clan, StringName(str(row[1])))
+			if def != null:
+				b.spawn(sd_i, def, Vector2(x, z))
+	# сценарий «Перестрелки» (G2, ИИ — G5): противник с первого шага идёт атакой с ходу
+	# на foe_amove вперёд — тяжёлые встают на встречного, лёгкие сходятся. Это
+	# расстановка с заданием, а не приказ игрока: в журнал команд не пишется, в записи
+	# боя едет вместе с setup.
+	var adv: float = p_setup.get("foe_amove", 0.0)
+	if adv != 0.0:
+		var foe := 1 - b.player_side
+		for s in b.ships:
+			if s.side == foe and not s.station and s.def.hangar <= 0:
+				s.has_amove = true
+				s.amove = s.pos + Vector2(0.0, -b.sides[foe].sign_z * adv)
+				s.amove_quiet = p_defs.doctrine.amove_resume_s
 	var with_reserve: bool = p_setup.get("reserve", true)
 	if with_reserve:
 		b.sides[Ship.ATTACKER].reserve = compose(p_defs, &"small", att)
+	# орудие планеты — ПОСЛЕ состояния боя (03, ловушка 29; 05, ловушка 40). В быстром
+	# бою — у планеты защитника, всегда (01, ловушка 16); в пробах без него — "".
+	var gg := str(p_setup.get("ground_gun", ""))
+	if gg == "defender":
+		gg = str(dfn)
+	if gg != "":
+		GroundGun.create(b, StringName(gg))
 	b.events.clear()
 
 
@@ -164,8 +173,7 @@ static func roman(n: int) -> String:
 func spawn(side: int, def: Defs.ShipDef, pos: Vector2) -> Ship:
 	var sd := sides[side]
 	var s := Ship.new()
-	s.uid = _uid
-	_uid += 1
+	s.uid = next_uid()
 	s.side = side
 	s.sign_z = sd.sign_z
 	s.def = def
@@ -185,24 +193,13 @@ func spawn(side: int, def: Defs.ShipDef, pos: Vector2) -> Ship:
 	s.stance = c.default_stance_station if s.station else c.default_stance_ship
 	s.anchor = pos
 	s.jumped_at_step = steps
+	s.stealth = def.stealth
+	s.seen_pos = pos
+	s.seen_at = time
+	Weapons.arm(self, s)
 	ships.append(s)
 	events.append([&"spawn", s.uid])
 	return s
-
-
-func ship_by_uid(u: int) -> Ship:
-	for s in ships:
-		if s.uid == u:
-			return s
-	return null
-
-
-func side_ships(side: int) -> Array[Ship]:
-	var out: Array[Ship] = []
-	for s in ships:
-		if not s.dead and s.side == side:
-			out.append(s)
-	return out
 
 
 # ───────────────────────────── шаг ─────────────────────────────
@@ -213,8 +210,7 @@ func queue(c: Dictionary) -> void:
 
 
 # space.js:3925 simStep · часть 05, 2.2; архитектура, 2.4. Пустые пока модули —
-# на своих местах порядка: РЭБ → орудие планеты → видимость (seen_pos до ИИ) —
-# G2; ИИ обеих сторон по ОДНОМУ снимку — G5; машины — G3; снаряды — G2.
+# на своих местах порядка: ИИ обеих сторон по ОДНОМУ снимку — G5; машины — G3.
 func step() -> void:
 	steps += 1
 	time = float(steps) * STEP            # часы — от числа шагов: без накопления ошибки
@@ -222,13 +218,19 @@ func step() -> void:
 	for c in cmds.take_due(steps):        # приказы, поставленные на этот шаг
 		_apply(c)
 	space.rebuild(ships)                  # живые + упакованный снимок, пары (2.5)
-	# Ecm.update(self) · GroundGun.update(self) · Vision.update(self) — G2
+	Ecm.update(self)                      # поля помех — один раз, по положениям начала шага
+	GroundGun.update(self)                # орудие планеты
+	Vision.update(self)                   # кто кого видит; seen_pos — ДО ИИ (05, ловушка 39)
 	_arrive_reinforcements()              # прибывшие — до ИИ
 	# ИИ: orders по одному снимку начала шага, потом применить — G5
 	for s in ships:
 		if not s.dead:
-			_update_ship(s)               # гипер → ион → (цели) → движение → (оружие, ПВО)
-	# Air.update_craft — G3 · Weapons.update_proj — G2 · ангары — G3
+			_update_ship(s)               # гипер → ион → цели → движение → оружие → ПВО
+	# Air.update_craft — G3
+	for p in projs:
+		if not p.dead:
+			Weapons.update_proj(self, p)  # снаряд, пущенный на этом шаге, летит уже сейчас (03, 2.1)
+	_clean_projs()                        # ангары — G3
 	# _check_teeth() — G5 («нечем бить» — ДО конца боя)
 	_check_end()
 	# metrics.sample(self) — G5
@@ -237,7 +239,7 @@ func step() -> void:
 # space.js:1211 updateShip · часть 03, 2.1 (порядок внутри)
 func _update_ship(s: Ship) -> void:
 	if s.charging():
-		# копит гипер — только накачка (02, 2.8 п. 1)
+		# копит гипер — только накачка, ни целей, ни огня (02, 2.8 п. 1; 03, 2.1 п. 1)
 		if Movement.update_hyper(s, STEP):
 			_complete_jump(s)
 		return
@@ -245,13 +247,30 @@ func _update_ship(s: Ship) -> void:
 	if s.def.flee > 0.0 and not s.station and s.hp_frac() < s.def.flee:
 		if _begin_jump(s):
 			if s.side == player_side:
-				_toast("%s: повреждения критические, уходим в гипер" % s.name)
+				toast("%s: повреждения критические, уходим в гипер" % s.name)
 		return
-	# цели и помехи — G2
+	Weapons.think(self, s)                # цели по ролям оружия и помехи (03, 2.7–2.9)
 	if s.station:
-		return                            # станция не летает (02, 2.8 п. 5)
-	var push := space.push[s.si] if s.si >= 0 else Vector2.ZERO
-	Movement.update(s, push, STEP, time, mp)
+		# станция не летает (02, 2.8 п. 5) — только доворачивает корпус на цель (03, 2.1 п. 6)
+		var t := s.target as Ship
+		if t != null and not t.dead:
+			Movement.face(s, t.pos - s.pos, STEP, time)
+	else:
+		var push := space.push[s.si] if s.si >= 0 else Vector2.ZERO
+		var nf := sqrt(space.near_d2[s.si]) if s.si >= 0 else INF
+		Movement.update(s, push, STEP, time, mp, nf)
+	Weapons.fire(self, s)                 # оружие — ПОСЛЕ движения этого шага (03, 2.1 п. 6)
+
+
+## Мёртвые снаряды — из списка в конце шага (space.js:3950).
+func _clean_projs() -> void:
+	var keep: Array[Proj] = []
+	for p in projs:
+		if not p.dead:
+			keep.append(p)
+		else:
+			p.unlink()
+	projs = keep
 
 
 # space.js:3785 sideOut, 3903 checkEnd (итог — G5)
@@ -310,12 +329,12 @@ func _complete_jump(s: Ship) -> void:
 	sd.jumped.append(s.def.id)
 	events.append([&"jump_out", s.uid])
 	if s.side != player_side and not sd.retreat:
-		_feed("Противник: %s ушёл в гипер" % s.name, &"warn")
+		feed("Противник: %s ушёл в гипер" % s.name, &"warn")
 	# уход носителя = отход всей стороны, честно, накачкой (C17; ловушка 22 части 02)
 	if s.def.cls == &"carrier" and not sd.conceded:
 		sd.conceded = true
 		order_retreat(s.side)
-		_toast("Носитель ушёл в гипер — флот отходит следом" if s.side == player_side else "Носитель противника ушёл — его флот отходит")
+		toast("Носитель ушёл в гипер — флот отходит следом" if s.side == player_side else "Носитель противника ушёл — его флот отходит")
 
 
 # space.js:730 orderRetreat — гипер всего флота с накачкой, а не конец боя (C17)
@@ -350,7 +369,7 @@ func call_reinforcements(side: int) -> bool:
 		return false
 	sd.reinforce_at = time + defs.hyper.reinforce_delay
 	if side == player_side:
-		_toast("Подкрепление выйдет из гипера через %d с" % roundi(defs.hyper.reinforce_delay))
+		toast("Подкрепление выйдет из гипера через %d с" % roundi(defs.hyper.reinforce_delay))
 	return true
 
 
@@ -364,10 +383,10 @@ func _arrive_reinforcements() -> void:
 			sd.reinforce_at = 0.0
 			var got := _drop_in(i, list)
 			if i == player_side:
-				_toast("Подкрепление вышло из гипера")
-				_feed("Подкрепление: %d %s вышли из гипера" % [got.size(), "корабль" if got.size() == 1 else ("корабля" if got.size() < 5 else "кораблей")], &"good")
+				toast("Подкрепление вышло из гипера")
+				feed("Подкрепление: %d %s вышли из гипера" % [got.size(), "корабль" if got.size() == 1 else ("корабля" if got.size() < 5 else "кораблей")], &"good")
 			else:
-				_toast("Противник получил подкрепление")
+				toast("Противник получил подкрепление")
 
 
 # space.js:827 dropIn · часть 02, 2.19
@@ -420,17 +439,30 @@ func _apply(c: Dictionary) -> void:
 			if not call_reinforcements(sd) and sd == player_side:
 				var s := sides[sd]
 				if s.reinforce_at > 0.0:
-					_toast("Подкрепление уже в пути: %d с" % ceili(s.reinforce_at - time))
+					toast("Подкрепление уже в пути: %d с" % ceili(s.reinforce_at - time))
 				elif s.retreat:
-					_toast("Флот отходит — подкрепление не зовём")
+					toast("Флот отходит — подкрепление не зовём")
 				else:
-					_toast("Резерва больше нет")
+					toast("Резерва больше нет")
 		&"retreat":
 			var rs: int = c.get("side", player_side)
 			order_retreat(rs)
 		&"cancel_retreat":
 			var cs: int = c.get("side", player_side)
 			cancel_retreat(cs)
+		&"focus":
+			var tu: int = c.get("target", 0)
+			_cmd_focus(_mine(c), ship_by_uid(tu))
+		&"amove":
+			var ax: float = c.get("x", 0.0)
+			var az: float = c.get("z", 0.0)
+			_cmd_move(_mine(c), Vector2(ax, az), true)
+		&"guard":
+			var wu: int = c.get("target", 0)
+			_cmd_guard(_mine(c), ship_by_uid(wu))
+		&"ecm":
+			var mode: StringName = c.get("mode", &"jam")
+			_cmd_ecm(_mine(c), mode)
 
 
 ## Корабли команды: живые, СВОИ (сторона игрока; space.js:3092 mineSelected), не станции.
@@ -449,8 +481,10 @@ func _mine(c: Dictionary) -> Array[Ship]:
 # space.js:3206 moveGroup (строй — G4)
 ## ПКМ по полю: выделенные идут, СОХРАНЯЯ взаимное расположение (строй по ролям — G4),
 ## со скоростью самого медленного (C70; ловушка 6 части 02). Любой приказ «идти»
-## выключает дрифт (ловушка 13).
-func _cmd_move(list: Array[Ship], click: Vector2) -> void:
+## выключает дрифт (ловушка 13). attack — атака с ходу (A + щелчок, 03, 2.15): та же
+## точка, но amove и БЕЗ скорости строя (03, ловушка 17 — у атаки с ходу своя защита:
+## встать на встречного); фокус, цель и охрана снимаются.
+func _cmd_move(list: Array[Ship], click: Vector2, attack: bool = false) -> void:
 	if list.is_empty():
 		return
 	var center := Vector2.ZERO
@@ -460,15 +494,106 @@ func _cmd_move(list: Array[Ship], click: Vector2) -> void:
 		slow = minf(slow, s.max_speed())
 	center /= float(list.size())
 	for s in list:
-		s.has_move = true
-		s.move_to = click + (s.pos - center)
-		s.has_amove = false
+		var dest := click if rollback_move_one_point else click + (s.pos - center)
+		s.has_move = not attack
+		s.move_to = dest
+		s.has_amove = attack
+		s.amove = dest
+		s.amove_quiet = defs.doctrine.amove_resume_s      # встречи ещё не было — идёт сразу
 		s.target = null
 		s.guard_of = null
-		s.group_speed = slow if list.size() > 1 else 0.0
+		s.group_speed = slow if (list.size() > 1 and not attack and not rollback_move_own_speed) else 0.0
 		s.arrive_t = 0.0
 		s.drift = false
 		s.forced = null
+		s.jam_shot = null
+	if attack:
+		toast("Атака с ходу: идут и встают на встречного")
+
+
+# space.js:3094 issueOrder (по врагу) · часть 03, 2.14; ДОКТРИНА 09, 6.1–6.3
+## ПКМ по врагу — фокус огня: сильнее тактики, тактику НЕ стирает (03, ловушка 16);
+## снимает «идти» и атаку с ходу. Безоружные приказ не принимают и держатся, где стоят
+## (C100). Тяжёлый в G2 принимает фокус как ВЫБОР ЦЕЛИ и с места не сходит (план G2,
+## п. 4): цель в поясе — бьёт главным калибром, вплотную — батареей. Лёгкие идут на цель.
+func _cmd_focus(list: Array[Ship], t: Ship) -> void:
+	if list.is_empty() or t == null or t.dead or t.side == player_side or not Vision.sees(self, player_side, t):
+		return
+	var held := 0
+	var heavies := 0
+	var lights := 0
+	var dz := INF
+	var far := 0.0
+	for s in list:
+		if not s.can_hurt():
+			held += 1                    # C100: безоружные остаются
+			continue
+		s.forced = t
+		if not s.heavy() or Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
+			s.target = t
+		s.jam_shot = null
+		s.has_move = false
+		s.has_amove = false
+		s.group_speed = 0.0
+		if s.heavy():
+			heavies += 1
+			dz = minf(dz, s.def.main.dead)
+			far = maxf(far, s.def.main.rng)
+		else:
+			lights += 1
+	var parts := PackedStringArray()
+	if heavies > 0:
+		parts.append("тяжёлые бьют с места: главный калибр — от %d до %d" % [roundi(dz), roundi(far)])
+	if lights > 0:
+		parts.append("лёгкие идут на цель")
+	if not parts.is_empty():
+		toast("Цель — %s: %s" % [Weapons.short_name(t), " · ".join(parts)])
+	if held > 0:
+		toast("Носитель и РЭБ безоружны — держатся позади")
+
+
+# space.js:3149 guardShip · часть 03, 2.16
+## ПКМ точно по корпусу своего — охранять его: кольцом вокруг, участок «Охраны» едет
+## за ним; приказы и фокус снимаются.
+func _cmd_guard(list: Array[Ship], ward: Ship) -> void:
+	if ward == null or ward.dead or ward.side != player_side or ward.charging():
+		return
+	var mine: Array[Ship] = []
+	for s in list:
+		if s != ward:
+			mine.append(s)
+	if mine.is_empty():
+		return
+	for i in mine.size():
+		var s := mine[i]
+		var a := float(i) / float(mine.size()) * TAU + GUARD_RING_A0
+		var r := ward.hull + s.hull + GUARD_RING_PAD
+		s.guard_of = ward
+		s.guard_off = Vector2(cos(a) * r, sin(a) * r)
+		s.anchor = ward.pos + s.guard_off
+		s.stance = &"guard"
+		s.has_move = false
+		s.has_amove = false
+		s.forced = null
+		s.target = null
+		s.jam_shot = null
+		s.drift = false
+		s.group_speed = 0.0
+	toast("Охраняют %s: держатся рядом и бьют подошедших" % Weapons.short_name(ward))
+
+
+# space.js:3436 (кнопки РЭБ) · часть 04, 1.2: «Глушение» / «Прикрытие» / «Молчать»
+func _cmd_ecm(list: Array[Ship], mode: StringName) -> void:
+	if not (mode in [&"jam", &"shield", &"off"]):
+		return
+	var n := 0
+	for s in list:
+		if s.def.ecm:
+			s.ecm_mode = mode
+			n += 1
+	if n > 0:
+		var txt: String = {&"jam": "РЭБ: глушение — помехи чужим под куполом", &"shield": "РЭБ: прикрытие — свои под куполом без помех", &"off": "РЭБ: молчит"}[mode]
+		toast(txt)
 
 
 # space.js:3174 setStance
@@ -478,11 +603,25 @@ func _cmd_move(list: Array[Ship], click: Vector2) -> void:
 func _set_stance(list: Array[Ship], id: StringName) -> void:
 	if list.is_empty():
 		return
+	# безоружному охотиться нечем: на «Охоте» он идёт при главном вооружённом из
+	# выделенных (P5; 02, ловушка 20), нет таких — держит свой участок
+	var lead: Ship = null
+	if id == &"hunt":
+		for s in list:
+			if s.can_hurt() and (lead == null or s.def.radius > lead.def.radius):
+				lead = s
 	var marching := 0
+	var wi := 0
 	for s in list:
 		s.stance = id
 		s.guard_of = null
 		s.anchor = s.pos
+		if lead != null and not s.can_hurt():
+			var a := float(wi) * LEAD_A_STEP + LEAD_A0
+			wi += 1
+			var r := lead.hull + s.hull + LEAD_PAD
+			s.guard_of = lead
+			s.guard_off = Vector2(cos(a) * r, sin(a) * r)
 		if id != &"hunt":
 			s.target = null
 		if id == &"hold":
@@ -492,14 +631,22 @@ func _set_stance(list: Array[Ship], id: StringName) -> void:
 			s.group_speed = 0.0
 			s.arrive_t = 0.0
 			s.drift = false
+			s.jam_shot = null
 		elif s.has_move or s.has_amove:
 			marching += 1
 	var st: Defs.StanceDef = defs.stances.get(id)
 	var nm := st.name if st != null else str(id)
+	# тексты — правда для G2: тяжёлые с места не сходят, пояс и отход — G4 (09, 6.7)
+	var what := {
+		&"hold": "встают на месте и бьют, кого достают",
+		&"guard": "держат участок, лёгкие встречают подошедших",
+		&"hunt": "лёгкие сами ищут цели, тяжёлые бьют с места",
+	}
+	var tail: String = what.get(id, "")
 	if id == &"hold":
-		_toast("%s: стоят на месте" % nm)
+		toast("%s: %s" % [nm, tail])
 	else:
-		_toast("%s%s" % [nm, " — после прихода в точку" if marching > 0 else ""])
+		toast("%s%s: %s" % [nm, " — после прихода в точку" if marching > 0 else "", tail])
 
 
 # space.js:2352 toggleDrift
@@ -512,7 +659,7 @@ func _toggle_drift(list: Array[Ship]) -> void:
 	var on := not all_on
 	for s in list:
 		s.drift = on
-	_toast("Гасители инерции отключены: корабль скользит по вектору" if on else "Гасители инерции включены")
+	toast("Гасители инерции отключены: корабль скользит по вектору" if on else "Гасители инерции включены")
 
 
 # space.js:3512–3550 («В гипер» / «Отменить гипер»; вопрос с носителем — G6)
@@ -525,7 +672,7 @@ func _cmd_hyper(list: Array[Ship]) -> void:
 			jumping.append(s)
 	if not jumping.is_empty():
 		if sides[player_side].conceded:
-			_toast("Носитель ушёл — отход уже не отменить")
+			toast("Носитель ушёл — отход уже не отменить")
 			return
 		for s in jumping:
 			_cancel_jump(s)
@@ -534,7 +681,7 @@ func _cmd_hyper(list: Array[Ship]) -> void:
 			any = any or (not s.dead and s.side == player_side and s.charging())
 		if not any:
 			sides[player_side].retreat = false
-		_toast("Гипер отменён")
+		toast("Гипер отменён")
 		return
 	var carrier := false
 	var longest := 0.0
@@ -543,28 +690,51 @@ func _cmd_hyper(list: Array[Ship]) -> void:
 			carrier = carrier or s.def.cls == &"carrier"
 			longest = maxf(longest, s.hyper_left)
 	if longest > 0.0:
-		_toast(("Авианосец копит гипер, %d с — за ним уйдёт весь флот · G — отменить" if carrier else "Гипер через %d с, всё это время беззащитны · G — отменить") % ceili(longest))
+		toast(("Авианосец копит гипер, %d с — за ним уйдёт весь флот · G — отменить" if carrier else "Гипер через %d с, всё это время беззащитны · G — отменить") % ceili(longest))
 
 
 # ───────────────────────────── журналы, отпечаток, запись ─────────────────────────────
 
-func _toast(text: String) -> void:
-	toast_log.append({"t": time, "step": steps, "text": text})
-
-
-func _feed(text: String, kind: StringName) -> void:
-	feed_log.append({"t": time, "step": steps, "text": text, "kind": kind})
-
-
-## Отпечаток состояния: время, шаги и у каждого корабля положение, скорость, курс,
-## прочность, гибель и накачка — побитно (повторяемость, архитектура 2.11).
+## Отпечаток состояния (повторяемость, архитектура 2.11) — побитно: время, шаги; у
+## каждого корабля положение, скорость, курс, прочность, гибель, накачка, И ПРИКАЗЫ
+## (идти, с ходу, тактика, участок, фокус и цели, охрана, дрифт, скорость строя), таймеры
+## оружия, РЭБ; снаряды; стороны (резерв, вызов, отход, «сдалась»), итог и орудие
+## планеты. Хвост G1: прежний отпечаток видел одни положения, и повтор, потерявший
+## приказ, который ещё не успел сдвинуть корабль, давал «совпало».
 func fingerprint() -> String:
 	var a := PackedFloat64Array()
 	a.append(time)
 	a.append(float(steps))
 	for s in ships:
 		a.append_array([float(s.uid), s.pos.x, s.pos.y, s.vel.x, s.vel.y, s.yaw, s.hp, 1.0 if s.dead else 0.0, s.hyper_left])
+		if rollback_fp_positions:
+			continue
+		a.append_array([1.0 if s.has_move else 0.0, s.move_to.x, s.move_to.y, 1.0 if s.has_amove else 0.0,
+			s.amove.x, s.amove.y, float(String(s.stance).hash()), s.anchor.x, s.anchor.y,
+			_uid_of(s.forced), _uid_of(s.target), _uid_of(s.sec_target), _uid_of(s.mis_target), _uid_of(s.guard_of),
+			1.0 if s.drift else 0.0, s.group_speed, s.retarget, s.ecm_power, float(String(s.ecm_mode).hash()), s.dealt])
+		a.append_array(s.main_cd)
+		a.append_array(s.sec_cd)
+		a.append_array(s.light_cd)
+		a.append_array(s.mis_cd)
+		a.append_array(s.pd_cd)
+	if not rollback_fp_positions:
+		for p in projs:
+			a.append_array([float(p.uid), p.pos.x, p.pos.y, p.dir.x, p.dir.y, p.hp, p.life, 1.0 if p.blind else 0.0])
+		for sd in sides:
+			var n := 0
+			for e in sd.reserve:
+				n += e.count
+			a.append_array([float(n), sd.reinforce_at, 1.0 if sd.retreat else 0.0, 1.0 if sd.conceded else 0.0, float(sd.jumped.size())])
+		a.append_array([1.0 if over else 0.0, float(winner)])
+		if gun != null:
+			a.append_array([gun.next, 1.0 if gun.warned else 0.0, gun.aim.x, gun.aim.y])
 	return a.to_byte_array().hex_encode().sha256_text().substr(0, 16)
+
+
+static func _uid_of(o: RefCounted) -> float:
+	var s := o as Ship
+	return float(s.uid) if s != null else 0.0
 
 
 ## Запись боя для повтора: заголовок (сборка, отпечаток данных, зерно) и журнал команд.
@@ -597,6 +767,13 @@ func dispose() -> void:
 	for s in ships:
 		s.unlink()
 	ships.clear()
+	for p in projs:
+		p.unlink()
+	projs.clear()
+	for f in fields:
+		f.src = null
+	fields.clear()
+	gun = null
 	space.ships.clear()
 	cmds.pending.clear()
 	cmds.journal.clear()

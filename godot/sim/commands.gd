@@ -12,6 +12,11 @@
 #   &"hyper"     ids           — в гипер; кто-то из них уже копит — отменить у копящих
 #   &"reinforce" side          — вызвать резерв (B)
 #   &"retreat"   side          — отход всем флотом; &"cancel_retreat" side — отменить
+#   &"focus"     ids, target   — ПКМ по врагу: фокус огня (у тяжёлого в G2 — выбор цели,
+#                                с места не сходит; безоружные не принимают, C100)
+#   &"amove"     ids, x, z     — A + щелчок: атака с ходу (без скорости строя, 03, ловушка 17)
+#   &"guard"     ids, target   — ПКМ точно в корпус своего: охранять его (03, 2.16)
+#   &"ecm"       ids, mode     — РЭБ: &"jam" «Глушение», &"shield" «Прикрытие», &"off" «Молчать»
 #
 # У записи — заголовок: сборка, отпечаток данных и зерно. Запись верна только для той
 # сборки и тех чисел, на которых сыграна: чужая сборка — отказ словами, а не молча
@@ -77,6 +82,11 @@ static func normalize(c: Dictionary) -> Dictionary:
 		out["side"] = roundi(sd)
 	if c.has("stance"):
 		out["stance"] = StringName(str(c["stance"]))
+	if c.has("mode"):
+		out["mode"] = StringName(str(c["mode"]))
+	if c.has("target"):
+		var tg: float = c["target"]
+		out["target"] = roundi(tg)
 	if c.has("step"):
 		var st: float = c["step"]
 		out["step"] = roundi(st)
