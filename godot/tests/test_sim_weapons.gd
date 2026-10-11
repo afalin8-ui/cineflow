@@ -312,7 +312,8 @@ func test_cone_and_turn_2_20_4() -> void:
 ## «Синхо» Плэктора против фрегата Тройдена на 435 (0,68 × 640), 60 с. С правкой
 ## pd → torpedo 0,7 (09, 4.4) ракета «Синхо» — класс torpedo — сбивается с двух выстрелов
 ## фрегата Тройдена, а не с одного: перемерено (план G2).
-func _sinho_vs_frigate(with_pd: bool) -> Dictionary:
+func _sinho_vs_frigate(with_pd: bool, no_owner: bool = false) -> Dictionary:
+	Weapons.rollback_proj_no_owner = no_owner
 	var b := _lab(&"troyden", &"plektor")
 	var tf := _put(b, Ship.ATTACKER, &"frigate", Vector2(0, 0), Vector2(0, -435))
 	tf.switch_off(&"engines", BIG)
@@ -341,8 +342,15 @@ func _sinho_vs_frigate(with_pd: bool) -> Dictionary:
 			elif e[0] == &"proj_hit":
 				hits += 1
 	pd_on_missiles = b.metrics.to_projs(Ship.ATTACKER)
+	var lost := BIG - tf.hp
+	var book := 0.0
+	for k: StringName in b.metrics.dmg[Ship.DEFENDER]:
+		book += b.metrics.to_ships(Ship.DEFENDER, k)
+	var out := {"fired": fired, "hits": hits, "pd": pd_on_missiles, "lost": lost, "dealt": sh.dealt,
+		"missile_book": b.metrics.to_ships(Ship.DEFENDER, &"missile"), "book": book}
 	b.dispose()
-	return {"fired": fired, "hits": hits, "pd": pd_on_missiles}
+	Weapons.rollback_proj_no_owner = false
+	return out
 
 
 func test_pd_vs_sinho_missiles() -> void:
@@ -352,6 +360,20 @@ func test_pd_vs_sinho_missiles() -> void:
 	note("ПВО против «Синхо» после правки pd → torpedo 0,7: попало %d из 36, ПВО набрало %.0f по ракетам" % [whole(r["hits"]), num(r["pd"])])
 	var o := _sinho_vs_frigate(false)
 	eq(whole(o["hits"]), 36, "откат «без ПВО»: попали все 36 — проверка краснеет")
+
+
+## Урон снаряда — ВЛАДЕЛЬЦУ (07, ловушка 57; М7 — «все источники, включая ракеты
+## «Синхо»», 09, 9.5 п. 11): 36 ракет без ПВО — урон фрегата записан «Синхо» (dealt) и
+## в учёт его стороны по ключу missile, сумма по ключам — ровно потерянная прочность.
+## Откат — урон снаряда не владельцу (кто = null): учёт пуст.
+func test_missile_damage_to_owner() -> void:
+	var r := _sinho_vs_frigate(false)
+	ok(num(r["lost"]) > 1000.0, "36 ракет «Синхо» попали: фрегат потерял %.1f" % num(r["lost"]))
+	near(num(r["dealt"]), num(r["lost"]), 1e-6, "урон ракет записан «Синхо» (dealt %.1f)" % num(r["dealt"]))
+	near(num(r["missile_book"]), num(r["lost"]), 1e-6, "учёт стороны Плэктора по ключу missile — весь урон ракет")
+	near(num(r["book"]), num(r["lost"]), 1e-6, "сумма по ключам — ровно потерянная прочность (М7)")
+	var o := _sinho_vs_frigate(false, true)
+	ok(num(o["dealt"]) == 0.0 and num(o["missile_book"]) == 0.0 and num(o["lost"]) > 1000.0, "откат «урон снаряда не владельцу»: учёт пуст (%.1f) при потерянных %.1f — проверка краснеет" % [num(o["missile_book"]), num(o["lost"])])
 
 
 ## Торпеда (класс torpedo) под ПВО — ×0,7, а не ×1,4 (09, 4.4): у фрегата Тройдена
@@ -472,6 +494,54 @@ func test_main_target_heavies_first() -> void:
 	b.dispose()
 
 
+## До G4 тяжёлый к цели не ходит — своя цель главного калибра СНАЧАЛА в поясе (замечание
+## к G2; 09, 1.2 и 6.3 «главный калибр не стоит молча»): крейсер Плэктора в 950 (дальше
+## R = 780, но в досягаемости «Охраны» 1,3 R и «Охоты» 1,8 R) и фрегат в 620 (в поясе).
+## Откат — прежний захват одним счётом по стойке: крейсер весомее фрегата (вес эскорта
+## 0,6), тяжёлый держит его целью и молчит «дальше дальности».
+func _belt_first(stance: StringName, rollback: bool) -> Dictionary:
+	Weapons.rollback_far_capture = rollback
+	var b := _lab()
+	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0), Vector2(0, -100))
+	tc.stance = stance
+	tc.hp = BIG
+	tc.max_hp = BIG
+	tc.sec_cd = PackedFloat64Array()
+	var far := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -950)))
+	var fr := _dummy(_put(b, Ship.DEFENDER, &"frigate", Vector2(300, -543)))     # 620 — в поясе
+	var log := _log(b, 20.0)
+	var mains := _shots(log, &"main", tc.uid)
+	var at_fr := 0
+	for m: Array in mains:
+		if m[2] == fr.uid:
+			at_fr += 1
+	var out := {"mains": mains.size(), "at_fr": at_fr, "far_hp": far.hp,
+		"too_far": b.metrics.idle[Ship.ATTACKER].get(&"too_far", 0.0), "moved": tc.pos.length()}
+	b.dispose()
+	Weapons.rollback_far_capture = false
+	return out
+
+
+func test_main_target_in_belt_first() -> void:
+	for st: StringName in [&"guard", &"hunt"]:
+		var r := _belt_first(st, false)
+		ok(whole(r["at_fr"]) >= 2 and whole(r["at_fr"]) == whole(r["mains"]), "«%s»: крейсер в 950 и фрегат в 620 — главный калибр бьёт фрегата в поясе: %d выстрелов из %d за 20 с" % [st, whole(r["at_fr"]), whole(r["mains"])])
+		ok(num(r["too_far"]) < 2.0, "«%s»: «дальше дальности» в журнале %.1f с, а не всё время" % [st, num(r["too_far"])])
+		ok(num(r["moved"]) < 0.5, "«%s»: с места не сошёл (сдвиг %.2f)" % [st, num(r["moved"])])
+		var o := _belt_first(st, true)
+		note("«%s»: по фрегату в поясе %d выстрелов, «дальше дальности» %.1f с; откат — %d и %.1f с" % [st, whole(r["at_fr"]), num(r["too_far"]), whole(o["mains"]), num(o["too_far"])])
+		ok(whole(o["mains"]) == 0 and num(o["too_far"]) > 10.0, "откат «захват одним счётом до R × reach» («%s»): выстрелов %d, «дальше дальности» %.1f с — проверка краснеет" % [st, whole(o["mains"]), num(o["too_far"])])
+	# в поясе никого — дальняя цель «Охоты» остаётся целью (стоит с ней, G4 подведёт)
+	var b := _lab()
+	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))
+	tc.stance = &"hunt"
+	var far := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -950)))
+	ok(Weapons.acquire(b, tc) == far, "в поясе никого: «Охота» берёт дальнего в 950 (дальше пояса, в 1,8 R)")
+	tc.stance = &"hold"
+	ok(Weapons.acquire(b, tc) == null, "«Держать» (захват 1,0 R): дальнего не берёт")
+	b.dispose()
+
+
 # ───────────────────────── приказы: C100, «Держать», фокус, «Охота» ─────────────────────────
 
 func test_c100_unarmed_hold_position() -> void:
@@ -541,16 +611,67 @@ func test_focus_keeps_stance_anchor_moves() -> void:
 	b.dispose()
 
 
-func test_hunt_unarmed_with_lead() -> void:
+## Безоружный на «Охоте» держится при главном вооружённом (02, ловушка 20; P5): флагман
+## ушёл на 600 — носитель идёт с ним, а не стоит посреди боя. Откат — безоружный к
+## вожаку не пристраивается (держит свой участок).
+func _hunt_lead_case(rollback: bool) -> Dictionary:
+	Battle.rollback_hunt_no_lead = rollback
 	var b := _lab()
 	var car := _put(b, Ship.ATTACKER, &"carrier", Vector2(-300, 0))
 	var cru := _put(b, Ship.ATTACKER, &"capital", Vector2(0, 0))
 	var cor := _put(b, Ship.ATTACKER, &"corvette", Vector2(200, 0))
+	_dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -2500)))
 	b.queue({"op": &"stance", "ids": [car.uid, cru.uid, cor.uid], "stance": &"hunt"})
 	b.step()
-	ok(car.guard_of == cru, "безоружный носитель на «Охоте» — при главном вооружённом (флагман; 02, ловушка 20)")
-	ok(cor.guard_of == null, "вооружённый корвет охотится сам")
+	var lead_ok := car.guard_of == cru and cor.guard_of == null
+	b.queue({"op": &"move", "ids": [cru.uid], "x": 600.0, "z": 0.0})
+	_steps(b, 30.0)
+	var out := {"lead": lead_ok, "gap": car.pos.distance_to(cru.pos), "lead_moved": cru.pos.distance_to(Vector2.ZERO),
+		"ring": cru.hull + car.hull + Battle.LEAD_PAD}
 	b.dispose()
+	Battle.rollback_hunt_no_lead = false
+	return out
+
+
+func test_hunt_unarmed_with_lead() -> void:
+	var r := _hunt_lead_case(false)
+	ok(flag(r["lead"]), "безоружный носитель на «Охоте» — при главном вооружённом (флагман; 02, ловушка 20), вооружённый корвет охотится сам")
+	ok(num(r["lead_moved"]) > 500.0, "флагман ушёл на %.0f" % num(r["lead_moved"]))
+	ok(num(r["gap"]) < num(r["ring"]) + 30.0, "носитель держится при нём: %.0f от флагмана (кольцо %.0f)" % [num(r["gap"]), num(r["ring"])])
+	var o := _hunt_lead_case(true)
+	ok(num(o["gap"]) > 500.0, "откат «безоружный не пристраивается к вожаку»: остался в %.0f от флагмана — проверка краснеет" % num(o["gap"]))
+
+
+## Без орудий «Охота» = «Охрана» в выборе движения (02, ловушка 21; space.js:1294): у
+## безоружного на «Охоте» нет вооружённого рядом — его вынесло со своего участка на 150
+## (расталкивание, выход из гипера), и он ВОЗВРАЩАЕТСЯ на участок, а к врагу не идёт.
+## Откат — безоружный «охотник» стоит, где его вынесло.
+func _unarmed_hunt_case(rollback: bool) -> Dictionary:
+	Movement.rollback_unarmed_hunt_stays = rollback
+	var b := _lab()
+	var car := _put(b, Ship.ATTACKER, &"carrier", Vector2.ZERO)
+	var foe := _dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -700)))
+	b.queue({"op": &"stance", "ids": [car.uid], "stance": &"hunt"})
+	b.step()
+	var anchor := car.anchor
+	car.pos = Vector2(0, -150)                      # вынесло к врагу
+	var closest := INF
+	for i in roundi(30.0 / Battle.STEP):
+		b.step()
+		closest = minf(closest, car.pos.distance_to(foe.pos))
+	var out := {"guard_of": car.guard_of, "anchor_d": car.pos.distance_to(anchor), "closest": closest}
+	b.dispose()
+	Movement.rollback_unarmed_hunt_stays = false
+	return out
+
+
+func test_unarmed_hunt_is_guard() -> void:
+	var r := _unarmed_hunt_case(false)
+	ok(obj(r["guard_of"]) == null, "носитель один на «Охоте»: вооружённого вожака нет")
+	ok(num(r["anchor_d"]) < 15.0, "вернулся на участок: %.1f от него (02, ловушка 21)" % num(r["anchor_d"]))
+	ok(num(r["closest"]) >= 549.0, "к врагу не шёл: ближе всего %.0f (вынесло на 550)" % num(r["closest"]))
+	var o := _unarmed_hunt_case(true)
+	ok(num(o["anchor_d"]) > 100.0, "откат «безоружный охотник стоит, где вынесло»: %.0f от участка — проверка краснеет" % num(o["anchor_d"]))
 
 
 # ───────────────────────── РЭБ (04, 2.16–2.17; 09, 1.7) ─────────────────────────
@@ -714,8 +835,10 @@ func _light_jam(stance: StringName, jam_at: Vector2, rollback: bool) -> Dictiona
 func test_light_under_dome() -> void:
 	var g := _light_jam(&"guard", Vector2(0, -300), false)
 	ok(num(g["jam_hurt"]) > 0.0 and num(g["moved"]) > 100.0, "«Охрана»: глушитель в 300 (поводок 240 + 136) — подошла и бьёт его (урон %.0f)" % num(g["jam_hurt"]))
+	# глушитель в 450 при поле 420: корвет ВНЕ купола — помех нет, глушитель обычная цель
+	# дальше захвата «Охраны» (286). Поводок к глушителю ПОД куполом — test_guard_jammer_beyond_leash
 	var far := _light_jam(&"guard", Vector2(0, -450), false)
-	ok(num(far["moved"]) < 5.0 and num(far["jam_hurt"]) == 0.0, "«Охрана»: глушитель в 450 — за поводком, не идёт (сдвиг %.1f)" % num(far["moved"]))
+	ok(num(far["moved"]) < 5.0 and num(far["jam_hurt"]) == 0.0, "«Охрана»: глушитель в 450 — корвет вне купола, цель дальше захвата: не идёт (сдвиг %.1f)" % num(far["moved"]))
 	var h := _light_jam(&"hold", Vector2(0, -300), false)
 	ok(num(h["moved"]) < 5.0 and num(h["jam_hurt"]) == 0.0, "«Держать» к глушителю не идёт (сдвиг %.1f; 03, ловушка 8)" % num(h["moved"]))
 	var o := _light_jam(&"hold", Vector2(0, -300), true)
@@ -841,14 +964,18 @@ func test_ground_gun_ion() -> void:
 
 func _m7(rollback: bool) -> Dictionary:
 	Weapons.rollback_no_planet_book = rollback
-	# показательная «Перестрелка» (все приказы, планета, «Синхо») — 150 с; снаряды
-	# собираем по ходу: мёртвые уходят из списка в конце шага
+	# показательная «Перестрелка» (все приказы, планета, «Синхо») — 150 с: 60 с приказов
+	# показательной записи и дальше без них; снаряды собираем по ходу: мёртвые уходят
+	# из списка в конце шага. Раньше здесь стоял demo_battle(…, 0) — НОЛЬ шагов приказов:
+	# бой без единого приказа, и ракет «Синхо» в нём не было вовсе (замечание к G2)
 	var seen: Dictionary[int, Proj] = {}
-	var b := Polygon.demo_battle(_defs(), "capella-проверка", 0)
-	for i in roundi(150.0 / Battle.STEP):
-		b.step()
-		for p in b.projs:
+	var grab := func(bb: Battle) -> void:
+		for p in bb.projs:
 			seen[p.uid] = p
+	var b := Polygon.demo_battle(_defs(), "capella-проверка", Polygon.DEMO_STEPS, grab)
+	for i in roundi(150.0 / Battle.STEP) - Polygon.DEMO_STEPS:
+		b.step()
+		grab.call(b)
 	var lost_ships := 0.0
 	for s in b.ships:
 		lost_ships += s.max_hp - s.hp
@@ -877,7 +1004,7 @@ func test_m7_damage_without_remainder() -> void:
 	near(num(r["book"]), num(r["ships"]), 1e-6, "М7: урон по кораблям по ключам (%.1f) = потерянной прочности (%.1f)" % [num(r["book"]), num(r["ships"])])
 	near(num(r["proj_book"]), num(r["projs"]), 1e-6, "урон по ракетам — отдельно, и тоже без остатка (%.1f)" % num(r["projs"]))
 	var keys: Dictionary = r["keys"]
-	for k: StringName in [&"heavy", &"sec", &"light", &"planet"]:
+	for k: StringName in [&"heavy", &"sec", &"light", &"missile", &"planet"]:
 		ok(num(keys.get(k, 0.0)) > 0.0, "в «Перестрелке» за 150 с урон есть у ключа %s (%.0f)" % [k, num(keys.get(k, 0.0))])
 	ok(num(r["proj_book"]) > 0.0, "ПВО сбивало ракеты «Синхо»")
 	ok(num(r["first_gun"]) > 0.0 and num(r["first_gun"]) <= 90.0, "первый выстрел главного калибра на %.1f с (М11: ≤ 90)" % num(r["first_gun"]))
@@ -888,38 +1015,249 @@ func test_m7_damage_without_remainder() -> void:
 
 # ───────────────────────── выстрел раскрывает; перезарядка; firstGun ─────────────────────────
 
-func _reveal_case(rollback: bool) -> Dictionary:
-	Weapons.rollback_quiet_shots = rollback
+## Каждый выстрел раскрывает (09, 9.5 п. 7; 03, ловушка 25): у КАЖДОГО источника свой
+## скрытный стрелок и свой откат — откат одного источника обязан краснеть ровно в нём
+## (замечание к G2: прежняя проверка ставила скрытность только батарее и ПВО, и откат
+## «главный калибр не раскрывает» проходил зелёным).
+## kind: &"main" — крейсер по крейсеру в поясе; &"light" — корвет по корвету; &"missile" —
+## «Синхо» пускает ракеты; &"sec" — цель в мёртвой зоне, бьёт только батарея; &"pd" —
+## безоружный РЭБ с ракетой рядом, бьёт только ПВО.
+const REVEAL_FLAGS := {&"main": "rollback_quiet_main", &"light": "rollback_quiet_light",
+	&"missile": "rollback_quiet_missile", &"sec": "rollback_quiet_shots", &"pd": "rollback_quiet_shots"}
+
+
+static func _quiet_flag(kind: StringName, on: bool) -> void:
+	match kind:
+		&"main":
+			Weapons.rollback_quiet_main = on
+		&"light":
+			Weapons.rollback_quiet_light = on
+		&"missile":
+			Weapons.rollback_quiet_missile = on
+		_:
+			Weapons.rollback_quiet_shots = on
+
+
+func _reveal_case(kind: StringName, rollback: bool) -> Dictionary:
+	_quiet_flag(kind, rollback)
 	var b := _lab()
-	# батарея: цель в мёртвой зоне — главный калибр молчит, бьёт ТОЛЬКО батарея
-	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0), Vector2(0, -100))
-	tc.switch_off(&"engines", BIG)
-	tc.stance = &"hold"
-	tc.stealth = true
-	tc.hp = BIG
-	tc.max_hp = BIG
-	_dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -250)))
-	# ПВО: безоружный РЭБ с ракетой рядом — бьёт ТОЛЬКО ПВО
-	var te := _put(b, Ship.ATTACKER, &"ecm", Vector2(-1500, 0))
-	te.stealth = true
-	te.hp = BIG
-	te.max_hp = BIG
-	var pcr := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(-1500, -2000)))
-	var p := Weapons.spawn_proj(b, pcr, te, 1.0, &"missile", 1.0, 1000.0, Vector2(0, 1))
-	p.pos = Vector2(-1500, -60)
-	_steps(b, 3.0)
-	var out := {"sec": tc.reveal_until, "pd": te.reveal_until, "sec_shots": tc.dealt, "pd_shots": te.dealt}
+	var me: Ship = null
+	match kind:
+		&"main":
+			me = _put(b, Ship.ATTACKER, &"cruiser", Vector2.ZERO, Vector2(0, -600))
+			me.sec_cd = PackedFloat64Array()
+			me.main_cd = PackedFloat64Array([0.0])
+			_dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -600)))
+		&"light":
+			me = _put(b, Ship.ATTACKER, &"corvette", Vector2.ZERO, Vector2(0, -150))
+			me.light_cd = PackedFloat64Array([0.0])
+			_dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -150)))
+		&"missile":
+			me = _put(b, Ship.DEFENDER, &"sinho", Vector2.ZERO, Vector2(0, 435))
+			me.main_cd = PackedFloat64Array()
+			me.sec_cd = PackedFloat64Array()
+			me.mis_cd = PackedFloat64Array([0.0])
+			_dummy(_put(b, Ship.ATTACKER, &"frigate", Vector2(0, 435)))
+		&"sec":
+			me = _put(b, Ship.ATTACKER, &"cruiser", Vector2.ZERO, Vector2(0, -100))
+			me.main_cd = PackedFloat64Array([0.0])
+			_dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -250)))     # мёртвая зона: только батарея
+		&"pd":
+			me = _put(b, Ship.ATTACKER, &"ecm", Vector2.ZERO)
+			var pcr := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -2000)))
+			var p := Weapons.spawn_proj(b, pcr, me, 1.0, &"missile", 1.0, 1000.0, Vector2(0, 1))
+			p.pos = Vector2(0, -60)
+	me.switch_off(&"engines", BIG)
+	me.stance = &"hold"
+	me.stealth = true
+	me.hp = BIG
+	me.max_hp = BIG
+	var roles: Dictionary = {}
+	var log := _log(b, 1.5)
+	for r: Array in log:
+		var e: Array = r[1]
+		if e[0] == &"fire" and e[1] == me.uid:
+			roles[e[3]] = true
+		elif e[0] == &"pd" and e[1] == me.uid:
+			roles[&"pd"] = true
+		elif e[0] == &"proj" and kind == &"missile":
+			roles[&"missile"] = true
+	var out := {"revealed": me.reveal_until > 0.0, "roles": roles.keys()}
 	b.dispose()
-	Weapons.rollback_quiet_shots = false
+	_quiet_flag(kind, false)
 	return out
 
 
 func test_every_shot_reveals() -> void:
-	var r := _reveal_case(false)
-	ok(num(r["sec_shots"]) > 0.0 and num(r["sec"]) > 0.0, "выстрел батареи раскрывает (до %.2f с)" % num(r["sec"]))
-	ok(num(r["pd_shots"]) > 0.0 and num(r["pd"]) > 0.0, "выстрел ПВО раскрывает (до %.2f с)" % num(r["pd"]))
-	var o := _reveal_case(true)
-	ok(num(o["sec"]) == 0.0 and num(o["pd"]) == 0.0, "откат «батарея и ПВО не раскрывают»: не раскрыт — проверка краснеет")
+	for kind: StringName in REVEAL_FLAGS:
+		var r := _reveal_case(kind, false)
+		var roles: Array = r["roles"]
+		ok(roles == [kind], "%s: стрелял ровно этот источник (%s)" % [kind, str(roles)])
+		ok(flag(r["revealed"]), "%s: выстрел раскрывает скрытного стрелка" % kind)
+		var o := _reveal_case(kind, true)
+		ok(not flag(o["revealed"]), "откат «%s не раскрывает» (%s): не раскрыт — проверка краснеет" % [kind, REVEAL_FLAGS[kind]])
+
+
+# ───────────────────────── РЭБ: «Прикрытие», глушитель первым, поводок, ПВО ─────────────────────────
+
+## Своё «Прикрытие» над кораблём снимает чужие помехи (04, 2.16; план G2, п. 5).
+## Откат — щит не действует.
+func _shield_case(own_mode: StringName, rollback: bool) -> Dictionary:
+	Ecm.rollback_no_shield = rollback
+	var b := _lab()
+	_dummy(_put(b, Ship.DEFENDER, &"ecm", Vector2(0, -250)))              # чужое «Глушение»
+	var me := _dummy(_put(b, Ship.ATTACKER, &"ecm", Vector2(0, 150)))      # своё поле, 420
+	me.ecm_mode = own_mode
+	var c := _put(b, Ship.ATTACKER, &"corvette", Vector2.ZERO, Vector2(0, -250))
+	c.switch_off(&"engines", BIG)
+	c.stance = &"hold"
+	c.light_cd = PackedFloat64Array()
+	_steps(b, 0.3)                                                         # оба поля набрали мощность
+	var out := {"jammed": Ecm.jammed(b, c.pos, Ship.ATTACKER), "jam": c.jam != null,
+		"shield_on": me.ecm_power > Ecm.ACTIVE}
+	b.dispose()
+	Ecm.rollback_no_shield = false
+	return out
+
+
+func test_ecm_shield_cancels_jam() -> void:
+	var r := _shield_case(&"shield", false)
+	ok(flag(r["shield_on"]), "своё «Прикрытие» поднято")
+	ok(not flag(r["jammed"]) and not flag(r["jam"]), "корвет под своим «Прикрытием» и чужим «Глушением» — помех нет")
+	var ctl := _shield_case(&"off", false)
+	ok(flag(ctl["jammed"]) and flag(ctl["jam"]), "контроль: своё поле молчит — помехи есть")
+	var o := _shield_case(&"shield", true)
+	ok(flag(o["jammed"]), "откат «щит не снимает помех»: помехи есть — проверка краснеет")
+
+
+## Под помехами первым — сам глушитель (03, 2.9; 09, 1.7): своя цель лёгкого — раненый
+## фрегат в 210 (дальше lockRange 170), рядом в 160 — целый корвет (ближе, его счёт выше
+## обычной цели), глушитель — в 300. Лёгкий берёт ГЛУШИТЕЛЯ. Откат — счёт глушителя без
+## 3000 (как у обычной цели): берёт корвет.
+func _jammer_first(rollback: bool) -> Dictionary:
+	Weapons.rollback_jammer_not_first = rollback
+	var b := _lab()
+	var tc := _put(b, Ship.ATTACKER, &"corvette", Vector2.ZERO, Vector2(0, -200))
+	tc.switch_off(&"engines", BIG)
+	tc.stance = &"guard"
+	tc.light_cd = PackedFloat64Array()
+	var jam := _dummy(_put(b, Ship.DEFENDER, &"ecm", Vector2(0, -300)))
+	var fr := _dummy(_put(b, Ship.DEFENDER, &"frigate", Vector2(-210, 0)))
+	fr.hp = 1.0                                       # раненый: +400 к счёту — своя цель
+	var co := _dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(160, 0)))
+	_steps(b, 0.3)
+	var out := {"jam": tc.jam != null, "target": tc.target, "jam_shot": tc.jam_shot, "jammer": jam, "corvette": co, "frigate": fr}
+	b.dispose()
+	Weapons.rollback_jammer_not_first = false
+	return out
+
+
+func test_jammer_first() -> void:
+	var r := _jammer_first(false)
+	ok(flag(r["jam"]), "корвет под чужим «Глушением»")
+	ok(obj(r["target"]) == obj(r["jammer"]) and obj(r["jam_shot"]) == obj(r["jammer"]), "лёгкий бьёт глушителя первым (а не корвет в 160 и не свою цель в 210)")
+	var o := _jammer_first(true)
+	ok(obj(o["target"]) == obj(o["corvette"]), "откат «глушитель без 3000»: берёт корвет — проверка краснеет")
+
+
+## Цель «под помехами» — временная (03, ловушка 7): глушитель замолчал — лёгкий
+## снимает jam_shot и берёт свою цель заново (раненый фрегат в 200). Откат — jam_shot
+## держится, и лёгкий так и бьёт глушителя.
+func _jam_shot_case(rollback: bool) -> Dictionary:
+	Weapons.rollback_jam_shot_sticks = rollback
+	var b := _lab()
+	var tc := _put(b, Ship.ATTACKER, &"corvette", Vector2.ZERO, Vector2(0, -200))
+	tc.switch_off(&"engines", BIG)
+	tc.stance = &"guard"
+	tc.light_cd = PackedFloat64Array()
+	var jam := _dummy(_put(b, Ship.DEFENDER, &"ecm", Vector2(0, -300)))
+	var fr := _dummy(_put(b, Ship.DEFENDER, &"frigate", Vector2(-200, 0)))
+	fr.hp = 1.0
+	_steps(b, 0.3)
+	var under := {"target": tc.target == jam, "jam_shot": tc.jam_shot == jam}
+	tc.retarget = BIG                                  # плановый пересмотр не мешает: смотрим правило
+	jam.ecm_mode = &"off"
+	_steps(b, 2.0 * Battle.STEP)                       # «Молчать» — помех нет со следующего шага
+	var out := {"under": under, "jam": tc.jam != null, "jam_shot": tc.jam_shot, "target": tc.target, "jammer": jam, "frigate": fr}
+	b.dispose()
+	Weapons.rollback_jam_shot_sticks = false
+	return out
+
+
+func test_jam_shot_temporary() -> void:
+	var r := _jam_shot_case(false)
+	var under: Dictionary = r["under"]
+	ok(flag(under["target"]) and flag(under["jam_shot"]), "под помехами лёгкий взял глушителя («цель под помехами»)")
+	ok(not flag(r["jam"]) and obj(r["jam_shot"]) == null and obj(r["target"]) == obj(r["frigate"]), "глушитель замолчал: jam_shot снят, лёгкий вернулся к своей цели (раненый фрегат)")
+	var o := _jam_shot_case(true)
+	ok(obj(o["jam_shot"]) == obj(o["jammer"]) and obj(o["target"]) == obj(o["jammer"]), "откат «цель под помехами держится»: бьёт молчащего глушителя — проверка краснеет")
+
+
+## «Охрана» к глушителю — только если дотянется (03, ловушка 6): корвет ПОД куполом
+## (глушитель в 400 < 420), но глушитель дальше поводка 240 + 0,8 × 170 = 376 — не идёт.
+## Откат — «Охрана» идёт к глушителю, где бы он ни был.
+func _guard_leash_jam(rollback: bool) -> Dictionary:
+	Weapons.rollback_guard_jam_any = rollback
+	var b := _lab()
+	var tc := _put(b, Ship.ATTACKER, &"corvette", Vector2.ZERO, Vector2(0, -300))
+	tc.stance = &"guard"
+	tc.hp = BIG
+	tc.max_hp = BIG
+	var jam := _dummy(_put(b, Ship.DEFENDER, &"ecm", Vector2(0, -400)))
+	jam.hp = 1700.0
+	jam.max_hp = 1700.0
+	_dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(2000, -2000)))
+	_steps(b, 0.3)
+	var under := tc.jam != null
+	_steps(b, 20.0)
+	var out := {"under": under, "moved": tc.pos.length(), "jam_hurt": 1700.0 - jam.hp}
+	b.dispose()
+	Weapons.rollback_guard_jam_any = false
+	return out
+
+
+func test_guard_jammer_beyond_leash() -> void:
+	var r := _guard_leash_jam(false)
+	ok(flag(r["under"]), "корвет под чужим куполом (глушитель в 400, поле 420)")
+	ok(num(r["moved"]) < 5.0 and num(r["jam_hurt"]) == 0.0, "«Охрана»: глушитель дальше поводка (400 > 376) — не идёт (сдвиг %.1f)" % num(r["moved"]))
+	var o := _guard_leash_jam(true)
+	ok(num(o["moved"]) > 100.0, "откат «Охрана к глушителю без поводка»: ушла на %.0f — проверка краснеет" % num(o["moved"]))
+
+
+## ПВО под чужим куполом бьёт слабее: урон × pdPenalty (09, 1.5 и 1.7; 04, 2.17) — и у
+## безоружного тоже. Откат — множитель 1.
+func _pd_under_dome(dome: bool, rollback: bool) -> float:
+	Weapons.rollback_no_pd_penalty = rollback
+	var b := _lab()
+	var tf := _dummy(_put(b, Ship.ATTACKER, &"frigate", Vector2.ZERO))
+	tf.pd_cd = PackedFloat64Array([BIG])
+	if dome:
+		_dummy(_put(b, Ship.DEFENDER, &"ecm", Vector2(0, -300)))
+	var pcr := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -2000)))
+	_steps(b, 0.3)
+	var p := Weapons.spawn_proj(b, pcr, tf, 1.0, &"missile", 1.0, 1000.0, Vector2(0, 1))
+	p.pos = Vector2(0, -60)
+	tf.pd_cd = PackedFloat64Array([0.0])
+	var got := 0.0
+	for i in 10:
+		b.step()
+		if p.hp < p.max_hp:
+			got = p.max_hp - p.hp
+			break
+	b.dispose()
+	Weapons.rollback_no_pd_penalty = false
+	return got
+
+
+func test_pd_penalty_under_dome() -> void:
+	var free := _pd_under_dome(false, false)
+	var jam := _pd_under_dome(true, false)
+	var pen := _defs().factions[&"plektor"].ecm.pd_penalty
+	ok(free > 0.0, "контроль: ПВО без помех сбивает ракету (%.2f за выстрел)" % free)
+	near(jam, free * pen, 1e-6, "ПВО под чужим куполом — × pdPenalty %.2f (%.2f за выстрел)" % [pen, jam])
+	var o := _pd_under_dome(true, true)
+	near(o, free, 1e-6, "откат «ПВО под помехами в полную силу»: %.2f — проверка краснеет" % o)
+	ok(absf(o - jam) > 1.0, "…и это не та же величина, что с правкой")
 
 
 func _reload_case(rollback: bool) -> Dictionary:

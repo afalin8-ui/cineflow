@@ -156,7 +156,10 @@ func _process(_delta: float) -> void:
 # ───────────────────────── показательная запись ─────────────────────────
 
 ## Показательный бой без вида: все приказы «Полигона» по журналу — идти, дрифт,
-## гипер, «Держать», подкрепление, фокус, атака с ходу, «Охота», охрана своего, РЭБ
+## гипер, «Держать», подкрепление, фокус (лёгкие — на «Синхо»: его ракетный пакет бьёт
+## только ближе 640, а сам он встаёт на 840 от цели, и без подлёта лёгких ракет в бою
+## нет вовсе — ПВО нечего сбивать; тяжёлые — на крейсер), атака с ходу, «Охота»,
+## охрана своего, РЭБ
 ## и в самом конце — «Охрана» одному корвету (её применяет последний шаг: такой приказ
 ## ещё не сдвинул ни одного корабля, и потерю его ловит только отпечаток с приказами).
 ## → запись с отпечатком на последнем шаге («fp»). Её проигрывает --replay с видом:
@@ -170,8 +173,9 @@ static func make_record(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 
 
 ## Тот же показательный бой — сам бой после steps_n шагов (проверки читают его замеры;
-## dispose() — за тем, кто позвал).
-static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS) -> Battle:
+## dispose() — за тем, кто позвал). each — позвать после КАЖДОГО шага (проверка М7
+## собирает снаряды: мёртвые уходят из списка в конце шага).
+static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS, each: Callable = Callable()) -> Battle:
 	var b := Battle.create(p_defs, setup_dict(SEED), p_build) as Battle
 	var own := b.side_ships(Ship.ATTACKER)
 	var all := PackedInt32Array()
@@ -191,10 +195,12 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 	var capital: int = by_cls.get(&"capital", all[0])
 	var ecm: int = by_cls.get(&"ecm", all[0])
 	var foe_cruiser := 0
+	var foe_sinho := 0
 	for s in b.side_ships(Ship.DEFENDER):
-		if s.def.id == &"cruiser":
+		if s.def.id == &"cruiser" and foe_cruiser == 0:
 			foe_cruiser = s.uid
-			break
+		elif s.def.id == &"sinho":
+			foe_sinho = s.uid
 	for i in steps_n:
 		match b.steps:
 			0:
@@ -205,6 +211,8 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 				b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
 			210:
 				b.queue({"op": &"hyper", "ids": PackedInt32Array([frigate])})
+			240:
+				b.queue({"op": &"focus", "ids": light, "target": foe_sinho})
 			300:
 				b.queue({"op": &"stance", "ids": heavy, "stance": &"hold"})
 			360:
@@ -228,4 +236,6 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 					b.queue({"op": &"stance", "ids": PackedInt32Array([s.uid]), "stance": &"guard"})
 					break
 		b.step()
+		if each.is_valid():
+			each.call(b)
 	return b

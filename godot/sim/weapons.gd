@@ -61,6 +61,24 @@ static var rollback_blind_temporary := false
 static var rollback_freeze_cd := false
 ## Батарея и ПВО не раскрывают стрелявшего (03, ловушка 25; 09, 9.5 п. 7).
 static var rollback_quiet_shots := false
+## Главный калибр и лёгкое орудие не раскрывают (каждый выстрел раскрывает — 09, 9.5
+## п. 7): у каждого свой флажок, чтобы откат бил в СВОЮ проверку.
+static var rollback_quiet_main := false
+static var rollback_quiet_light := false
+static var rollback_quiet_missile := false
+## Своя цель главного калибра — одним счётом по стойке до R × reach (как было до
+## доработки G2): тяжёлый брал цель дальше дальности, хотя враг стоял в поясе, и молчал.
+static var rollback_far_capture := false
+## Урон снаряда не засчитывается владельцу (07, ловушка 57): М7 и dealt «Синхо» пустые.
+static var rollback_proj_no_owner := false
+## Под чужим куполом ПВО бьёт в полную силу (09, 1.5: ПВО × pdPenalty).
+static var rollback_no_pd_penalty := false
+## Цель «под помехами» (jam_shot) держится и после конца помех (03, ловушка 7).
+static var rollback_jam_shot_sticks := false
+## Под помехами глушитель — не «первым» (счёт −d, как у обычной цели; 03, 2.9).
+static var rollback_jammer_not_first := false
+## «Охрана» идёт к глушителю, даже если не дотянется с поводка (03, ловушка 6).
+static var rollback_guard_jam_any := false
 
 
 ## Таймеры оружия при появлении (space.js:337 spawnShip · часть 03, 2.2): у каждой
@@ -134,7 +152,7 @@ static func think(b: State, s: Ship) -> void:
 		s.target = want if want != null else acquire(b, s)
 		s.jam_shot = null
 		s.retarget = b.rng.randf_range(RETARGET_MIN, RETARGET_MAX)
-	if s.jam_shot != null and s.jam == null:
+	if s.jam_shot != null and s.jam == null and not rollback_jam_shot_sticks:
 		# вышли из-под купола или глушитель сбит — к своей цели (03, ловушка 7)
 		s.jam_shot = null
 		s.target = want if want != null else acquire(b, s)
@@ -188,6 +206,14 @@ static func _stance(b: State, s: Ship) -> Defs.StanceDef:
 ## эскорта — main.escort_weight (тяжёлые и носители первыми). «Охрана» без приказа
 ## идти — не дальше поводка 0,5 R + R от участка. «Охота» без целей — ближайший, но
 ## тоже НЕ ближе мёртвой зоны (иначе встала бы молча с целью под носом, 03, 7.2 п. 2).
+##
+## ДО G4 (план G2, п. 4): тяжёлый к цели не ходит, поэтому цель берётся СНАЧАЛА В ПОЯСЕ
+## (0,4 R…R), и только если там никого — дальняя по стойке (1,3 R «Охраны», 1,8 R
+## «Охоты»). Одним счётом дальний крейсер на 950 перевешивал фрегата в поясе на 620
+## (вес эскорта 0,6), и главный калибр стоял с целью, которую достать нечем: в
+## «Перестрелке» — половина времени «дальше дальности» при враге в поясе (замечание
+## к G2; 09, 1.2 и 6.3: «главный калибр не стоит молча»). С G4, когда тяжёлый пойдёт
+## в пояс сам, — снова одним счётом по стойке.
 static func main_acquire(b: State, s: Ship) -> Ship:
 	var w := s.def.main
 	var d_ := b.defs.doctrine
@@ -195,8 +221,10 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 	var fence := 0.0
 	if s.stance == &"guard" and not s.station and not s.has_move and not s.has_amove:
 		fence = d_.leash_capital_k * w.rng + w.rng
-	var best: Ship = null
+	var best: Ship = null            # в поясе
 	var best_score := -INF
+	var far: Ship = null             # дальше дальности, но в досягаемости тактики
+	var far_score := -INF
 	var near: Ship = null
 	var nd := INF
 	for o in b.ships:
@@ -205,7 +233,8 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 		if b.defs.dmg_mult(w.key, o.def.cls_i) <= 0.0:
 			continue                 # ноль в таблице — не цель (09, 9.5 п. 6)
 		var d := s.pos.distance_to(o.pos)
-		if main_reach(s, d) < 0:
+		var reach_k := main_reach(s, d)
+		if reach_k < 0:
 			continue                 # ДОКТРИНА 09, 1.2: в мёртвой зоне — не цель главного калибра
 		if d < nd:
 			nd = d
@@ -216,9 +245,15 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 			continue
 		var wgt := d_.main_escort_weight if o.def.cls == &"escort" else 1.0
 		var score := wgt * SCORE - d + (1.0 - o.hp_frac()) * HURT_BONUS + (CARRIER_BONUS if o.def.cls == &"carrier" else 0.0)
-		if score > best_score:
-			best_score = score
-			best = o
+		if reach_k == 0 or rollback_far_capture:
+			if score > best_score:
+				best_score = score
+				best = o
+		elif score > far_score:
+			far_score = score
+			far = o
+	if best == null:
+		best = far
 	if best == null and s.stance == &"hunt" and not s.station:
 		return near
 	return best
@@ -288,10 +323,10 @@ static func jam_pick(b: State, s: Ship) -> Ship:
 		var d := src.pos.distance_to(s.pos)
 		if d > lock and not roam:
 			continue
-		if d > lock and s.forced == null and not s.has_amove and s.stance == &"guard" \
+		if d > lock and s.forced == null and not s.has_amove and s.stance == &"guard" and not rollback_guard_jam_any \
 				and src.pos.distance_to(s.anchor) > leash_of(b, s) + lock * JAM_LEASH_K:
 			continue                 # «Охрана» к глушителю — только если дотянется
-		var sc := JAMMER_SCORE - d
+		var sc := (0.0 if rollback_jammer_not_first else JAMMER_SCORE) - d
 		if sc > bs:
 			bs = sc
 			best = src
@@ -385,7 +420,7 @@ static func _jam_feed(b: State, s: Ship, lock: float) -> void:
 		# ДОКТРИНА 09, 1.7: главный калибр под помехами бьёт, но вдвое реже
 		b.jam_feed_at = b.time
 		var jp: Defs.EcmDef = s.jam
-		b.feed("Наш %s под помехами РЭБ — главный калибр в %s раза реже" % [short_name(s), _times(jp.main_slow)], &"warn")
+		b.feed("Наш %s под помехами РЭБ — главный калибр %s" % [short_name(s), slower(jp.main_slow)], &"warn")
 	elif t != null and s.pos.distance_to(t.pos) > lock:
 		b.jam_feed_at = b.time
 		b.feed("Наш %s под помехами РЭБ — бьёт только вблизи" % short_name(s), &"warn")
@@ -393,6 +428,17 @@ static func _jam_feed(b: State, s: Ship, lock: float) -> void:
 
 static func _times(k: float) -> String:
 	return ("%.1f" % k).replace(".", ",").trim_suffix(",0")
+
+
+## «вдвое реже», «в 2,5 раза реже» — словами доктрины (09, 6.7).
+static func slower(k: float) -> String:
+	return "вдвое реже" if is_equal_approx(k, 2.0) else "в %s раза реже" % _times(k)
+
+
+## Докуда батарея бьёт СЕЙЧАС: под помехами и ослеплением — lockRange (09, 1.3); 0 —
+## батареи нет. Для строки «чем занят» (09, 6.7: «бьёт» — только когда выстрел возможен).
+static func sec_reach(b: State, s: Ship) -> float:
+	return _lock(b, s, s.def.sec.rng) if s.def.sec != null else 0.0
 
 
 ## «Крейсер «Рэш» II» → «Рэш» II: собственное имя с номером (space.js:985 shortName).
@@ -455,7 +501,8 @@ static func _fire_main(b: State, s: Ship) -> void:
 			continue
 		s.main_cd[i] = w.cd * (jp.main_slow if rollback_slow_cd and jp != null and not b.old_ecm else 1.0)
 		fired = true
-		Vision.reveal(b, s)                   # выстрел раскрывает (09, 9.5 п. 7)
+		if not rollback_quiet_main:
+			Vision.reveal(b, s)               # выстрел раскрывает (09, 9.5 п. 7)
 		if b.metrics.first_gun <= 0.0:
 			b.metrics.first_gun = b.time      # первый выстрел ГЛАВНОГО калибра по КОРАБЛЮ (03, ловушка 34)
 		b.metrics.main_shots[s.side] += 1
@@ -518,7 +565,8 @@ static func _fire_light(b: State, s: Ship) -> void:
 		if s.light_cd[i] > 0.0 or t.dead:
 			continue
 		s.light_cd[i] = w.cd
-		Vision.reveal(b, s)
+		if not rollback_quiet_light:
+			Vision.reveal(b, s)               # лёгкое тоже раскрывает (09, 9.5 п. 7)
 		b.events.append([&"fire", s.uid, t.uid, &"light", i])
 		damage(b, t, w.dmg * aim_of(b, s.side), w.key, s, (t.pos - s.pos).normalized())
 
@@ -545,7 +593,8 @@ static func _fire_missile(b: State, s: Ship) -> void:
 		if s.mis_cd[i] > 0.0:
 			continue
 		s.mis_cd[i] = w.cd
-		Vision.reveal(b, s)
+		if not rollback_quiet_missile:
+			Vision.reveal(b, s)               # пуск ракет раскрывает (09, 9.5 п. 7)
 		for k in maxi(1, w.salvo):
 			var spread := w.spread if w.spread > 0.0 else 0.05
 			var dir := (t.pos - s.pos).normalized() + Vector2(b.rng.randf_range(-1.0, 1.0), b.rng.randf_range(-1.0, 1.0)) * spread
@@ -623,7 +672,7 @@ static func _fire_pd(b: State, s: Ship) -> void:
 		if pen < 0.0:
 			# свой вызов помех, а не s.jam: штраф и у безоружных (04, 2.17)
 			var jp := Ecm.profile(b, s.pos, s.side)
-			pen = jp.pd_penalty if jp != null else 1.0
+			pen = jp.pd_penalty if jp != null and not rollback_no_pd_penalty else 1.0
 		if not rollback_quiet_shots:
 			Vision.reveal(b, s)               # выстрел ПВО тоже раскрывает (03, ловушка 25)
 		b.events.append([&"pd", s.uid, i, t.pos, t.uid])
@@ -703,7 +752,7 @@ static func damage(b: State, t: RefCounted, amount: float, key: StringName, src:
 	var who := src
 	var sp := src as Proj
 	if sp != null:
-		who = sp.owner                        # урон снаряда — его владельцу (07, ловушка 57)
+		who = null if rollback_proj_no_owner else sp.owner   # урон снаряда — его владельцу (07, ловушка 57)
 	var by := who as Ship
 	if ship != null:
 		ship.hp = maxf(0.0, after)

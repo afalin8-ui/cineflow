@@ -53,6 +53,9 @@ static var rollback_heavy_approach := false
 ## ТОЛЬКО для проверки отката (03, ловушка 8): «Держать» с целью подходит к ней, как
 ## «Охота», — и к глушителю тоже (sim/weapons.gd → jam_pick читает этот же флажок).
 static var rollback_hold_approach := false
+## ТОЛЬКО для проверки отката (02, ловушка 21): безоружный на «Охоте» без вооружённого
+## не возвращается на участок — стоит, где его вынесло. В бою всегда false.
+static var rollback_unarmed_hunt_stays := false
 
 
 ## Числа полёта из данных — собираются один раз на бой (в тике без словарей).
@@ -266,7 +269,7 @@ static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params, nea
 		desired = approach(s, t, range0, vmax, p)
 	elif t != null and s.stance == &"guard":
 		desired = guard_station(s, t, range0, p)
-	elif (s.stance == &"guard" or (s.stance == &"hunt" and not s.can_hurt())) and s.pos.distance_to(s.anchor) > ANCHOR_SLOP:
+	elif (s.stance == &"guard" or (s.stance == &"hunt" and not s.can_hurt() and not rollback_unarmed_hunt_stays)) and s.pos.distance_to(s.anchor) > ANCHOR_SLOP:
 		# безоружному «Охота» — та же «Охрана» (P5): целей нет — назад, на участок
 		desired = arrive(s, s.anchor, vmax, rev, brake_k)
 	# иначе — «Держать» и пустой участок: стоим (desired = 0)

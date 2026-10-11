@@ -674,10 +674,17 @@ func test_main_polygon_table_keys() -> void:
 	var pn2: Node = main.get("polygon")
 	var b2: Object = pn2.get("battle")
 	ok(b2 != null and b2 != b1, "F8 — «Полигон» заново")
-	# F9 — запись боя файлом; её проигрывает --replay
+	# F9 — запись боя файлом; её проигрывает --replay. Файл — в папку ЭТОГО прогона
+	# (tests/case.gd → tmp), а не в общий user://: имя — с точностью до секунды, и два
+	# прогона в одну секунду писали бы один файл (замечание к G2)
+	var f9_dir := tmp("f9_ui")
+	DirAccess.make_dir_recursive_absolute(f9_dir)
+	var bench_f9: Node = main.get("bench")
+	bench_f9.set("out_dir", f9_dir)
 	await hooks.key(KEY_F9)
 	var path: String = main.get("last_record")
 	ok(path != "" and FileAccess.file_exists(path), "F9 — запись боя файлом: %s" % path)
+	ok(path.begins_with(f9_dir), "запись F9 — в папке прогона, а не в общей папке данных: %s" % path)
 	if path != "":
 		var why := PackedStringArray()
 		var rec := MainScript.read_record(path, PackedStringArray(), why)

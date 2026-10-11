@@ -21,6 +21,10 @@ const BattleInput := preload("res://input/battle_input.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
 const Picking := preload("res://input/picking.gd")
 const MainScript := preload("res://main.gd")
+const PolygonHud := preload("res://ui/polygon_hud.gd")
+const Weapons := preload("res://sim/weapons.gd")
+
+const BIG := 1.0e9
 
 var _defs: Defs
 
@@ -258,9 +262,12 @@ func test_circles_at_most_three() -> void:
 
 
 ## Полоска на фокус говорит, что сделают тяжёлые и лёгкие (09, 6.2), а безоружные
-## называют себя (C100); строка «чем занят» у тяжёлого говорит «главным по …» только
-## когда выстрел возможен (09, 6.7).
-func test_focus_toast_and_doing() -> void:
+## называют себя (C100); строка «чем занят» у тяжёлого, до которого цель фокуса не
+## достаёт, НАЗЫВАЕТ её и говорит «вне пояса» (09, 6.3 и 6.7), а «главным» не бьёт.
+## Откат — строка молчит о цели фокуса: прежняя проверка «не начинается с «главным»»
+## была зелёной и тогда, когда о приказе не говорилось ничего (замечание к G2).
+func _focus_line(rollback: bool) -> Dictionary:
+	PolygonHud.rollback_focus_unnamed = rollback
 	var p := await _polygon()
 	var own := p.battle.side_ships(Ship.ATTACKER)
 	_select(p, own)
@@ -272,13 +279,162 @@ func test_focus_toast_and_doing() -> void:
 	var said := PackedStringArray()
 	for t in p.battle.toast_log:
 		said.append(str(t["text"]))
-	var all := "\n".join(said)
+	var cru := _first_of(p, Ship.ATTACKER, func(s: Ship) -> bool: return s.def.id == &"cruiser")
+	var out := {"said": "\n".join(said), "line": PolygonHud.doing(cru, p.battle), "foe": Weapons.short_name(foe),
+		"d": roundi(cru.pos.distance_to(foe.pos)), "reach": Weapons.main_reach(cru, cru.pos.distance_to(foe.pos))}
+	PolygonHud.rollback_focus_unnamed = false
+	await _drop(p)
+	return out
+
+
+func test_focus_toast_and_doing() -> void:
+	var r := await _focus_line(false)
+	var all := str(r["said"])
 	ok(all.contains("тяжёлые бьют с места: главный калибр — от 312 до 900") and all.contains("лёгкие идут на цель"), "полоска на фокус: «%s»" % all.replace("\n", " / "))
 	ok(all.contains("безоружны — держатся позади"), "носитель и РЭБ безоружны — сказано")
+	var line := str(r["line"])
+	note("фокус всего флота: крейсер — «%s»" % line)
+	ok(whole(r["reach"]) != 0, "цель фокуса вне пояса крейсера (%d)" % whole(r["d"]))
+	ok(not line.begins_with("главным по %s" % str(r["foe"])) and line.contains(str(r["foe"])) and line.contains("вне пояса"), "строка крейсера называет цель фокуса и «вне пояса»: «%s»" % line)
+	var o := await _focus_line(true)
+	ok(not str(o["line"]).contains(str(o["foe"])), "откат «строка молчит о фокусе»: «%s» — проверка краснеет" % str(o["line"]))
+
+
+## Бой-проба без вида: тяжёлый Тройдена, вокруг — что задаст setup.call(battle, крейсер).
+func _lab(setup: Callable) -> Battle:
+	var b := Battle.create(_get_defs(), {"attacker": &"troyden", "defender": &"plektor", "size": &"small", "seed": 5, "reserve": false}) as Battle
+	b.ships.clear()
+	var c := b.spawn(Ship.ATTACKER, b.defs.ship(&"troyden", &"cruiser"), Vector2.ZERO)
+	c.set_yaw(Ship.yaw_of(Vector2(0, -100)))
+	c.hp = BIG
+	c.max_hp = BIG
+	c.stance = &"hold"
+	setup.call(b, c)
+	return b
+
+
+func _foe(b: Battle, id: StringName, at: Vector2) -> Ship:
+	var s := b.spawn(Ship.DEFENDER, b.defs.ship(&"plektor", id), at)
+	s.switch_off(&"engines", BIG)
+	s.stance = &"hold"
+	s.hp = BIG
+	s.max_hp = BIG
+	s.main_cd = PackedFloat64Array()
+	s.sec_cd = PackedFloat64Array()
+	s.light_cd = PackedFloat64Array()
+	s.mis_cd = PackedFloat64Array()
+	s.pd_cd = PackedFloat64Array()
+	return s
+
+
+## Цель фокуса вне пояса, а своя цель в поясе есть (09, 6.3): главный калибр бьёт её, и
+## строка это говорит — «главным по «…» · «Рэш» вне пояса (950)». Было: «главным по
+## «Исса» IV (749)» — ни слова о цели фокуса, приказ выглядел проигнорированным
+## (замечание к G2). Откат — строка молчит о фокусе.
+func _focus_with_own(rollback: bool) -> Dictionary:
+	PolygonHud.rollback_focus_unnamed = rollback
+	var far: Array[Ship] = []
+	var near: Array[Ship] = []
+	var b := _lab(func(bb: Battle, c: Ship) -> void:
+		far.append(_foe(bb, &"cruiser", Vector2(0, -950)))
+		near.append(_foe(bb, &"frigate", Vector2(300, -543)))
+		bb.queue({"op": &"focus", "ids": [c.uid], "target": far[0].uid}))
+	for i in 45:
+		b.step()
+	var c := b.ships[0]
+	var out := {"line": PolygonHud.doing(c, b), "far": Weapons.short_name(far[0]), "near": Weapons.short_name(near[0]),
+		"forced": c.forced == far[0], "target": c.target == near[0]}
+	b.dispose()
+	PolygonHud.rollback_focus_unnamed = false
+	return out
+
+
+func test_doing_focus_out_of_belt_with_own_target() -> void:
+	var r := _focus_with_own(false)
+	ok(flag(r["forced"]) and flag(r["target"]), "фокус — на крейсер в 950, главный калибр взял фрегат в поясе")
+	var line := str(r["line"])
+	note("фокус вне пояса при своей цели в поясе: «%s»" % line)
+	ok(line.begins_with("главным по %s" % str(r["near"])) and line.contains("%s вне пояса (950)" % str(r["far"])), "строка: «%s»" % line)
+	var o := _focus_with_own(true)
+	ok(not str(o["line"]).contains(str(o["far"])), "откат «строка молчит о фокусе»: «%s» — проверка краснеет" % str(o["line"]))
+
+
+## «Бьёт» — только когда выстрел возможен (09, 6.7): крейсер «Держать», РЭБ Плэктора
+## в 305 и корвет в 253 — оба в мёртвой зоне и оба дальше lockRange 170: батарея под
+## помехами не бьёт, и строка этого не обещает. Корвет подошёл на 134 — батарея бьёт,
+## строка называет его. Откат — прежнее «· бьёт батарея» без проверки.
+func _bat_claim(rollback: bool, cor_at: Vector2) -> Dictionary:
+	PolygonHud.rollback_bat_claim = rollback
+	var b := _lab(func(bb: Battle, c: Ship) -> void:
+		c.switch_off(&"engines", BIG)
+		c.main_cd = PackedFloat64Array([0.0])
+		_foe(bb, &"ecm", Vector2(-260, -160))
+		_foe(bb, &"corvette", cor_at))
+	var sec := 0
+	for i in roundi(4.0 / Battle.STEP):
+		b.step()
+		for e in b.events:
+			if e[0] == &"fire" and e[3] == &"sec":
+				sec += 1
+	var c := b.ships[0]
+	var out := {"line": PolygonHud.doing(c, b), "sec": sec, "reason": c.idle_reason}
+	b.dispose()
+	PolygonHud.rollback_bat_claim = false
+	return out
+
+
+func test_doing_no_battery_claim() -> void:
+	var r := _bat_claim(false, Vector2(250, -40))
+	eq(r["reason"], &"dead_zone", "главный калибр молчит: мёртвая зона")
+	eq(whole(r["sec"]), 0, "батарея под помехами по корвету в 253 (дальше lockRange) не выстрелила ни разу")
+	var line := str(r["line"])
+	note("вплотную под помехами: «%s»" % line)
+	ok(line.begins_with("враг вплотную — главный калибр не бьёт") and not line.contains("бьёт батарея") and not line.contains("батареей"), "строка не обещает батарею: «%s»" % line)
+	ok(line.contains("вдвое реже"), "под помехами — «вдвое реже», словами доктрины: «%s»" % line)
+	var near := _bat_claim(false, Vector2(120, -60))
+	ok(whole(near["sec"]) > 0 and str(near["line"]).contains("батареей по"), "корвет подошёл на 134 — батарея бьёт, строка это говорит: «%s»" % str(near["line"]))
+	var o := _bat_claim(true, Vector2(250, -40))
+	ok(str(o["line"]).contains("бьёт батарея"), "откат «бьёт батарея без проверки»: «%s» — проверка краснеет" % str(o["line"]))
+
+
+## Купол, пояс под курсором и круг цели фокуса спрашивают ЕДИНЫЙ фильтр видимости
+## (input/picking.gd → shown; 04, ловушка 33, C67): скрытый (проверочный крючок
+## Picking.test_hidden — скрытности в срезе ещё нет) не рисуется. Откат — купол и
+## пояса мимо фильтра («не погиб»).
+func _shown_case(rollback: bool) -> Dictionary:
+	BattleFx.rollback_no_shown = rollback
+	var p := await _polygon()
+	var ecm := _first_of(p, Ship.DEFENDER, func(s: Ship) -> bool: return s.def.ecm)
+	var foe := _first_of(p, Ship.DEFENDER, func(s: Ship) -> bool: return s.def.id == &"cruiser")
+	var foe2 := _first_of(p, Ship.DEFENDER, func(s: Ship) -> bool: return s.def.id == &"capital")
 	var cru := _first_of(p, Ship.ATTACKER, func(s: Ship) -> bool: return s.def.id == &"cruiser")
-	var line := p.hud.doing(cru)
-	ok(not line.begins_with("главным"), "крейсер, до которого цель не достаёт (%d), «главным» не бьёт: «%s»" % [roundi(cru.pos.distance_to(foe.pos)), line])
+	p.view.paused = false
+	for i in 12:
+		p.view.advance(Battle.STEP)               # купол набрал мощность
+	p.view.paused = true
+	cru.forced = foe2
+	_select(p, [cru] as Array[Ship])
+	p.view.hover_uid = foe.uid
+	p.view.draw_state()
+	var before := {"dome": p.view.bfx.drawn_domes.has(ecm.uid), "hover": p.view.bfx.drawn_belts.has(foe.uid), "focus": p.view.bfx.drawn_belts.has(foe2.uid)}
+	Picking.test_hidden = {ecm.uid: true, foe.uid: true, foe2.uid: true}
+	p.view.draw_state()
+	var after := {"dome": p.view.bfx.drawn_domes.has(ecm.uid), "hover": p.view.bfx.drawn_belts.has(foe.uid), "focus": p.view.bfx.drawn_belts.has(foe2.uid)}
+	Picking.test_hidden = {}
+	BattleFx.rollback_no_shown = false
 	await _drop(p)
+	return {"before": before, "after": after}
+
+
+func test_domes_and_belts_by_shown() -> void:
+	var r := await _shown_case(false)
+	var b0: Dictionary = r["before"]
+	var a0: Dictionary = r["after"]
+	ok(flag(b0["dome"]) and flag(b0["hover"]) and flag(b0["focus"]), "видимые: купол чужого РЭБ, пояс под курсором и пояс цели фокуса нарисованы (%s)" % str(b0))
+	ok(not flag(a0["dome"]) and not flag(a0["hover"]) and not flag(a0["focus"]), "скрытые фильтром — не нарисованы (%s)" % str(a0))
+	var o := await _shown_case(true)
+	var ao: Dictionary = o["after"]
+	ok(flag(ao["dome"]) and flag(ao["hover"]) and flag(ao["focus"]), "откат «купол и пояса мимо фильтра»: скрытые нарисованы (%s) — проверка краснеет" % str(ao))
 
 
 # ───────────────────────── флажок отката --old-ecm ─────────────────────────

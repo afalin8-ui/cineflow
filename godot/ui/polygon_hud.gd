@@ -13,6 +13,7 @@
 extends CanvasLayer
 
 const Ship := preload("res://sim/ship.gd")
+const State := preload("res://sim/state.gd")
 const Weapons := preload("res://sim/weapons.gd")
 const Defs := preload("res://sim/defs.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
@@ -23,6 +24,17 @@ const TOAST_REAL_MS := 4000
 const TOASTS_MAX := 3
 ## Полоски — ниже подсказки клавиш (две строки слева сверху, ui/fps_counter.gd).
 const TOAST_Y := 70.0
+## Зазор полосок до края экрана и до строки статуса справа.
+const TOAST_GAP := 16.0
+
+## ТОЛЬКО для проверок отката (замечания к G2), в игре всегда false:
+## полоски — по середине экрана, как было: на 1366 длинная полоса фокуса всего флота
+## наезжала на строку статуса справа («…идут на цельПланета (Ядерная ракета): 23 с»);
+static var rollback_toast_center := false
+## строка «чем занят» молчит о цели фокуса вне пояса (приказ выглядел невыполненным);
+static var rollback_focus_unnamed := false
+## «враг вплотную — … · бьёт батарея» без проверки, может ли батарея стрелять.
+static var rollback_bat_claim := false
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
@@ -120,8 +132,7 @@ func _process(_delta: float) -> void:
 	if tt != _last_toasts:
 		_last_toasts = tt
 		toasts.text = tt
-	toasts.reset_size()
-	toasts.position = Vector2((vs.x - toasts.size.x) * 0.5, TOAST_Y)
+	_place_toasts(vs)
 	var sl := _sel_text(b)
 	if sl != _last_sel:
 		_last_sel = sl
@@ -135,6 +146,29 @@ func _process(_delta: float) -> void:
 		banner.text = "Бой окончен: %s.\nF8 — начать заново" % ("ничья" if w < 0 else ("наша сторона держит орбиту" if w == my_side else "орбиту держит противник"))
 		banner.reset_size()
 		banner.position = ((vs - banner.size) * 0.5).floor() - Vector2(0.0, vs.y * 0.18)
+
+
+## Полоски — по середине экрана, если там им хватает места; иначе — в промежутке
+## между левым краем и строкой статуса справа (она стоит на той же высоте: заголовок,
+## часы, резерв, планета), а не шире его: длинная полоска переносится по словам.
+func _place_toasts(vs: Vector2) -> void:
+	toasts.autowrap_mode = TextServer.AUTOWRAP_OFF
+	toasts.custom_minimum_size = Vector2.ZERO
+	toasts.reset_size()
+	var w := toasts.size.x
+	var right := status.position.x - TOAST_GAP
+	var left := TOAST_GAP
+	var x := (vs.x - w) * 0.5
+	if not rollback_toast_center and x + w > right:
+		var band := maxf(right - left, 120.0)
+		if w > band:
+			toasts.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			toasts.custom_minimum_size = Vector2(band, 0.0)
+			toasts.size = Vector2(band, 0.0)
+			toasts.reset_size()
+			w = toasts.size.x
+		x = left + (band - w) * 0.5
+	toasts.position = Vector2(x, TOAST_Y)
 
 
 func _status_text(b: Object) -> String:
@@ -209,7 +243,7 @@ func _sel_text(b: Object) -> String:
 			names.append(s.name)
 		if s.side == my_side:
 			own += 1
-			var a := doing(s)
+			var a := doing(s, b as State)
 			var c: int = acts.get(a, 0)
 			acts[a] = c + 1
 	var head := "Выбрано: %d" % sel.size() if own > 0 else "Противник"
@@ -226,8 +260,9 @@ func _sel_text(b: Object) -> String:
 
 
 ## Чем занят свой корабль — одной строкой (07, 7.2 п. 2; 09, 6.7: слово «бьёт» — только
-## когда выстрел возможен).
-static func doing(s: Ship) -> String:
+## когда выстрел возможен). b — бой: докуда батарея бьёт сейчас (под помехами —
+## lockRange).
+static func doing(s: Ship, b: State) -> String:
 	if s.charging():
 		return "копит гипер %d с" % ceili(s.hyper_left)
 	if s.drift:
@@ -240,19 +275,30 @@ static func doing(s: Ship) -> String:
 	var jam := ""
 	if s.jam != null and s.heavy():
 		var jp: Defs.EcmDef = s.jam
-		jam = " · под помехами — главный калибр в %s раза реже" % Weapons._times(jp.main_slow)
+		jam = " · под помехами — главный калибр %s" % Weapons.slower(jp.main_slow)
 	if s.heavy():
-		var bat := (" · батареей по %s" % Weapons.short_name(sec)) if sec != null and not sec.dead and s.pos.distance_to(sec.pos) <= s.def.sec.rng else ""
+		# «батареей по …» — только если батарея по ней СЕЙЧАС достаёт (под помехами —
+		# ближе lockRange, 09, 1.3): иначе это обещание выстрела, которого нет
+		var bat := ""
+		if sec != null and not sec.dead and s.pos.distance_to(sec.pos) <= Weapons.sec_reach(b, s):
+			bat = " · батареей по %s" % Weapons.short_name(sec)
+		# цель фокуса вне пояса, а главный калибр бьёт свою цель в поясе (09, 6.3): приказ
+		# не потерян — строка называет, почему по цели фокуса не бьёт
+		var off := ""
+		if fz != null and not fz.dead and fz != t and not rollback_focus_unnamed:
+			off = " · %s вне пояса (%d)" % [Weapons.short_name(fz), roundi(s.pos.distance_to(fz.pos))]
 		if s.idle_reason == &"dead_zone":
-			return "враг вплотную — главный калибр не бьёт%s%s" % [bat if bat != "" else " · бьёт батарея", jam]
+			if rollback_bat_claim and bat == "":
+				bat = " · бьёт батарея"
+			return "враг вплотную — главный калибр не бьёт%s%s%s" % [bat, off, jam]
 		if t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
-			return "главным по %s (%d)%s%s" % [Weapons.short_name(t), roundi(s.pos.distance_to(t.pos)), bat, jam]
-		if fz != null and not fz.dead:
+			return "главным по %s (%d)%s%s%s" % [Weapons.short_name(t), roundi(s.pos.distance_to(t.pos)), bat, off, jam]
+		if fz != null and not fz.dead and not rollback_focus_unnamed:
 			return "цель %s вне пояса (%d) — стоит%s%s" % [Weapons.short_name(fz), roundi(s.pos.distance_to(fz.pos)), bat, jam]
 		if s.has_amove:
 			return "идёт с боем%s" % jam
 		if bat != "":
-			return "держит позицию%s%s" % [bat, jam]
+			return "держит позицию%s%s%s" % [bat, off, jam]
 	elif t != null and not t.dead:
 		var d := s.pos.distance_to(t.pos)
 		if s.has_amove or s.forced != null or s.stance == &"hunt":

@@ -31,6 +31,14 @@ mkdir -p "$LOGS"
 # кадры (хвост G1; tests/case.gd → tmp). Проверка с откатом — ниже, «своя папка прогона».
 export CAPELLA_TMP="$LOGS/tmp"
 mkdir -p "$CAPELLA_TMP"
+# И user:// у прогона СВОЙ (замечание к G2): Godot на Linux кладёт app_userdata в
+# $XDG_DATA_HOME. F9 из test_ui_polygon писал запись боя «capella_replay_<секунда>.json»
+# в общий user:// (путь приходил из main.gd, и сторож по строке «user://» в тестах его
+# не видел): два прогона в одну секунду писали ОДИН файл, и первый удалял его раньше,
+# чем второй прочёл. Теперь чужого прогона такой файл не заденет, а сторож после ярусов
+# (ниже) найдёт его в папке этого прогона. Кэш шейдеров при этом свой, холодный — как в CI.
+export XDG_DATA_HOME="$LOGS/xdg"
+mkdir -p "$XDG_DATA_HOME"
 TIERS=(sim ui)
 if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility); fi
 FAILED=0
@@ -88,7 +96,7 @@ got="$(tmp_pair -)"
 if [[ "$got" != "0 0" ]]; then fail "своя папка прогона: пробы дали «$got»"; cat "$LOGS"/probe_tmp_*.log >&2; else say "   $(grep -h '^PROBE_TMP' "$LOGS"/probe_tmp_*.log | tr '\n' ' ')"; fi
 got="$(tmp_pair shared)"
 if [[ "$got" == "0 0" ]]; then fail "откат «общая папка»: оба прогона увидели только своё — проверка ничего не ловит"; else say "   откат «общая папка» краснеет: коды $got, $(grep -h '^PROBE_TMP clash' "$LOGS"/probe_tmp_*.log | head -1)"; fi
-stray="$(grep -n 'user://' "$PROJ"/tests/*.gd | grep -v -e '/tests/case.gd:' -e 'get_process_id' -e '# путь, не файл' -e '^[^:]*:[0-9]*:\s*#' || true)"
+stray="$(grep -n 'user://' "$PROJ"/tests/*.gd | grep -v -e '/tests/case.gd:' -e 'get_process_id' -e '# путь, не файл' -e '# откат сторожа' -e '^[^:]*:[0-9]*:\s*#' || true)"
 if [[ -n "$stray" ]]; then fail "тесты пишут в общий user:// мимо tests/case.gd → tmp: $stray"; fi
 
 # ── 3–5. ярусы тестов ──
@@ -118,6 +126,24 @@ run_tier() {
   esac
 }
 for t in "${TIERS[@]}"; do run_tier "$t"; done
+
+# ── сторож user:// после ярусов (замечание к G2): ни один тест не оставил capella_*
+# в user:// этого прогона — всё временное идёт через tests/case.gd → tmp. Откат —
+# проба, которая пишет туда файл, как F9 до правки: сторож обязан его найти.
+say "── сторож user://: ярусы не пишут мимо tmp()"
+user_dir() { sed -n 's/^PROBE_USERDIR //p' "$1" | head -1; }
+stray_in() { find "$1" -maxdepth 1 -name 'capella_*' 2>/dev/null | sort; }
+timeout 60 "$GODOT" --headless --path "$PROJ" -s res://tests/probe_tmp.gd -- --userdir >"$LOGS/userdir.log" 2>&1
+udir="$(user_dir "$LOGS/userdir.log")"
+left="$(stray_in "$udir")"
+if [[ -z "$udir" || "$udir" != "$XDG_DATA_HOME"/* ]]; then fail "сторож user://: user:// прогона не в его папке («$udir»)"; show_tail "$LOGS/userdir.log"
+elif [[ -n "$left" ]]; then fail "ярусы оставили файлы в user:// мимо tests/case.gd → tmp: $(echo $left)"
+else say "   чисто: $udir"; fi
+sx="$(mktemp -d)"
+XDG_DATA_HOME="$sx" timeout 60 "$GODOT" --headless --path "$PROJ" -s res://tests/probe_tmp.gd -- --userdir stray >"$LOGS/userdir_stray.log" 2>&1
+sleft="$(stray_in "$(user_dir "$LOGS/userdir_stray.log")")"
+if [[ -z "$sleft" ]]; then fail "откат сторожа user://: файл пробы не найден — сторож ничего не ловит"; else say "   откат «файл в user://» ловится: $(basename "$sleft")"; fi
+rm -rf "$sx"
 
 # ── главная сцена сама: режим --selftest (тот же, что запускает выгруженные сборки) ──
 say "── главная сцена -- --selftest"

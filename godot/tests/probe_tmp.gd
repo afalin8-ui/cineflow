@@ -7,6 +7,8 @@
 # и читает обратно. Чужая метка или пропавший файл — «clash», код 1.
 # shared — откат: общая папка user://test_tmp, как было до правки; хоть один из двух
 # обязан увидеть чужое.
+#   … -s res://tests/probe_tmp.gd -- --userdir [stray] — напечатать, где user://
+# этого процесса (и в откате stray — оставить там файл capella_*).
 extends SceneTree
 
 const Case := preload("res://tests/case.gd")
@@ -20,6 +22,17 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
+	# -- --userdir [stray]: где у ЭТОГО процесса user:// (обёртка сторожит его после
+	# ярусов); stray — откат сторожа: записать туда файл, как F9 из теста мимо tmp()
+	if args.size() > 0 and args[0] == "--userdir":
+		var ud := ProjectSettings.globalize_path("user://")   # откат сторожа: путь, не файл
+		if args.size() > 1 and args[1] == "stray":
+			var w := FileAccess.open("user://capella_replay_probe.json", FileAccess.WRITE)   # откат сторожа
+			w.store_string("{}")
+			w.close()
+		print("PROBE_USERDIR %s" % ud)
+		quit(0)
+		return
 	if args.size() < 2:
 		printerr("probe_tmp: нужны папка встречи и метка")
 		quit(2)

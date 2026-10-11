@@ -35,6 +35,9 @@ static var rollback_move_own_speed := false
 static var rollback_move_one_point := false
 ## Отпечаток боя — только положения и прочность, как в G1: приказов и сторон не видит.
 static var rollback_fp_positions := false
+## ТОЛЬКО для проверки отката (02, ловушка 20): безоружный на «Охоте» к главному
+## вооружённому не пристраивается — держит свой участок посреди боя. В бою всегда false.
+static var rollback_hunt_no_lead := false
 
 
 ## Бой из состава быстрого боя (часть 01, 2.15). setup:
@@ -616,7 +619,7 @@ func _set_stance(list: Array[Ship], id: StringName) -> void:
 		s.stance = id
 		s.guard_of = null
 		s.anchor = s.pos
-		if lead != null and not s.can_hurt():
+		if lead != null and not s.can_hurt() and not rollback_hunt_no_lead:
 			var a := float(wi) * LEAD_A_STEP + LEAD_A0
 			wi += 1
 			var r := lead.hull + s.hull + LEAD_PAD

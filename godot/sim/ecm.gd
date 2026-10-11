@@ -23,6 +23,8 @@ const SPIN_K := 2.5
 ## ТОЛЬКО для проверки отката: глушит поле с мощностью, а не в режиме «Глушение» —
 ## «Молчать» снимало бы помехи не со следующего шага, а через ~3 с (04, 2.16).
 static var rollback_mode_by_power := false
+## ТОЛЬКО для проверки отката: своё «Прикрытие» чужих помех не снимает (04, 2.16).
+static var rollback_no_shield := false
 
 
 ## Профиль купола корабля: клановый (у Девиана радиус ×1,45, lockRange ×0,6…).
@@ -67,8 +69,8 @@ static func profile(b: State, pos: Vector2, side: int) -> Defs.EcmDef:
 		if in_field(f, pos):
 			hit = f.prof
 			break
-	if hit == null:
-		return null
+	if hit == null or rollback_no_shield:
+		return hit
 	for f in b.fields:
 		if f.mode != &"shield" or f.side != side:
 			continue

@@ -24,6 +24,7 @@ const BattleView := preload("res://view/battle_view.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
 const MainScene := preload("res://main.tscn")
 const Polygon := preload("res://tools/polygon.gd")
+const PolygonHud := preload("res://ui/polygon_hud.gd")
 
 const BIG := 1.0e9
 
@@ -63,6 +64,11 @@ func _lab_view(setup: Callable) -> BattleView:
 	tree.root.add_child(v)
 	v.setup(_get_defs(), b, false)
 	v.paused = true                          # шагает сама проверка, а не часы кадров
+	# часы вида стоят: покачивание (view.bob) считается от НАСТОЯЩИХ часов, и концы
+	# луча от прогона к прогону сдвигались на доли точки — откат «тонкий луч» гулял
+	# 67…87% при пороге 80% (замечание к G2). Рисует проверка сама — draw_state()
+	v.set_process(false)
+	v.clock = 0.0
 	v.rig.edge_enabled = false
 	v.rig.input_enabled = false
 	await hooks.frames(2)
@@ -129,13 +135,23 @@ static func _lit_share(img: Image, a: Vector2, b: Vector2, thr: float, n: int = 
 ## mode: &"ok" — как в игре; &"no_min" — откат «без нижнего предела толщины»
 ## (min_px = 0); &"no_abs" — откат «как было с G0b»: шейдер без abs у
 ## PROJECTION_MATRIX[1][1] (он отрицательный — предел не действует).
-func _beam_share(mode: StringName) -> float:
+## Луч стоит на экране ВЕРТИКАЛЬНО (камера смотрит вдоль него), и кадр снимается при
+## восьми сдвигах камеры вбок на восьмую точки: тонкий луч (0,6 точки) пропадает
+## там, где середина точки выпала из полоски, — а на вертикали это видно сразу всей
+## длиной хотя бы при одном из восьми сдвигов (полоска 0,6, промежуток 0,4 > 0,125).
+## → доли «виден» по сдвигам. Раньше луч шёл наискось при одном положении, и доля
+## у отката зависела от того, куда пришлась полоска: 67…87% (замечание к G2).
+const BEAM_SHIFTS := 8
+
+
+func _beam_shares(mode: StringName) -> PackedFloat64Array:
 	var v := await _lab_view(func(b: Battle) -> void:
 		var f := _put(b, Ship.ATTACKER, &"frigate", Vector2(0, 0), Vector2(0, -250))
 		f.light_cd = PackedFloat64Array([0.0])
 		f.pd_cd = PackedFloat64Array()
 		_quiet(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -250), Vector2(0, 0))))
-	v.rig.set_view(Vector3(0, 0, -125), 0.6, 2400.0, true)
+	var mid := Vector3(0, 0, -125)
+	v.rig.set_view(mid, 0.0, 2400.0, true)
 	var mat := v.bfx.gfx.beam_mat
 	if mode == &"no_min":
 		mat.set_shader_parameter("min_px", 0.0)
@@ -147,27 +163,43 @@ func _beam_share(mode: StringName) -> float:
 	await hooks.frames(2)
 	var fired := _until_fire(v, &"light")
 	ok(fired, "лёгкое орудие выстрелило")
-	v.draw_state()
-	await hooks.frames(3)
-	var img := tree.root.get_texture().get_image()
 	var me := v.battle.ships[0]
 	var tg := v.battle.ships[1]
 	var cam := v.rig.camera
-	var a := cam.unproject_position(v.visual_of(me).part_point(&"muzzle_0"))
-	var bb := cam.unproject_position(v.ship_point(tg))
-	var share := _lit_share(img, a, bb, 0.06)
-	note("%s · луч %s: виден на %.0f%% середины" % [renderer(), mode, share * 100.0])
-	img.save_png(_shots_dir().path_join("beam_2400_%s_%s.png" % [mode, renderer()]))
+	# точек экрана на единицу мира поперёк луча — на его середине
+	var px_per := cam.unproject_position(mid + Vector3(1, 0, 0)).distance_to(cam.unproject_position(mid))
+	var out := PackedFloat64Array()
+	for k in BEAM_SHIFTS:
+		v.rig.set_view(mid + Vector3(float(k) / float(BEAM_SHIFTS) / px_per, 0, 0), 0.0, 2400.0, true)
+		v.draw_state()
+		await hooks.frames(3)
+		var img := tree.root.get_texture().get_image()
+		var a := cam.unproject_position(v.visual_of(me).part_point(&"muzzle_0"))
+		var bb := cam.unproject_position(v.ship_point(tg))
+		out.append(_lit_share(img, a, bb, 0.06))
+		if k == 0:
+			img.save_png(_shots_dir().path_join("beam_2400_%s_%s.png" % [mode, renderer()]))
+	var txt := PackedStringArray()
+	for x in out:
+		txt.append("%.0f%%" % (x * 100.0))
+	note("%s · луч %s: виден на %s середины (сдвиги по %.2f точки, луч вертикален: %.1f → %.1f)" % [renderer(), mode, ", ".join(txt), 1.0 / BEAM_SHIFTS, cam.unproject_position(v.ship_point(me)).x, cam.unproject_position(v.ship_point(tg)).x])
 	await _drop(v)
-	return share
+	return out
+
+
+static func _min_of(a: PackedFloat64Array) -> float:
+	var m := INF
+	for x in a:
+		m = minf(m, x)
+	return m
 
 
 func test_beam_not_thinner_than_pixel_at_2400() -> void:
-	var s := await _beam_share(&"ok")
-	ok(s >= 0.95, "%s: луч лёгкого орудия на 2400 (0,9 в мире — меньше точки) виден вдоль %.0f%% середины" % [renderer(), s * 100.0])
+	var s := await _beam_shares(&"ok")
+	ok(s.size() == BEAM_SHIFTS and _min_of(s) >= 0.95, "%s: луч лёгкого орудия на 2400 (0,9 в мире — меньше точки) виден вдоль всей середины при любом сдвиге: худший %.0f%%" % [renderer(), _min_of(s) * 100.0])
 	for m: StringName in [&"no_min", &"no_abs"]:
-		var o := await _beam_share(m)
-		ok(o < 0.8, "%s: откат «%s»: луч рвётся — виден на %.0f%% середины, проверка краснеет" % [renderer(), m, o * 100.0])
+		var o := await _beam_shares(m)
+		ok(_min_of(o) < 0.5, "%s: откат «%s»: луч рвётся — при худшем сдвиге виден на %.0f%% середины, проверка краснеет" % [renderer(), m, _min_of(o) * 100.0])
 
 
 # ───────────────────────── купол в покое — одно кольцо по полю ─────────────────────────
@@ -362,6 +394,55 @@ func test_skirmish_snapshots() -> void:
 			await hooks.frames(2)
 			ok(hint.get_global_rect().intersects(status.get_global_rect()), "%s %s: откат «длинный заголовок» наезжает — проверка краснеет" % [renderer(), tag])
 			hud.set("title", was)
+		main.queue_free()
+		await hooks.frames(3)
+		b.dispose()
+
+
+## Полоска фокуса ВСЕГО флота не наезжает на строку статуса справа (замечание к G2: на
+## 1366 полоса в 799 точек по середине экрана доходила до 1082, а статус начинается
+## с 1023 — на снимке «…идут на цельПланета (Ядерная ракета): 23 с»). Полоски стоят на
+## той же высоте, что статус, и обязаны умещаться между левым краем и им. Откат — по
+## середине экрана, как было (на 1366 краснеет, на 1920 места хватает и так).
+func test_toast_not_on_status() -> void:
+	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
+		var got := await hooks.set_window_size(size)
+		var main := MainScene.instantiate()
+		tree.root.add_child(main)
+		await hooks.frames(6)
+		var poly: Polygon = main.get("polygon")
+		var view := poly.view
+		var b := view.battle
+		view.paused = true
+		var all_own: Array[int] = []
+		var foe: Ship = null
+		for s in b.ships:
+			if s.side == Ship.ATTACKER:
+				all_own.append(s.uid)
+			elif s.def.id == &"cruiser" and foe == null:
+				foe = s
+		view.selection = all_own
+		b.queue({"op": &"focus", "ids": all_own, "target": foe.uid})
+		view.paused = false
+		view.advance(Battle.STEP)
+		view.paused = true
+		await hooks.frames(3)
+		var tag := "%d×%d" % [got.x, got.y]
+		var fps: Node = main.get("fps")
+		var hint: Label = fps.get("hint")
+		var hud: Node = poly.get("hud")
+		var status: Label = hud.get("status")
+		var toasts: Label = hud.get("toasts")
+		ok(toasts.text.contains("Цель — ") and toasts.text.contains("лёгкие идут на цель"), "%s %s: полоска фокуса всего флота: «%s»" % [renderer(), tag, toasts.text.replace("\n", " / ")])
+		ok(not toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: полоска (%s) не наезжает на строку статуса (%s)" % [renderer(), tag, str(toasts.get_global_rect()), str(status.get_global_rect())])
+		ok(not toasts.get_global_rect().intersects(hint.get_global_rect()), "%s %s: и на подсказку клавиш (%s)" % [renderer(), tag, str(hint.get_global_rect())])
+		ok(toasts.get_global_rect().position.x >= 0.0 and toasts.get_global_rect().end.x <= float(got.x), "%s %s: полоска в пределах экрана" % [renderer(), tag])
+		tree.root.get_texture().get_image().save_png(_shots_dir().path_join("toast_%s_%s.png" % [renderer(), tag]))
+		if got.x < 1500:
+			PolygonHud.rollback_toast_center = true
+			await hooks.frames(2)
+			ok(toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: откат «полоска по середине экрана» наезжает на статус (%s) — проверка краснеет" % [renderer(), tag, str(toasts.get_global_rect())])
+			PolygonHud.rollback_toast_center = false
 		main.queue_free()
 		await hooks.frames(3)
 		b.dispose()

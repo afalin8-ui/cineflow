@@ -24,6 +24,7 @@ const Proj := preload("res://sim/proj.gd")
 const Defs := preload("res://sim/defs.gd")
 const FxPool := preload("res://view/fx_pool.gd")
 const ShipVisual := preload("res://view/ship_visual.gd")
+const Picking := preload("res://input/picking.gd")
 const SpaceEnv := preload("res://view/space_env.gd")
 const BELT_SHADER := preload("res://view/shaders/belt.gdshader")
 const SPRITE_SHADER := preload("res://view/shaders/sprite.gdshader")
@@ -64,6 +65,9 @@ static var rollback_dome_js := false
 static var rollback_no_belts := false
 ## Круги у всех выделенных, без правила «больше трёх — только главный» (P5).
 static var rollback_all_circles := false
+## Купол и пояса — мимо единого фильтра видимости (только «не погиб»), как было до
+## доработки G2: со скрытностью купол скрытого РЭБ рисовался бы (04-33, C67).
+static var rollback_no_shown := false
 ## След ракеты кладётся по игровому времени (space.js:1693: раз в 0,035 с).
 const TRAIL_EVERY := 0.035
 
@@ -394,7 +398,8 @@ func _draw_domes(sel: Array[int], hover: int) -> void:
 			_domes[s.uid] = parts
 		var ring: MeshInstance3D = parts[0]
 		var wall: MeshInstance3D = parts[1]
-		var on := not s.dead and s.ecm_power > 0.02
+		# единый фильтр видимости (input/picking.gd → shown; 04, ловушка 33, C67)
+		var on := _shown(s) and s.ecm_power > 0.02
 		ring.visible = on
 		if not on:
 			wall.visible = false
@@ -452,15 +457,15 @@ func _dome_wall(_s: Ship) -> MeshInstance3D:
 func circle_list(sel: Array[int], hover: int) -> Array[Ship]:
 	var out: Array[Ship] = []
 	var hs := battle.ship_by_uid(hover) if hover > 0 else null
-	if hs != null and not hs.dead and hs.range0() > 0.0:
+	if hs != null and _shown(hs) and hs.range0() > 0.0:
 		out.append(hs)
 	var own: Array[Ship] = []
 	for u in sel:
 		var s := battle.ship_by_uid(u)
-		if s == null or s.dead:
+		if s == null or not _shown(s):
 			continue
 		var fz := s.forced as Ship
-		if fz != null and not fz.dead and fz.range0() > 0.0 and fz not in out:
+		if fz != null and _shown(fz) and fz.range0() > 0.0 and fz not in out:
 			out.append(fz)
 		if s.side == my_side and s.range0() > 0.0:
 			own.append(s)
@@ -480,6 +485,11 @@ func circle_list(sel: Array[int], hover: int) -> Array[Ship]:
 	while out.size() > MAX_CIRCLES and not rollback_all_circles:
 		out.pop_back()
 	return out
+
+
+## Тот же фильтр, что у корабля на экране и выбора (input/picking.gd).
+func _shown(s: Ship) -> bool:
+	return not s.dead if rollback_no_shown else Picking.shown(s, my_side)
 
 
 func _draw_belts(sel: Array[int], hover: int) -> void:
