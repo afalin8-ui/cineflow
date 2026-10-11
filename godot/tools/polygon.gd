@@ -120,6 +120,7 @@ func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}) -> bool:
 	input.box_changed = hud.show_box
 	input.orders_enabled = replay.is_empty()
 	add_child(input)
+	hud.input = input
 	if not replay.is_empty():
 		var st: float = replay.get("steps", 0.0)
 		view.stop_at_step = roundi(st)

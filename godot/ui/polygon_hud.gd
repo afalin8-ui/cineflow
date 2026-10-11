@@ -17,11 +17,16 @@ const State := preload("res://sim/state.gd")
 const Weapons := preload("res://sim/weapons.gd")
 const Defs := preload("res://sim/defs.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
+const Squad := preload("res://sim/squad.gd")
+const Craft := preload("res://sim/craft.gd")
+const Body := preload("res://sim/body.gd")
 
 ## Сколько игровых секунд живёт полоска модели и сколько настоящих — своя.
 const TOAST_GAME_S := 4.5
 const TOAST_REAL_MS := 4000
 const TOASTS_MAX := 3
+## Подсказок ввода — не больше двух: третья строка остаётся полоске модели.
+const HINTS_MAX := 2
 ## Полоски — ниже подсказки клавиш (две строки слева сверху, ui/fps_counter.gd).
 const TOAST_Y := 70.0
 ## Зазор полосок до края экрана и до строки статуса справа.
@@ -35,9 +40,18 @@ static var rollback_toast_center := false
 static var rollback_focus_unnamed := false
 ## «враг вплотную — … · бьёт батарея» без проверки, может ли батарея стрелять.
 static var rollback_bat_claim := false
+## Хвосты G2 (замечания проверяющих), в игре всегда false:
+## подсказки ввода («A — щёлкните точку или врага», «Сначала выбери…») — ПОСЛЕ полосок
+## модели, как было: три полоски приказов вытесняли подсказку целиком;
+static var rollback_hints_last := false
+## тяжёлый со своей целью вне пояса пишет «охота · целей не видно», а лёгкий под
+## помехами дальше lockRange — «бьёт X», хотя выстрел невозможен.
+static var rollback_doing_g2 := false
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
+## Ввод (input/battle_input.gd): ждёт ли A щелчка — подсказка держится, пока ждёт.
+var input: Node
 var title := ""
 
 var status: Label
@@ -200,18 +214,21 @@ func _status_text(b: Object) -> String:
 	return "\n".join(lines)
 
 
+## Подсказка ввода, которая держится, пока ввод в этом состоянии (A ждёт щелчка).
+func input_hint() -> String:
+	if input == null:
+		return ""
+	var armed: bool = input.get("amove_armed")
+	return "A — щёлкните точку или врага · Esc — отмена" if armed else ""
+
+
 func _toast_text(b: Object) -> String:
-	var out := PackedStringArray()
-	var log: Array[Dictionary] = b.get("toast_log")
-	var t: float = b.get("time")
-	var i := log.size() - 1
-	while i >= 0 and out.size() < TOASTS_MAX:
-		var e: Dictionary = log[i]
-		var et: float = e["t"]
-		if t - et > TOAST_GAME_S:
-			break
-		out.append(str(e["text"]))
-		i -= 1
+	# подсказки ввода — ПЕРВЫМИ и всегда (хвост G2): полоски модели о приказах шли
+	# первыми, и три приказа подряд вытесняли «A — щёлкните точку или врага» целиком
+	var hints := PackedStringArray()
+	var ih := input_hint()
+	if ih != "":
+		hints.append(ih)
 	var now := Time.get_ticks_msec()
 	var keep: Array[Array] = []
 	for l in _local:
@@ -220,10 +237,29 @@ func _toast_text(b: Object) -> String:
 			keep.append(l)
 	_local = keep
 	for j in range(_local.size() - 1, -1, -1):
-		if out.size() >= TOASTS_MAX:
+		if hints.size() >= HINTS_MAX:
 			break
-		out.append(str(_local[j][0]))
-	return "\n".join(out)
+		hints.append(str(_local[j][0]))
+	var room := TOASTS_MAX if rollback_hints_last else TOASTS_MAX - hints.size()
+	var out := PackedStringArray()
+	var log: Array[Dictionary] = b.get("toast_log")
+	var t: float = b.get("time")
+	var i := log.size() - 1
+	while i >= 0 and out.size() < room:
+		var e: Dictionary = log[i]
+		var et: float = e["t"]
+		if t - et > TOAST_GAME_S:
+			break
+		out.append(str(e["text"]))
+		i -= 1
+	if rollback_hints_last:
+		for h in hints:
+			if out.size() >= TOASTS_MAX:
+				break
+			out.append(h)
+		return "\n".join(out)
+	hints.append_array(out)
+	return "\n".join(hints)
 
 
 ## Что выбрано и чем занято: «Выбрано: 3 · идут», имена — до четырёх.
@@ -231,18 +267,36 @@ func _sel_text(b: Object) -> String:
 	var sel: Array[int] = view.get("selection")
 	var my_side: int = view.get("my_side")
 	if sel.is_empty():
-		return "Ничего не выбрано · ЛКМ — выбрать, протяжка — рамка\nB — подкрепление · Пробел — пауза · 1, 2, 4 — скорость"
+		return "Ничего не выбрано · ЛКМ — выбрать, протяжка — рамка, щелчок по машине — её звено\nНоситель: Z / X / C — поднять звено · B — подкрепление · Пробел — пауза · 1, 2, 4 — скорость"
 	var names := PackedStringArray()
 	var own := 0
+	var own_carriers := 0
+	var free_bays := 0
+	var own_squads := 0
 	var acts: Dictionary[String, int] = {}
 	for u in sel:
 		var s: Ship = b.call("ship_by_uid", u)
+		var q: Squad = b.call("squad_by_uid", u) if s == null else null
+		if q != null and not q.dead:
+			# звено: «Перехватчик «Зонг» ×4/5» (04, 1.1)
+			if names.size() < 4:
+				names.append(squad_name(q, b as State))
+			if q.side == my_side:
+				own += 1
+				own_squads += 1
+				var qa := squad_doing(q, b as State)
+				var qc: int = acts.get(qa, 0)
+				acts[qa] = qc + 1
+			continue
 		if s == null or s.dead:
 			continue
 		if names.size() < 4:
 			names.append(s.name)
 		if s.side == my_side:
 			own += 1
+			if s.hangar != null:
+				own_carriers += 1
+				free_bays += s.hangar.free
 			var a := doing(s, b as State)
 			var c: int = acts.get(a, 0)
 			acts[a] = c + 1
@@ -254,9 +308,53 @@ func _sel_text(b: Object) -> String:
 	var line := "%s — %s%s" % [head, ", ".join(names), more]
 	if not act_list.is_empty():
 		line += "\n" + ", ".join(act_list)
-	if own > 0:
+	if own_carriers > 0:
+		line += "\nZ — перехватчики · X — истребители · C — бомбардировщики · свободно мест в ангаре: %d" % free_bays
+	if own_squads > 0 and own_squads == own:
+		line += "\nПКМ — лететь, по врагу или чужому звену — бить · V — на посадку"
+	elif own > 0:
 		line += "\nПКМ — лететь, по врагу — бить его · A — атака с ходу · H/S — стоять · Y — охрана · T — охота · G — гипер · D — дрифт"
 	return line
+
+
+## «Перехватчик «Зонг» ×4/5» — роль, имя машины, живых из поднятых (04, 1.1).
+static func squad_name(q: Squad, b: State) -> String:
+	var rd: Defs.StrikeRoleDef = b.defs.strike_roles.get(q.role)
+	return "%s %s ×%d/%d" % [rd.label if rd != null else str(q.role), q.def.name, q.craft.size(), q.size]
+
+
+## Чем занято своё звено (04, 1.1: «атакует», «идёт к точке», «перезаряжается»,
+## «патрулирует»; доктрина 09, 4.2 и 4.4 — обход с фланга и патруль над своей линией).
+static func squad_doing(q: Squad, b: State) -> String:
+	if q.recall:
+		return "на посадку"
+	var reloading := 0
+	var flank := 0
+	var fighting := 0
+	var leaving := 0
+	for c in q.craft:
+		if c.leaving:
+			leaving += 1
+		elif c.reloading > 0.0:
+			reloading += 1
+		elif c.role == &"bomber" and not b.bomber_direct and c.leg < 2:
+			flank += 1
+		elif c.target != null:
+			fighting += 1
+	if leaving > 0:
+		return "ракет нет — уходит с поля"
+	if reloading * 2 >= q.craft.size():
+		return "перезаряжается у носителя"
+	if flank * 2 >= q.craft.size():
+		return "обходит строй с фланга"
+	if fighting > 0:
+		var t := q.target as Ship
+		return "атакует %s" % Weapons.short_name(t) if t != null and not t.dead else "атакует"
+	if q.has_move:
+		return "идёт к точке"
+	if q.role == &"interceptor":
+		return "патрулирует над своей линией"
+	return "кружит у носителя"
 
 
 ## Чем занят свой корабль — одной строкой (07, 7.2 п. 2; 09, 6.7: слово «бьёт» — только
@@ -295,15 +393,27 @@ static func doing(s: Ship, b: State) -> String:
 			return "главным по %s (%d)%s%s%s" % [Weapons.short_name(t), roundi(s.pos.distance_to(t.pos)), bat, off, jam]
 		if fz != null and not fz.dead and not rollback_focus_unnamed:
 			return "цель %s вне пояса (%d) — стоит%s%s" % [Weapons.short_name(fz), roundi(s.pos.distance_to(fz.pos)), bat, jam]
+		# своя цель вне пояса (на «Охоте» — до 1,8 R): пока тяжёлый в пояс не ходит (G4),
+		# он стоит, и строка обязана это сказать, а не «целей не видно» (хвост G2)
+		if t != null and not t.dead and not s.has_amove and not rollback_doing_g2:
+			var dt_ := s.pos.distance_to(t.pos)
+			return "цель %s %s (%d) — стоит%s%s" % [Weapons.short_name(t), "вне пояса" if Weapons.main_reach(s, dt_) > 0 else "в мёртвой зоне", roundi(dt_), bat, jam]
 		if s.has_amove:
 			return "идёт с боем%s" % jam
 		if bat != "":
 			return "держит позицию%s%s%s" % [bat, off, jam]
-	elif t != null and not t.dead:
-		var d := s.pos.distance_to(t.pos)
-		if s.has_amove or s.forced != null or s.stance == &"hunt":
-			return ("бьёт %s" if s.def.light != null and d <= s.def.light.rng else "идёт на %s") % Weapons.short_name(t)
-		return ("бьёт %s" if s.def.light != null and d <= s.def.light.rng else "охрана · видит %s") % Weapons.short_name(t)
+	elif s.target != null:
+		var tb := s.target as Body
+		if tb != null and not tb.dead:
+			var d := s.pos.distance_to(tb.pos)
+			var tn := Weapons.short_name(t) if t != null else "машины звена"
+			# под помехами лёгкое бьёт только ближе lockRange: «бьёт X» дальше — обещание
+			# выстрела, которого нет (хвост G2; 09, 6.7)
+			if s.def.light != null and d <= s.def.light.rng and d > Weapons.light_reach(b, s) and not rollback_doing_g2:
+				return "под помехами — бьёт только вблизи (%s в %d)" % [tn, roundi(d)]
+			if s.has_amove or s.forced != null or s.stance == &"hunt":
+				return ("бьёт %s" if s.def.light != null and d <= s.def.light.rng else "идёт на %s") % tn
+			return ("бьёт %s" if s.def.light != null and d <= s.def.light.rng else "охрана · видит %s") % tn
 	if s.has_amove:
 		return "идёт с боем"
 	if s.vel.length() > 3.0:

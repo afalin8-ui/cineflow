@@ -485,6 +485,12 @@ static func sec_reach(b: State, s: Ship) -> float:
 	return _lock(b, s, s.def.sec.rng) if s.def.sec != null else 0.0
 
 
+## Докуда лёгкое орудие бьёт СЕЙЧАС: под помехами и ослеплением — lockRange (09, 1.4);
+## 0 — лёгкого орудия нет. Для строки «чем занят» (09, 6.7).
+static func light_reach(b: State, s: Ship) -> float:
+	return _lock(b, s, s.def.light.rng) if s.def.light != null else 0.0
+
+
 ## «Крейсер «Рэш» II» → «Рэш» II: собственное имя с номером (space.js:985 shortName).
 static func short_name(s: Ship) -> String:
 	var n := s.name

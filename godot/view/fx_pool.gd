@@ -78,28 +78,31 @@ func _pool(mesh: ArrayMesh, slots: int, mat: ShaderMaterial, nm: String) -> Mult
 
 
 ## Луч или трасса от a до b: толщина в мире (не меньше min_px точек экрана), цвет,
-## срок жизни, яркость (больше 1 — светится).
-func beam(a: Vector3, b: Vector3, color: Color, width: float, life: float, power: float = 1.0) -> void:
+## срок жизни, яркость (больше 1 — светится). px — свой нижний предел в точках экрана
+## (0 — общий у материала): главный калибр толще лёгкого и там, где оба упёрлись в предел.
+func beam(a: Vector3, b: Vector3, color: Color, width: float, life: float, power: float = 1.0, px: float = 0.0) -> void:
 	var mm := beams.multimesh
 	var i := _beam_next
 	_beam_next = (_beam_next + 1) % mm.instance_count
-	mm.set_instance_transform(i, Transform3D(Basis(b - a, Vector3.UP, Vector3(color.r, color.g, color.b)), a))
+	mm.set_instance_transform(i, Transform3D(Basis(b - a, Vector3(px, 1.0, 0.0), Vector3(color.r, color.g, color.b)), a))
 	mm.set_instance_custom_data(i, Color(now, life, width, power))
 	beams_written += 1
 
 
-func flash(p: Vector3, color: Color, size: float, life: float, power: float = 1.0) -> void:
+## Вспышка: размер в мире (не меньше min_px точек; px — свой предел, 0 — общий).
+func flash(p: Vector3, color: Color, size: float, life: float, power: float = 1.0, px: float = 0.0) -> void:
 	var mm := flashes.multimesh
 	var i := _flash_next
 	_flash_next = (_flash_next + 1) % mm.instance_count
-	mm.set_instance_transform(i, Transform3D(Basis(Vector3.RIGHT, Vector3.UP, Vector3(color.r, color.g, color.b)), p))
+	mm.set_instance_transform(i, Transform3D(Basis(Vector3.RIGHT, Vector3(px, 1.0, 0.0), Vector3(color.r, color.g, color.b)), p))
 	mm.set_instance_custom_data(i, Color(now, life, size, power))
 	flashes_written += 1
 
 
 ## Летящий отрезок от a к b: голова проходит путь за dist / speed, хвост — seg позади;
-## delay — родиться позже (очередь батареи: росчерк за росчерком). Слот — самый старый.
-func tracer(a: Vector3, b: Vector3, color: Color, width: float, speed: float, seg: float, power: float = 1.0, delay: float = 0.0) -> void:
+## delay — родиться позже (очередь батареи: росчерк за росчерком), px — свой нижний
+## предел толщины в точках экрана (0 — общий). Слот — самый старый.
+func tracer(a: Vector3, b: Vector3, color: Color, width: float, speed: float, seg: float, power: float = 1.0, delay: float = 0.0, px: float = 0.0) -> void:
 	if tracers == null:
 		return
 	var mm := tracers.multimesh
@@ -107,7 +110,7 @@ func tracer(a: Vector3, b: Vector3, color: Color, width: float, speed: float, se
 	_tracer_next = (_tracer_next + 1) % mm.instance_count
 	var d := maxf(a.distance_to(b), 1e-3)
 	var frac := minf(seg / d, 1.0)
-	mm.set_instance_transform(i, Transform3D(Basis(b - a, Vector3(frac, 0.0, 0.0), Vector3(color.r, color.g, color.b)), a))
+	mm.set_instance_transform(i, Transform3D(Basis(b - a, Vector3(frac, px, 0.0), Vector3(color.r, color.g, color.b)), a))
 	mm.set_instance_custom_data(i, Color(now + delay, d / maxf(speed, 1.0), width, power))
 	tracers_written += 1
 

@@ -11,6 +11,8 @@
 extends RefCounted
 
 const Ship := preload("res://sim/ship.gd")
+const Craft := preload("res://sim/craft.gd")
+const Squad := preload("res://sim/squad.gd")
 
 ## «Ближайший» — центр корабля на экране не дальше 30 точек (06, 2.4.3).
 const NEAR_PX := 30.0
@@ -180,3 +182,84 @@ static func _ships(b: Variant) -> Array[Ship]:
 		return out
 	var list: Array[Ship] = o.get("ships")
 	return list
+
+
+
+# ───────────────────────── авиация (G3; часть 04, 1.1) ─────────────────────────
+
+## Звено под точкой экрана: ближайшая к курсору машина в 30 точках — её звено целиком
+## (машину отдельно выбрать нельзя, 04, 1.1). Фильтр видимости — тот же (C18; 04,
+## ловушка 24: скрытая машина прячется так же, как корабль). → [звено, расстояние] или [].
+static func pick_squad(view: Node3D, screen: Vector2, px: float = NEAR_PX) -> Array:
+	var cam := _cam(view)
+	if cam == null:
+		return []
+	var b: Variant = view.get("battle")
+	if typeof(b) != TYPE_OBJECT:
+		return []
+	var bo: Object = b
+	var crafts: Array[Craft] = bo.get("crafts")
+	var best: Craft = null
+	var best_d := px
+	for c in crafts:
+		if c.dead or test_hidden.has(c.uid):
+			continue
+		var p: Vector3 = view.call("craft_point", c)
+		if cam.is_position_behind(p):
+			continue
+		var d := cam.unproject_position(p).distance_to(screen)
+		if d <= best_d:
+			best_d = d
+			best = c
+	if best == null or best.squad == null:
+		return []
+	return [best.squad as Squad, best_d]
+
+
+## Кто под точкой: корабль (капсула корпуса — первым) или звено; ближе к курсору из
+## «ближайшего корабля в 30» и «ближайшей машины в 30». → Ship, Squad или null.
+static func pick_any(view: Node3D, screen: Vector2) -> RefCounted:
+	var cam := _cam(view)
+	if cam == null:
+		return null
+	var hull := pick_hull(view, screen)
+	if hull != null:
+		return hull
+	var sq := pick_squad(view, screen)
+	var near_s := nearest(view, screen, NEAR_PX)
+	if sq.is_empty():
+		return near_s
+	if near_s == null:
+		var q0: Squad = sq[0]
+		return q0
+	var sp: Vector3 = view.call("ship_point", near_s)
+	var ds := cam.unproject_position(sp).distance_to(screen)
+	var dq: float = sq[1]
+	if dq < ds:
+		var q1: Squad = sq[0]
+		return q1
+	return near_s
+
+
+## Свои звенья, чей центр на экране внутри рамки (06, 2.5; 04, 1.1).
+static func squads_in_box(view: Node3D, rect: Rect2) -> Array[int]:
+	var out: Array[int] = []
+	var cam := _cam(view)
+	if cam == null:
+		return out
+	var my_side: int = view.get("my_side")
+	var b: Variant = view.get("battle")
+	if typeof(b) != TYPE_OBJECT:
+		return out
+	var bo: Object = b
+	var squads: Array[Squad] = bo.get("squads")
+	for q in squads:
+		if q.dead or q.side != my_side:
+			continue
+		var c: Vector3 = view.call("squad_point", q)
+		if cam.is_position_behind(c):
+			continue
+		var p := cam.unproject_position(c)
+		if p.x >= rect.position.x and p.x <= rect.end.x and p.y >= rect.position.y and p.y <= rect.end.y:
+			out.append(q.uid)
+	return out

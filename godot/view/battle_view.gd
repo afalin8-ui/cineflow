@@ -27,6 +27,9 @@ const ShipVisualScene := preload("res://view/ship_visual.tscn")
 const FxPool := preload("res://view/fx_pool.gd")
 const Picking := preload("res://input/picking.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
+const AirView := preload("res://view/air_view.gd")
+const Craft := preload("res://sim/craft.gd")
+const Squad := preload("res://sim/squad.gd")
 
 ## 4× при 30 кадрах — 4 шага; больше — бой замедляется, а не дробит шаг (архитектура, 3).
 const MAX_STEPS := 8
@@ -51,6 +54,8 @@ var rig: CameraRig
 var fx: FxPool
 ## Огонь, снаряды, купола, пояса, орудие планеты — игровыми часами (с G2).
 var bfx: BattleFx
+## Авиация: машины точками со следами (G3).
+var air: AirView
 ## Корабль под курсором (uid, 0 — никого): его пояс и полный купол (09, 6.7; 04, ловушка 17).
 var hover_uid := 0
 ## Сторона, за которую смотрит игрок (её корабли — «свои»).
@@ -130,6 +135,13 @@ func setup(p_defs: Defs, p_battle: Battle, with_env: bool = true) -> void:
 	bfx.name = "BattleFx"
 	add_child(bfx)
 	bfx.setup(battle, my_side, point_of, visual_of)
+	air = AirView.new()
+	air.name = "AirView"
+	add_child(air)
+	air.setup(battle, my_side)
+	air.ship_pt = ship_point
+	air.proj_pt = bfx.proj_point
+	bfx.craft_pt = air.point_of
 	for s in battle.ships:
 		_add_visual(s)
 	draw_state()
@@ -323,6 +335,7 @@ func _remember_prev() -> void:
 		if not s.dead:
 			_prev[s.uid] = Vector3(s.pos.x, s.pos.y, s.yaw)
 	bfx.remember()
+	air.remember()
 
 
 ## События ЭТОГО шага (архитектура, 2.10): новые корабли, гипер, выход, итог; огонь
@@ -331,6 +344,7 @@ func _consume(events: Array[Array]) -> void:
 	for e in events:
 		var kind: StringName = e[0]
 		bfx.consume(e)
+		air.consume(e)
 		match kind:
 			&"spawn":
 				var u: int = e[1]
@@ -396,7 +410,9 @@ func draw_state() -> void:
 	_draw_lines(a)
 	fx.set_time(clock)
 	# игровые часы на этом кадре: начало шага + доля шага (на паузе стоят)
-	bfx.draw(a, battle.time - Battle.STEP + a * Battle.STEP, selection, hover_uid)
+	var game_t := battle.time - Battle.STEP + a * Battle.STEP
+	air.draw(a, game_t, selection)
+	bfx.draw(a, game_t, selection, hover_uid)
 
 
 func _draw_plumes(s: Ship) -> void:
@@ -449,6 +465,20 @@ func _draw_lines(a: float) -> void:
 		if s.vel.length_squared() > 1.0:
 			pts.append_array([p, p + Vector3(s.vel.x, 0.0, s.vel.y) * VEL_LINE_S])
 			cols.append_array([vel, vel])
+	# звенья (G3): к точке приказа «идти» — мятной, к цели — красной
+	for u in selection:
+		var q := battle.squad_by_uid(u)
+		if q == null or q.dead or q.side != my_side:
+			continue
+		var qp := squad_point(q)
+		if q.has_move:
+			pts.append_array([qp, Vector3(q.move_to.x, 0.0, q.move_to.y)])
+			cols.append_array([go, go])
+		var qt := q.target as Ship
+		if qt != null and not qt.dead and Picking.shown(qt, my_side):
+			var fc2 := Color(FOCUS_LINE.r, FOCUS_LINE.g, FOCUS_LINE.b, 0.6)
+			pts.append_array([qp, _point(qt, a)])
+			cols.append_array([fc2, fc2])
 	if pts.is_empty():
 		return                           # пустую поверхность ImmediateMesh не заводит
 	_lines_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
@@ -542,11 +572,31 @@ func target_flash(s: Ship) -> void:
 	fx.flash(ship_point(s), FOCUS_LINE, maxf(s.def.radius * 3.0, 24.0), 0.5, 1.8)
 
 
-## Выбор без мёртвых и ушедших (06, 2.5: «выбор чистится сам»).
+## Выбор без мёртвых и ушедших (06, 2.5: «выбор чистится сам»); звено — пока живо.
 func clean_selection() -> void:
 	var keep: Array[int] = []
 	for u in selection:
 		var s := battle.ship_by_uid(u)
 		if s != null and Picking.shown(s, my_side):
 			keep.append(u)
+		elif s == null:
+			var q := battle.squad_by_uid(u)
+			if q != null and not q.dead:
+				keep.append(u)
 	selection = keep
+
+
+## Нарисованная точка машины (выбор мышью, G3).
+func craft_point(c: Craft) -> Vector3:
+	return air.drawn.get(c.uid, air.point_of(c))
+
+
+## Нарисованный центр звена — середина его машин на экране.
+func squad_point(q: Squad) -> Vector3:
+	var sum := Vector3.ZERO
+	var n := 0
+	for c in q.craft:
+		if not c.dead:
+			sum += craft_point(c)
+			n += 1
+	return sum / float(n) if n > 0 else Vector3(q.pos.x, 0.0, q.pos.y)

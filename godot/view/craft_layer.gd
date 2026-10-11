@@ -55,3 +55,19 @@ func put(key: StringName, i: int, pos: Vector3, fwd: Vector3, up: Vector3 = Vect
 func commit() -> void:
 	for key: StringName in layers:
 		layers[key].multimesh.buffer = _buf[key]
+
+
+## Бой (G3): машин вида бывает сколько угодно — слой растёт (вдвое, чтобы не пересоздавать
+## буфер на каждом пуске), а рисуется ровно n первых.
+func ensure(key: StringName, n: int) -> void:
+	var mi: MultiMeshInstance3D = layers.get(key)
+	if mi == null:
+		return
+	var mm := mi.multimesh
+	if n > mm.instance_count:
+		var want := maxi(n, mm.instance_count * 2)
+		mm.instance_count = want
+		var buf := PackedFloat32Array()
+		buf.resize(want * 12)
+		_buf[key] = buf
+	mm.visible_instance_count = n

@@ -4,6 +4,7 @@
 // Данные экземпляра:
 //   origin            — начало A;  basis.x — вектор A → B;
 //   basis.y.x         — длина отрезка долей пути (0…1);
+//   basis.y.y         — свой нижний предел толщины в точках экрана (0 — общий min_px);
 //   basis.z           — цвет (rgb);
 //   INSTANCE_CUSTOM   — (рождение, время пути, толщина в мире, яркость).
 // Голова идёт от A к B за «время пути», хвост — на длину отрезка позади. Рождение
@@ -37,7 +38,8 @@ void vertex() {
 	// abs: [1][1] здесь ОТРИЦАТЕЛЕН в обоих отрисовщиках (4.7.2, проверено в G2) — без него
 	// px < 0, и «не меньше min_px точек» не действовало вовсе (с G0b)
 	float px = 2.0 * max(-vp.z, 1.0) / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-	float w = max(INSTANCE_CUSTOM.z, min_px * px);
+	float mpx = MODEL_MATRIX[1].y > 0.0 ? MODEL_MATRIX[1].y : min_px;
+	float w = max(INSTANCE_CUSTOM.z, mpx * px);
 	v_across = VERTEX.y;
 	v_along = VERTEX.x;
 	vp += side * VERTEX.y * w;

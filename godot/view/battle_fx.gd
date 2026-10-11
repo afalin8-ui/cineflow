@@ -22,6 +22,8 @@ const Battle := preload("res://sim/battle.gd")
 const Ship := preload("res://sim/ship.gd")
 const Proj := preload("res://sim/proj.gd")
 const Defs := preload("res://sim/defs.gd")
+const Body := preload("res://sim/body.gd")
+const Craft := preload("res://sim/craft.gd")
 const FxPool := preload("res://view/fx_pool.gd")
 const ShipVisual := preload("res://view/ship_visual.gd")
 const Picking := preload("res://input/picking.gd")
@@ -68,6 +70,22 @@ static var rollback_all_circles := false
 ## Купол и пояса — мимо единого фильтра видимости (только «не погиб»), как было до
 ## доработки G2: со скрытностью купол скрытого РЭБ рисовался бы (04-33, C67).
 static var rollback_no_shown := false
+## Конец снаряда, не попавшего ни в один кадр, — в центре поля (0, 0, 0), как было в G2.
+static var rollback_end_center := false
+## Свой нижний предел в точках экрана (хвост G2; 09, 11.8): общий «не меньше 1,6»
+## делал на старте (3990) главный калибр и лёгкое ОДНОЙ толщины — их не отличить;
+## ракета (3 точки) и трасса ПВО (1,6) на рабочем виде (2400) читались пылинкой.
+## Главный калибр — широкий цветной луч с белой серединой, лёгкое — общий предел.
+const MAIN_PX := 4.0
+const MAIN_CORE_PX := 2.0
+const PD_PX := 2.4
+## Пятно ракеты гаснет от середины к краю, и видно его вдвое уже квада: 8 точек квада —
+## это 4 видимых (замер снимком на 2400; при 3 — пылинка в 1,5 точки). Клубы следа — 4.
+const MISSILE_PX := 8.0
+const TORP_PX := 10.0
+const PUFF_PX := 4.0
+## ТОЛЬКО для проверки отката: один общий предел у всех, как в G2.
+static var rollback_one_px := false
 ## След ракеты кладётся по игровому времени (space.js:1693: раз в 0,035 с).
 const TRAIL_EVERY := 0.035
 
@@ -78,6 +96,9 @@ var gfx: FxPool
 var point: Callable
 ## Модель корабля на сцене: visual.call(ship) → ShipVisual (или null).
 var visual: Callable
+## Нарисованная точка машины (view/air_view.gd, G3): craft_pt.call(craft, alpha) → Vector3.
+## Цель ПВО, лёгкого орудия и ракеты истребителя бывает машиной, а хозяин торпеды — машина.
+var craft_pt: Callable
 
 var _rng := RandomNumberGenerator.new()
 ## Доля шага, по которой берутся точки кораблей: в событиях — нынешнее положение, в
@@ -160,6 +181,40 @@ func _y(s: Ship) -> float:
 	return v.global_position.y if v != null else 0.0
 
 
+## Высота-картинка любого тела: корабль — его модель, машина — её точка (G3).
+func _body_y(b: Body) -> float:
+	var s := b as Ship
+	if s != null:
+		return _y(s)
+	var c := b as Craft
+	if c != null and craft_pt.is_valid():
+		var p: Vector3 = craft_pt.call(c, 1.0)
+		return p.y
+	return 0.0
+
+
+## Нарисованная точка цели: корабль, машина или снаряд; fallback — точка плоскости.
+func _body_pt(b: Body, fallback: Vector2) -> Vector3:
+	var s := b as Ship
+	if s != null:
+		return _pt(s)
+	var c := b as Craft
+	if c != null and craft_pt.is_valid():
+		var p: Vector3 = craft_pt.call(c, _a)
+		return p
+	if b != null and _proj_at.has(b.uid):
+		return _proj_at[b.uid]
+	return Vector3(fallback.x, 0.0, fallback.y)
+
+
+## Нарисованная точка снаряда (для очередей перехватчика по ракете, G3).
+func proj_point(u: int, at: Vector2) -> Vector3:
+	if _proj_at.has(u):
+		return _proj_at[u]
+	var y: float = _proj_y0.get(u, 0.0)
+	return Vector3(at.x, y, at.y)
+
+
 func _pt(s: Ship) -> Vector3:
 	var p: Vector3 = point.call(s, _a)
 	return p
@@ -205,7 +260,7 @@ func consume(e: Array) -> void:
 			var role: StringName = e[3]
 			var mount: int = e[4]
 			var a := battle.ship_by_uid(u1)
-			var t := battle.ship_by_uid(u2)
+			var t := battle.body_by_uid(u2)       # корабль или, по приказу на звено, машина
 			if a != null and t != null:
 				_fire(a, t, role, mount)
 		&"charge":
@@ -223,31 +278,37 @@ func consume(e: Array) -> void:
 				var to2: Vector2 = e[3]
 				var tu: int = e[4]
 				var to: Vector3 = _proj_at.get(tu, Vector3(to2.x, _y(s), to2.y))
+				var tc := battle.craft_by_uid(tu) if not _proj_at.has(tu) else null
+				if tc != null:
+					to = _body_pt(tc, to2)            # ПВО по машине (04, 2.12)
 				var from := _node_pt(s, "pd_", barrel)
 				var col := PD_OWN if s.side == my_side else PD_FOE
-				gfx.tracer(from, to, col, 0.55, 780.0, 46.0, 2.0)
+				gfx.tracer(from, to, col, 0.55, 780.0, 46.0, 2.0, 0.0, _px(PD_PX))
 				_bump(&"pd")
 		&"proj":
 			var pu: int = e[1]
 			for p in battle.projs:
 				if p.uid == pu:
-					var ow := p.owner as Ship
-					var tg := p.target as Ship
-					_proj_y0[pu] = _y(ow) if ow != null else 0.0
+					var ow := p.owner as Body
+					var tg := p.target as Body
+					_proj_y0[pu] = _body_y(ow) if ow != null else 0.0
 					_proj_d0[pu] = p.pos.distance_to(tg.pos) if tg != null else 1.0
 					_proj_trail[pu] = -1.0
-					if ow != null:
-						gfx.flash(_node_pt(ow, "missile_", 0), Color(1.0, 0.82, 0.62), ow.def.radius * 0.7, 0.3, 1.6)
+					var os := ow as Ship
+					if os != null:
+						gfx.flash(_node_pt(os, "missile_", 0), Color(1.0, 0.82, 0.62), os.def.radius * 0.7, 0.3, 1.6)
+					elif ow != null:
+						gfx.flash(_body_pt(ow, p.pos), Color(1.0, 0.82, 0.62), 4.0, 0.25, 1.6)
 					break
 		&"proj_hit":
 			var hu: int = e[1]
-			var at: Vector3 = _proj_at.get(hu, Vector3.ZERO)
-			gfx.flash(at, BOOM, 18.0, 0.5, 2.2)
+			var hp2: Vector2 = e[2]
+			gfx.flash(_end_at(hu, hp2), BOOM, 18.0, 0.5, 2.2)
 			_forget(hu)
 		&"proj_end":
 			var eu: int = e[1]
-			var at2: Vector3 = _proj_at.get(eu, Vector3.ZERO)
-			gfx.flash(at2, HIT, 7.0, 0.3, 1.6)
+			var ep2: Vector2 = e[2]
+			gfx.flash(_end_at(eu, ep2), HIT, 7.0, 0.3, 1.6)
 			_forget(eu)
 		&"destroyed":
 			var du: int = e[1]
@@ -261,6 +322,23 @@ func consume(e: Array) -> void:
 			_gun_fire(gk, gat, gh)
 
 
+## Где рисовать конец снаряда: нарисованная точка, если снаряд успел попасть в кадр;
+## иначе — его место из события на высоте пускавшего. Раньше запасной точкой был (0, 0, 0):
+## снаряд, сбитый или попавший раньше первого кадра (ПВО на том же шаге, 4×), вспыхивал
+## в центре поля (хвост G2).
+func _end_at(u: int, at: Vector2) -> Vector3:
+	if _proj_at.has(u):
+		return _proj_at[u]
+	if rollback_end_center:
+		return Vector3.ZERO
+	var y: float = _proj_y0.get(u, 0.0)
+	return Vector3(at.x, y, at.y)
+
+
+static func _px(v: float) -> float:
+	return 0.0 if rollback_one_px else v
+
+
 func _forget(u: int) -> void:
 	_proj_prev.erase(u)
 	_proj_y0.erase(u)
@@ -269,34 +347,34 @@ func _forget(u: int) -> void:
 	_proj_at.erase(u)
 
 
-func _fire(a: Ship, t: Ship, role: StringName, mount: int) -> void:
+func _fire(a: Ship, t: Body, role: StringName, mount: int) -> void:
 	var own := a.side == my_side
-	var to := _pt(t) + Vector3(_rng.randf_range(-0.3, 0.3), _rng.randf_range(-0.2, 0.3), _rng.randf_range(-0.3, 0.3)) * t.def.radius
+	var to := _body_pt(t, t.pos) + Vector3(_rng.randf_range(-0.3, 0.3), _rng.randf_range(-0.2, 0.3), _rng.randf_range(-0.3, 0.3)) * t.hit_r
 	_bump(role)
 	match role:
 		&"main":
 			var from := _node_pt(a, "muzzle_", mount)
 			var c := MAIN_OWN if own else MAIN_FOE
 			var w := 0.9 + a.def.radius * 0.07
-			gfx.beam(from, to, c, w * 1.4, 0.55, 2.8)
-			gfx.beam(from, to, Color(1, 1, 1), w * 0.45, 0.35, 2.0)
+			gfx.beam(from, to, c, w * 1.4, 0.55, 2.8, _px(MAIN_PX))
+			gfx.beam(from, to, Color(1, 1, 1), w * 0.45, 0.35, 2.0, _px(MAIN_CORE_PX))
 			gfx.flash(from, c, a.def.radius * 1.5, 0.35, 2.2)
-			gfx.flash(to, HIT, t.def.radius * 2.6, 0.8, 2.4)
+			gfx.flash(to, HIT, t.hit_r * 2.6, 0.8, 2.4)
 			for i in 3:
-				gfx.flash(to + Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-0.5, 1), _rng.randf_range(-1, 1)) * t.def.radius, HIT, t.def.radius * 0.8, 0.45, 1.6)
+				gfx.flash(to + Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-0.5, 1), _rng.randf_range(-1, 1)) * t.hit_r, HIT, t.hit_r * 0.8, 0.45, 1.6)
 		&"sec":
 			# очередь из трёх росчерков от точки батареи — свой вид, без тряски (08, 7.2 п. 6)
 			var from2 := _node_pt(a, "aux_", mount)
 			var c2 := SEC_OWN if own else SEC_FOE
 			for k in 3:
-				var jit := Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-0.5, 0.5), _rng.randf_range(-1, 1)) * t.def.radius * 0.5
+				var jit := Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-0.5, 0.5), _rng.randf_range(-1, 1)) * t.hit_r * 0.5
 				gfx.tracer(from2, to + jit, c2, 2.4, 1100.0, 24.0, 2.4, k * 0.07)
 			gfx.flash(from2, c2, 7.0, 0.22, 2.0)
 		_:
 			var from3 := _node_pt(a, "muzzle_", mount)
 			var c3 := LIGHT_OWN if own else LIGHT_FOE
 			gfx.beam(from3, to, c3, 0.9, 0.18, 1.9)
-			gfx.flash(to, c3, t.def.radius * 1.2, 0.3, 1.5)
+			gfx.flash(to, c3, t.hit_r * 1.2, 0.3, 1.5)
 
 
 func _boom(d: Ship) -> void:
@@ -357,21 +435,21 @@ func _draw_projs(a: float, game_t: float) -> void:
 		var xz := prev.lerp(cur, a)
 		var y0: float = _proj_y0.get(p.uid, 0.0)
 		var y := y0
-		var t := p.target as Ship
+		var t := p.target as Body
 		if t != null:
 			var d0: float = _proj_d0.get(p.uid, 1.0)
-			y = lerpf(y0, _y(t), clampf(1.0 - xz.distance_to(t.pos) / maxf(d0, 1.0), 0.0, 1.0))
+			y = lerpf(y0, _body_y(t), clampf(1.0 - xz.distance_to(t.pos) / maxf(d0, 1.0), 0.0, 1.0))
 		var at := Vector3(xz.x, y, xz.y)
 		_proj_at[p.uid] = at
 		var torp := p.key == &"torp"
-		mm.set_instance_transform(n, Transform3D(Basis(Vector3.RIGHT, Vector3.UP, Vector3(MISSILE.r, MISSILE.g, MISSILE.b)), at))
+		mm.set_instance_transform(n, Transform3D(Basis(Vector3.RIGHT, Vector3(_px(TORP_PX if torp else MISSILE_PX), 1.0, 0.0), Vector3(MISSILE.r, MISSILE.g, MISSILE.b)), at))
 		mm.set_instance_custom_data(n, Color(0.0, 0.0, 6.0 if torp else 4.0, 2.2))
 		var last: float = _proj_trail.get(p.uid, -1.0)
 		if game_t - last >= TRAIL_EVERY:
 			_proj_trail[p.uid] = game_t
 			var back := at - Vector3(p.dir.x, 0.0, p.dir.y) * 3.0
 			gfx.now = game_t
-			gfx.flash(back, Color(1.0, 0.7, 0.4), 2.6 if torp else 1.8, 0.35, 1.4)
+			gfx.flash(back, Color(1.0, 0.7, 0.4), 2.6 if torp else 1.8, 0.35, 1.4, _px(PUFF_PX))
 		n += 1
 	mm.visible_instance_count = n
 

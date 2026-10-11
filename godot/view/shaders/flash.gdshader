@@ -2,6 +2,7 @@
 // в вершинном шейдере от `now`. Данные экземпляра:
 //   origin          — место;
 //   basis.z         — цвет (rgb);
+//   basis.y.x       — свой нижний предел в точках экрана (0 — общий min_px);
 //   INSTANCE_CUSTOM — (рождение, срок, размер в мире, яркость).
 // Не меньше min_px точек экрана, иначе на дальнем виде вспышка — пылинка.
 shader_type spatial;
@@ -22,7 +23,8 @@ void vertex() {
 	// abs: [1][1] здесь ОТРИЦАТЕЛЕН в обоих отрисовщиках (4.7.2, проверено в G2) — без него
 	// px < 0, и «не меньше min_px точек» не действовало вовсе (с G0b)
 	float px = 2.0 * max(-c.z, 1.0) / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-	float size = max(INSTANCE_CUSTOM.z * (0.35 + 0.65 * sqrt(k)), min_px * px);
+	float mpx = MODEL_MATRIX[1].x > 0.0 ? MODEL_MATRIX[1].x : min_px;
+	float size = max(INSTANCE_CUSTOM.z * (0.35 + 0.65 * sqrt(k)), mpx * px);
 	bool alive = age >= 0.0 && age <= life;
 	v_fade = alive ? (1.0 - k) * (1.0 - k) * INSTANCE_CUSTOM.w : 0.0;
 	v_uv = VERTEX.xy * 2.0;

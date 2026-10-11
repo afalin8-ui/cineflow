@@ -569,15 +569,20 @@ func _reserve_frames(speed: int) -> Vector2:
 	v.battle.queue({"op": &"reinforce", "side": Ship.ATTACKER})
 	var frames := 0
 	var arrived := -1.0
-	var before := v.battle.side_ships(Ship.ATTACKER).size()
+	# новые корабли — по uid, а не по числу живых: с авиацией противника (G3) свои
+	# гибнут до выхода резерва, и «живых стало больше» не наступало вовсе
+	var before: Dictionary[int, bool] = {}
+	for s0 in v.battle.ships:
+		before[s0.uid] = true
 	while frames < 4000 and arrived < 0.0:
 		v.advance(1.0 / 60.0)
 		frames += 1
-		var now := v.battle.side_ships(Ship.ATTACKER)
-		if now.size() > before:
-			# игровая секунда выхода — по шагу, на котором корабль появился (на 4× за
-			# кадр два шага, и часы кадра ушли бы на шаг дальше)
-			arrived = now[now.size() - 1].jumped_at_step * Battle.STEP
+		for s in v.battle.ships:
+			if s.side == Ship.ATTACKER and not before.has(s.uid):
+				# игровая секунда выхода — по шагу, на котором корабль появился (на 4× за
+				# кадр два шага, и часы кадра ушли бы на шаг дальше)
+				arrived = s.jumped_at_step * Battle.STEP
+				break
 	await _drop_view(v)
 	return Vector2(frames, arrived)
 

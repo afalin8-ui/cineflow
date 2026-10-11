@@ -20,10 +20,16 @@
 #   H и S — «Держать» (приказ встать, 09, 9.5 п. 2), Y — «Охрана», T — «Охота»,
 #   A — атака с ходу, G — гипер (повторно — отмена), D — дрифт, B — подкрепление,
 #   Пробел — пауза (скорость прежняя), 1 / 2 / 4 — скорость, Esc — снять выбор.
+# - Авиация (G3; 04, 1.1 и 2.13): щелчок по машине выбирает её ЗВЕНО целиком; рамка
+#   берёт и свои звенья; Z / X / C — поднять звено перехватчиков, истребителей,
+#   бомбардировщиков с первого выделенного носителя со свободным местом; V — выделенные
+#   звенья на посадку. ПКМ по врагу или по чужому звену — бить (корабли — машины звена,
+#   C14; тяжёлые такой приказ не принимают, 09, 4.6); ПКМ по полю — звенья летят туда.
 # - Под курсором — корабль (hover): у чужого тяжёлого рисуется его пояс (09, 6.7).
 extends Node
 
 const Ship := preload("res://sim/ship.gd")
+const Squad := preload("res://sim/squad.gd")
 const Picking := preload("res://input/picking.gd")
 const CameraRig := preload("res://view/camera_rig.gd")
 
@@ -56,6 +62,11 @@ static var rollback_guard_by_near := false
 static var rollback_esc_clears := false
 ## Курсор не отслеживается: пояса чужого тяжёлого по наведению нет (09, 6.7).
 static var rollback_no_hover := false
+## Машины под курсором не ищутся (как в G2): звено не выбрать щелчком и не ударить ПКМ
+## (04, 1.1 и 2.13).
+static var rollback_no_squad_pick := false
+## Z / X / C без носителя в выборе всё равно шлют пуск — подсказки «выбери носитель» нет.
+static var rollback_launch_any := false
 
 var _lmb := false
 var _lmb_from := Vector2.ZERO
@@ -97,6 +108,37 @@ func own_selected() -> PackedInt32Array:
 		var s: Ship = b.call("ship_by_uid", u)
 		if s != null and not s.dead and s.side == my_side and not s.station:
 			out.append(u)
+	return out
+
+
+## Свои живые выбранные звенья (04, 2.13).
+func own_squads() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	for u in _sel():
+		var q: Squad = b.call("squad_by_uid", u)
+		if q != null and not q.dead and q.side == my_side:
+			out.append(u)
+	return out
+
+
+## Свои выбранные носители (и станция): у кого есть ангар (04, 2.3).
+func own_carriers() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	for u in _sel():
+		var s: Ship = b.call("ship_by_uid", u)
+		if s != null and not s.dead and s.side == my_side and s.hangar != null:
+			out.append(u)
+	return out
+
+
+## Кому отдаётся приказ мышью: свои корабли (без станции) и свои звенья.
+func own_orders() -> PackedInt32Array:
+	var out := own_selected()
+	out.append_array(own_squads())
 	return out
 
 
@@ -199,14 +241,18 @@ func _notification(what: int) -> void:
 ## Щелчок ЛКМ (06, 2.5 selectEntity): по своему — выбрать (Shift — добавить или
 ## убрать), по чужому — только его (рассмотреть), по пустому — снять (без Shift).
 func _click(at: Vector2, shift: bool) -> void:
-	var s := Picking.pick(view, at)
+	var hit := _under(at)
 	var my_side: int = view.get("my_side")
-	if s == null:
+	if hit == null:
 		if not shift:
 			_set_sel([])
 		return
-	if s.side != my_side:
-		_set_sel([s.uid])
+	var s := hit as Ship
+	var q := hit as Squad
+	var uid := s.uid if s != null else q.uid
+	var side := s.side if s != null else q.side
+	if side != my_side:
+		_set_sel([uid])
 		return
 	if shift:
 		# чужой в выборе и Shift — свой добавляется к одним своим
@@ -214,21 +260,31 @@ func _click(at: Vector2, shift: bool) -> void:
 		var b := _battle()
 		for u in _sel():
 			var o: Ship = b.call("ship_by_uid", u)
-			if o != null and o.side == my_side:
+			var oq: Squad = b.call("squad_by_uid", u)
+			if (o != null and o.side == my_side) or (oq != null and oq.side == my_side):
 				keep.append(u)
-		if s.uid in keep:
-			keep.erase(s.uid)
+		if uid in keep:
+			keep.erase(uid)
 		else:
-			keep.append(s.uid)
+			keep.append(uid)
 		_set_sel(keep)
 	else:
-		_set_sel([s.uid])
+		_set_sel([uid])
+
+
+## Кто под точкой: корабль или звено (Picking.pick_any); откат — только корабли.
+func _under(at: Vector2) -> RefCounted:
+	if rollback_no_squad_pick:
+		return Picking.pick(view, at)
+	return Picking.pick_any(view, at)
 
 
 ## Рамка: свои корабли без станции; Shift — к выбору, без Shift — выбор ЗАМЕНЯЕТСЯ
 ## найденным, в том числе пустым (06, 2.5).
 func _box(r: Rect2, shift: bool) -> void:
 	var got := Picking.in_box(view, r)
+	if not rollback_no_squad_pick:
+		got.append_array(Picking.squads_in_box(view, r))
 	if shift:
 		var sel: Array[int] = []
 		sel.append_array(_sel())
@@ -252,15 +308,23 @@ func _hover(at: Vector2) -> void:
 ## невыделенного — охранять его; иначе — выделенные свои идут в точку плоскости y = 0
 ## под курсором, сохраняя взаимное расположение. Нет своих выделенных — ничего (06, 2.6).
 func order_at(at: Vector2) -> bool:
-	var ids := own_selected()
+	var ids := own_orders()
 	if ids.is_empty():
 		return false
 	var my_side: int = view.get("my_side")
-	var foe := Picking.pick(view, at) if not rollback_rmb_move_only else null
+	var under := _under(at) if not rollback_rmb_move_only else null
+	var foe := under as Ship
 	if foe != null and foe.side != my_side:
 		_queue({"op": &"focus", "ids": ids, "target": foe.uid})
 		if orders_enabled:
 			view.call("target_flash", foe)
+		return true
+	var fq := under as Squad
+	if fq != null and fq.side != my_side:
+		# по чужому звену — бить его машины (C14); тяжёлые не примут (09, 4.6)
+		_queue({"op": &"focus", "ids": ids, "target": fq.uid})
+		if orders_enabled:
+			view.call("order_flash", view.call("squad_point", fq))
 		return true
 	var ward: Ship = null
 	if not rollback_rmb_move_only:
@@ -284,15 +348,20 @@ func order_at(at: Vector2) -> bool:
 ## Щелчок после A (03, 2.15): по врагу — фокус, иначе — атака с ходу в точку.
 func amove_at(at: Vector2) -> bool:
 	amove_armed = false
-	var ids := own_selected()
+	var ids := own_orders()
 	if ids.is_empty():
 		return false
 	var my_side: int = view.get("my_side")
-	var foe := Picking.pick(view, at)
+	var under := _under(at)
+	var foe := under as Ship
 	if foe != null and foe.side != my_side:
 		_queue({"op": &"focus", "ids": ids, "target": foe.uid})
 		if orders_enabled:
 			view.call("target_flash", foe)
+		return true
+	var fq := under as Squad
+	if fq != null and fq.side != my_side:
+		_queue({"op": &"focus", "ids": ids, "target": fq.uid})
 		return true
 	var rig: CameraRig = view.get("rig")
 	var hit: Variant = rig.ground_at(at, false)
@@ -324,11 +393,27 @@ func _key(k: InputEventKey) -> bool:
 					st = &"hunt"
 				_queue({"op": &"stance", "ids": ids, "stance": st})
 		KEY_A:
-			if own_selected().is_empty():
+			if own_orders().is_empty():
 				_say("Атака с ходу: сначала выбери свои корабли")
 			else:
-				amove_armed = true
-				_say("Атака с ходу: щёлкни точку или цель · Esc — отмена")
+				amove_armed = true            # подсказку держит экран, пока A ждёт щелчка
+		KEY_Z, KEY_X, KEY_C:
+			var cs := own_carriers() if not rollback_launch_any else own_selected()
+			if cs.is_empty():
+				_say("Звенья поднимает носитель: выбери его и нажми Z, X или C")
+			else:
+				var role := &"interceptor"
+				if k.physical_keycode == KEY_X:
+					role = &"fighter"
+				elif k.physical_keycode == KEY_C:
+					role = &"bomber"
+				_queue({"op": &"launch", "ids": cs, "role": role})
+		KEY_V:
+			var qs := own_squads()
+			if qs.is_empty():
+				_say("На посадку: сначала выбери свои звенья (щелчок по машине)")
+			else:
+				_queue({"op": &"recall", "ids": qs})
 		KEY_G:
 			var ids2 := own_selected()
 			if not ids2.is_empty():     # без выбора G — молча (06, 1.5)
@@ -353,7 +438,6 @@ func _key(k: InputEventKey) -> bool:
 		KEY_ESCAPE:
 			if amove_armed and not rollback_esc_clears:
 				amove_armed = false         # сначала — отмена ожидания A, выбор цел
-				_say("Атака с ходу отменена")
 			else:
 				amove_armed = false
 				_set_sel([])

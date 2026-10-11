@@ -155,8 +155,8 @@ func test_stance_keys_by_place() -> void:
 		var got: StringName = _last(p).get("stance", &"")
 		eq(got, c[2], "клавиша на месте %s (буква «%s») — «%s»" % [OS.get_keycode_string(phys), String.chr(code), c[2]])
 	eq(p.battle.cmds.journal.size(), n0 + 4, "четыре нажатия — четыре приказа")
-	await hooks.key(KEY_Z, KEY_T)                  # буква T на чужом месте
-	eq(p.battle.cmds.journal.size(), n0 + 4, "буква T на месте Z — ничего (06, ловушка 49)")
+	await hooks.key(KEY_J, KEY_T)                  # буква T на чужом месте (Z с G3 — пуск звена)
+	eq(p.battle.cmds.journal.size(), n0 + 4, "буква T на месте J — ничего (06, ловушка 49)")
 	await hooks.key(KEY_Y, KEY_Y, true)            # повтор — не нажатие
 	eq(p.battle.cmds.journal.size(), n0 + 4, "повтор клавиши (echo) — не приказ")
 	await _drop(p)
