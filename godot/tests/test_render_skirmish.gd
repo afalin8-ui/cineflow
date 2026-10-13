@@ -439,6 +439,12 @@ func test_toast_not_on_status() -> void:
 		ok(toasts.get_global_rect().position.x >= 0.0 and toasts.get_global_rect().end.x <= float(got.x), "%s %s: полоска в пределах экрана" % [renderer(), tag])
 		tree.root.get_texture().get_image().save_png(_shots_dir().path_join("toast_%s_%s.png" % [renderer(), tag]))
 		if got.x < 1500:
+			# с G4 полоска фокуса короче («встают на дистанцию 312–900») и на 1366 влезает
+			# по середине и так — откат меряется на ДЛИННОЙ полоске (прежний текст G2–G3):
+			# правило «между левым краем и статусом» обязано держать и её
+			hud.call("say", "Цель — «Рэш»: тяжёлые бьют с места: главный калибр — от 312 до 900 · лёгкие идут на цель")
+			await hooks.frames(2)
+			ok(not toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: длинная полоска (%s) не наезжает на статус" % [renderer(), tag, str(toasts.get_global_rect())])
 			PolygonHud.rollback_toast_center = true
 			await hooks.frames(2)
 			ok(toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: откат «полоска по середине экрана» наезжает на статус (%s) — проверка краснеет" % [renderer(), tag, str(toasts.get_global_rect())])
@@ -446,3 +452,67 @@ func test_toast_not_on_status() -> void:
 		main.queue_free()
 		await hooks.frames(3)
 		b.dispose()
+
+
+# ───────────────────────── «Бой линий» на рабочем виде (G4; М14, часть) ─────────────────────────
+
+## Рабочий вид (camera.dist_work, 2400) над серединой между линиями, когда линии сошлись на
+## свою дистанцию (30 с «Боя линий» без приказов): обе линии и середина на экране, центры
+## линий на снимке — не ближе 0,2 высоты кадра (09, 8.2, М14) и не под панелью снизу.
+## Откат — правкой числа (как --set): рабочий вид вдвое ближе (camera.dist_work 1200) —
+## обе линии в кадр не влезают. Флажок --legacy-approach этот замер НЕ ловит (линии
+## съезжаются до 627, это 0,40 высоты) — его ловит М3 (tests/test_sim_doctrine.gd).
+func _lines_view(flags: Dictionary, size: Vector2i, save: bool, dist_k: float = 1.0) -> Dictionary:
+	var got := await hooks.set_window_size(size)
+	var main := MainScene.instantiate()
+	tree.root.add_child(main)
+	await hooks.frames(6)
+	# флажки главная сцена берёт из командной строки в _ready — «Бой линий» заново с ними
+	Polygon.flags = flags
+	main.call("open_polygon")
+	await hooks.frames(4)
+	var poly: Polygon = main.get("polygon")
+	var view := poly.view
+	var b := view.battle
+	# без вида — быстрее и одинаково: бой от вида не зависит (раздел 6 CLAUDE.md)
+	view.paused = true
+	while b.time < 30.0:
+		view.paused = false
+		view.advance(Battle.STEP * 8.0)
+		view.paused = true
+	var la := b.sides[Ship.ATTACKER].line
+	var ld := b.sides[Ship.DEFENDER].line
+	var mid := (la + ld) * 0.5
+	view.rig.set_view(Vector3(mid.x, 0.0, mid.y), 0.0, b.defs.doctrine.camera_dist_work * dist_k, true)
+	view.draw_state()
+	await hooks.frames(4)
+	var cam: Camera3D = view.rig.camera
+	var vs := Vector2(got)
+	var pa := cam.unproject_position(Vector3(la.x, 0.0, la.y))
+	var pd := cam.unproject_position(Vector3(ld.x, 0.0, ld.y))
+	var hud: Node = poly.get("hud")
+	var panel: Control = hud.get("panel")
+	var top := panel.get_global_rect().position.y
+	var screen := Rect2(Vector2.ZERO, vs)
+	var out := {"a": pa, "d": pd, "gap": absf(pa.y - pd.y) / vs.y, "on": screen.has_point(pa) and screen.has_point(pd),
+		"under": pa.y >= top or pd.y >= top, "l": la.distance_to(ld), "tag": "%d×%d" % [got.x, got.y]}
+	if save:
+		tree.root.get_texture().get_image().save_png(_shots_dir().path_join("lines_2400_%s_%s.png" % [renderer(), out["tag"]]))
+	main.queue_free()
+	await hooks.frames(3)
+	b.dispose()
+	Polygon.flags = {}
+	return out
+
+
+func test_lines_working_view() -> void:
+	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
+		var r := await _lines_view({}, size, true)
+		var pa: Vector2 = r["a"]
+		var pd: Vector2 = r["d"]
+		note("%s %s: линии в %.0f, на снимке через %.2f высоты (свои %s, чужие %s)" % [renderer(), str(r["tag"]), num(r["l"]), num(r["gap"]), str(pa.round()), str(pd.round())])
+		ok(flag(r["on"]) and not flag(r["under"]), "%s %s: обе линии на рабочем виде на экране и не под панелью" % [renderer(), str(r["tag"])])
+		ok(num(r["gap"]) >= 0.2, "%s %s: центры линий через %.2f высоты кадра (≥ 0,2, М14)" % [renderer(), str(r["tag"]), num(r["gap"])])
+	var o := await _lines_view({}, Vector2i(1366, 768), false, 0.5)
+	note("откат «рабочий вид 1200»: свои %s, чужие %s" % [str(o["a"]), str(o["d"])])
+	ok(not flag(o["on"]) or flag(o["under"]), "откат «рабочий вид вдвое ближе»: линии не помещаются в кадр — проверка краснеет")

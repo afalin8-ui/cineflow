@@ -172,6 +172,18 @@ jobs:
           head -12 "$csv"
           rm -f godot/build/linux/capella_frames_*.csv
 
+      # стенд «бой без отрисовки» (план G4, п. 6): в выгруженной сборке -s нет — дверь
+      # главной сцены -- --bench; tools/bench_core.gd обязан доехать в выгрузку
+      - name: Linux-сборка, стенд -- --bench (сценарий «brake», 1 бой)
+        run: |
+          set -uo pipefail
+          code=0
+          timeout 180 godot/build/linux/capella.x86_64 --headless -- --bench --load brake --n 1 > "$RUNNER_TEMP/bench_core.log" 2>&1 || code=$?
+          cut -c1-200 "$RUNNER_TEMP/bench_core.log"
+          if [ $code -ne 0 ] || ! grep -q '^BENCH {' "$RUNNER_TEMP/bench_core.log" || ! grep -q '^BENCH_SUM {' "$RUNNER_TEMP/bench_core.log"; then
+            echo "::error::стенд выгруженной сборки: код $code"; exit 1
+          fi
+
       # пропавшая модель — громкий отказ и в ВЫПУСКНОЙ сборке: замер не начинается,
       # код 1, беда называет корабль (раньше — пустое место молча и «83 корабля» в итоге)
       - name: Linux-сборка, пропавшая модель — замер и --selftest отказывают (код 1)

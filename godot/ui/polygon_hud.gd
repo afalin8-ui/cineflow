@@ -21,6 +21,8 @@ const Squad := preload("res://sim/squad.gd")
 const Craft := preload("res://sim/craft.gd")
 const Body := preload("res://sim/body.gd")
 const Air := preload("res://sim/air.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
+const Picking := preload("res://input/picking.gd")
 
 ## Сколько игровых секунд живёт полоска модели и сколько настоящих — своя.
 const TOAST_GAME_S := 4.5
@@ -54,6 +56,9 @@ static var rollback_doing_g2 := false
 ## нижняя панель без переноса строк, как было: на 1366 строка занятий всего флота делала
 ## её шире окна, и панель уходила за оба края (вторая проверка G3).
 static var rollback_panel_nowrap := false
+## ТОЛЬКО для проверки отката: строка «чем занят» у тяжёлого — как в G2–G3 (без состояний
+## пояса доктрины): «… — стоит», когда он идёт к цели.
+static var rollback_doing_g3 := false
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
@@ -73,6 +78,11 @@ var _last_status := ""
 var _last_sel := ""
 var _last_toasts := ""
 var _last_panel_vw := 0.0
+## F4 — строка-отладка пояса над тяжёлыми (09, 6.7; только разработчику): состояние
+## доктрины, расстояния, часы «не оторваться». dbg_lines — что нарисовано (uid → текст).
+var belt_debug := false
+var dbg_lines: Dictionary[int, String] = {}
+var _dbg: Array[Label] = []
 
 
 func _ready() -> void:
@@ -162,6 +172,7 @@ func _process(_delta: float) -> void:
 		sel_label.text = sl
 		_fit_panel(vs)
 	panel.position = Vector2(((vs.x - panel.size.x) * 0.5), vs.y - panel.size.y - 14.0)
+	_draw_belt_debug(b)
 	banner.visible = over
 	if over:
 		var w: int = b.get("winner")
@@ -382,6 +393,62 @@ static func squad_doing(q: Squad, b: State) -> String:
 	return "кружит у носителя"
 
 
+## F4: строки-отладки над каждым видимым тяжёлым (обеих сторон) — где он на экране.
+func _draw_belt_debug(b: Object) -> void:
+	dbg_lines.clear()
+	var cam: Camera3D = null
+	var rig: Object = view.get("rig")
+	if rig != null:
+		cam = rig.get("camera")
+	var n := 0
+	if belt_debug and cam != null:
+		var bt := b as State
+		var my_side: int = view.get("my_side")
+		for s in bt.ships:
+			if s.dead or not s.heavy() or s.station or not Picking.shown(s, my_side):
+				continue
+			var pt: Vector3 = view.call("ship_point", s)
+			if cam.is_position_behind(pt):
+				continue
+			var txt := belt_line(s, bt)
+			dbg_lines[s.uid] = txt
+			while _dbg.size() <= n:
+				var l := _label(13, Color(1.0, 0.85, 0.45))
+				l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				add_child(l)
+				_dbg.append(l)
+			var lb := _dbg[n]
+			lb.text = txt
+			lb.visible = true
+			lb.reset_size()
+			lb.position = (cam.unproject_position(pt) - Vector2(lb.size.x * 0.5, 46.0)).floor()
+			n += 1
+	for i in range(n, _dbg.size()):
+		_dbg[i].visible = false
+
+
+## Строка-отладка пояса (F4): состояние доктрины, до цели движения и до ближайшего чужого,
+## часы и выигрыш окна «не оторваться», сколько врагов «не повод отходить».
+static func belt_line(s: Ship, b: State) -> String:
+	var parts := PackedStringArray([HeavyDoctrine.NAMES[s.belt] if not s.legacy else "по-старому"])
+	var t := s.forced as Ship
+	if t == null or t.dead:
+		t = s.target as Ship
+	if t != null and not t.dead:
+		parts.append("цель %d" % roundi(s.pos.distance_to(t.pos)))
+	var nd := INF
+	for o in b.ships:
+		if not o.dead and o.side != s.side:
+			nd = minf(nd, s.pos.distance_to(o.pos))
+	if nd < INF:
+		parts.append("ближ. %d / D %d" % [roundi(nd), roundi(s.def.main.dead)])
+	if s.ret_foe != null:
+		parts.append("окно %.1f с +%d" % [s.ret_clock, roundi(s.ret_gain)])
+	if not s.futile.is_empty():
+		parts.append("не повод: %d" % s.futile.size())
+	return " · ".join(parts)
+
+
 ## Чем занят свой корабль — одной строкой (07, 7.2 п. 2; 09, 6.7: слово «бьёт» — только
 ## когда выстрел возможен). b — бой: докуда батарея бьёт сейчас (под помехами —
 ## lockRange).
@@ -399,6 +466,8 @@ static func doing(s: Ship, b: State) -> String:
 	if s.jam != null and s.heavy():
 		var jp: Defs.EcmDef = s.jam
 		jam = " · под помехами — главный калибр %s" % Weapons.slower(jp.main_slow)
+	if s.heavy() and not s.legacy and not s.station and not rollback_doing_g3:
+		return _doing_belt(s, b, jam)
 	if s.heavy():
 		# «батареей по …» — только если батарея по ней СЕЙЧАС достаёт (под помехами —
 		# ближе lockRange, 09, 1.3): иначе это обещание выстрела, которого нет
@@ -448,4 +517,82 @@ static func doing(s: Ship, b: State) -> String:
 			return "охота · целей не видно"
 		&"hold":
 			return "стоит%s" % jam
+	return "стоит%s" % jam
+
+
+## Строка тяжёлого доктрины (09, 6.7) — по состоянию пояса (sim/heavy_doctrine.gd): «выходит
+## на дистанцию · 940 до «Рэш»», «держит дистанцию · главным по «Рэш» (620)», «враг вплотную
+## — отходит · батареей по «Исса»», «не оторваться от «Исса» — бьёт батареей», «прижат —
+## главным по «Рэш» · батареей по «Исса»», «держит позицию · враг вплотную — бьёт батареей»,
+## «путь к «Рэш» закрыт — «Исса» в 340». «Бьёт» — только когда выстрел возможен.
+static func _doing_belt(s: Ship, b: State, jam: String) -> String:
+	var t := s.target as Ship
+	var sec := s.sec_target as Ship
+	var fz := s.forced as Ship
+	var mt := fz if fz != null and not fz.dead else t        # против кого встаёт в пояс (2.9)
+	if mt != null and mt.dead:
+		mt = null
+	var bat_ok := sec != null and not sec.dead and s.pos.distance_to(sec.pos) <= Weapons.sec_reach(b, s)
+	var bat := " · батареей по %s" % Weapons.short_name(sec) if bat_ok else ""
+	# «бьёт батареей по X» — только когда батарея по X СЕЙЧАС достаёт (откат — без проверки)
+	var bat_hit := " — бьёт батареей по %s" % Weapons.short_name(sec) if bat_ok else (" — бьёт батареей" if rollback_bat_claim else "")
+	var main := ""
+	if t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
+		main = "главным по %s (%d)" % [Weapons.short_name(t), roundi(s.pos.distance_to(t.pos))]
+	# цель фокуса вне пояса, а главный калибр бьёт свою (6.3) — приказ не потерян
+	var off := ""
+	if fz != null and not fz.dead and fz != t and not rollback_focus_unnamed:
+		off = " · %s вне пояса (%d)" % [Weapons.short_name(fz), roundi(s.pos.distance_to(fz.pos))]
+	var close: Ship = null
+	var cd := INF
+	for o in b.ships:
+		if o.dead or o.side == s.side or not Picking.shown(o, s.side):
+			continue
+		var d := s.pos.distance_to(o.pos)
+		if d < cd:
+			cd = d
+			close = o
+	match s.belt:
+		HeavyDoctrine.APPROACH:
+			var head := "выходит на дистанцию · %d до %s" % [roundi(s.pos.distance_to(mt.pos)), Weapons.short_name(mt)] if mt != null else "выходит на дистанцию"
+			return head + (" · " + main if main != "" and t != mt else "") + bat + jam
+		HeavyDoctrine.BELT:
+			if main != "":
+				return "держит дистанцию · %s%s%s%s" % [main, bat, off, jam]
+			if mt != null:
+				return "держит дистанцию · %d до %s%s%s" % [roundi(s.pos.distance_to(mt.pos)), Weapons.short_name(mt), bat, jam]
+			return "держит дистанцию%s%s" % [bat, jam]
+		HeavyDoctrine.BLOCKED:
+			var who := "%s в %d" % [Weapons.short_name(close), roundi(cd)] if close != null else "чужой рядом"
+			var tn := Weapons.short_name(mt) if mt != null else "цели"
+			return "путь к %s закрыт — %s%s%s%s" % [tn, who, (" · " + main) if main != "" else "", bat_hit.replace(" — ", " · "), jam]
+		HeavyDoctrine.LEASH:
+			var tn2 := "%s (%d)" % [Weapons.short_name(mt), roundi(s.pos.distance_to(mt.pos))] if mt != null else "цель"
+			return "на краю участка · %s дальше поводка%s%s" % [tn2, bat, jam]
+		HeavyDoctrine.RETREAT:
+			return "враг вплотную — отходит%s%s%s" % [(" · " + main) if main != "" else "", bat, jam]
+		HeavyDoctrine.PINNED:
+			return "прижат%s%s%s" % [(" — " + main) if main != "" else "", bat, jam]
+		HeavyDoctrine.FUTILE:
+			var fo: Ship = null
+			for u: int in s.futile:
+				var o := b.ship_by_uid(u)
+				if o != null and not o.dead and (fo == null or s.pos.distance_to(o.pos) < s.pos.distance_to(fo.pos)):
+					fo = o
+			var fn := Weapons.short_name(fo) if fo != null else "врага"
+			return "не оторваться от %s%s%s%s" % [fn, bat_hit, (" · " + main) if main != "" else "", jam]
+		HeavyDoctrine.HOLD:
+			if close != null and cd < s.def.main.dead:
+				return "держит позицию · враг вплотную%s%s%s" % [bat_hit, (" · " + main) if main != "" else "", jam]
+			if main != "":
+				return "держит позицию · %s%s%s%s" % [main, bat, off, jam]
+			return "держит позицию%s%s" % [bat, jam]
+		HeavyDoctrine.MOVE:
+			if s.has_amove:
+				return "идёт с боем%s%s" % [bat, jam]
+			return "идёт на участок%s%s" % [bat, jam]
+	if main != "":
+		return "%s%s%s%s" % [main, bat, off, jam]
+	if bat != "":
+		return "стоит%s%s" % [bat, jam]
 	return "стоит%s" % jam

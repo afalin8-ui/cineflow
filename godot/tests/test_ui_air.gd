@@ -366,10 +366,12 @@ func _still(s: Ship) -> Ship:
 	return s
 
 
-## Тяжёлый на «Охоте» берёт свою цель до 1,8 R, а в пояс до G4 не ходит: стоит. Было —
-## «охота · целей не видно» при цели на виду.
+## Тяжёлый на «Охоте» берёт свою цель до 1,8 R и с G4 выходит к ней на дистанцию (09, 2.9;
+## здесь двигатели выбиты — состояние то же, «выходит на дистанцию»). Было — «охота · целей
+## не видно» при цели на виду; откат — строка G2 (и без состояний пояса, rollback_doing_g3).
 func _hunt_line(rollback: bool) -> Dictionary:
 	PolygonHud.rollback_doing_g2 = rollback
+	PolygonHud.rollback_doing_g3 = rollback
 	var own: Array[Ship] = []
 	var foe: Array[Ship] = []
 	var b := _lab(func(bb: Battle) -> void:
@@ -384,6 +386,7 @@ func _hunt_line(rollback: bool) -> Dictionary:
 	var out := {"line": PolygonHud.doing(own[0], b), "target": own[0].target == foe[0], "foe": Weapons.short_name(foe[0])}
 	b.dispose()
 	PolygonHud.rollback_doing_g2 = false
+	PolygonHud.rollback_doing_g3 = false
 	return out
 
 
@@ -392,7 +395,7 @@ func test_doing_hunt_target_out_of_belt() -> void:
 	ok(flag(r["target"]), "крейсер на «Охоте» взял фрегата в 1000 (дальность 780, охота до 1,8 R)")
 	var line := str(r["line"])
 	note("охота, цель вне пояса: «%s»" % line)
-	ok(line.begins_with("цель %s вне пояса (1000) — стоит" % str(r["foe"])), "строка называет цель и что крейсер стоит: «%s»" % line)
+	ok(line.begins_with("выходит на дистанцию · 1000 до %s" % str(r["foe"])), "строка называет цель и что крейсер выходит к ней на дистанцию: «%s»" % line)
 	var o := _hunt_line(true)
 	ok(not str(o["line"]).contains(str(o["foe"])), "откат — прежняя строка «%s» молчит о цели — проверка краснеет" % str(o["line"]))
 

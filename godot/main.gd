@@ -38,6 +38,8 @@ const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
 const ShipModels := preload("res://view/ship_models.gd")
 const BenchCore := preload("res://tools/bench_core.gd")
+## ТОЛЬКО для проверки отката: F4 (отладка пояса) не слушается.
+static var rollback_no_f4 := false
 
 const HINT_TABLE := "F3 — счётчик кадров · F5 — минута замера кадров · F6 — «Полигон» · F11 — окно / полный экран\nкамера: колесо — ближе и дальше, Q/E или правая кнопка — повернуть, стрелки и край экрана — сдвинуть"
 const HINT_POLYGON := "F3 — счётчик кадров · F5 — замер кадров на «Столе» · F6 — «Стол» · F8 — начать заново · F9 — запись боя · F11 — полный экран\nкамера: колесо — ближе и дальше · Q/E или правая кнопка с протяжкой — повернуть · стрелки и край экрана — сдвинуть"
@@ -369,6 +371,11 @@ func _input(event: InputEvent) -> void:
 			if mode != &"polygon" or polygon == null:
 				return
 			save_record()
+		KEY_F4:
+			# строка-отладка пояса над тяжёлыми (09, 6.7; только разработчику — в подсказке нет)
+			if mode != &"polygon" or polygon == null or rollback_no_f4:
+				return
+			polygon.hud.belt_debug = not polygon.hud.belt_debug
 		_:
 			return
 	get_viewport().set_input_as_handled()

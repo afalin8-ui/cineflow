@@ -24,6 +24,7 @@ const MainScript := preload("res://main.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const Weapons := preload("res://sim/weapons.gd")
 const BenchCore := preload("res://tools/bench_core.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 
 const BIG := 1.0e9
 
@@ -264,11 +265,13 @@ func test_circles_at_most_three() -> void:
 
 ## Полоска на фокус говорит, что сделают тяжёлые и лёгкие (09, 6.2), а безоружные
 ## называют себя (C100); строка «чем занят» у тяжёлого, до которого цель фокуса не
-## достаёт, НАЗЫВАЕТ её и говорит «вне пояса» (09, 6.3 и 6.7), а «главным» не бьёт.
-## Откат — строка молчит о цели фокуса: прежняя проверка «не начинается с «главным»»
-## была зелёной и тогда, когда о приказе не говорилось ничего (замечание к G2).
+## достаёт, НАЗЫВАЕТ её и говорит, что он выходит к ней на дистанцию (09, 6.7), а «главным»
+## не бьёт. Откат — строка молчит о цели фокуса (и без состояний пояса): прежняя проверка
+## «не начинается с «главным»» была зелёной и тогда, когда о приказе не говорилось ничего
+## (замечание к G2).
 func _focus_line(rollback: bool) -> Dictionary:
 	PolygonHud.rollback_focus_unnamed = rollback
+	PolygonHud.rollback_doing_g3 = rollback
 	var p := await _polygon()
 	var own := p.battle.side_ships(Ship.ATTACKER)
 	_select(p, own)
@@ -284,6 +287,7 @@ func _focus_line(rollback: bool) -> Dictionary:
 	var out := {"said": "\n".join(said), "line": PolygonHud.doing(cru, p.battle), "foe": Weapons.short_name(foe),
 		"d": roundi(cru.pos.distance_to(foe.pos)), "reach": Weapons.main_reach(cru, cru.pos.distance_to(foe.pos))}
 	PolygonHud.rollback_focus_unnamed = false
+	PolygonHud.rollback_doing_g3 = false
 	await _drop(p)
 	return out
 
@@ -296,7 +300,8 @@ func test_focus_toast_and_doing() -> void:
 	var line := str(r["line"])
 	note("фокус всего флота: крейсер — «%s»" % line)
 	ok(whole(r["reach"]) != 0, "цель фокуса вне пояса крейсера (%d)" % whole(r["d"]))
-	ok(not line.begins_with("главным по %s" % str(r["foe"])) and line.contains(str(r["foe"])) and line.contains("вне пояса"), "строка крейсера называет цель фокуса и «вне пояса»: «%s»" % line)
+	# с G4 тяжёлый с фокусом вне пояса сам выходит к цели на дистанцию (09, 2.9 и 6.6)
+	ok(not line.begins_with("главным по %s" % str(r["foe"])) and line.contains(str(r["foe"])) and line.begins_with("выходит на дистанцию"), "строка крейсера называет цель фокуса и что выходит к ней на дистанцию: «%s»" % line)
 	var o := await _focus_line(true)
 	ok(not str(o["line"]).contains(str(o["foe"])), "откат «строка молчит о фокусе»: «%s» — проверка краснеет" % str(o["line"]))
 
@@ -355,7 +360,7 @@ func test_doing_focus_out_of_belt_with_own_target() -> void:
 	ok(flag(r["forced"]) and flag(r["target"]), "фокус — на крейсер в 950, главный калибр взял фрегат в поясе")
 	var line := str(r["line"])
 	note("фокус вне пояса при своей цели в поясе: «%s»" % line)
-	ok(line.begins_with("главным по %s" % str(r["near"])) and line.contains("%s вне пояса (950)" % str(r["far"])), "строка: «%s»" % line)
+	ok(line.contains("главным по %s" % str(r["near"])) and line.contains("%s вне пояса (950)" % str(r["far"])), "строка: «%s»" % line)
 	var o := _focus_with_own(true)
 	ok(not str(o["line"]).contains(str(o["far"])), "откат «строка молчит о фокусе»: «%s» — проверка краснеет" % str(o["line"]))
 
@@ -390,12 +395,12 @@ func test_doing_no_battery_claim() -> void:
 	eq(whole(r["sec"]), 0, "батарея под помехами по корвету в 253 (дальше lockRange) не выстрелила ни разу")
 	var line := str(r["line"])
 	note("вплотную под помехами: «%s»" % line)
-	ok(line.begins_with("враг вплотную — главный калибр не бьёт") and not line.contains("бьёт батарея") and not line.contains("батареей"), "строка не обещает батарею: «%s»" % line)
+	ok(line.begins_with("держит позицию · враг вплотную") and not line.contains("батаре"), "строка не обещает батарею: «%s»" % line)
 	ok(line.contains("вдвое реже"), "под помехами — «вдвое реже», словами доктрины: «%s»" % line)
 	var near := _bat_claim(false, Vector2(120, -60))
 	ok(whole(near["sec"]) > 0 and str(near["line"]).contains("батареей по"), "корвет подошёл на 134 — батарея бьёт, строка это говорит: «%s»" % str(near["line"]))
 	var o := _bat_claim(true, Vector2(250, -40))
-	ok(str(o["line"]).contains("бьёт батарея"), "откат «бьёт батарея без проверки»: «%s» — проверка краснеет" % str(o["line"]))
+	ok(str(o["line"]).contains("бьёт батаре"), "откат «бьёт батареей без проверки»: «%s» — проверка краснеет" % str(o["line"]))
 
 
 ## Купол, пояс под курсором и круг цели фокуса спрашивают ЕДИНЫЙ фильтр видимости
@@ -469,3 +474,70 @@ func test_rollback_flags() -> void:
 			again.dispose()
 		await _drop(p)
 	Polygon.flags = {}
+
+
+# ───────────────────────── строка «чем занят» по поясу доктрины (G4; 09, 6.7) ─────────────────────────
+
+## Крейсер Тройдена в (0, 0) с тактикой stance, вокруг — prep.call(бой, крейсер); secs секунд
+## боя без вида. → [строка, состояние пояса].
+func _belt_case(stance: StringName, prep: Callable, secs: float) -> Array:
+	var b := _lab(func(bb: Battle, c: Ship) -> void:
+		c.stance = stance
+		prep.call(bb, c))
+	for i in roundi(secs / Battle.STEP):
+		b.step()
+	var c := b.ships[0]
+	var out := [PolygonHud.doing(c, b), c.belt]
+	b.dispose()
+	return out
+
+
+func _belt_cases() -> Array:
+	var out: Array = []
+	# цель дальше пояса, путь чист — выходит на дистанцию
+	out.append(["выходит на дистанцию · ", HeavyDoctrine.APPROACH, _belt_case(&"hunt", func(bb: Battle, _c: Ship) -> void:
+		_foe(bb, &"cruiser", Vector2(0, -1100)), 1.0)])
+	# цель в поясе — держит дистанцию и бьёт главным
+	out.append(["держит дистанцию · главным по ", HeavyDoctrine.BELT, _belt_case(&"hunt", func(bb: Battle, _c: Ship) -> void:
+		_foe(bb, &"cruiser", Vector2(0, -650)), 1.0)])
+	# корвет вплотную — отходит
+	out.append(["враг вплотную — отходит", HeavyDoctrine.RETREAT, _belt_case(&"hunt", func(bb: Battle, _c: Ship) -> void:
+		_foe(bb, &"corvette", Vector2(0, -200)), 1.0)])
+	# фокус на крейсер дальше пояса, а корвет между 0,4 R и 0,45 R — путь закрыт
+	out.append(["путь к ", HeavyDoctrine.BLOCKED, _belt_case(&"hunt", func(bb: Battle, c: Ship) -> void:
+		var far := _foe(bb, &"cruiser", Vector2(0, -950))
+		_foe(bb, &"corvette", Vector2(330, 0))
+		bb.queue({"op": &"focus", "ids": [c.uid], "target": far.uid}), 1.0)])
+	# корвет вплотную сзади, вперёд не отходят — прижат
+	out.append(["прижат", HeavyDoctrine.PINNED, _belt_case(&"hunt", func(bb: Battle, _c: Ship) -> void:
+		_foe(bb, &"cruiser", Vector2(0, -700))
+		_foe(bb, &"corvette", Vector2(0, 250)), 2.0)])
+	# корвет гонится — «не оторваться»
+	out.append(["не оторваться от ", HeavyDoctrine.FUTILE, _belt_case(&"hunt", func(bb: Battle, _c: Ship) -> void:
+		var cv := bb.spawn(Ship.DEFENDER, bb.defs.ship(&"plektor", &"corvette"), Vector2(0, -250))
+		cv.stance = &"hunt"
+		cv.hp = BIG
+		cv.max_hp = BIG, 12.0)])
+	return out
+
+
+func test_doing_belt_states() -> void:
+	var bad := 0
+	for c: Array in _belt_cases():
+		var want: String = c[0]
+		var st: int = c[1]
+		var got: Array = c[2]
+		var line: String = got[0]
+		var belt: int = got[1]
+		note("«%s»: «%s»" % [HeavyDoctrine.NAMES[st], line])
+		eq(HeavyDoctrine.NAMES[belt], HeavyDoctrine.NAMES[st], "состояние пояса — «%s»" % HeavyDoctrine.NAMES[st])
+		ok(line.begins_with(want), "строка «%s» начинается с «%s»" % [line, want])
+	PolygonHud.rollback_doing_g3 = true
+	for c: Array in _belt_cases():
+		var want: String = c[0]
+		var got: Array = c[2]
+		var line: String = got[0]
+		if not line.begins_with(want):
+			bad += 1
+	PolygonHud.rollback_doing_g3 = false
+	ok(bad >= 5, "откат «строка как в G3»: %d строк из 6 не говорят, что делает тяжёлый — проверка краснеет" % bad)

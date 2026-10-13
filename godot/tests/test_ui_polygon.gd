@@ -23,6 +23,7 @@ extends "res://tests/case.gd"
 const Defs := preload("res://sim/defs.gd")
 const Battle := preload("res://sim/battle.gd")
 const Ship := preload("res://sim/ship.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const BattleInput := preload("res://input/battle_input.gd")
@@ -708,6 +709,57 @@ func test_main_polygon_table_keys() -> void:
 	ok(not flag(bench.get("running")), "F5 — прервать замер")
 	main.queue_free()
 	await hooks.frames(2)
+
+
+## F4 — строка-отладка пояса над тяжёлыми (09, 6.7; план G4, п. 7; только разработчику —
+## в подсказке её нет): над каждым видимым тяжёлым обеих сторон — состояние доктрины, второе
+## нажатие убирает. Откат — F4 не слушается (main.rollback_no_f4).
+func _f4(rollback: bool) -> Dictionary:
+	MainScript.rollback_no_f4 = rollback
+	await hooks.set_window_size(Vector2i(1366, 768))
+	var main := MainScene.instantiate()
+	tree.root.add_child(main)
+	await hooks.frames(3)
+	var poly: Node = main.get("polygon")
+	var hud: Object = poly.get("hud")
+	var b: Object = poly.get("battle")
+	var heavies := 0
+	for s: Ship in b.get("ships"):
+		if not s.dead and s.heavy() and not s.station:
+			heavies += 1
+	await hooks.key(KEY_F4)
+	await hooks.frames(2)
+	var on: Dictionary = hud.get("dbg_lines")
+	var lines := PackedStringArray()
+	for u: int in on:
+		lines.append(str(on[u]))
+	var named := 0
+	for l in lines:
+		for nm in HeavyDoctrine.NAMES:
+			if l.begins_with(nm):
+				named += 1
+				break
+	await hooks.key(KEY_F4)
+	await hooks.frames(2)
+	var off: Dictionary = hud.get("dbg_lines")
+	var fps: Node = main.get("fps")
+	var hint: Label = fps.get("hint")
+	var out := {"heavies": heavies, "on": lines.size(), "named": named, "off": off.size(), "sample": lines[0] if lines.size() > 0 else "", "hint": hint.text}
+	main.queue_free()
+	await hooks.frames(2)
+	MainScript.rollback_no_f4 = false
+	return out
+
+
+func test_f4_belt_debug() -> void:
+	var r := await _f4(false)
+	note("F4: строк %d при %d тяжёлых, например «%s»" % [whole(r["on"]), whole(r["heavies"]), str(r["sample"])])
+	ok(whole(r["on"]) == whole(r["heavies"]) and whole(r["heavies"]) > 0, "F4 — строка над каждым тяжёлым обеих сторон (%d из %d)" % [whole(r["on"]), whole(r["heavies"])])
+	eq(whole(r["named"]), whole(r["on"]), "каждая строка начинается с состояния пояса доктрины")
+	eq(whole(r["off"]), 0, "F4 ещё раз — строк нет")
+	ok(not str(r["hint"]).contains("F4"), "в подсказке клавиш F4 нет — это отладка разработчика")
+	var o := await _f4(true)
+	eq(whole(o["on"]), 0, "откат «F4 не слушается»: строк нет — проверка краснеет")
 
 
 ## Ушедший в гипер выпадает из выбора (06, 2.5: «выбор чистится сам»), и панель

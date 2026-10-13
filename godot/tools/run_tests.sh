@@ -219,6 +219,25 @@ if [[ $code -ne 0 ]] || ! grep -q '^SELFTEST ok: .*правок 1,' "$LOGS/selft
 fi
 rm -rf "$rel"
 
+# ── стенд «бой без отрисовки» (план G4, п. 6): дверь главной сцены `-- --bench` — та же,
+# что у выгруженной сборки (там -s нет). Один бой сценария «brake»: строка BENCH на бой,
+# сводка BENCH_SUM, код 0. Откат — данные с ошибкой (--set неизвестного пути): стенд
+# обязан отказать словами и кодом 1, а не мерить бой на испорченных числах.
+say "── стенд -- --bench (сценарий «brake», 1 бой)"
+timeout 120 "$GODOT" --headless --path "$PROJ" -- --bench --load brake --n 1 >"$LOGS/bench_core.log" 2>&1
+code=$?
+grep -m1 '^BENCH_SUM' "$LOGS/bench_core.log" | cut -c1-160
+if [[ $code -ne 0 ]] || ! grep -q '^BENCH {' "$LOGS/bench_core.log" || ! grep -q '^BENCH_SUM {' "$LOGS/bench_core.log" || grep -q 'SCRIPT ERROR' "$LOGS/bench_core.log"; then
+  fail "--bench (код $code)"; show_tail "$LOGS/bench_core.log"
+fi
+code=0
+timeout 120 "$GODOT" --headless --path "$PROJ" -- --bench --load brake --n 1 --set nope.nope=1 >"$LOGS/bench_core_bad.log" 2>&1 || code=$?
+if [[ $code -ne 1 ]] || ! grep -q '^BENCH ОТКАЗ' "$LOGS/bench_core_bad.log"; then
+  fail "--bench с испорченными данными не отказал (код $code)"; show_tail "$LOGS/bench_core_bad.log"
+else
+  say "   откат «данные с ошибкой»: код 1, $(grep -m1 '^BENCH ОТКАЗ' "$LOGS/bench_core_bad.log")"
+fi
+
 # ── повтор боя (G1; архитектура, 2.9): запись — зерно + журнал команд + отпечаток на
 # последнем шаге. Показательный бой «Полигона» БЕЗ вида (--make-replay) проигрывается
 # С ВИДОМ на 60 и 144 кадрах (--fixed-fps): отпечатки обязаны совпасть до бита —
