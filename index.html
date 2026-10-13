@@ -61,7 +61,10 @@
           theme: {
             extend: {
               colors: {
-                indigo: { 50:'#fbf6f3',100:'#f4e6e0',200:'#eacfc1',300:'#d5a893',400:'#c98d73',500:'#bf7c66',600:'#ab644f',700:'#8d503f',800:'#79473a',900:'#623c32',950:'#341e18' },
+                indigo: { 50:'#fcf5f2',100:'#f7e6dd',200:'#eecebd',300:'#e0a98f',400:'#d58c6b',500:'#cc7a5f',600:'#b96147',700:'#994e38',800:'#7f4333',900:'#68392d',950:'#371c15' },
+                // Зелёный — тот же спокойный «готово» (--ok), что в палитре:
+                // штатный emerald (насыщенность 0,149) был ярче всего на экране.
+                emerald: { 50:'#f4faf3',100:'#e5f4e2',200:'#cfe8ca',300:'#b4d8ac',400:'#98c390',500:'#82aa7a',600:'#688a62',700:'#546e4f',800:'#42573e',900:'#364733',950:'#1d281c' },
                 // Шкала zinc — те же шесть шагов поверхностей и четыре
                 // ступени текста, что и в :root. Классы zinc-* стоят в коде
                 // тысячами, и подгонять их по одному значило бы навсегда
@@ -146,17 +149,15 @@
           --muted: #a6a39a;       /* подписи, метки разделов */
           --muted-2: #6f6b63;     /* служебное, моно-метки */
 
-          /* АКЦЕНТ ПРИГЛУШЁН до насыщенности остальной палитры (OKLCH: светлота
-             0,65, насыщенность 0,09 — у зелёного «готово» 0,082). Прежний
-             #d97757 был 0,131: в полтора раза громче всего вокруг, и на тёмном
-             холсте каждая ссылка и кнопка перекрикивала содержимое. Оттенок тот
-             же — терракота осталась терракотой. Контраст текстом на карточке
-             4,7 (норма 4,5), тёмного текста на заливке 5,3. Шкала indigo
-             в tailwind.config пересчитана тем же способом. */
-          --accent: #bf7c66;
-          --accent-hover: #c98d73;
-          --accent-soft: rgba(191,124,102,.12);  /* фон своего сообщения в чате */
-          --accent-line: rgba(191,124,102,.45);  /* рамка активного тега */
+          /* АКЦЕНТ ПРИГЛУШЁН — посередине между прежним и совсем тихим (OKLCH:
+             светлота 0,66, насыщенность 0,11). Прежний #d97757 (0,131) был
+             громче всего на экране; пробовали 0,09 (#cc7a5f) — «совсем
+             блеклый». Оттенок тот же. Контраст текстом на карточке 4,9,
+             тёмного текста на заливке 5,5. Шкала indigo пересчитана так же. */
+          --accent: #cc7a5f;
+          --accent-hover: #d58c6b;
+          --accent-soft: rgba(204,122,95,.12);  /* фон своего сообщения в чате */
+          --accent-line: rgba(204,122,95,.45);  /* рамка активного тега */
 
           --ok: #7a9d6b;          /* снято, сохранено */
           --warn: #facc15;        /* солнце, приборы на схеме света, стикеры */
@@ -231,7 +232,7 @@
             -webkit-tap-highlight-color: transparent;
             -webkit-font-smoothing: antialiased;
         }
-        ::selection { background: rgba(191,124,102,0.3); }
+        ::selection { background: rgba(204,122,95,0.3); }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-md); }
@@ -306,7 +307,7 @@
         .cf-card-text { white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden;
                         cursor: move; user-select: none; -webkit-user-select: none; }
         .cf-card-text:empty::before { content: ''; }
-        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(191,124,102,0.4); }
+        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(204,122,95,0.4); }
 
         /* ---------- утилиты редизайна ---------- */
         :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
@@ -683,7 +684,7 @@
               background: #1a1918 !important; color: #f0eee6 !important;
               -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .print-dark .print-head { border-bottom-color: #4a4741 !important; }
-            .print-dark .print-eyebrow { color: #bf7c66 !important; }
+            .print-dark .print-eyebrow { color: #cc7a5f !important; }
             .print-dark .print-meta, .print-dark .cf-print-dim { color: #a6a39a !important; }
             .print-dark td, .print-dark th { border-color: #4a4741 !important; }
             .print-dark img { border-color: #4a4741 !important; }
@@ -703,10 +704,10 @@
            (фон --bg, карточки нашими цветами), см. ExcBoard. */
         .cf-exc { background: var(--bg); }
         .cf-exc .excalidraw { --ui-font: var(--font-ui);
-          --color-primary: #bf7c66; --color-primary-darker: #ab644f; --color-primary-darkest: #8d503f;
-          --color-primary-light: #f6dfd6; --color-primary-light-darker: #efcdbf; --color-primary-hover: #b06d57;
+          --color-primary: #cc7a5f; --color-primary-darker: #b96147; --color-primary-darkest: #994e38;
+          --color-primary-light: #f6dfd6; --color-primary-light-darker: #efcdbf; --color-primary-hover: #c06b52;
           --color-surface-primary-container: #f6dfd6; --color-on-primary-container: #5b2413;
-          --color-brand-hover: #b06d57; --color-brand-active: #a0614d; --color-selection: #bf7c66; }
+          --color-brand-hover: #c06b52; --color-brand-active: #b05e45; --color-selection: #cc7a5f; }
         /* --theme-filter: none — холст и образцы цветов НЕ выворачиваются
            (JS-половина этой правки — в vendor/excalidraw/build.mjs). */
         .cf-exc .excalidraw.theme--dark {
@@ -1561,7 +1562,7 @@
           const g = cv.getContext('2d');
           g.fillStyle = '#242322'; g.fillRect(0, 0, w, h);
           g.fillStyle = '#33312d'; g.fillRect(0, h - 6, w, 6);
-          g.fillStyle = '#bf7c66';
+          g.fillStyle = '#cc7a5f';
           const r = Math.min(w, h) * 0.13, cx = w / 2, cy = h / 2 - r * 0.15;
           g.beginPath(); g.moveTo(cx - r * 0.7, cy - r); g.lineTo(cx + r, cy); g.lineTo(cx - r * 0.7, cy + r); g.closePath(); g.fill();
           g.fillStyle = '#a6a39a'; g.font = `500 ${Math.round(h * 0.055)}px -apple-system, Helvetica, Arial, sans-serif`;
@@ -6711,7 +6712,7 @@
                 // чтобы линия на нём пропала.
                 ctx.lineWidth = lw * 2.4; ctx.strokeStyle = 'rgba(0,0,0,.35)';
                 ctx.setLineDash([]); ctx.strokeRect(x, y, w, h);
-                ctx.lineWidth = lw; ctx.strokeStyle = wide ? SIM_LINE : '#bf7c66';   // = --accent, рамка на экране
+                ctx.lineWidth = lw; ctx.strokeStyle = wide ? SIM_LINE : '#cc7a5f';   // = --accent, рамка на экране
                 ctx.strokeRect(x, y, w, h);
                 // Метка пропорции в углу рамки — единственная надпись
                 // на картинке, ровно как «2.35:1» у Cadrage.
@@ -8034,7 +8035,7 @@
         const EXC_EDGE = '#33312d';      // --border
         const EXC_DIM = '#6f6b63';       // --muted-2: рамка пустого окошка
         const EXC_STICKY_INK = '#1e1e1e';// по пастели стикера — тёмным
-        const EXC_LINK = '#bf7c66';      // --accent
+        const EXC_LINK = '#cc7a5f';      // --accent
         const EXC_BG = '#1a1918';        // --bg: холст
         // Доски, нарисованные при ВЫВОРАЧИВАЮЩЕЙ тёмной теме, хранят цвета
         // «до фильтра»: чёрный карандаш на экране был светлым. Переводим их
@@ -8760,7 +8761,7 @@
         // обязаны читаться одинаково. Свёрнута ли — общий `cf_mini`.
         // Данные приходят из onChange доски через `bind`, а рисуем не чаще
         // десяти раз в секунду: onChange сыплет на каждое движение пальца.
-        const EXC_MINI_COL = { scene: '#bf7c66', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
+        const EXC_MINI_COL = { scene: '#cc7a5f', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
         const excElBox = (e) => {
           if (Array.isArray(e.points) && e.points.length) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -10734,7 +10735,7 @@
               background: #1a1918 !important; color: #f0eee6 !important;
               -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .print-dark .print-head { border-bottom-color: #4a4741 !important; }
-            .print-dark .print-eyebrow { color: #bf7c66 !important; }
+            .print-dark .print-eyebrow { color: #cc7a5f !important; }
             .print-dark .print-meta, .print-dark .cf-print-dim { color: #a6a39a !important; }
             .print-dark td, .print-dark th { border-color: #4a4741 !important; }
             .print-dark img { border-color: #4a4741 !important; }
@@ -12582,7 +12583,7 @@
             });
             // Карточки — заливкой, цвет по виду: так на карте видно не только
             // «что-то лежит», но и что именно.
-            const COL = { scene: '#bf7c66', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
+            const COL = { scene: '#cc7a5f', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
             boardCards().forEach(c => {
               ctx.fillStyle = c.t === 'sticky' ? ((c.o && c.o.color) || COL.sticky) : COL[c.t];
               ctx.globalAlpha = 0.9;
@@ -13314,7 +13315,7 @@
               if (h) {
                 const b = shapeBox(h);
                 ctx.save();
-                ctx.strokeStyle = 'rgba(191,124,102,0.95)'; ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(204,122,95,0.95)'; ctx.lineWidth = 2;
                 ctx.strokeRect(b.x * z + vv.x - 3, b.y * z + vv.y - 3, b.w * z + 6, b.h * z + 6);
                 ctx.restore();
               }
@@ -13331,14 +13332,14 @@
                 const b = shapeBox(s);
                 const [px, py] = toScr(b.x, b.y);
                 const pw = b.w * z, ph = b.h * z;
-                ctx.strokeStyle = 'rgba(191,124,102,0.9)'; ctx.lineWidth = 1;
+                ctx.strokeStyle = 'rgba(204,122,95,0.9)'; ctx.lineWidth = 1;
                 ctx.setLineDash([4, 3]);
                 ctx.strokeRect(px - 4, py - 4, pw + 8, ph + 8);
                 ctx.setLineDash([]);
                 shapeHandles(s).forEach(hd => {
                   const [hx, hy] = toScr(hd.x, hd.y);
                   ctx.fillStyle = '#1a1918';
-                  ctx.strokeStyle = 'rgba(191,124,102,1)'; ctx.lineWidth = 1.5;
+                  ctx.strokeStyle = 'rgba(204,122,95,1)'; ctx.lineWidth = 1.5;
                   ctx.beginPath(); ctx.rect(hx - 4.5, hy - 4.5, 9, 9); ctx.fill(); ctx.stroke();
                 });
               });
@@ -13348,7 +13349,7 @@
             // выглядит как «оно само куда-то прыгнуло».
             if (guides.current.length) {
               ctx.save();
-              ctx.strokeStyle = 'rgba(191,124,102,0.95)'; ctx.lineWidth = 1;
+              ctx.strokeStyle = 'rgba(204,122,95,0.95)'; ctx.lineWidth = 1;
               ctx.setLineDash([5, 4]);
               guides.current.forEach(g => {
                 ctx.beginPath();
@@ -13371,8 +13372,8 @@
               const ry = Math.min(od.y0, od.y1) * z + vv.y;
               const rw = Math.abs(od.x1 - od.x0) * z, rh = Math.abs(od.y1 - od.y0) * z;
               ctx.save();
-              ctx.fillStyle = 'rgba(191,124,102,0.12)'; ctx.fillRect(rx, ry, rw, rh);
-              ctx.strokeStyle = 'rgba(191,124,102,0.95)'; ctx.lineWidth = 1.5;
+              ctx.fillStyle = 'rgba(204,122,95,0.12)'; ctx.fillRect(rx, ry, rw, rh);
+              ctx.strokeStyle = 'rgba(204,122,95,0.95)'; ctx.lineWidth = 1.5;
               ctx.setLineDash([6, 4]); ctx.strokeRect(rx, ry, rw, rh);
               ctx.restore();
             }
@@ -14738,7 +14739,7 @@
             const c = document.createElement('canvas');
             c.width = c.height = 64;
             const x = c.getContext('2d');
-            x.fillStyle = '#bf7c66'; x.fillRect(0, 0, 64, 64);
+            x.fillStyle = '#cc7a5f'; x.fillRect(0, 0, 64, 64);
             x.fillStyle = '#1a1918'; x.font = 'bold 22px sans-serif'; x.fillText('CF', 12, 40);
             c.toBlob(b => resolve(b), 'image/jpeg', 0.85);
           });
@@ -19023,7 +19024,7 @@
           const syncTitle = !isOnline
             ? (syncing ? `Офлайн · ${pendingWrites} правок ждут связи` : 'Офлайн · правки сохраняются на устройстве')
             : (syncing ? `Отправка в облако · ${pendingWrites}` : 'Всё сохранено в облаке');
-          const syncDot = !isOnline ? '#f59e0b' : (syncing ? '#fbbf24' : '#10b981');
+          const syncDot = !isOnline ? '#f59e0b' : (syncing ? '#fbbf24' : 'var(--ok)');
           // Соединение поднимается заново и само, но ждать этого вслепую —
           // худшее, что можно предложить человеку на площадке. Нажатие на
           // точку связи делает то же самое немедленно.
@@ -19356,7 +19357,7 @@
               )}
               {penProbeOn && <PenProbe onClose={togglePenProbe} />}
               {fpsNow && (
-                <div className="fixed pointer-events-none" style={{ left: '50%', transform: 'translateX(-50%)', bottom: 8, zIndex: 500, whiteSpace: 'nowrap', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '5px 9px', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: fpsNow.now >= 50 ? '#10b981' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
+                <div className="fixed pointer-events-none" style={{ left: '50%', transform: 'translateX(-50%)', bottom: 8, zIndex: 500, whiteSpace: 'nowrap', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '5px 9px', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: fpsNow.now >= 50 ? 'var(--ok)' : (fpsNow.now >= 30 ? '#fbbf24' : '#f87171') }}>
                   {/* «кадры» в приложении — это раскадровка, поэтому здесь
                       пишем «плавность» и fps: иначе читается как счётчик кадров */}
                   плавность {fpsNow.now} fps <span style={{ color: 'var(--muted-2)' }}>· хуже всего {fpsNow.low}</span>
@@ -22716,7 +22717,7 @@
                             const t = boardScenes.find(s => s.id === item.sceneId); if (!t) return null;
                             const a = linkAnchor(item, type); const ex = t.x; const ey = t.y + 50;
                             const on = selectedWbItems.includes(item.id) || selectedWbItems.includes(t.id);
-                            return (<path key={`link-${item.id}`} d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={on ? "#bf7c66" : "rgba(191,124,102,0.6)"} strokeWidth={on ? "4" : "3"} strokeDasharray="6 6" />);
+                            return (<path key={`link-${item.id}`} d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={on ? "#cc7a5f" : "rgba(204,122,95,0.6)"} strokeWidth={on ? "4" : "3"} strokeDasharray="6 6" />);
                           })}
                           {linkingFrom && (() => {
                              const src = linkingFrom.type === 'sticky' ? stickies.find(x => x.id === linkingFrom.id)
@@ -22726,7 +22727,7 @@
                              if (!src) return null;
                              const a = linkAnchor(src, linkingFrom.type);
                              const { x: ex, y: ey } = inkPt(mousePos.x, mousePos.y);
-                             return <path d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#bf7c66" strokeWidth="4" />;
+                             return <path d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#cc7a5f" strokeWidth="4" />;
                           })()}
                         </svg>
 
@@ -24359,7 +24360,7 @@
                         <div className="mb-3 bg-[var(--scrim)] border border-[var(--border)] rounded-lg p-3 space-y-2">
                           {cloudTest.map((s, i) => (
                             <div key={i} className="flex items-start gap-2">
-                              <span className="shrink-0 font-bold" style={{ color: s.ok ? '#10b981' : '#f87171', lineHeight: 1.5 }}>
+                              <span className="shrink-0 font-bold" style={{ color: s.ok ? 'var(--ok)' : '#f87171', lineHeight: 1.5 }}>
                                 {s.ok ? '✓' : '✕'}
                               </span>
                               <span className="min-w-0">
@@ -24945,7 +24946,7 @@
                             } else { showToast("❌ Массив сцен пуст."); }
                           } catch (e) { showToast("❌ Ошибка формата JSON."); }
                         }}
-                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-[#1a1918] px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
                       >Импортировать сцены</button>
                     </div>
 
@@ -24970,7 +24971,7 @@
                             <div key={i} className={m.role === 'me' ? 'text-right' : ''}>
                               <span className="inline-block text-left rounded-lg px-3 py-2 text-xs leading-relaxed"
                                     style={{ whiteSpace: 'pre-wrap', maxWidth: '92%',
-                                             background: m.role === 'me' ? 'var(--raised)' : 'rgba(191,124,102,.12)',
+                                             background: m.role === 'me' ? 'var(--raised)' : 'rgba(204,122,95,.12)',
                                              color: m.role === 'me' ? 'var(--text-2)' : 'var(--text)',
                                              border: '1px solid ' + (m.role === 'me' ? 'var(--border)' : 'var(--accent-line)') }}>
                                 {m.text}

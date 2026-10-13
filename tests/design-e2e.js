@@ -63,7 +63,7 @@ TITLES.forEach((t, i) => {
     await new Promise(r => setTimeout(r, 900));
     return !!b;
   }, re);
-  const ACCENT = 'rgb(191, 124, 102)';   // = --accent
+  const ACCENT = 'rgb(204, 122, 95)';   // = --accent
 
   // ---- ПЛАНШЕТ
   const { page: p, errs } = await mk(1194, 834);
