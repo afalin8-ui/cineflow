@@ -14324,6 +14324,56 @@
             } else fallback();
           };
 
+          // ВХОД В КОМНАТУ ПО КОДУ. «Войти» молчал или уводил не туда
+          // в трёх случаях, и со стороны все три — «ничего не происходит»:
+          // (1) iPhone сам ставит заглавную первую букву и правит слова
+          //     автокоррекцией — «Room-3f8a» это ДРУГАЯ комната, новая и
+          //     пустая, и человек видит тот же пустой проект, что и был;
+          // (2) код совпал с нынешним — выход без единого слова;
+          // (3) в адресе стоит ?room= (иконку поставили со ссылки-
+          //     приглашения) — он перебивает введённый код после перезагрузки.
+          // Поэтому: поле без автокоррекции, на совпадение — полоска,
+          // ?room= из адреса убирается, а перед входом облако спрашивается,
+          // есть ли в такой комнате хоть что-нибудь. Пусто — говорим это
+          // и пробуем тот же код строчными; новую пустую комнату войти
+          // всё равно можно, но уже сознательно.
+          const [roomBusy, setRoomBusy] = useState(false);
+          const joinRoom = async (raw) => {
+            const v = String(raw || '').trim();
+            if (!v) { showToast('Впишите код комнаты'); return; }
+            if (v === appId) { showToast('Вы уже в этой комнате'); return; }
+            const go = (code) => {
+              try { localStorage.setItem('cf_room', code); } catch (e) {}
+              const u = new URL(location.href);
+              if (u.searchParams.has('room')) { u.searchParams.delete('room'); location.replace(u.toString()); }
+              else location.reload();
+            };
+            if (!db || !navigator.onLine) { go(v); return; }   // спросить облако нечем
+            const has = async (code) => {
+              const base = db.collection('artifacts').doc(code).collection('public').doc('data');
+              for (const c of ['scenes', 'references', 'locations', 'messages', 'docs']) {
+                const snap = await base.collection(c).limit(1).get({ source: 'server' });
+                if (!snap.empty) return true;
+              }
+              return false;
+            };
+            // Облако не ответило за 8 с — входим без проверки: молчащая
+            // связь не должна запирать человека снаружи его проекта.
+            const ask = (code) => Promise.race([has(code).catch(() => null), new Promise(r => setTimeout(() => r(null), 8000))]);
+            setRoomBusy(true);
+            showToast('Проверяю комнату «' + v + '»…');
+            const found = await ask(v);
+            if (found !== false) { go(v); return; }
+            const low = v.toLowerCase();
+            if (low !== v && (await ask(low)) === true) { showToast('Нашлась комната «' + low + '»'); go(low); return; }
+            setRoomBusy(false);
+            setToast(null);
+            setConfirmAction({ calm: true, label: 'Войти всё равно',
+              title: 'В комнате «' + v + '» пусто',
+              message: 'В облаке нет ни сцен, ни фотографий, ни объектов, ни сообщений с таким кодом. Скорее всего, код набран с ошибкой — проверьте буквы: большие и маленькие различаются.\n\nЕсли это новая комната, войдите всё равно.',
+              onConfirm: () => go(v) });
+          };
+
           // Авторизация Firebase
           useEffect(() => {
             if (auth) {
@@ -24353,8 +24403,12 @@
                   <div className="mb-4">
                     <label className="text-xs text-zinc-400 font-semibold block mb-1.5 ml-1">Код комнаты проекта</label>
                     <div className="flex gap-2">
-                      <input type="text" defaultValue={appId} id="cf-room-input" className="flex-1 glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
-                      <button onClick={() => { const v = document.getElementById('cf-room-input').value.trim(); if (v && v !== appId) { localStorage.setItem('cf_room', v); window.location.reload(); } }} className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 rounded-lg transition-colors">Войти</button>
+                      <input type="text" defaultValue={appId} id="cf-room-input" data-cf="room-input"
+                             autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false} enterKeyHint="go"
+                             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); joinRoom(e.currentTarget.value); } }}
+                             className="flex-1 glass-input rounded-lg px-4 py-2.5 text-sm font-mono" />
+                      <button onClick={() => joinRoom(document.getElementById('cf-room-input').value)} disabled={roomBusy} data-cf="room-join"
+                              className="bg-indigo-500 hover:bg-indigo-400 text-[#1a1918] text-xs font-bold px-4 rounded-lg transition-colors disabled:opacity-60">{roomBusy ? 'Проверяю…' : 'Войти'}</button>
                     </div>
                     <p className="text-[length:var(--fs-1)] text-zinc-500 mt-1.5 ml-1">Код — это и есть замок: кто его знает, тот видит проект. Простой код вроде «cineflow-room-3» можно угадать — если делитесь приложением с посторонними, поменяйте его на что-то своё и разошлите группе новую ссылку.</p>
                     <button onClick={() => {
