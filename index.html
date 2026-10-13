@@ -18899,6 +18899,14 @@
             const today = new Date().toISOString().slice(0, 10);
             return shiftDates.find(d => d >= today) || shiftDates[shiftDates.length - 1];
           }, [shiftDates]);
+          // Сцена, которую откроет выбор режима в «Ещё», пока на экране список:
+          // выбранная, если она в показанной смене, иначе первая сцена смены.
+          const modeScene = (() => {
+            const act = scenes.find(x => x.id === activeSceneId);
+            if (phoneFilter === 'shift' && nearestShift && !(act && act.date === nearestShift))
+              return sortedScenes.find(x => x.date === nearestShift) || act || sortedScenes[0] || null;
+            return act || sortedScenes[0] || null;
+          })();
 
           // «развернуть все» у референсов и раскадровки раскрывает сетку
           // НА МЕСТЕ, вдоль текста и вниз. Никаких всплывающих окон:
@@ -24349,8 +24357,18 @@
                             {currentView === 'notion' && (
                               <React.Fragment>
                                 <span className="cf-meta block px-3 pt-1 pb-1.5">Режим экрана сцены</span>
+                                {/* СО СПИСКА РЕЖИМ ОТКРЫВАЕТ СЦЕНУ. Режим меняет вид
+                                    ОТКРЫТОЙ сцены, а на списке её нет: кружок
+                                    переезжал, шторка закрывалась, и на экране
+                                    оставался тот же список — со стороны «режимы
+                                    не работают» (запись экрана пользователя).
+                                    Какую сцену откроем, сказано заранее. */}
+                                {!phoneSceneOpen && modeScene && (
+                                  <span className="cf-meta block px-3 pb-1.5" data-cf="mode-opens">откроется сцена #{modeScene.number}</span>
+                                )}
                                 {SCENE_MODES.map(m => (
-                                  <button key={m.id} onClick={() => { setSceneMode(m.id); setPhoneSheet(null); }}
+                                  <button key={m.id} data-cf={'more-mode-' + m.id}
+                                          onClick={() => { setSceneMode(m.id); setPhoneSheet(null); if (!phoneSceneOpen && modeScene) { setActiveSceneId(modeScene.id); setPhoneSceneOpen(true); } }}
                                           className="w-full flex items-center gap-3 px-3 rounded-lg"
                                           style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: sceneMode === m.id ? 'var(--accent)' : 'var(--text-2)' }}>
                                     {sceneMode === m.id ? '●' : '○'} {m.label}
