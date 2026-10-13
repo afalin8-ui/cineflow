@@ -389,6 +389,8 @@ class Doctrine:
 	var ai_air_bomber_slots_k: float
 	var ai_air_bomber_min: int
 	var air_patrol_k: float
+	var air_patrol_escort_take: float
+	var air_patrol_escort_drop: float
 	var air_bomber_flank_extra: float
 	var air_bomber_flank_points_k: PackedFloat64Array
 	var amove_resume_s: float
@@ -407,6 +409,7 @@ class Doctrine:
 	var camera_far: float
 	var view_height_spread: float      # только картинка (09, 11.6)
 	var view_bob: float
+	var view_craft_arc: float          # дуги машин по высоте (09, 11.6), только картинка
 	# раскладываются по местам (DOCTRINE_SPECIAL), здесь — для справки и стенда
 	var sec_mounts: Dictionary[StringName, int] = {}
 	var ecm_main_slow_default: float

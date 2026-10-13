@@ -3,13 +3,16 @@
 # - машины на рабочем виде (2400) — точками цвета стороны, со следом (04, 2.21): точка
 #   есть у каждой машины, след виден вдоль пути; откаты — «точек нет» (модель на 2400 —
 #   пара тусклых точек) и «следа нет»;
-# - ракеты и трассы ПВО на рабочем виде видны (хвост G2): пятно ракеты и полоска ПВО
-#   не меньше заданного числа точек; откат — один общий предел толщины, как в G2;
+# - ракеты и трассы ПВО на рабочем виде видны (хвост G2): пятно ракеты и свет в
+#   поперечнике трассы ПВО не меньше замеренного; откаты — предел ракеты и предел ПВО
+#   ПО ОДНОМУ (общий 1,6, как в G2), один общий предел и ПВО без предела вовсе;
 # - главный калибр и лёгкое на СТАРТОВОМ виде (3990) различимы по толщине (хвост G2):
 #   у обоих мировая толщина меньше точки, и общий предел «не меньше 1,6» делал их
 #   одинаковыми; откат — один общий предел;
 # - снаряд, кончившийся раньше первого кадра, вспыхивает там, где кончился, а не в
-#   центре поля (хвост G2); откат — конец в (0, 0, 0), как было.
+#   центре поля (хвост G2); откат — конец в (0, 0, 0), как было;
+# - очередь перехватчика и луч лёгкого корабля по цели, сбитой ЭТИМ ЖЕ выстрелом, кончаются
+#   у неё, а не в центре поля и не пропадают (замечание к G3); откаты — прежние.
 extends "res://tests/case.gd"
 
 const Defs := preload("res://sim/defs.gd")
@@ -18,6 +21,7 @@ const Ship := preload("res://sim/ship.gd")
 const Craft := preload("res://sim/craft.gd")
 const Squad := preload("res://sim/squad.gd")
 const Weapons := preload("res://sim/weapons.gd")
+const Hangar := preload("res://sim/hangar.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
 const AirView := preload("res://view/air_view.gd")
@@ -157,6 +161,28 @@ static func _band_width(img: Image, a: Vector2, b: Vector2, thr: float) -> float
 	return widths[2]
 
 
+## Сколько СВЕТА в поперечнике отрезка a→b в его середине: сумма яркости точек поперечной
+## линии (±6), медиана по пяти поперечникам. Доля «светится ли середина» тонкой полоски
+## в 1,6 точки и полоски в 2,4 одна и та же — 100% (замечание к G3: откат «PD_PX = 0» был
+## зелёным), а видна полоска тем лучше, чем больше в ней света.
+static func _cross_light(img: Image, a: Vector2, b: Vector2) -> float:
+	var along := (b - a).normalized()
+	var across := Vector2(-along.y, along.x)
+	var sums: Array[float] = []
+	for k in 5:
+		var c := a.lerp(b, 0.4 + 0.05 * float(k))
+		var sum := 0.0
+		for i in range(-6, 7):
+			var p := c + across * float(i)
+			var x := roundi(p.x)
+			var y := roundi(p.y)
+			if x >= 0 and y >= 0 and x < img.get_width() and y < img.get_height():
+				sum += lum(img.get_pixel(x, y))
+		sums.append(sum)
+	sums.sort()
+	return sums[2]
+
+
 # ───────────────────────── машины: точки и след на 2400 ─────────────────────────
 
 ## Точка машины — середина её пятна белая: не меньше двух точек ярче 0,95 в 5 × 5 вокруг
@@ -272,10 +298,14 @@ static func _orange_area(img: Image, p: Vector2, r: int) -> int:
 
 
 ## mode: &"ok" — как в игре; &"one_px" — откат «один общий предел, как в G2»;
-## &"pd_no_min" — откат «у трассы ПВО нет нижнего предела» (0,55 в мире — треть точки).
-## Шаги идут, пока не наберётся по восемь замеров ракеты и ПВО.
+## &"missile" и &"pd" — откаты ПО ОДНОМУ (замечание к G3): у ракеты (MISSILE_PX) или
+## у трассы ПВО (PD_PX) своего предела нет, общий 1,6 — как было в G2, остальные как в
+## игре; &"pd_no_min" — у трассы ПВО нет предела вовсе (0,55 в мире — треть точки; это
+## состояние ДО G2, до правки abs). Шаги идут, пока не наберётся по восемь замеров
+## ракеты и ПВО.
 func _missiles_pd(mode: StringName) -> Dictionary:
-	BattleFx.rollback_one_px = mode != &"ok"
+	BattleFx.rollback_one_px = mode == &"one_px" or mode == &"pd_no_min"
+	BattleFx.rollback_px_off = mode if mode == &"missile" or mode == &"pd" else &""
 	var v := await _lab_view(func(b: Battle) -> void:
 		var f := _put(b, Ship.ATTACKER, &"frigate", Vector2(0, 0), Vector2(0, -600))
 		f.light_cd = PackedFloat64Array()
@@ -293,6 +323,7 @@ func _missiles_pd(mode: StringName) -> Dictionary:
 	var tr := v.bfx.gfx.tracers.multimesh
 	var miss_area: Array[float] = []
 	var pd_lit: Array[float] = []
+	var pd_light: Array[float] = []
 	var saved := false
 	for i in roundi(8.0 / Battle.STEP):
 		_step_draw(v)
@@ -325,6 +356,7 @@ func _missiles_pd(mode: StringName) -> Dictionary:
 			var a2: Vector2 = sg[0]
 			var b2: Vector2 = sg[1]
 			pd_lit.append(_lit_share(img, a2, b2, 0.12))
+			pd_light.append(_cross_light(img, a2, b2))
 		if not saved and not segs.is_empty() and mm.visible_instance_count > 0:
 			img.save_png(_shots_dir().path_join("missiles_pd_%s_%s.png" % [mode, renderer()]))
 			saved = true
@@ -333,29 +365,50 @@ func _missiles_pd(mode: StringName) -> Dictionary:
 	var f: Dictionary = v.bfx.fired
 	miss_area.sort()
 	pd_lit.sort()
+	pd_light.sort()
 	var out := {"m": miss_area[miss_area.size() / 2] if not miss_area.is_empty() else 0.0, "pd": pd_lit[pd_lit.size() / 2] if not pd_lit.is_empty() else 0.0,
-		"nm": miss_area.size(), "npd": pd_lit.size(), "fired": f}
-	note("%s · ракеты и ПВО %s: пятно ракеты %.0f точек (медиана из %d), трасса ПВО видна на %.0f%% середины (медиана из %d)" % [renderer(), mode, num(out["m"]), miss_area.size(), num(out["pd"]) * 100.0, pd_lit.size()])
+		"pdl": pd_light[pd_light.size() / 2] if not pd_light.is_empty() else 0.0, "nm": miss_area.size(), "npd": pd_lit.size(), "fired": f}
+	note("%s · ракеты и ПВО %s: пятно ракеты %.0f точек (медиана из %d), трасса ПВО видна на %.0f%% середины, света в поперечнике %.2f (медиана из %d)" % [renderer(), mode, num(out["m"]), miss_area.size(), num(out["pd"]) * 100.0, num(out["pdl"]), pd_lit.size()])
 	await _drop(v)
 	BattleFx.rollback_one_px = false
+	BattleFx.rollback_px_off = &""
 	return out
 
 
-## Пятно ракеты — оранжевые точки ярче 0,3 в 13 × 13 вокруг неё (с её следом): с G3 —
-## не меньше MISS_AREA (замер: Forward+ 48, Compatibility 28; в откате 15 и 9). Трасса
-## ПВО — доля середины, где она светится.
-const MISS_AREA := 20.0
+## Пятно ракеты — оранжевые точки ярче 0,3 в 13 × 13 вокруг неё (с её следом). Трасса
+## ПВО — доля середины, где она светится, и сколько в её поперечнике света. Пороги —
+## ЗАМЕР в каждом отрисовщике, и у каждого свой откат ПО ОДНОМУ (замечание к G3: при
+## пороге 20 откат «MISSILE_PX = 0» давал 22 и был зелёным, а откат «PD_PX = 0» — 100%
+## середины, как и с правкой: доля не отличает полоску в 1,6 точки от полоски в 2,4).
+## Замер (lavapipe, часы вида стоят):
+##                       Forward+            Compatibility
+##   как в игре          48 · 100% · 2,38    28 · 100% · 2,02
+##   MISSILE_PX = 0      22                  12
+##   PD_PX = 0                 100% · 1,83         100% · 1,33
+##   один предел (G2)    15 · 100% · 1,83     9 · 100% · 1,33
+##   ПВО без предела           57% · 0,28          38% · 0,07
+const MISS_AREA := {"forward_plus": 35.0, "gl_compatibility": 20.0}
+const PD_LIGHT := {"forward_plus": 2.1, "gl_compatibility": 1.65}
 
 
 func test_missiles_and_pd_visible_at_2400() -> void:
+	var ma: float = MISS_AREA.get(renderer(), 35.0)
+	var pl: float = PD_LIGHT.get(renderer(), 2.1)
 	var r := await _missiles_pd(&"ok")
 	ok(whole(r["nm"]) > 0 and whole(r["npd"]) > 0, "%s: ракеты летят, ПВО по ним бьёт (%s)" % [renderer(), str(r["fired"])])
-	ok(num(r["m"]) >= MISS_AREA, "%s: ракета на 2400 — пятно со следом не меньше %.0f точек: %.0f" % [renderer(), MISS_AREA, num(r["m"])])
+	ok(num(r["m"]) >= ma, "%s: ракета на 2400 — пятно со следом не меньше %.0f точек: %.0f" % [renderer(), ma, num(r["m"])])
 	ok(num(r["pd"]) >= 0.9, "%s: трасса ПВО на 2400 видна вдоль середины: %.0f%%" % [renderer(), num(r["pd"]) * 100.0])
+	ok(num(r["pdl"]) >= pl, "%s: в поперечнике трассы ПВО света не меньше %.2f: %.2f" % [renderer(), pl, num(r["pdl"])])
+	var om := await _missiles_pd(&"missile")
+	ok(num(om["m"]) < ma, "%s: откат «MISSILE_PX = 0» (общий предел 1,6, как в G2): пятно ракеты %.0f — проверка краснеет" % [renderer(), num(om["m"])])
+	ok(num(om["pdl"]) >= pl, "%s: контроль — при этом откате трасса ПВО как в игре (%.2f)" % [renderer(), num(om["pdl"])])
+	var op := await _missiles_pd(&"pd")
+	ok(num(op["pdl"]) < pl, "%s: откат «PD_PX = 0» (общий 1,6, как в G2): света в поперечнике %.2f — проверка краснеет" % [renderer(), num(op["pdl"])])
+	ok(num(op["m"]) >= ma, "%s: контроль — при этом откате ракета как в игре (%.0f)" % [renderer(), num(op["m"])])
 	var o := await _missiles_pd(&"one_px")
-	ok(num(o["m"]) < MISS_AREA, "%s: откат «один общий предел, как в G2»: пятно ракеты %.0f — пылинка, проверка краснеет" % [renderer(), num(o["m"])])
+	ok(num(o["m"]) < ma and num(o["pdl"]) < pl, "%s: откат «один общий предел, как в G2»: пятно ракеты %.0f, свет ПВО %.2f — проверка краснеет" % [renderer(), num(o["m"]), num(o["pdl"])])
 	var n := await _missiles_pd(&"pd_no_min")
-	ok(num(n["pd"]) < 0.9, "%s: откат «у трассы ПВО нет нижнего предела»: %.0f%% — рвётся, проверка краснеет" % [renderer(), num(n["pd"]) * 100.0])
+	ok(num(n["pd"]) < 0.9, "%s: откат «у трассы ПВО нет нижнего предела» (до G2): %.0f%% — рвётся, проверка краснеет" % [renderer(), num(n["pd"]) * 100.0])
 
 
 # ───────────────────────── главный калибр и лёгкое на старте (3990) ─────────────────────────
@@ -447,6 +500,100 @@ func test_projectile_end_flash_not_at_center() -> void:
 	var o := await _end_flash(true)
 	var c3: Vector3 = o["origin"]
 	ok(c3 != Vector3.INF and c3.length() < 1.0 and num(o["lum0"]) > 0.3, "%s: откат «конец в (0, 0, 0)»: вспышка в центре поля (%.2f) — проверка краснеет" % [renderer(), num(o["lum0"])])
+
+
+# ───────────────────── выстрел по цели, сбитой этим же выстрелом ─────────────────────
+
+## Концы отрезков пула (луч или летящий отрезок) с номера w0 по w1: конец = начало +
+## basis.x (view/fx_pool.gd); только цвета color.
+static func _ends(mi: MultiMeshInstance3D, w0: int, w1: int, color: Color) -> Array[Vector3]:
+	var mm := mi.multimesh
+	var out: Array[Vector3] = []
+	for k in range(w0, w1):
+		var t := mm.get_instance_transform(k % mm.instance_count)
+		if Color(t.basis.z.x, t.basis.z.y, t.basis.z.z).is_equal_approx(color):
+			out.append(t.origin + t.basis.x)
+	return out
+
+
+static func _nearest(ends: Array[Vector3], at: Vector2) -> float:
+	var best := INF
+	for e in ends:
+		best = minf(best, Vector2(e.x, e.z).distance_to(at))
+	return best
+
+
+## Машину, сбитую на шаге, Hangar.tick убирает в конце шага, а вид разбирает события
+## ПОСЛЕ шага — цели уже нет (замечание к G3): очередь перехватчика уходила росчерком
+## в центр поля (0, 0, 0), луч лёгкого корабля не рисовался вовсе. Теперь место цели — в
+## самом событии. Свои перехватчики и фрегат (фокус на звено) против звена чужих
+## бомбардировщиков с прочностью 0,01: каждая очередь и каждый луч сбивают. who: &"craft"
+## — бьют перехватчики, &"light" — фрегат с фокусом на звено (каждый своим прогоном, чтобы
+## сбитое досталось именно ему). mode: &"ok"; откаты &"zero" (очередь в (0, 0, 0)) и
+## &"lost" (луч по ушедшей цели не рисуется).
+func _downed_shots(mode: StringName, who: StringName) -> Dictionary:
+	AirView.rollback_target_zero = mode == &"zero"
+	BattleFx.rollback_fire_lost = mode == &"lost"
+	var v := await _lab_view(func(b: Battle) -> void:
+		_put(b, Ship.ATTACKER, &"carrier", Vector2(0, 250), Vector2(0, -300))
+		# фрегат у самого носителя (на него и заходят бомбардировщики) и с двигателями:
+		# лёгкое бьёт в конусе, и фрегат поворачивается к цели; ПВО молчит — иначе машины
+		# сбивало бы оно, а не луч
+		var f := _put(b, Ship.ATTACKER, &"frigate", Vector2(70, 200), Vector2(0, -300))
+		f.off_until.erase(&"engines")
+		f.pd_cd = PackedFloat64Array()
+		_quiet(_put(b, Ship.DEFENDER, &"carrier", Vector2(0, -700), Vector2(0, 0)))
+		_quiet(_put(b, Ship.DEFENDER, &"cruiser", Vector2(-250, -700), Vector2(0, 0))))
+	var b := v.battle
+	var foe := Hangar.launch(b, b.ships[2], &"bomber")       # команды — только своей стороне
+	if who == &"light":
+		b.queue({"op": &"focus", "ids": [b.ships[1].uid], "target": foe.uid})
+	else:
+		b.queue({"op": &"launch", "ids": [b.ships[0].uid], "role": &"interceptor"})
+	var craft_d: Array[float] = []
+	var light_d: Array[float] = []
+	for i in roundi(40.0 / Battle.STEP):
+		for c in b.crafts:
+			if c.side == Ship.DEFENDER:
+				c.hp = minf(c.hp, 0.01)
+		var tw0 := v.air.fx.tracers_written
+		var bw0 := v.bfx.gfx.beams_written
+		_step_draw(v)
+		var cends := _ends(v.air.fx.tracers, tw0, v.air.fx.tracers_written, AirView.GUN_OWN)
+		var lends := _ends(v.bfx.gfx.beams, bw0, v.bfx.gfx.beams_written, BattleFx.LIGHT_OWN)
+		for e in b.events:
+			if e[0] == &"craft_fire" and b.body_by_uid(whole(e[2])) == null:
+				var cat: Vector2 = e[3]
+				craft_d.append(_nearest(cends, cat))
+			elif e[0] == &"fire" and e[3] == &"light" and b.body_by_uid(whole(e[2])) == null:
+				var lat: Vector2 = e[5]
+				light_d.append(_nearest(lends, lat))
+		if b.crafts.filter(func(c: Craft) -> bool: return c.side == Ship.DEFENDER).is_empty() and i > 30:
+			break
+	await _drop(v)
+	AirView.rollback_target_zero = false
+	BattleFx.rollback_fire_lost = false
+	craft_d.sort()
+	light_d.sort()
+	note("%s · выстрел по сбитой цели (%s, %s): очередей %d, конец дальше всего в %s от места цели; лучей лёгкого %d, дальше всего %s" % [renderer(), mode, who,
+		craft_d.size(), "%.1f" % craft_d[-1] if not craft_d.is_empty() else "—", light_d.size(), "%.1f" % light_d[-1] if not light_d.is_empty() else "—"])
+	return {"craft": craft_d, "light": light_d}
+
+
+func test_shot_at_downed_target_ends_at_its_place() -> void:
+	var r := await _downed_shots(&"ok", &"craft")
+	var r2 := await _downed_shots(&"ok", &"light")
+	var cd: Array[float] = r["craft"]
+	var ld: Array[float] = r2["light"]
+	ok(cd.size() >= 2 and ld.size() >= 1, "%s: перехватчики сбили машины очередью (%d), фрегат — лучом (%d)" % [renderer(), cd.size(), ld.size()])
+	ok(not cd.is_empty() and cd[-1] < 5.0, "%s: очередь по сбитой машине кончается у неё, а не в центре поля (дальше всего %.1f)" % [renderer(), cd[-1] if not cd.is_empty() else INF])
+	ok(not ld.is_empty() and ld[-1] < 5.0, "%s: луч лёгкого по сбитой машине нарисован и кончается у неё (дальше всего %.1f)" % [renderer(), ld[-1] if not ld.is_empty() else INF])
+	var o := await _downed_shots(&"zero", &"craft")
+	var od: Array[float] = o["craft"]
+	ok(not od.is_empty() and od[-1] > 100.0, "%s: откат «цель после шага — (0, 0, 0)»: очередь уходит на %.0f от места цели — проверка краснеет" % [renderer(), od[-1] if not od.is_empty() else -1.0])
+	var l := await _downed_shots(&"lost", &"light")
+	var lo: Array[float] = l["light"]
+	ok(not lo.is_empty() and lo[0] == INF, "%s: откат «луч по ушедшей цели не рисуется»: у сбитых лучей нет (%d) — проверка краснеет" % [renderer(), lo.size()])
 
 
 # ───────────────────────── «Полигон»: воздушный бой на снимке ─────────────────────────

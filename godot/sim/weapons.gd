@@ -556,7 +556,7 @@ static func _fire_main(b: State, s: Ship) -> void:
 		if b.metrics.first_gun <= 0.0:
 			b.metrics.first_gun = b.time      # первый выстрел ГЛАВНОГО калибра по КОРАБЛЮ (03, ловушка 34)
 		b.metrics.main_shots[s.side] += 1
-		b.events.append([&"fire", s.uid, t.uid, &"main", i])
+		b.events.append([&"fire", s.uid, t.uid, &"main", i, t.pos])
 		damage(b, t, w.dmg * aim_of(b, s.side), w.key, s, (t.pos - s.pos).normalized())
 	if ready and not fired:
 		var r := why if why != &"" else &"no_target"
@@ -618,7 +618,7 @@ static func _fire_light(b: State, s: Ship) -> void:
 		s.light_cd[i] = w.cd
 		if not rollback_quiet_light:
 			Vision.reveal(b, s)               # лёгкое тоже раскрывает (09, 9.5 п. 7)
-		b.events.append([&"fire", s.uid, t.uid, &"light", i])
+		b.events.append([&"fire", s.uid, t.uid, &"light", i, t.pos])
 		damage(b, t, w.dmg * aim_of(b, s.side), w.key, s, (t.pos - s.pos).normalized())
 
 
@@ -701,7 +701,7 @@ static func _fire_sec(b: State, s: Ship) -> void:
 		s.sec_cd[i] = w.cd
 		if not rollback_quiet_shots:
 			Vision.reveal(b, s)               # батарея тоже раскрывает (09, 1.3)
-		b.events.append([&"fire", s.uid, t.uid, &"sec", i])
+		b.events.append([&"fire", s.uid, t.uid, &"sec", i, t.pos])
 		damage(b, t, w.dmg * aim_of(b, s.side), w.key, s, (t.pos - s.pos).normalized())
 
 

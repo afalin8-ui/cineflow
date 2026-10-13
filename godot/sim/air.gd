@@ -7,11 +7,14 @@
 # и отворот бомбардировщика, ракеты, боезапас и перезарядка в космосе, посадка,
 # уход пустых с поля. Доктрина меняет две вещи:
 # - перехватчик без цели патрулирует над СВОЕЙ лёгкой линией — на air.patrol_k
-#   отрезка между центрами линий тяжёлых, а не кружит у носителя (09, 4.2);
+#   отрезка между центрами линий тяжёлых, а не кружит у носителя (09, 4.2); чужой лёгкий
+#   с патруля берёт только в полосе вокруг точки патруля (air.patrol_escort_*; поправлено
+#   при доработке G3 — «эскорт ≤ 1000 от машины» уводил звено в ПВО чужих корветов);
 # - бомбардировщик заходит С ФЛАНГА по двум точкам (0,5 и 1,0 того же отрезка,
 #   полуширина чужого строя + air.bomber_flank_extra вбок) и возвращается за ракетами
 #   тем же путём; цель — ближайший к точке 2 не-эскорт (09, 4.4). Флажок отката
-#   «прямо на цель» — `--bomber-direct` (09, 8.4).
+#   «прямо на цель» — `--bomber-direct` (09, 8.4). Приказ «идти» — по прямой, без обхода
+#   и без своих целей: звено летит в точку и ждёт там (09, 4.4, уточнено при доработке G3).
 # Пока строя нет (G4), линия — центр тяжёлых в строю (sim/formation.gd → line_of): той
 # же функцией, что потом.
 #
@@ -72,8 +75,14 @@ const LEG_REACH := 90.0
 static var rollback_instant_reload := false
 ## «садиться некуда» — на каждом шаге, а не один раз на звено (C8; 04, ловушка 6);
 static var rollback_tell_always := false
-## пустая машина без носителя не уходит с поля (04, ловушка 7).
+## пустая машина без носителя не уходит с поля (04, ловушка 7);
 static var rollback_no_leave := false
+## перехватчик с патруля берёт чужой эскорт в 1000 от СЕБЯ, как в JS и в G3 до доработки
+## (09, 4.2: звено уходило с патруля в ПВО чужих корветов и гибло за 10 с);
+static var rollback_patrol_any_escort := false
+## бомбардировщик с приказом «идти» сначала обходит строй и берёт свои цели — как в G3
+## до доработки (09, 4.4: «идти» — по прямой).
+static var rollback_move_route := false
 
 
 ## Геометрия строя стороны на этом шаге (prepare): своя и чужая линии.
@@ -135,6 +144,17 @@ static func patrol_point(b: State, side: int) -> Variant:
 		return null
 	var k := 0.5 if b.patrol_mid else b.defs.doctrine.air_patrol_k
 	return g.p + g.ax * (k * g.d)
+
+
+## Перехватчик на патруле — без приказа игрока («бить», «идти», «на посадку») и есть точка
+## патруля: → она, иначе null (тогда цели — как в JS, от самой машины).
+static func _patrol_of(b: State, c: Craft) -> Variant:
+	if c.role != &"interceptor" or rollback_patrol_any_escort:
+		return null
+	var q := c.squad as Squad
+	if q == null or q.target != null or q.has_move or q.recall:
+		return null
+	return patrol_point(b, c.side)
 
 
 ## ДОКТРИНА 09, 4.4: две точки обхода с фланга: на глубине air.bomber_flank_points_k
@@ -206,6 +226,14 @@ static func update_craft(b: State, c: Craft) -> void:
 	var tb := c.target as Body
 	if tb != null and (tb.dead or not Vision.sees_body(b, c.side, tb)):
 		c.target = null                       # 1. цель погибла или скрылась (C18)
+	elif tb != null and tb.kind == Body.SHIP:
+		# ДОКТРИНА 09, 4.2: с патруля чужой лёгкий — только в своей полосе; ушёл дальше
+		# air.patrol_escort_drop от точки патруля — бросить (не гнаться до чужой шеренги)
+		var pp: Variant = _patrol_of(b, c)
+		if pp != null:
+			var ppv: Vector2 = pp
+			if tb.pos.distance_to(ppv) > b.defs.doctrine.air_patrol_escort_drop:
+				c.target = null
 	# 2. след — картинка вида (по игровому времени, 04, 2.21)
 	if c.leaving:                             # 3. пустая без носителя — с поля
 		_leave_field(b, c)
@@ -259,11 +287,12 @@ static func update_craft(b: State, c: Craft) -> void:
 			for s in b.ships:
 				any = any or (not s.dead and not s.charging() and s.side == q.side and s.hangar != null)
 			b.toast("%s: садиться некуда — %s" % [c.def.name, "все ангары заняты" if any else "носителей не осталось"])
+	var go := going(c)
 	# ДОКТРИНА 09, 4.4: бомбардировщик сначала обходит строй с фланга
-	if c.role == &"bomber" and not b.bomber_direct and c.leg < 2:
+	if routing(b, c):
 		if _route_out(b, c, q):
 			return
-	if c.target == null:                      # 6. цель: приказ звена или своя
+	if c.target == null and not go:           # 6. цель: приказ звена или своя
 		c.target = live_target(b, c, q.target if q != null else null)
 		if c.target == null:
 			c.target = acquire(b, c, c.pos)
@@ -291,6 +320,21 @@ static func update_craft(b: State, c: Craft) -> void:
 	_dogfight(b, c, t, d, wr)                 # 9. собачья свалка
 
 
+## ДОКТРИНА 09, 4.4: бомбардировщик с приказом «идти» летит в точку по прямой — без обхода
+## и без своих целей. Свой поиск у бомбардировщика — не-эскорт в 2600, то есть всё поле,
+## и у JS «идти» сразу становилось налётом напрямик сквозь шеренги (уточнено при
+## доработке G3). Звено ждёт у точки, бьёт — по приказу.
+static func going(c: Craft) -> bool:
+	var q := c.squad as Squad
+	return c.role == &"bomber" and q != null and q.has_move and not rollback_move_route
+
+
+## Бомбардировщик сейчас на маршруте обхода (09, 4.4): не напрямик, точки не пройдены, не
+## «идти». Одно правило на модель и строку «чем занято звено» (ui/polygon_hud.gd).
+static func routing(b: State, c: Craft) -> bool:
+	return c.role == &"bomber" and not b.bomber_direct and c.leg < 2 and not going(c)
+
+
 ## Цель по приказу звена (space.js:1000 liveTarget): корабль — он сам, если жив и
 ## виден; звено — ближайшая к машине живая машина этого звена (C14).
 static func live_target(b: State, c: Craft, t: RefCounted) -> Body:
@@ -314,7 +358,14 @@ static func acquire(b: State, c: Craft, from: Vector2) -> Body:
 			if x == null:
 				x = _near_proj(b, from, INT_PROJ, foe)
 			if x == null:
-				x = _near_ship(b, from, INT_ESCORT, foe, 1)
+				var pp: Variant = _patrol_of(b, c)
+				if pp == null:
+					x = _near_ship(b, from, INT_ESCORT, foe, 1)
+				else:
+					# ДОКТРИНА 09, 4.2 (поправлено при доработке G3): с патруля — только чужой
+					# лёгкий ближе air.patrol_escort_take к точке патруля, ближайший к машине
+					var ppv: Vector2 = pp
+					x = _near_ship(b, from, INT_ESCORT, foe, 1, ppv, b.defs.doctrine.air_patrol_escort_take)
 			return x
 		&"bomber":
 			var s := _near_ship(b, from, BMB_ANY, foe, -1)
@@ -331,14 +382,18 @@ static func acquire(b: State, c: Craft, from: Vector2) -> Body:
 
 ## Ближайший корабль стороны side СТРОГО ближе r. escort: 1 — только эскорт, −1 — только
 ## не-эскорт, 0 — любой (space.js:1012 nearest; РЭБ — класса escort, 04, 2.6).
-static func _near_ship(b: State, from: Vector2, r: float, side: int, escort: int) -> Ship:
+## band > 0 — ещё и не дальше band от точки at (полоса патруля, 09, 4.2).
+static func _near_ship(b: State, from: Vector2, r: float, side: int, escort: int, at: Vector2 = Vector2.ZERO, band: float = 0.0) -> Ship:
 	var best: Ship = null
 	var bd := r * r
+	var band2 := band * band
 	for s in b.ships:
 		if s.dead or s.side != side or not Vision.sees(b, 1 - side, s):
 			continue
 		var is_e := s.def.cls == &"escort"
 		if (escort == 1 and not is_e) or (escort == -1 and is_e):
+			continue
+		if band > 0.0 and s.pos.distance_squared_to(at) >= band2:
 			continue
 		var d := from.distance_squared_to(s.pos)
 		if d < bd:
@@ -395,7 +450,7 @@ static func _dogfight(b: State, c: Craft, t: Body, d: float, wr: float) -> void:
 			else:
 				# перехватчик — пушки без боезапаса, мгновенное попадание; урон со сложностью
 				c.reveal_until = b.time + b.defs.stealth.reveal_for
-				b.events.append([&"craft_fire", c.uid, t.uid])
+				b.events.append([&"craft_fire", c.uid, t.uid, t.pos])
 				Weapons.damage(b, t, c.def.dmg * Weapons.aim_of(b, c.side), c.def.weapon, c, to)
 
 

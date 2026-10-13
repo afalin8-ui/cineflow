@@ -11,7 +11,9 @@
 #   следа и превращают точки в звено, которое крутит вираж.
 # - Своя интерполяция, как у кораблей (архитектура, 3): перед каждым шагом — прошлое
 #   положение и курс; машина, появившаяся на этом шаге, не смешивается (телепорт).
-# - Высота — только картинка (09, 11.6): у каждой машины своя постоянная.
+# - Высота — только картинка (09, 11.6): у каждой машины СВОИ ДУГИ по высоте
+#   ±view.craft_arc, как в JS (часть 04, 2.4 п. 7), а бомбардировщик на отвороте
+#   уходит вверх. Число — из doctrine.json (раздел view), не из кода.
 extends Node3D
 
 const Battle := preload("res://sim/battle.gd")
@@ -43,15 +45,25 @@ const DOT_PX := 5.0
 const DOT_SIZE := 3.0
 ## Точка ближе к камере на 14 (в мире): иначе она внутри своей модели и не видна вовсе.
 const DOT_LIFT := 14.0
-## Высота-картинка машины: над плоскостью боя, разброс — чтобы звено не лежало блином.
-const HEIGHT_BASE := 18.0
-const HEIGHT_SPREAD := 22.0
+## Дуги по высоте (09, 11.6): y = view.craft_arc · cos(фаза) + подъём. Фаза копится по
+## ИГРОВОМУ времени: кружение, патруль и путь — 0,3 рад/с (space.js:1608, cos(0,3 t +
+## slot)·40), свалка — 0,8 (space.js:1645, проход в свалке: cos(0,8 t + slot)·40).
+## Копится, а не считается от t: иначе смена занятия давала бы скачок высоты. Начало
+## фазы — номер машины в звене (slot) плюс своя фаза звена: звенья не качаются в лад.
+const ARC_CALM := 0.3
+const ARC_FIGHT := 0.8
+## Отворот бомбардировщика — вверх (space.js:1626: точка ухода на 90 выше): подъём до
+## view.craft_arc за LIFT_S игровых секунд, после отворота — так же вниз.
+const LIFT_S := 1.5
 
 ## ТОЛЬКО для проверок отката (план G3, п. 5): в игре всегда false.
 ## Точек поверх моделей нет — машина на 2400 остаётся моделью в пару точек.
 static var rollback_no_dots := false
 ## Следа нет — звено читается россыпью точек, а не виражом.
 static var rollback_no_trails := false
+## Высота — постоянная у каждой машины, числами в коде (18 ± 22), как в G3 до доработки:
+## дуг нет, отворот вверх не виден, правка view.craft_arc ничего не меняет.
+static var rollback_fixed_height := false
 
 var battle: Battle
 var my_side := 0
@@ -65,7 +77,12 @@ var proj_pt: Callable
 
 var _rng := RandomNumberGenerator.new()
 var _prev: Dictionary[int, Vector3] = {}         # (x, z, курс) на прошлом шаге
-var _h: Dictionary[int, float] = {}
+var _arc := 0.0                                  # view.craft_arc
+var _h: Dictionary[int, float] = {}              # высота машины на последнем кадре
+var _ph: Dictionary[int, float] = {}             # фаза дуги
+var _lift: Dictionary[int, float] = {}           # подъём на отвороте (0…_arc)
+var _ht: Dictionary[int, float] = {}             # игровое время последнего счёта высоты
+var _qph: Dictionary[int, float] = {}            # своя фаза звена
 var _trail_at: Dictionary[int, float] = {}
 var _trail_pt: Dictionary[int, Vector3] = {}
 ## Нарисованные точки машин на этом кадре: выбор мышью и прицел эффектов читают их.
@@ -79,6 +96,7 @@ func setup(p_battle: Battle, p_my_side: int) -> void:
 	battle = p_battle
 	my_side = p_my_side
 	_rng.seed = battle.battle_seed ^ 0x6a09e667       # свой генератор картинки: модель не тронута
+	_arc = battle.defs.doctrine.view_craft_arc
 	models = CraftLayer.new()
 	models.name = "CraftModels"
 	add_child(models)
@@ -121,10 +139,47 @@ func _dot_pool() -> MultiMeshInstance3D:
 	return mi
 
 
+## Высота машины на этом кадре (посчитана в draw); машина, которую ещё не рисовали, —
+## на начале своей дуги.
 func _height(c: Craft) -> float:
 	if not _h.has(c.uid):
-		_h[c.uid] = HEIGHT_BASE + _rng.randf_range(-HEIGHT_SPREAD, HEIGHT_SPREAD)
+		_start_arc(c)
 	return _h[c.uid]
+
+
+func _start_arc(c: Craft) -> void:
+	if rollback_fixed_height:
+		_h[c.uid] = 18.0 + _rng.randf_range(-22.0, 22.0)
+		return
+	var q := c.squad as Squad
+	var qu := q.uid if q != null else 0
+	if not _qph.has(qu):
+		_qph[qu] = _rng.randf_range(0.0, TAU)
+	_ph[c.uid] = float(c.slot) + _qph[qu]
+	_lift[c.uid] = 0.0
+	_ht[c.uid] = battle.time
+	_h[c.uid] = _arc * cos(_ph[c.uid])
+
+
+## Дуга по игровому времени game_t (09, 11.6): фаза — скоростью занятия, подъём — к
+## отвороту бомбардировщика или обратно.
+func _advance_arc(c: Craft, game_t: float) -> void:
+	if not _h.has(c.uid):
+		_start_arc(c)
+	if rollback_fixed_height:
+		return
+	var dt := clampf(game_t - _ht[c.uid], 0.0, 1.0)
+	_ht[c.uid] = game_t
+	var fight := c.target != null and c.role != &"bomber" and not c.leaving
+	_ph[c.uid] = _ph[c.uid] + (ARC_FIGHT if fight else ARC_CALM) * dt
+	var want := _arc if c.role == &"bomber" and c.phase == &"break" else 0.0
+	_lift[c.uid] = move_toward(_lift[c.uid], want, _arc / LIFT_S * dt)
+	_h[c.uid] = _arc * cos(_ph[c.uid]) + _lift[c.uid]
+
+
+## Подъём машины на отвороте сейчас (проверки, 09, 11.6).
+func lift_of(u: int) -> float:
+	return _lift.get(u, 0.0)
 
 
 ## Запомнить положения перед шагом (своя интерполяция).
@@ -158,7 +213,7 @@ func consume(e: Array) -> void:
 		&"craft_dead":
 			var du: int = e[1]
 			var at: Vector2 = e[2]
-			var y: float = _h.get(du, HEIGHT_BASE)
+			var y: float = _h.get(du, 0.0)
 			var p := Vector3(at.x, y, at.y)
 			fx.flash(p, BOOM, 10.0, 0.7, 2.6)
 			fx.flash(p, Color(1, 0.95, 0.85), 4.0, 0.3, 3.0)
@@ -169,10 +224,11 @@ func consume(e: Array) -> void:
 		&"craft_fire":
 			var cu: int = e[1]
 			var tu: int = e[2]
+			var tat: Vector2 = e[3]
 			var c2 := battle.craft_by_uid(cu)
 			if c2 != null:
 				var from := point_of(c2, 1.0)
-				var to := _target_pt(tu)
+				var to := _target_pt(tu, tat)
 				fx.tracer(from + Vector3(c2.dir.x, 0.0, c2.dir.y) * 4.0, to, GUN_OWN if c2.side == my_side else GUN_FOE, 0.5, 600.0, 18.0, 2.2)
 		&"reload":
 			var ru: int = e[1]
@@ -181,10 +237,17 @@ func consume(e: Array) -> void:
 				fx.flash(point_of(c3, 1.0), Color(0.62, 0.91, 1.0), 4.0, 0.3, 1.8)
 
 
-func _target_pt(u: int) -> Vector3:
+## ТОЛЬКО для проверки отката: цели, которой после шага уже нет, — (0, 0, 0), как было.
+static var rollback_target_zero := false
+
+
+## Куда бьёт очередь: цель, если она ещё есть; сбитая этой же очередью (машину Hangar.tick
+## убирает в конце шага, снаряд — уборка снарядов) — место из события на её последней
+## высоте (замечание к G3: росчерк уходил в центр поля).
+func _target_pt(u: int, at: Vector2) -> Vector3:
 	var b := battle.body_by_uid(u)
 	if b == null:
-		return Vector3.ZERO
+		return Vector3.ZERO if rollback_target_zero else point_by_uid(u, at)
 	var s := b as Ship
 	if s != null and ship_pt.is_valid():
 		var sp: Vector3 = ship_pt.call(s)
@@ -198,9 +261,26 @@ func _target_pt(u: int) -> Vector3:
 	return Vector3(b.pos.x, 0.0, b.pos.y)
 
 
+## Точка машины по номеру: живая — нарисованная сейчас; ушедшая на этом шаге — место
+## из события на высоте, на которой её рисовали последний раз (BattleFx берёт её же для
+## выстрела корабля по сбитой машине).
+func point_by_uid(u: int, at: Vector2) -> Vector3:
+	var c := battle.craft_by_uid(u)
+	if c != null:
+		return point_of(c, 1.0)
+	if proj_pt.is_valid() and not _h.has(u):
+		var pp: Vector3 = proj_pt.call(u, at)
+		return pp
+	var y: float = _h.get(u, 0.0)
+	return Vector3(at.x, y, at.y)
+
+
 func _forget(u: int) -> void:
 	_prev.erase(u)
 	_h.erase(u)
+	_ph.erase(u)
+	_lift.erase(u)
+	_ht.erase(u)
 	_trail_at.erase(u)
 	_trail_pt.erase(u)
 	drawn.erase(u)
@@ -231,6 +311,7 @@ func draw(a: float, game_t: float, sel: Array[int]) -> void:
 	for c in battle.crafts:
 		if c.dead:
 			continue
+		_advance_arc(c, game_t)
 		var p := point_of(c, a)
 		drawn[c.uid] = p
 		var q := c.squad as Squad

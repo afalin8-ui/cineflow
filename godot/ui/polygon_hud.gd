@@ -20,6 +20,7 @@ const FrameBench := preload("res://ui/frame_bench.gd")
 const Squad := preload("res://sim/squad.gd")
 const Craft := preload("res://sim/craft.gd")
 const Body := preload("res://sim/body.gd")
+const Air := preload("res://sim/air.gd")
 
 ## Сколько игровых секунд живёт полоска модели и сколько настоящих — своя.
 const TOAST_GAME_S := 4.5
@@ -337,7 +338,7 @@ static func squad_doing(q: Squad, b: State) -> String:
 			leaving += 1
 		elif c.reloading > 0.0:
 			reloading += 1
-		elif c.role == &"bomber" and not b.bomber_direct and c.leg < 2:
+		elif Air.routing(b, c):
 			flank += 1
 		elif c.target != null:
 			fighting += 1
@@ -351,7 +352,7 @@ static func squad_doing(q: Squad, b: State) -> String:
 		var t := q.target as Ship
 		return "атакует %s" % Weapons.short_name(t) if t != null and not t.dead else "атакует"
 	if q.has_move:
-		return "идёт к точке"
+		return "ждёт у точки" if q.pos.distance_to(q.move_to) < Air.LEG_REACH * 2.0 else "идёт к точке"
 	if q.role == &"interceptor":
 		return "патрулирует над своей линией"
 	return "кружит у носителя"

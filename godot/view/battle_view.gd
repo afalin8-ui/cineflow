@@ -142,6 +142,7 @@ func setup(p_defs: Defs, p_battle: Battle, with_env: bool = true) -> void:
 	air.ship_pt = ship_point
 	air.proj_pt = bfx.proj_point
 	bfx.craft_pt = air.point_of
+	bfx.craft_at = air.point_by_uid
 	for s in battle.ships:
 		_add_visual(s)
 	draw_state()
