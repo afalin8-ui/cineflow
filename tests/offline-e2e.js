@@ -61,7 +61,7 @@ const setMode = m => { MODE = m; if (m !== 'hang') { hung.forEach(r => r.socket 
   await ctx.route('**/*', route => {
     const u = route.request().url();
     if (u.startsWith(`http://127.0.0.1:${PORT}`)) return route.continue();
-    for (const [f, re] of [['react.js', /react@18\/umd\/react\.production/], ['react-dom.js', /react-dom@18/], ['babel.js', /babel\.min\.js/], ['tailwind.js', /cdn\.tailwindcss/]])
+    for (const [f, re] of [['react.js', /react@18[.0-9]*\/umd\/react\.production/], ['react-dom.js', /react-dom@18/], ['babel.js', /babel\.min\.js/], ['tailwind.js', /cdn\.tailwindcss/]])
       if (re.test(u)) return route.fulfill({ body: fs.readFileSync(path.join(LIBS, f)), contentType: 'application/javascript', headers: { 'access-control-allow-origin': '*' } });
     route.fulfill({ body: '', contentType: 'application/javascript', headers: { 'access-control-allow-origin': '*' } });
   });
