@@ -26,6 +26,17 @@ var push := PackedVector2Array()
 ## Ближайший чужой корабль (индекс в снимке; −1 — нет) и квадрат расстояния до него.
 var near := PackedInt32Array()
 var near_d2 := PackedFloat64Array()
+## Для замеров строя (М9, 09, 8.2) — тем же проходом пар, а не перебором объектов
+## (godot/CLAUDE.md, 3; замечание к G4: перебор пар объектами в _sample_lines стоил
+## ~0,8 мс шага «Генерального»): uid по индексу, тяжёлый ли (не станция), пары «свой
+## в чужом» ближе (hull + hull) × FOE_ROOM — ровно те, что толкает расталкивание чужих
+## (09, 5.7: признак клубка), ключом min(uid) × 100000 + max(uid), и сколько пар чужих
+## тяжёлых ближе √heavy_r2 (0 — не считать).
+var uid := PackedInt32Array()
+var heavy := PackedByteArray()
+var foe_in := PackedInt64Array()
+var heavy_close := 0
+var heavy_r2 := 0.0
 
 
 ## Собрать снимок живых и один проход пар i < j.
@@ -45,6 +56,8 @@ func rebuild(all: Array[Ship]) -> void:
 	push.resize(n)
 	near.resize(n)
 	near_d2.resize(n)
+	uid.resize(n)
+	heavy.resize(n)
 	for i in n:
 		var s := ships[i]
 		pos[i] = s.pos
@@ -54,6 +67,10 @@ func rebuild(all: Array[Ship]) -> void:
 		push[i] = Vector2.ZERO
 		near[i] = -1
 		near_d2[i] = INF
+		uid[i] = s.uid
+		heavy[i] = 1 if (s.heavy() and not s.station) else 0
+	foe_in.clear()
+	heavy_close = 0
 	_pairs()
 
 
@@ -75,6 +92,13 @@ func _pairs() -> void:
 					near_d2[j] = d2
 					near[j] = i
 			var mn := (hull[j] + hi) * (FOE_ROOM if foe else 1.0)
+			if foe:
+				if d2 < mn * mn:
+					var ua := uid[i]
+					var ub := uid[j]
+					foe_in.append(mini(ua, ub) * 100000 + maxi(ua, ub))
+				if d2 < heavy_r2 and heavy[i] == 1 and heavy[j] == 1:
+					heavy_close += 1
 			# space.js:1313: dd < min && dd > 0.01
 			if d2 < mn * mn and d2 > 0.0001:
 				var dd := sqrt(d2)
@@ -86,15 +110,3 @@ func _pairs() -> void:
 ## Расстояние по плоскости боя — одна функция на весь бой (архитектура, 2.3).
 static func battle_dist(a: Ship, b: Ship) -> float:
 	return a.pos.distance_to(b.pos)
-
-
-## Сколько пар «свой в чужом» ближе (hull + hull) × k — признак клубка (М9 с G4).
-func foe_overlaps(k: float) -> int:
-	var c := 0
-	for i in n:
-		for j in range(i + 1, n):
-			if side[i] != side[j]:
-				var mn := (hull[i] + hull[j]) * k
-				if pos[i].distance_squared_to(pos[j]) < mn * mn:
-					c += 1
-	return c

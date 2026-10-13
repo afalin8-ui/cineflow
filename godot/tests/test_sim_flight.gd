@@ -947,6 +947,41 @@ func test_move_group_slowest_and_layout() -> void:
 	ok(not march_layout_problems(keep).is_empty(), "откат «как стояли» (клик + место от центра): %s — проверка краснеет" % "; ".join(march_layout_problems(keep)))
 
 
+## Ось строя ПКМ — от точки приказа к центру ВИДИМЫХ ЧУЖИХ ТЯЖЁЛЫХ (09, 6.4), а не по ходу
+## марша. Проверка выше идёт без противника и берёт ось «клик − центр», то есть главную в игре
+## ветку не видит (замечание к G4). Здесь чужие тяжёлые сбоку от линии марша: корвет обязан
+## встать на 0,35 L по оси К НИМ, тяжёлые — на линию через точку поперёк этой оси. Откат —
+## ось всегда по ходу марша. → [корвет вдоль оси к чужим, тяжёлые вдоль неё же, 0,35 L].
+func _axis_to_foe(rollback: bool) -> Vector3:
+	Battle.rollback_axis_march = rollback
+	var b := _lab()
+	var list: Array[Ship] = [_one(b, &"corvette", Vector2(-150, 0)), _one(b, &"cruiser", Vector2(0, 60)), _one(b, &"capital", Vector2(170, -20))]
+	_one(b, &"cruiser", Vector2(-900, -950), Ship.DEFENDER)
+	_one(b, &"capital", Vector2(-900, -650), Ship.DEFENDER)
+	var ids := PackedInt32Array()
+	for s in list:
+		ids.append(s.uid)
+	var click := Vector2(40.0, -900.0)
+	var ax := (Vector2(-900.0, -800.0) - click).normalized()
+	var l := Formation.line_l(b.defs, Formation.members_from(list))
+	b.queue({"op": &"move", "ids": ids, "x": click.x, "z": click.y})
+	b.step()
+	var corv := (list[0].move_to - click).dot(ax)
+	var heavy := maxf(absf((list[1].move_to - click).dot(ax)), absf((list[2].move_to - click).dot(ax)))
+	var want := b.defs.doctrine.line_corvette_k * l
+	b.dispose()
+	Battle.rollback_axis_march = false
+	return Vector3(corv, heavy, want)
+
+
+func test_move_axis_to_foe_heavies() -> void:
+	var r := _axis_to_foe(false)
+	note("ПКМ с чужими тяжёлыми сбоку: корвет %.0f по оси к ним (0,35 L = %.0f), тяжёлые %.1f от линии через точку" % [r.x, r.z, r.y])
+	ok(absf(r.x - r.z) <= 1.0 and r.y <= 1.0, "ось строя — к чужим тяжёлым: корвет на 0,35 L по ней (%.0f из %.0f), тяжёлые на линии поперёк неё (%.1f)" % [r.x, r.z, r.y])
+	var o := _axis_to_foe(true)
+	ok(absf(o.x - o.z) > 50.0, "откат «ось по ходу марша»: корвет %.0f по оси к чужим вместо %.0f — проверка краснеет" % [o.x, o.z])
+
+
 ## Отпечаток боя видит и ПРИКАЗЫ, и состояние СТОРОН (хвост G1): повтор, потерявший
 ## приказ, который ещё не успел сдвинуть ни один корабль, обязан дать «не совпало».
 ## Откат — прежний отпечаток (положения и прочность): он такой повтор не замечает.

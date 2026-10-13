@@ -31,6 +31,10 @@ const UMBRELLA := 5      # первый фрегат — у носителя (3.
 const ECM_OLD := 6       # РЭБ на 0,1 L — ТОЛЬКО откат --ecm-01L
 const FRIGATE2 := 7      # вторая шеренга фрегатов «в 50 позади» — ТОЛЬКО откат --ecm-01L
 const NONE := -1         # станция: не двигается
+## ТОЛЬКО для проверки отката (в игре false): вторая шеренга фрегатов отката --ecm-01L ищет
+## своих по первой шеренге, как в первой выкладке G4, — и они остаются без места (NONE).
+static var rollback_rank2_by_fr := false
+
 const BAND_NAMES: Array[String] = ["тяжёлые", "вторая шеренга тяжёлых", "корветы", "фрегаты", "носители", "зонт носителя", "РЭБ на 0,1 L", "вторая шеренга фрегатов"]
 
 
@@ -210,6 +214,7 @@ static func places(defs: Defs, members: Array[Member], spec: Spec) -> Out:
 		frig.erase(umb)
 	var fr: Array[Member] = []
 	fr.append_array(frig)
+	var back: Array[Member] = []           # вторая шеренга фрегатов — ТОЛЬКО откат --ecm-01L
 	if spec.ecm_01l:
 		# откат 09, 8.4 (было): РЭБ у центра на 0,1 L; фрегаты, не влезшие шагом в ширину
 		# линии, — второй шеренгой в line.light_rank2 (was) позади первой
@@ -217,7 +222,6 @@ static func places(defs: Defs, members: Array[Member], spec: Spec) -> Out:
 		var back_z: float = d.was.get(&"line.light_rank2", 0.0)
 		_rank(slots, ECM_OLD, ecm, ecm_k * l, 0.0, d.line_step_light)
 		var cap := _fit(fr, rank_w, d.line_step_light)
-		var back: Array[Member] = []
 		while fr.size() > cap:
 			back.append(fr.pop_back())
 		_rank(slots, FRIGATE, fr, z_frig, rank_w, d.line_step_light)
@@ -263,7 +267,7 @@ static func places(defs: Defs, members: Array[Member], spec: Spec) -> Out:
 			var m := members[i]
 			if m.def.id != id:
 				continue
-			if not _in_band(m, band, row, rank2, corv, fr, ecm, carr, umb, spec):
+			if not _in_band(m, band, row, rank2, corv, fr, back, ecm, carr, umb, spec):
 				continue
 			who.append(i)
 		who.sort_custom(func(a: int, b2: int) -> bool:
@@ -282,13 +286,17 @@ static func places(defs: Defs, members: Array[Member], spec: Spec) -> Out:
 	return out
 
 
+## Входит ли член строя в полосу. Вторая шеренга фрегатов (только откат --ecm-01L) — СВОИМ
+## списком: её фрегаты сняты с первой (fr), и по fr им не досталось бы места вовсе — они
+## стояли бы в P, посреди линии тяжёлых, и откат краснел бы не тем (замечание к G4).
 static func _in_band(m: Member, band: int, row: Array[Member], rank2: Array[Member], corv: Array[Member],
-		fr: Array[Member], ecm: Array[Member], carr: Array[Member], umb: Member, spec: Spec) -> bool:
+		fr: Array[Member], back: Array[Member], ecm: Array[Member], carr: Array[Member], umb: Member, spec: Spec) -> bool:
 	match band:
 		HEAVY: return m in row
 		HEAVY2: return m in rank2
 		CORVETTE: return m in corv
-		FRIGATE, FRIGATE2: return (m in fr) or (not spec.ecm_01l and m in ecm)
+		FRIGATE: return (m in fr) or (not spec.ecm_01l and m in ecm)
+		FRIGATE2: return (m in fr) if rollback_rank2_by_fr else (m in back)
 		ECM_OLD: return m in ecm
 		CARRIER: return m in carr
 		UMBRELLA: return m == umb

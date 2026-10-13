@@ -207,7 +207,7 @@ static func main(defs: Defs, args: PackedStringArray, build: String) -> int:
 ## tools/summarize.py).
 static func summary(reps: Array[Dictionary]) -> Dictionary:
 	var keys := ["m1", "m2", "m2_ep_med", "m3_med", "m3_med_k", "m3_p5", "m3_short", "m4", "m4_back", "m6", "m6_ep_med",
-		"m6_back", "m6_rear", "m6_edge", "m9_entries", "m9_heavy", "m10_heavy", "m10_corvette", "m10_frigate", "m10_self", "first_gun", "first_hit", "len"]
+		"m6_back", "m6_rear", "m6_edge", "m9_entries", "m9_heavy", "m10_heavy", "m10_corvette", "m10_frigate", "m10_self", "p_min", "first_gun", "first_hit", "len"]
 	var out := {"n": reps.size()}
 	for k: String in keys:
 		var a := PackedFloat64Array()

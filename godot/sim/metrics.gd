@@ -104,6 +104,10 @@ var m10_frigate := PackedFloat64Array()
 ## себя. Откат --ecm-01L (РЭБ на 0,1 L перед флагманом) обязан это показать: расталкивание
 ## сдвигает тяжёлых на десятки, а не на сотни, и медиана М10 (≤ 150) этого не видит.
 var m10_self := 0
+## Места линий P двух сторон под заглушкой строя: ближе всего за фазу «бой» (INF — не было).
+## P считается от чужих тяжёлых, которые ещё в пути, и без предела line.lead_max места обеих
+## сторон съезжались до 300 — шеренги лёгких проходили сквозь друг друга (найдено стендом G4).
+var p_min := INF
 
 ## М3: ни одного шага L < 360, пока у обеих сторон есть линия (09, 8.2).
 const M3_FLOOR := 360.0
@@ -111,10 +115,10 @@ const M3_FLOOR := 360.0
 const M4_BEHIND := 50.0
 ## М4: побитые лёгкие (< 30%) уходят за линию по правилу (09, 3.5) и не считаются.
 const M4_HURT := 0.3
-## М9: пары чужих тяжёлых ближе 360 (09, 8.2).
+## М9: пары чужих тяжёлых ближе 360 (09, 8.2). «Свой в чужом» — ближе (hull + hull) × 1,15
+## (09, 5.7) — это ровно радиус расталкивания чужих (sim/space.gd → FOE_ROOM), и пары берутся
+## из того же прохода пар снимка (space.foe_in, heavy_close).
 const M9_HEAVY := 360.0
-## М9: «свой в чужом» — ближе (hull + hull) × 1,15 (09, 5.7).
-const M9_K := 1.15
 
 
 func book(side: int, key: StringName, cls_i: int, dealt: float) -> void:
@@ -280,6 +284,6 @@ func lines_summary() -> Dictionary:
 		"m6_rear": m6_rear, "m6_edge": m6_edge,
 		"m9_entries": m9_entries, "m9_heavy": m9_heavy,
 		"m10_heavy": median(m10_heavy), "m10_corvette": median(m10_corvette), "m10_frigate": median(m10_frigate),
-		"m10_self": m10_self,
+		"m10_self": m10_self, "p_min": p_min if p_min < INF else -1.0,
 		"first_hit": first_hit, "first_gun": first_gun,
 	}

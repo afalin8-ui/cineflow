@@ -518,7 +518,21 @@ func _belt_cases() -> Array:
 		cv.stance = &"hunt"
 		cv.hp = BIG
 		cv.max_hp = BIG, 12.0)])
+	# корвет гонится, а у тяжёлого есть и цель главного калибра — чужой крейсер; фокус на корвете
+	# (замечание к G4: «не оторваться» жило один шаг, дальше — «держит дистанцию · 148 до…»)
+	out.append(["не оторваться от ", HeavyDoctrine.FUTILE, _belt_case(&"hunt", _futile_with_heavy, 30.0)])
 	return out
+
+
+## Корвет на «Охоте» гонится за крейсером, чужой крейсер-мишень в 716 (цель главного калибра),
+## фокус крейсера — на корвете (09, 6.3: «не оторваться от «Исса» — бьёт батареей»).
+func _futile_with_heavy(bb: Battle, c: Ship) -> void:
+	_foe(bb, &"cruiser", Vector2(0, -716))
+	var cv := bb.spawn(Ship.DEFENDER, bb.defs.ship(&"plektor", &"corvette"), Vector2(0, -250))
+	cv.stance = &"hunt"
+	cv.hp = BIG
+	cv.max_hp = BIG
+	bb.queue({"op": &"focus", "ids": [c.uid], "target": cv.uid})
 
 
 func test_doing_belt_states() -> void:
@@ -540,4 +554,34 @@ func test_doing_belt_states() -> void:
 		if not line.begins_with(want):
 			bad += 1
 	PolygonHud.rollback_doing_g3 = false
-	ok(bad >= 5, "откат «строка как в G3»: %d строк из 6 не говорят, что делает тяжёлый — проверка краснеет" % bad)
+	ok(bad >= 6, "откат «строка как в G3»: %d строк из 7 не говорят, что делает тяжёлый — проверка краснеет" % bad)
+
+
+## «Не оторваться» держится, пока тот корвет ближе 0,5 R (09, 2.6 и 6.3), и строка это говорит,
+## хотя у тяжёлого есть и цель главного калибра. Откаты: «не оторваться» на один шаг (как
+## в первой выкладке G4 — дальше «держит дистанцию») и строка «держит дистанцию · 148 до …»
+## при цели в мёртвой зоне.
+func _futile_line(sim_rb: bool, hud_rb: bool) -> Array:
+	HeavyDoctrine.rollback_futile_one_step = sim_rb
+	PolygonHud.rollback_belt_dead_text = hud_rb
+	var r := _belt_case(&"hunt", _futile_with_heavy, 30.0)
+	HeavyDoctrine.rollback_futile_one_step = false
+	PolygonHud.rollback_belt_dead_text = false
+	return r
+
+
+func test_doing_futile_holds() -> void:
+	var r := _futile_line(false, false)
+	var line: String = r[0]
+	var st: int = r[1]
+	note("корвет гонится, чужой крейсер в 716 — цель главного калибра, фокус на корвете — «%s»: «%s»" % [HeavyDoctrine.NAMES[st], line])
+	ok(st == HeavyDoctrine.FUTILE and line.begins_with("не оторваться от «"), "через 30 с — всё ещё «не оторваться», и строка это говорит: «%s»" % line)
+	var o := _futile_line(true, false)
+	var ol: String = o[0]
+	var os: int = o[1]
+	note("откат «не оторваться на один шаг»: «%s»: «%s»" % [HeavyDoctrine.NAMES[os], ol])
+	ok(os != HeavyDoctrine.FUTILE and not ol.begins_with("не оторваться"), "откат «не оторваться на один шаг»: «%s» — проверка краснеет" % HeavyDoctrine.NAMES[os])
+	ok(not ol.begins_with("держит дистанцию"), "цель в мёртвой зоне — строка не говорит «держит дистанцию»: «%s»" % ol)
+	var o2 := _futile_line(true, true)
+	var o2l: String = o2[0]
+	ok(o2l.begins_with("держит дистанцию"), "откат строки «держит дистанцию до цели в мёртвой зоне»: «%s» — проверка краснеет" % o2l)

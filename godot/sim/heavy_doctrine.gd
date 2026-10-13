@@ -62,6 +62,16 @@ static var rollback_hold_retreats := false
 static var rollback_g2_stand := false
 ## нос по ходу (как отход разворотом кормой, 2.4): главный калибр при отходе молчит.
 static var rollback_nose_along := false
+## «не оторваться» живёт один шаг, как в первой выкладке G4: враг из futile выпадает из
+## «повода отходить», и со следующего шага тяжёлый «держит дистанцию» или «путь закрыт»,
+## хотя тот же корвет у него под носом (замечание к G4; 09, 2.6 и 6.3);
+static var rollback_futile_one_step := false
+## «не оторваться» засчитывается только тому, от кого считались часы: погоня двумя-тремя
+## корветами запускала отход заново от каждого, и тяжёлый уползал на 430–730 (замечание к G4).
+static var rollback_futile_one_foe := false
+## охрана своего на ходу — как «Охрана» на месте: самоотход и торможение у чужих (замечание
+## к G4: крейсер отходил от корвета и отставал от идущего носителя на ~600; 09, 6.6 п. 2).
+static var rollback_escort_retreats := false
 
 
 ## Шаг тяжёлого доктрины: состояние, желаемая скорость, нос и полёт. Звать для живого
@@ -83,6 +93,7 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 	var intr: Ship = null
 	var intr_d := INF
 	var futile_close := false
+	var futile_near := false             # «не оторваться» от врага ближе 0,5 R (2.6)
 	for o in b.ships:
 		if o.dead or o.side == s.side or not Vision.sees(b, s.side, o):
 			continue
@@ -91,6 +102,7 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 			near_d = d
 		if s.futile.has(o.uid):
 			futile_close = futile_close or d < dead
+			futile_near = futile_near or d < dc.retreat_futile_forget_k * r
 			continue
 		if d < intr_d:
 			intr_d = d
@@ -109,6 +121,12 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 		# приказ игрока на движение сильнее всего: на ходу самоотхода нет (6.6, п. 2)
 		desired = Movement.go_to(s, s.move_to, vmax, dt, p)
 		st = MOVE
+	elif escorting(s) and not rollback_escort_retreats:
+		# охрана своего НА ХОДУ — тоже прямой приказ на движение (6.6, п. 2): за своим местом
+		# в кольце, без самоотхода и без торможения у чужих («даже сквозь чужой строй»).
+		# Охраняемый встал — дальше «Охрана» вокруг места в кольце, с самоотходом в поводке
+		desired = Movement.arrive(s, s.anchor, ms, p.rev, p.brake_k)
+		st = MOVE
 	elif s.stance == &"hold" and not rollback_hold_retreats:
 		st = HOLD                        # «Держать» — приказ встать (09, 9.5 п. 2)
 	elif intr != null and (intr_d < dead or (retreating and intr_d < dc.belt_back_off_k * r)):
@@ -117,6 +135,13 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 		if st == RETREAT and _futile_tick(b, s, intr, intr_d, dt):
 			st = FUTILE                  # «не оторваться»: со следующего шага этот враг — не повод
 			desired = Vector2.ZERO
+	elif futile_near and not rollback_futile_one_step:
+		# «не оторваться» ДЕРЖИТСЯ, пока тот враг ближе 0,5 R (2.6: «этот враг не повод отходить,
+		# пока он ближе 0,5 R… тяжёлый стоит и бьёт батареей»; 6.3). Раньше ветки цели: иначе со
+		# следующего шага тяжёлый «держал дистанцию» до корвета в своей мёртвой зоне или стоял
+		# «путь закрыт», а строка «чем занят» говорила неправду. Главный калибр бьёт свою цель
+		# в поясе, как и был (Weapons), батарея — того, от кого не оторваться
+		st = FUTILE
 	elif t != null:
 		var d := s.pos.distance_to(t.pos)
 		var leash := _leashed(s)
@@ -151,6 +176,16 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 		s.ret_foe = null
 	set_state(b, s, st)
 	Movement.fly(s, desired, push, dt, b.time, p, look(b, s, desired + push))
+
+
+## Охрана своего на ходу (09, 6.6, п. 2): охраняемый жив и идёт — по приказу «идти» или
+## атаки с ходу, или просто движется (быстрее «пришёл», space.js:1287). Тогда для тяжёлого это
+## приказ движения: самоотхода нет. Охраняемый встал — «Охрана» вокруг места в кольце.
+static func escorting(s: Ship) -> bool:
+	var ward := s.guard_of as Ship
+	if ward == null or ward.dead or ward.charging():
+		return false
+	return ward.has_move or ward.has_amove or ward.vel.length() > Movement.ARRIVED_V
 
 
 ## Смена состояния — в журнал боя (архитектура, 2.7; 09, 8.4: первый шаг поиска ошибки).
@@ -303,11 +338,16 @@ static func _axis(b: State, s: Ship) -> Vector2:
 # ВРАГУ, 9.5 п. 13). → true, если сработало на этом шаге.
 static func _futile_tick(b: State, s: Ship, foe: Ship, d: float, dt: float) -> bool:
 	var dc := b.defs.doctrine
-	if s.ret_foe != foe:
+	# окно — от начала ЭПИЗОДА отхода, по расстоянию до БЛИЖАЙШЕГО, от кого отходят (d — до foe,
+	# ближайшего «повода»). Сбрасывать окно, когда ближайшим стал другой, нельзя: три корвета
+	# вровень сменяют друг друга почти на каждом шаге, и окно не набиралось 10 с вместо 4
+	# (замечание к G4: крейсер уползал на 420). Откат «один враг» — прежнее правило
+	if s.ret_foe == null or (rollback_futile_one_foe and s.ret_foe != foe):
 		s.ret_foe = foe
 		s.ret_clock = 0.0
 		s.ret_hist = PackedFloat64Array()
 		return false
+	s.ret_foe = foe
 	var away := s.vel.dot((s.pos - foe.pos) / d) if d > 1e-6 else 0.0
 	if away < dc.retreat_futile_speed_k * s.max_speed() and not rollback_futile_from_start:
 		return false                     # не на ходу от врага — часы стоят
@@ -330,6 +370,23 @@ static func _futile_tick(b: State, s: Ship, foe: Ship, d: float, dt: float) -> b
 	if gain >= dc.retreat_futile_gain:
 		return false
 	s.futile[foe.uid] = b.time
+	if not rollback_futile_one_foe:
+		# отходят от ВСЕХ, кто ближе 0,5 R (_retreat), и «не оторваться» — от всех, кто так же
+		# держится рядом: расстояние до них растёт не быстрее порога окна (gain / окно, 5 ед/с).
+		# Иначе погоня двумя-тремя корветами запускала отход заново от каждого — тяжёлый уползал
+		# на 430–730 вместо одного отхода (замечание к G4; 9.5 п. 13 — помнится по каждому врагу).
+		# Чужой тяжёлый, сам отходящий, расходится быстрее порога — от него отход работает (2.5)
+		var keep := dc.retreat_futile_gain / dc.retreat_futile_window_s
+		var close := dc.belt_back_off_k * s.def.main.rng
+		for o in b.ships:
+			if o == foe or o.dead or o.side == s.side or s.futile.has(o.uid) or not Vision.sees(b, s.side, o):
+				continue
+			var off := s.pos - o.pos
+			var dd := off.length()
+			if dd < 1e-6 or dd >= close:
+				continue
+			if (s.vel - o.vel).dot(off / dd) < keep:
+				s.futile[o.uid] = b.time
 	s.ret_foe = null
 	s.ret_clock = 0.0
 	s.ret_hist = PackedFloat64Array()

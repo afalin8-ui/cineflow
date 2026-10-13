@@ -222,3 +222,17 @@ static func _apply(b: State, side: int, plan: Array) -> void:
 		s.slot_order = float(o.rank[i])
 		s.slot_band = o.band[i]
 		s.leash_set = d.leash_frigate_ai if o.band[i] == Formation.FRIGATE and not s.def.ecm else 0.0
+	# М10, строй против расталкивания (9.5 п. 20): пары новых мест ближе hull + hull — один раз
+	# на раздачу; замер (battle → _sample_lines) считает их по шагам, пока оба живы и в строю
+	var sd := b.sides[side]
+	sd.slot_clash = PackedInt32Array()
+	for i in mine.size():
+		if o.band[i] == Formation.NONE:
+			continue
+		for j in range(i + 1, mine.size()):
+			if o.band[j] == Formation.NONE:
+				continue
+			var mn := mine[i].hull + mine[j].hull
+			if o.at[i].distance_squared_to(o.at[j]) < mn * mn:
+				sd.slot_clash.append(mine[i].uid)
+				sd.slot_clash.append(mine[j].uid)

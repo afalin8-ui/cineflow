@@ -255,6 +255,85 @@ func test_chase_does_not_crawl() -> void:
 	ok(whole(o["starts"]) >= 4, "откат «забыть через 15 с где угодно»: отход заново каждые ~20 с — %d раз за 120 с — проверка краснеет" % whole(o["starts"]))
 
 
+## Корвет гонится, а у тяжёлого есть цель главного калибра — чужой крейсер-мишень в 716
+## (замечание к G4; 09, 2.6 и 6.3). «Не оторваться» обязано ДЕРЖАТЬСЯ, пока корвет ближе
+## 0,5 R: тяжёлый стоит и бьёт батареей. Откат — «не оторваться» на один шаг (дальше
+## «держит дистанцию» до корвета в мёртвой зоне или «путь закрыт»). → доля секунд
+## в «не оторваться» после первого срабатывания и сдвиг.
+func _futile_hold(rollback: bool, focus: bool) -> Vector2:
+	HeavyDoctrine.rollback_futile_one_step = rollback
+	var b := _lab()
+	var s := _tough(_put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 0)))
+	s.stance = &"hunt"
+	_dummy(_put(b, Ship.DEFENDER, &"plektor", &"cruiser", Vector2(0, -716)))
+	var c := _tough(_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2(0, -250)))
+	c.stance = &"hunt"
+	if focus:
+		b.queue({"op": &"focus", "ids": [s.uid], "target": c.uid})
+	var after := 0.0
+	var held := 0.0
+	var seen := false
+	for i in roundi(40.0 / Battle.STEP):
+		b.step()
+		seen = seen or s.belt == HeavyDoctrine.FUTILE
+		if seen:
+			after += Battle.STEP
+			if s.belt == HeavyDoctrine.FUTILE:
+				held += Battle.STEP
+	var out := Vector2(held / after if after > 0.0 else 0.0, s.pos.length())
+	b.dispose()
+	HeavyDoctrine.rollback_futile_one_step = false
+	return out
+
+
+func test_futile_holds_with_heavy_target() -> void:
+	for focus: bool in [true, false]:
+		var r := _futile_hold(false, focus)
+		note("корвет гонится, чужой крейсер в 716%s: «не оторваться» %.0f%% времени после срабатывания, сдвиг %.0f" % [", фокус на корвете" if focus else "", r.x * 100.0, r.y])
+		ok(r.x >= 0.99, "«не оторваться» держится, пока корвет рядом%s: %.0f%% времени" % [" (фокус на корвете)" if focus else "", r.x * 100.0])
+		ok(r.y <= 300.0, "тяжёлый стоит, а не пятится дальше: сдвиг %.0f" % r.y)
+	var o := _futile_hold(true, true)
+	note("откат «не оторваться на один шаг»: %.1f%% времени" % (o.x * 100.0))
+	ok(o.x < 0.1, "откат «не оторваться на один шаг»: %.1f%% времени после срабатывания — проверка краснеет" % (o.x * 100.0))
+
+
+## Погоня двумя-тремя корветами (у каждого фокус на тяжёлом): отход один, тяжёлый не уползает
+## (09, 2.6; замечание к G4: по одному «не оторваться» на каждого корвета — отход заново
+## от каждого, 1 корвет 277, 2 — 432, 3 — 583–728). → сдвиг за 120 с и сколько раз начался отход.
+func _pack_chase(n: int, rollback: bool) -> Vector2:
+	HeavyDoctrine.rollback_futile_one_foe = rollback
+	var b := _lab()
+	var s := _tough(_put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 0)))
+	s.stance = &"hunt"
+	for k in n:
+		var c := _tough(_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2((k - (n - 1) * 0.5) * 80.0, -250.0)))
+		c.stance = &"hunt"
+		b.queue({"op": &"focus", "ids": [c.uid], "target": s.uid})
+	var starts := 0
+	var was := false
+	var far := 0.0
+	for i in roundi(120.0 / Battle.STEP):
+		b.step()
+		var ret := s.belt == HeavyDoctrine.RETREAT
+		if ret and not was:
+			starts += 1
+		was = ret
+		far = maxf(far, s.pos.length())
+	b.dispose()
+	HeavyDoctrine.rollback_futile_one_foe = false
+	return Vector2(far, starts)
+
+
+func test_chase_by_pack_does_not_crawl() -> void:
+	for n: int in [2, 3]:
+		var r := _pack_chase(n, false)
+		note("погоня %d корветами, 120 с: сдвиг %.0f, отходов %d" % [n, r.x, roundi(r.y)])
+		ok(r.x <= 400.0 and roundi(r.y) <= 1, "погоня %d корветами: один отход и не дальше 400 — %.0f, отходов %d" % [n, r.x, roundi(r.y)])
+	var o := _pack_chase(3, true)
+	note("откат «не оторваться только от одного»: сдвиг %.0f, отходов %d" % [o.x, roundi(o.y)])
+	ok(o.x > 400.0 and roundi(o.y) >= 2, "откат «не оторваться только от одного»: %.0f, отходов %d — проверка краснеет" % [o.x, roundi(o.y)])
+
+
 # ───────────────────────── отход не ведёт вперёд, «прижат», «Держать» ─────────────────────────
 
 ## Чужой крейсер — цель в поясе впереди (−z), корвет-мишень вплотную СЗАДИ: «прочь от него»
@@ -331,6 +410,37 @@ func test_hold_no_self_retreat() -> void:
 	ok(o > 50.0, "откат «Держать тоже отходит»: ушёл на %.0f — проверка краснеет" % o)
 
 
+## Охрана своего на ходу — прямой приказ на движение (09, 6.6, п. 2): носитель идёт
+## к (0, −600), крейсер охраняет его, корвет-мишень у пути. Крейсер сам не отходит и не
+## отстаёт от своего места в кольце. Откат — как «Охрана» на месте (самоотход, торможение
+## у чужих): отходил и отставал на ~700 (замечание к G4). → [худшее отставание, был ли отход].
+func _escort(rollback: bool) -> Array:
+	HeavyDoctrine.rollback_escort_retreats = rollback
+	var b := _lab()
+	var car := _tough(_put(b, Ship.ATTACKER, &"troyden", &"carrier", Vector2(0, 200)))
+	var s := _tough(_put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 100)))
+	_dummy(_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2(150, -100)))
+	b.queue({"op": &"guard", "ids": [s.uid], "target": car.uid})
+	b.queue({"op": &"move", "ids": [car.uid], "x": 0.0, "z": -600.0})
+	var lag := 0.0
+	for i in roundi(30.0 / Battle.STEP):
+		b.step()
+		lag = maxf(lag, s.pos.distance_to(s.anchor))
+	var out := [lag, _had(b, s.uid, HeavyDoctrine.RETREAT)]
+	b.dispose()
+	HeavyDoctrine.rollback_escort_retreats = false
+	return out
+
+
+func test_escort_no_self_retreat_on_the_move() -> void:
+	var r := _escort(false)
+	note("охрана идущего носителя, корвет у пути: отставание от места в кольце до %.0f" % num(r[0]))
+	ok(not flag(r[1]) and num(r[0]) <= 250.0, "охрана своего на ходу: сам не отходит, отстаёт не больше 250 — %.0f" % num(r[0]))
+	var o := _escort(true)
+	note("откат «охрана на ходу как на месте»: отставание %.0f, отход %s" % [num(o[0]), str(flag(o[1]))])
+	ok(flag(o[1]) and num(o[0]) > 500.0, "откат «охрана на ходу отходит сама»: отставание %.0f — проверка краснеет" % num(o[0]))
+
+
 # ───────────────────────── строй (09, раздел 5; 9.5 пп. 9, 10, 20) ─────────────────────────
 
 ## Пары своих мест ближе hull + hull (расталкивание) — поперёк И по глубине.
@@ -395,6 +505,45 @@ func test_formation_wider_than_push() -> void:
 	var ob: PackedStringArray = o[1]
 	note("откат --ecm-01L: пар ближе hull + hull — %d (%s)" % [ob.size(), "; ".join(ob.slice(0, 2))])
 	ok(not ob.is_empty(), "откат --ecm-01L (РЭБ на 0,1 L и вторая шеренга в 50): %d пар ближе hull + hull — проверка краснеет" % ob.size())
+
+
+## Откат --ecm-01L раскладывает ВСЕХ: вторая шеренга фрегатов получает свои места, а не
+## остаётся без полосы посреди линии тяжёлых (замечание к G4) — иначе откат краснел бы не
+## тем, что проверяет (раздел 9 CLAUDE.md). Все составы быстрого боя против линии каждого
+## клана того же масштаба и против узкой (175 — «Сражение» Тройдена, 0 — один тяжёлый): у всех
+## — полоса. Вторая шеренга фрегатов бывает только у Плэктора «Генерального» против узкой.
+func _ecm01l_unplaced(rollback: bool) -> PackedStringArray:
+	Formation.rollback_rank2_by_fr = rollback
+	var d := _defs()
+	var out := PackedStringArray()
+	for size in d.quick.size_ids:
+		for clan in d.faction_ids:
+			var widths := PackedFloat64Array([175.0, 0.0])
+			for foe in d.faction_ids:
+				widths.append(Formation.heavy_width(d, Formation.members_of(d, foe, Battle.ids_of(Battle.compose(d, size, foe)))))
+			for fw in widths:
+				var ids := Battle.ids_of(Battle.compose(d, size, clan))
+				var members := Formation.members_of(d, clan, ids)
+				var spec := Formation.Spec.new()
+				spec.p = Vector2(0, 650)
+				spec.ax = Vector2(0, -1)
+				spec.by_pos = false
+				spec.ecm_01l = true
+				spec.foe_width = fw
+				var o := Formation.places(d, members, spec)
+				for i in members.size():
+					if o.band[i] == Formation.NONE:
+						out.append("%s %s (чужая линия %.0f): %s в %s" % [size, clan, fw, members[i].def.id, str(o.at[i].round())])
+	Formation.rollback_rank2_by_fr = false
+	return out
+
+
+func test_ecm01l_places_everyone() -> void:
+	var r := _ecm01l_unplaced(false)
+	ok(r.is_empty(), "откат --ecm-01L: без места (полоса NONE) — никого (%s)" % "; ".join(r.slice(0, 3)))
+	var o := _ecm01l_unplaced(true)
+	note("откат «вторая шеренга по первой»: без места — %d (%s)" % [o.size(), "; ".join(o.slice(0, 2))])
+	ok(not o.is_empty(), "откат «вторая шеренга фрегатов ищет своих по первой»: %d без места — проверка краснеет" % o.size())
 
 
 ## Места по положению (5.4): корветы, переставленные вбок «не по номеру», получают места
@@ -545,6 +694,32 @@ func test_bench_battle_measures() -> void:
 	# откат --ecm-01L — места двух своих ближе hull + hull (М10)
 	var ec := _bench("battle", 1000, 1, {"ecm_01l": true})
 	ok(_worst(ec, "m10_self") > 0.0, "откат --ecm-01L: мест ближе hull + hull — %.0f шагов — М10 краснеет" % _worst(ec, "m10_self"))
+
+
+## Место линии P не убегает вперёд своих тяжёлых дальше line.lead_max (найдено стендом G4):
+## P считается от чужих тяжёлых, которые ещё в пути, и без предела места обеих сторон
+## съезжались до 300 — шеренги лёгких проходили сквозь друг друга. Беда видна в «Стычке» (две
+## крейсерские линии, «Сражение» и «Генеральное» — слабее), и откат обязан краснеть ЭТОЙ
+## проверкой: без неё правка числа не краснила ни одного замера «Сражения» (замечание к G4).
+## Мерило — ближе всего места P двух сторон за фазу «бой» (p_min) против L = 0,85 R_line.
+## Откат — правка числа line.lead_max = 1e9 (--set).
+func test_bench_lead_max() -> void:
+	var dc := _defs().doctrine
+	var base := _bench("skirmish", 1000, 2, {})
+	var off := Defs.load_default({"line.lead_max": 1.0e9}) as Defs
+	var o: Array[Dictionary] = []
+	for i in 2:
+		o.append(BenchCore.run_one(off, BenchCore.setup_for("skirmish", 1000 + i, false, {}), BenchCore.MAX_S, "capella-проверка"))
+	var l := dc.line_L_k * _med(base, "r_line")
+	var pmin := 1.0e9
+	var omin := 1.0e9
+	for r in base:
+		pmin = minf(pmin, num(r["p_min"]))
+	for r in o:
+		omin = minf(omin, num(r["p_min"]))
+	note("«Стычка», 2 боя: места линий двух сторон не ближе %.0f (L = %.0f); откат line.lead_max = 1e9 — %.0f" % [pmin, l, omin])
+	ok(pmin >= 0.7 * l, "места линий P двух сторон не съезжаются: ближе всего %.0f (≥ 0,7 L = %.0f)" % [pmin, 0.7 * l])
+	ok(omin < 0.7 * l, "откат line.lead_max = 1e9: места линий съехались до %.0f — проверка краснеет" % omin)
 
 
 ## Флажки, беда которых видна только там, где правило решает исход (09, 8.4): «линии» —

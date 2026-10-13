@@ -59,6 +59,9 @@ static var rollback_panel_nowrap := false
 ## ТОЛЬКО для проверки отката: строка «чем занят» у тяжёлого — как в G2–G3 (без состояний
 ## пояса доктрины): «… — стоит», когда он идёт к цели.
 static var rollback_doing_g3 := false
+## ТОЛЬКО для проверки отката (замечание к G4): «держит дистанцию · 148 до «Исса»», хотя 148 —
+## в мёртвой зоне и главный калибр молчит.
+static var rollback_belt_dead_text := false
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
@@ -559,6 +562,9 @@ static func _doing_belt(s: Ship, b: State, jam: String) -> String:
 		HeavyDoctrine.BELT:
 			if main != "":
 				return "держит дистанцию · %s%s%s%s" % [main, bat, off, jam]
+			if mt != null and s.pos.distance_to(mt.pos) < s.def.main.dead and not rollback_belt_dead_text:
+				# цель ближе мёртвой зоны — это не «держит дистанцию»: главный калибр по ней молчит
+				return "%s в мёртвой зоне (%d)%s%s" % [Weapons.short_name(mt), roundi(s.pos.distance_to(mt.pos)), bat_hit, jam]
 			if mt != null:
 				return "держит дистанцию · %d до %s%s%s" % [roundi(s.pos.distance_to(mt.pos)), Weapons.short_name(mt), bat, jam]
 			return "держит дистанцию%s%s" % [bat, jam]
@@ -590,6 +596,8 @@ static func _doing_belt(s: Ship, b: State, jam: String) -> String:
 		HeavyDoctrine.MOVE:
 			if s.has_amove:
 				return "идёт с боем%s%s" % [bat, jam]
+			if HeavyDoctrine.escorting(s):
+				return "идёт за %s%s%s" % [Weapons.short_name(s.guard_of as Ship), bat, jam]
 			return "идёт на участок%s%s" % [bat, jam]
 	if main != "":
 		return "%s%s%s%s" % [main, bat, off, jam]

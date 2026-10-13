@@ -59,6 +59,9 @@ static var rollback_exit_no_edge := false
 ## ТОЛЬКО для проверки отката (09, 6.4): ПКМ по полю — прежний квадрат «как стояли»,
 ## без строя по ролям. В бою всегда false.
 static var rollback_move_keep_layout := false
+## ТОЛЬКО для проверки отката (09, 6.4; замечание к G4): ось строя ПКМ всегда по ходу марша,
+## а не к центру видимых чужих тяжёлых. В бою всегда false.
+static var rollback_axis_march := false
 
 
 ## Бой из состава быстрого боя (часть 01, 2.15). setup:
@@ -92,6 +95,7 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	b.mp.guard_leash = gs.leash if gs != null else 0.0
 	b.mp.amove_resume = p_defs.doctrine.amove_resume_s
 	b.mp.clear_k = p_defs.doctrine.belt_clear_k
+	b.space.heavy_r2 = Metrics.M9_HEAVY * Metrics.M9_HEAVY     # М9: пары чужих тяжёлых — проходом пар снимка
 	# флажки отката доктрины тяжёлых и строя (09, 8.4) — ключи состава боя
 	b.legacy_approach = p_setup.get("legacy_approach", false)
 	b.no_share_close = p_setup.get("no_share_close", false)
@@ -162,7 +166,8 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	# сценарий «Перестрелки» (G2, ИИ — G5): противник с первого шага идёт атакой с ходу
 	# на foe_amove вперёд — тяжёлые встают на встречного, лёгкие сходятся. Это
 	# расстановка с заданием, а не приказ игрока: в журнал команд не пишется, в записи
-	# боя едет вместе с setup.
+	# боя едет вместе с setup. С G4 «Бой линий» его не ставит (противника ведёт заглушка
+	# строя, line_stub) — ключ остался для проб.
 	var adv: float = p_setup.get("foe_amove", 0.0)
 	if adv != 0.0:
 		var foe := 1 - b.player_side
@@ -434,6 +439,8 @@ func _sample_lines() -> void:
 		m.m3.append(l)
 		if l < Metrics.M3_FLOOR:
 			m.m3_short += 1
+	if sides[0].stub and sides[1].stub:
+		m.p_min = minf(m.p_min, sides[0].stub_p.distance_to(sides[1].stub_p))
 	var hcount := [0, 0]
 	for s in ships:
 		if s.dead or s.station or s.charging():
@@ -446,11 +453,11 @@ func _sample_lines() -> void:
 			var t := s.target as Ship
 			if t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
 				m.m1_s += STEP
-			var close := false
-			for o in ships:
-				if not o.dead and o.side != s.side and Vision.sees(self, s.side, o) and s.pos.distance_to(o.pos) < s.def.main.dead:
-					close = true
-					break
+			# ближайший чужой — из снимка начала шага (sim/space.gd: тот же проход пар, что
+			# расталкивание), а не перебором объектов (godot/CLAUDE.md, 3). Сдвиг на шаг — доли
+			# единицы; видимость в срезе — «да» всегда (sim/vision.gd), появится скрытность —
+			# спрашивать её здесь
+			var close := s.si >= 0 and space.near_d2[s.si] < s.def.main.dead * s.def.main.dead
 			if close:
 				m.m2_s += STEP
 			Metrics.episode(m.m2_run, m.m2_eps, s.uid, close, time)
@@ -493,38 +500,26 @@ func _sample_lines() -> void:
 			if pc == hcount[i] and proj > pp:
 				m.m6_back[i] += proj - pp
 		m.m6_prev[i] = [hcount[i], proj]
-	# М9: входы пар «свой в чужом» и пары чужих тяжёлых ближе 360
-	var now_in: Dictionary[int, bool] = {}
-	var n := ships.size()
-	# М10, строй против расталкивания: места двух своих ближе hull + hull (9.5 п. 20)
-	for i in n:
-		var a := ships[i]
-		if a.dead or not a.has_slot or not sides[a.side].stub or a.charging():
+	# М10, строй против расталкивания: места двух своих ближе hull + hull (9.5 п. 20) — пары
+	# посчитаны, когда заглушка раздавала места (line_stub → slot_clash); здесь — пока оба
+	# живы и в строю
+	for i in 2:
+		var cl := sides[i].slot_clash
+		if not sides[i].stub or cl.is_empty():
 			continue
-		for j in range(i + 1, n):
-			var c := ships[j]
-			if c.dead or not c.has_slot or c.side != a.side or c.charging():
-				continue
-			var mn := a.hull + c.hull
-			if a.slot.distance_squared_to(c.slot) < mn * mn:
+		for k in range(0, cl.size(), 2):
+			var a := ship_by_uid(cl[k])
+			var c := ship_by_uid(cl[k + 1])
+			if a != null and c != null and not a.dead and not c.dead and not a.charging() and not c.charging():
 				m.m10_self += 1
-	for i in n:
-		var a := ships[i]
-		if a.dead:
-			continue
-		for j in range(i + 1, n):
-			var c := ships[j]
-			if c.dead or c.side == a.side:
-				continue
-			var d2 := a.pos.distance_squared_to(c.pos)
-			var mn := (a.hull + c.hull) * Metrics.M9_K
-			if d2 < mn * mn:
-				var key := mini(a.uid, c.uid) * 100000 + maxi(a.uid, c.uid)
-				now_in[key] = true
-				if not m.m9_in.has(key):
-					m.m9_entries += 1
-			if a.heavy() and c.heavy() and not a.station and not c.station and d2 < Metrics.M9_HEAVY * Metrics.M9_HEAVY:
-				m.m9_heavy += 1
+	# М9: входы пар «свой в чужом» (ближе (hull + hull) × 1,15 — пары расталкивания чужих) и пары
+	# чужих тяжёлых ближе 360 — из того же прохода пар снимка (sim/space.gd)
+	var now_in: Dictionary[int, bool] = {}
+	for key in space.foe_in:
+		now_in[key] = true
+		if not m.m9_in.has(key):
+			m.m9_entries += 1
+	m.m9_heavy += space.heavy_close
 	m.m9_in = now_in
 
 
@@ -1034,7 +1029,9 @@ func _order_axis(click: Vector2, center: Vector2) -> Vector2:
 			fh += o.pos
 			nh += 1
 	var v := Vector2.ZERO
-	if nh > 0:
+	if rollback_axis_march:
+		pass
+	elif nh > 0:
 		v = fh / float(nh) - click
 	elif na > 0:
 		v = fa / float(na) - click
