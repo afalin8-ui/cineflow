@@ -10,7 +10,11 @@
 # - подсказка ввода «A — щёлкните точку или врага» держится поверх потока полосок модели
 #   (хвост G2; откат «подсказки после полосок»);
 # - строка «чем занят»: тяжёлый на «Охоте» со своей целью вне пояса и лёгкий под помехами
-#   дальше lockRange говорят правду (хвост G2; откат — прежние строки).
+#   дальше lockRange говорят правду (хвост G2; откат — прежние строки); звено
+#   бомбардировщиков с приказом «идти» — «идёт к точке», потом «ждёт у точки» (доработка
+#   G3; откат «маршрут раньше приказа»);
+# - высота машин — дуги ±view.craft_arc из doctrine.json (09, 11.6; откат — постоянная
+#   высота числами в коде).
 extends "res://tests/case.gd"
 
 const Defs := preload("res://sim/defs.gd")
@@ -23,6 +27,9 @@ const BattleInput := preload("res://input/battle_input.gd")
 const Picking := preload("res://input/picking.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const Weapons := preload("res://sim/weapons.gd")
+const BattleView := preload("res://view/battle_view.gd")
+const AirView := preload("res://view/air_view.gd")
+const Air := preload("res://sim/air.gd")
 
 const BIG := 1.0e9
 ## Рабочий вид (09, 11): машины на нём — точки, и выбирать их надо именно здесь.
@@ -236,7 +243,7 @@ func _rmb_on_foe_squad(heavy: bool, rollback: bool) -> Dictionary:
 	Battle.rollback_heavy_to_squad = rollback
 	var p := await _polygon()
 	var out := {"found": false}
-	# чужое звено поднимается на 8-й секунде (FOE_AIR); ждём, пока оно отойдёт от носителя
+	# чужое звено поднимается на 4-й секунде (FOE_AIR.first); ждём, пока оно отойдёт от носителя
 	var fq: Squad = null
 	for i in 12:
 		await _run(p, 1.0)
@@ -432,6 +439,156 @@ func test_doing_light_under_jam() -> void:
 	ok(line.begins_with("под помехами — бьёт только вблизи") and line.contains("230"), "строка: «%s»" % line)
 	var o := _jam_line(true)
 	ok(str(o["line"]).begins_with("бьёт"), "откат — прежнее «%s» обещает выстрел — проверка краснеет" % str(o["line"]))
+
+
+## Строка звена бомбардировщиков с приказом «идти» (доработка G3): сначала «идёт к точке»,
+## у точки — «ждёт у точки»; не «обходит строй с фланга» (обход — одно правило
+## Air.routing на модель и строку). Откат «маршрут раньше приказа» — строка говорит про
+## обход, как и делает звено.
+func _move_line(rollback: bool) -> Dictionary:
+	Air.rollback_move_route = rollback
+	var b := Battle.create(_get_defs(), Polygon.setup_dict(Polygon.SEED)) as Battle
+	var car: Ship = null
+	for s in b.ships:
+		if s.side == Ship.ATTACKER and s.hangar != null and not s.station and car == null:
+			car = s
+	b.queue({"op": &"launch", "ids": PackedInt32Array([car.uid]), "role": &"bomber"})
+	b.step()
+	b.step()
+	var q: Squad = b.squads[0]
+	var goal := car.pos + Vector2(-600, 0)
+	b.queue({"op": &"move", "ids": PackedInt32Array([q.uid]), "x": goal.x, "z": goal.y})
+	var lines: Array[String] = []
+	for i in roundi(15.0 / Battle.STEP):
+		b.step()
+		if i % 15 == 0:
+			var l := PolygonHud.squad_doing(q, b)
+			if lines.is_empty() or lines[-1] != l:
+				lines.append(l)
+	b.dispose()
+	Air.rollback_move_route = false
+	return {"lines": lines}
+
+
+func test_bomber_move_line() -> void:
+	var r := _move_line(false)
+	var lines: Array[String] = r["lines"]
+	note("звено бомбардировщиков, «идти»: %s" % " → ".join(lines))
+	ok(not lines.is_empty() and lines[0] == "идёт к точке" and lines[-1] == "ждёт у точки", "строка: «идёт к точке» → «ждёт у точки» (%s)" % " → ".join(lines))
+	ok(not lines.has("обходит строй с фланга"), "про обход строка не говорит")
+	var o := _move_line(true)
+	var ol: Array[String] = o["lines"]
+	ok(ol.has("обходит строй с фланга"), "откат «маршрут раньше приказа»: «%s» — проверка краснеет" % " → ".join(ol))
+
+
+# ───────────────────────── вид: дуги машин по высоте ─────────────────────────
+
+## Лаборатория с видом без неба: свой носитель и фрегат против чужого носителя и крейсера.
+## Корабли неподвижны и бессмертны, чужие молчат; вид шагает постоянным шагом и рисует
+## каждый шаг. (Пулы эффектов без окна пусты — RenderingServer заглушка; что нарисовано
+## пулом, проверяет ярус картинки: test_render_air.)
+func _air_lab(defs: Defs, foe_at: Vector2) -> BattleView:
+	await hooks.set_window_size(Vector2i(1366, 768))
+	var b := Battle.create(defs, {"attacker": &"troyden", "defender": &"plektor", "size": &"small", "seed": 5, "reserve": false}) as Battle
+	b.ships.clear()
+	for row: Array in [[Ship.ATTACKER, &"troyden", &"carrier", Vector2(0, 200)], [Ship.ATTACKER, &"troyden", &"frigate", Vector2(150, 0)],
+			[Ship.DEFENDER, &"plektor", &"carrier", foe_at], [Ship.DEFENDER, &"plektor", &"cruiser", foe_at + Vector2(-200, 0)]]:
+		var side: int = row[0]
+		var clan: StringName = row[1]
+		var id: StringName = row[2]
+		var at: Vector2 = row[3]
+		var sh := _still(b.spawn(side, b.defs.ship(clan, id), at))
+		sh.stance = &"hold"
+		if side == Ship.DEFENDER:
+			sh.main_cd = PackedFloat64Array()
+			sh.sec_cd = PackedFloat64Array()
+			sh.light_cd = PackedFloat64Array()
+			sh.pd_cd = PackedFloat64Array()
+	var v := BattleView.new()
+	v.name = "AirLab"
+	tree.root.add_child(v)
+	v.setup(defs, b, false)
+	v.paused = true
+	v.set_process(false)
+	await hooks.frames(1)
+	return v
+
+
+func _drop_view(v: BattleView) -> void:
+	var b := v.battle
+	v.queue_free()
+	await hooks.frames(2)
+	b.dispose()
+
+
+func _view_step(v: BattleView) -> void:
+	v.paused = false
+	v.advance(Battle.STEP)
+	v.paused = true
+	v.draw_state()
+
+
+## Высота машин — ДУГИ ±view.craft_arc (09, 11.6; часть 04, 2.4 п. 7), числом из
+## doctrine.json (замечание к G3: постоянная высота 18 ± 22 была вписана в код). За 30 с
+## у каждой машины, прожившей больше 20 с, размах высоты больше 1,2 craft_arc; ни одна не
+## выше 2 craft_arc (дуга плюс подъём на отвороте) и не ниже −craft_arc; бомбардировщик на
+## отвороте поднимается. Правка --set view.craft_arc=12 — числа следуют. Откат — высота
+## постоянная, числами в коде.
+func _arcs(defs: Defs, fixed: bool) -> Dictionary:
+	AirView.rollback_fixed_height = fixed
+	var arc := defs.doctrine.view_craft_arc
+	var v := await _air_lab(defs, Vector2(0, -1100))
+	var b := v.battle
+	for role: StringName in [&"interceptor", &"fighter", &"bomber"]:
+		b.queue({"op": &"launch", "ids": [b.ships[0].uid], "role": role})
+	var lo: Dictionary[int, float] = {}
+	var hi: Dictionary[int, float] = {}
+	var born: Dictionary[int, float] = {}
+	var lift := 0.0
+	var breaks := 0
+	for i in roundi(30.0 / Battle.STEP):
+		_view_step(v)
+		for c in b.crafts:
+			if c.dead or not v.air.drawn.has(c.uid):
+				continue
+			var y: float = v.air.drawn[c.uid].y
+			if not born.has(c.uid):
+				born[c.uid] = b.time
+				lo[c.uid] = y
+				hi[c.uid] = y
+			lo[c.uid] = minf(lo[c.uid], y)
+			hi[c.uid] = maxf(hi[c.uid], y)
+			if c.role == &"bomber" and c.phase == &"break":
+				breaks += 1
+				lift = maxf(lift, v.air.lift_of(c.uid))
+	var spans: Array[float] = []
+	var top := -INF
+	var bottom := INF
+	for u in born:
+		top = maxf(top, hi[u])
+		bottom = minf(bottom, lo[u])
+		if b.time - born[u] >= 20.0:
+			spans.append(hi[u] - lo[u])
+	spans.sort()
+	await _drop_view(v)
+	AirView.rollback_fixed_height = false
+	note("дуги машин (craft_arc %.0f%s): машин %d, размах у долгоживущих от %.1f до %.1f, высоты %.1f…%.1f, отворотов %d, подъём до %.1f" % [arc,
+		", откат" if fixed else "", born.size(), spans[0] if not spans.is_empty() else -1.0, spans[-1] if not spans.is_empty() else -1.0, bottom, top, breaks, lift])
+	return {"arc": arc, "spans": spans, "top": top, "bottom": bottom, "lift": lift, "breaks": breaks}
+
+
+func test_craft_height_arcs_follow_doctrine() -> void:
+	for d: Defs in [_get_defs(), Defs.load_default({"view.craft_arc": 12.0}) as Defs]:
+		var r := await _arcs(d, false)
+		var arc: float = r["arc"]
+		var spans: Array[float] = r["spans"]
+		ok(spans.size() >= 8, "craft_arc %.0f: машин, проживших 20 с, — %d" % [arc, spans.size()])
+		ok(not spans.is_empty() and spans[0] > 1.2 * arc, "craft_arc %.0f: у каждой машины дуги по высоте — наименьший размах %.1f (больше %.1f)" % [arc, spans[0] if not spans.is_empty() else -1.0, 1.2 * arc])
+		ok(num(r["top"]) <= 2.0 * arc + 1e-3 and num(r["bottom"]) >= -arc - 1e-3, "craft_arc %.0f: высоты в −%.0f…+%.0f (%.1f…%.1f)" % [arc, arc, 2.0 * arc, num(r["bottom"]), num(r["top"])])
+		ok(whole(r["breaks"]) > 0 and num(r["lift"]) > 0.8 * arc, "craft_arc %.0f: бомбардировщик на отвороте поднимается (%.1f)" % [arc, num(r["lift"])])
+	var o := await _arcs(Defs.load_default({"view.craft_arc": 12.0}) as Defs, true)
+	var os: Array[float] = o["spans"]
+	ok((not os.is_empty() and os[0] < 1.2 * 12.0) or num(o["top"]) > 24.0, "откат «высота постоянная, числами в коде»: размах %.1f, наибольшая высота %.1f при craft_arc 12 — проверка краснеет" % [os[0] if not os.is_empty() else -1.0, num(o["top"])])
 
 
 # ───────────────────────── протяжка (как в test_ui_polygon) ─────────────────────────

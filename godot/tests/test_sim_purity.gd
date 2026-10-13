@@ -532,8 +532,11 @@ func test_strict_typing_settings() -> void:
 		if not n.begins_with("debug/gdscript/warnings/"):
 			continue
 		var key := n.get_file()
-		if key.begins_with("unsafe_") or key == "untyped_declaration":
+		# confusable_capture_reassignment (замечание к G3): `x = …` внутри лямбды меняет КОПИЮ
+		# захвата, внешняя переменная не меняется — проверка C99, копившая итог так, была
+		# зелёной при любом ангаре. Ошибка разбора — и такую строку не написать.
+		if key.begins_with("unsafe_") or key == "untyped_declaration" or key == "confusable_capture_reassignment":
 			seen += 1
 			var level: int = ProjectSettings.get_setting(n)
 			eq(level, 2, "%s — ошибка (2)" % key)
-	ok(seen >= 6, "настроек unsafe_* и untyped_declaration: %d (в 4.7.2 их шесть)" % seen)
+	ok(seen >= 7, "настроек unsafe_*, untyped_declaration и confusable_capture_reassignment: %d (в 4.7.2 их семь)" % seen)
