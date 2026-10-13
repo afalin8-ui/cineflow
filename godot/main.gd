@@ -16,8 +16,12 @@
 #                                       сверить отпечаток на последнем шаге и выйти (код 0/1).
 #                                       Частоту кадров задаёт --fixed-fps движка: бой с видом
 #                                       на любой частоте и без вида обязан совпасть до бита
-#   capella.x86_64 -- --old-ecm         «Полигон» с помехами по-старому (откат 09, 1.7: главный
+#   capella.x86_64 -- --old-ecm         «Бой линий» с помехами по-старому (откат 09, 1.7: главный
 #                                       калибр под куполом бьёт только ближе lockRange)
+#   capella.x86_64 -- --bench …         стенд «бой без отрисовки» (tools/bench_core.gd): строка
+#                                       JSON на бой, --load battle|skirmish|lines|brake|clear,
+#                                       --n, --seed, --swap, флажки отката 09, 8.4 (--legacy-approach,
+#                                       --no-share-close, --no-foe-brake, --clear-055, --ecm-01L); код 0/1
 # Беда в данных или в моделях — текст на экране и в stderr, сцена и замер не
 # начинаются; в режимах --selftest, --bench-render и --replay-check — ещё и код выхода 1.
 # Без режима — «Полигон» (G1): два флота «Сражения», полёт по приказам. «Стол» (G0b) —
@@ -33,6 +37,7 @@ const FpsCounter := preload("res://ui/fps_counter.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
 const ShipModels := preload("res://view/ship_models.gd")
+const BenchCore := preload("res://tools/bench_core.gd")
 
 const HINT_TABLE := "F3 — счётчик кадров · F5 — минута замера кадров · F6 — «Полигон» · F11 — окно / полный экран\nкамера: колесо — ближе и дальше, Q/E или правая кнопка — повернуть, стрелки и край экрана — сдвинуть"
 const HINT_POLYGON := "F3 — счётчик кадров · F5 — замер кадров на «Столе» · F6 — «Стол» · F8 — начать заново · F9 — запись боя · F11 — полный экран\nкамера: колесо — ближе и дальше · Q/E или правая кнопка с протяжкой — повернуть · стрелки и край экрана — сдвинуть"
@@ -73,6 +78,10 @@ func _ready() -> void:
 			ShipModels.use_file(a.substr("--ship-models=".length()))
 	if "--selftest" in args:
 		_selftest()
+		return
+	if "--bench" in args:
+		# стенд (архитектура, 8.6): в выгруженной сборке -s нет — дверь главной сцены
+		get_tree().quit(BenchCore.main(defs, args, release_name()))
 		return
 	if not defs.ok:
 		_fail("Игра не запустилась: данные боя с ошибкой.", "ДАННЫЕ", defs.errors, args)
@@ -205,9 +214,7 @@ func _replay_checked(good: bool, text: String) -> void:
 ## Флажки боя из командной строки (tools/polygon.gd): `--old-ecm` — откат 09, 1.7;
 ## `--bomber-direct` и `--patrol-mid` — откаты авиации 09, 8.4 (G3).
 static func apply_flags(args: PackedStringArray) -> void:
-	Polygon.old_ecm = "--old-ecm" in args
-	Polygon.bomber_direct = "--bomber-direct" in args
-	Polygon.patrol_mid = "--patrol-mid" in args
+	Polygon.flags = BenchCore.flags_from_args(args)
 
 
 ## Запись боя из файла (JSON). Относительный путь — от папок запуска (как --overrides).

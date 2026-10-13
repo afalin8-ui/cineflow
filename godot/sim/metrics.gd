@@ -13,7 +13,14 @@
 #   урон по кораблям на поднятое звено и доля сбитых звеньев (М8), «машина-секунды»
 #   в середине (М5: проекция машины на ось своей стороны −100 ≤ p ≤ L + 100, без
 #   взлёта и посадки — 250 от своего носителя).
-# М1–М13 целиком — G5 (стенд).
+# - доктрина тяжёлых и строй (G4; 09, 8.1–8.2): фазы боя (марш — до первого выстрела главного
+#   калибра по кораблю; бой — до первого отхода стороны или конца; развязка), М1 (тяжёлые
+#   в поясе), М2 (вплотную, с эпизодами), М3 (расстояние между линиями), М4 (лёгкие между
+#   линиями), М6 (отход — не бегство), М9 (входы «свой в чужом», пары тяжёлых ближе 360),
+#   М10 (строй ИИ держится: до своего места). Сами шаги замера — в battle.gd
+#   (_sample_lines): метрикам нельзя грузить состояние боя (кольцо preload). Журнал смен
+#   состояния пояса — battle.belt_log. Сводка — summary() одной строкой JSON (стенд).
+# М5, М7, М8, М11 — выше; М12, М13 — G5.
 extends RefCounted
 
 ## Причины молчания готового главного калибра (03, 7.5) — по порядку проверок выстрела.
@@ -50,6 +57,64 @@ var first_gun := 0.0
 ## М5: машина-секунды в воздухе (без взлёта и посадки) и из них — в середине; [сторона].
 var craft_s := PackedFloat64Array([0.0, 0.0])
 var craft_mid_s := PackedFloat64Array([0.0, 0.0])
+
+# ── доктрина тяжёлых и строй (G4; 09, 8.2) ──
+## Фазы боя (09, 8.1): 0 марш, 1 бой, 2 развязка; когда начался и кончился бой.
+var phase := 0
+var fight_t0 := -1.0
+var fight_t1 := -1.0
+## Тяжёлый-секунды в фазе «бой» и из них: цель главного калибра в поясе (М1), чужой
+## корабль ближе мёртвой зоны (М2), в отходе (М6).
+var heavy_s := 0.0
+var m1_s := 0.0
+var m2_s := 0.0
+var m6_s := 0.0
+## Эпизоды М2 и М6 (длины, с) и их начала по uid.
+var m2_eps := PackedFloat64Array()
+var m6_eps := PackedFloat64Array()
+var m2_run: Dictionary[int, float] = {}
+var m6_run: Dictionary[int, float] = {}
+## М3: L(t) между центрами тяжёлых двух сторон, по шагам фазы «бой»; R_line — наименьшая
+## дальность главного калибра тяжёлых обеих линий; шаги с L < M3_FLOOR.
+var m3 := PackedFloat64Array()
+var r_line := INF
+var m3_short := 0
+## М4: лёгкий-секунды (корвет, фрегат, РЭБ; не побитые) в фазе «бой»: между линиями
+## (0 ≤ p ≤ L) и за своими тяжёлыми (p < −M4_BEHIND).
+var light_s := 0.0
+var m4_mid_s := 0.0
+var m4_back_s := 0.0
+## М6: смещение центра своей линии назад за фазу «бой» (сумма шагов назад по оси стороны),
+## тяжёлые-шаги за тыловым рубежом и ближе retreat.edge к краю поля.
+var m6_back := PackedFloat64Array([0.0, 0.0])
+var m6_prev: Array = [null, null]
+var m6_rear := 0
+var m6_edge := 0
+## М9: пары «свой в чужом» ближе (hull + hull) × 1,15 сейчас, сколько было входов; шаги, когда
+## пара чужих тяжёлых ближе M9_HEAVY.
+var m9_in: Dictionary[int, bool] = {}
+var m9_entries := 0
+var m9_heavy := 0
+## М10: расстояния до своего места (корабли под заглушкой строя) по шагам фазы «бой».
+var m10_heavy := PackedFloat64Array()
+var m10_corvette := PackedFloat64Array()
+var m10_frigate := PackedFloat64Array()
+## М10, строй против расталкивания (09, 9.5 п. 20; 5.3): шаги, на которых МЕСТА двух своих
+## (под заглушкой строя) ближе радиуса расталкивания своих hull + hull — строй толкает сам
+## себя. Откат --ecm-01L (РЭБ на 0,1 L перед флагманом) обязан это показать: расталкивание
+## сдвигает тяжёлых на десятки, а не на сотни, и медиана М10 (≤ 150) этого не видит.
+var m10_self := 0
+
+## М3: ни одного шага L < 360, пока у обеих сторон есть линия (09, 8.2).
+const M3_FLOOR := 360.0
+## М4: «за своими тяжёлыми» — p < −50 (09, 8.2).
+const M4_BEHIND := 50.0
+## М4: побитые лёгкие (< 30%) уходят за линию по правилу (09, 3.5) и не считаются.
+const M4_HURT := 0.3
+## М9: пары чужих тяжёлых ближе 360 (09, 8.2).
+const M9_HEAVY := 360.0
+## М9: «свой в чужом» — ближе (hull + hull) × 1,15 (09, 5.7).
+const M9_K := 1.15
 
 
 func book(side: int, key: StringName, cls_i: int, dealt: float) -> void:
@@ -157,3 +222,64 @@ func air_to_ships(side: int) -> float:
 	for k in AIR_KEYS:
 		t += to_ships(side, k)
 	return t
+
+
+# ───────────────────────── доктрина тяжёлых и строй (G4) ─────────────────────────
+
+## Эпизод по uid: вошёл (on) — запомнить начало, вышел — записать длину.
+static func episode(run: Dictionary[int, float], eps: PackedFloat64Array, uid: int, on: bool, now: float) -> void:
+	if on:
+		if not run.has(uid):
+			run[uid] = now
+	elif run.has(uid):
+		var t0: float = run[uid]
+		eps.append(now - t0)
+		run.erase(uid)
+
+
+## Закрыть незакрытые эпизоды (конец боя или фазы «бой»).
+func close_episodes(now: float) -> void:
+	for u: int in m2_run.keys():
+		episode(m2_run, m2_eps, u, false, now)
+	for u: int in m6_run.keys():
+		episode(m6_run, m6_eps, u, false, now)
+
+
+static func median(a: PackedFloat64Array) -> float:
+	if a.is_empty():
+		return -1.0
+	var s := a.duplicate()
+	s.sort()
+	var n := s.size()
+	return s[n >> 1] if n % 2 == 1 else (s[(n >> 1) - 1] + s[n >> 1]) * 0.5
+
+
+## Доля «худших» q (0,05 — 5% наименьших): значение на этой доле снизу.
+static func low(a: PackedFloat64Array, q: float) -> float:
+	if a.is_empty():
+		return -1.0
+	var s := a.duplicate()
+	s.sort()
+	return s[clampi(floori(q * float(s.size())), 0, s.size() - 1)]
+
+
+static func share(part: float, whole_: float) -> float:
+	return part / whole_ if whole_ > 0.0 else -1.0
+
+
+## Сводка замеров G4 одним словарём (стенд пишет её строкой JSON; 09, 8.2).
+func lines_summary() -> Dictionary:
+	return {
+		"fight_t0": fight_t0, "fight_t1": fight_t1,
+		"m1": share(m1_s, heavy_s),
+		"m2": share(m2_s, heavy_s), "m2_ep_med": median(m2_eps),
+		"m3_med": median(m3), "m3_p5": low(m3, 0.05), "m3_short": m3_short, "r_line": r_line if r_line < INF else -1.0,
+		"m3_med_k": median(m3) / r_line if r_line < INF and not m3.is_empty() else -1.0,
+		"m4": share(m4_mid_s, light_s), "m4_back": share(m4_back_s, light_s),
+		"m6": share(m6_s, heavy_s), "m6_ep_med": median(m6_eps), "m6_back": maxf(m6_back[0], m6_back[1]),
+		"m6_rear": m6_rear, "m6_edge": m6_edge,
+		"m9_entries": m9_entries, "m9_heavy": m9_heavy,
+		"m10_heavy": median(m10_heavy), "m10_corvette": median(m10_corvette), "m10_frigate": median(m10_frigate),
+		"m10_self": m10_self,
+		"first_hit": first_hit, "first_gun": first_gun,
+	}

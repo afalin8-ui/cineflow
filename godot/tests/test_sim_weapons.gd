@@ -13,6 +13,7 @@ const Weapons := preload("res://sim/weapons.gd")
 const Ecm := preload("res://sim/ecm.gd")
 const GroundGun := preload("res://sim/ground_gun.gd")
 const Movement := preload("res://sim/movement.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Polygon := preload("res://tools/polygon.gd")
 
 const BIG := 1.0e9
@@ -495,13 +496,15 @@ func test_main_target_heavies_first() -> void:
 	b.dispose()
 
 
-## До G4 тяжёлый к цели не ходит — своя цель главного калибра СНАЧАЛА в поясе (замечание
-## к G2; 09, 1.2 и 6.3 «главный калибр не стоит молча»): крейсер Плэктора в 950 (дальше
-## R = 780, но в досягаемости «Охраны» 1,3 R и «Охоты» 1,8 R) и фрегат в 620 (в поясе).
-## Откат — прежний захват одним счётом по стойке: крейсер весомее фрегата (вес эскорта
-## 0,6), тяжёлый держит его целью и молчит «дальше дальности».
-func _belt_first(stance: StringName, rollback: bool) -> Dictionary:
-	Weapons.rollback_far_capture = rollback
+## С G4 — снова одним счётом по стойке (замечание к G2 и план G2, п. 4: «с G4 тяжёлый
+## к дальней цели пойдёт сам»): крейсер Плэктора в 950 (дальше R = 780, но в досягаемости
+## «Охраны» 1,3 R и «Охоты» 1,8 R) весомее фрегата в 620 (вес эскорта 0,6) — тяжёлый берёт
+## его целью и ПОДХОДИТ (дальше 0,92 R, путь чист: фрегат дальше 0,45 R) на 0,8 R, а там
+## бьёт главным калибром. Откат — тяжёлый стоит, как в G2 (HeavyDoctrine.rollback_g2_stand):
+## одним счётом с дальней целью он молчит «дальше дальности» — ровно та беда, ради которой
+## в G2 стояло правило «сначала в поясе».
+func _far_target(stance: StringName, rollback: bool) -> Dictionary:
+	HeavyDoctrine.rollback_g2_stand = rollback
 	var b := _lab()
 	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0), Vector2(0, -100))
 	tc.stance = stance
@@ -510,34 +513,35 @@ func _belt_first(stance: StringName, rollback: bool) -> Dictionary:
 	tc.sec_cd = PackedFloat64Array()
 	var far := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -950)))
 	var fr := _dummy(_put(b, Ship.DEFENDER, &"frigate", Vector2(300, -543)))     # 620 — в поясе
-	var log := _log(b, 20.0)
+	var picked := Weapons.acquire(b, tc) == far
+	var log := _log(b, 25.0)
 	var mains := _shots(log, &"main", tc.uid)
-	var at_fr := 0
+	var at_far := 0
 	for m: Array in mains:
-		if m[2] == fr.uid:
-			at_fr += 1
-	var out := {"mains": mains.size(), "at_fr": at_fr, "far_hp": far.hp,
-		"too_far": b.metrics.idle[Ship.ATTACKER].get(&"too_far", 0.0), "moved": tc.pos.length()}
+		if m[2] == far.uid:
+			at_far += 1
+	var out := {"picked": picked, "mains": mains.size(), "at_far": at_far, "at_fr": mains.size() - at_far,
+		"too_far": b.metrics.idle[Ship.ATTACKER].get(&"too_far", 0.0), "moved": tc.pos.length(), "d": tc.pos.distance_to(far.pos)}
 	b.dispose()
-	Weapons.rollback_far_capture = false
+	HeavyDoctrine.rollback_g2_stand = false
 	return out
 
 
-func test_main_target_in_belt_first() -> void:
+func test_main_target_one_score_heavy_goes() -> void:
 	for st: StringName in [&"guard", &"hunt"]:
-		var r := _belt_first(st, false)
-		ok(whole(r["at_fr"]) >= 2 and whole(r["at_fr"]) == whole(r["mains"]), "«%s»: крейсер в 950 и фрегат в 620 — главный калибр бьёт фрегата в поясе: %d выстрелов из %d за 20 с" % [st, whole(r["at_fr"]), whole(r["mains"])])
-		ok(num(r["too_far"]) < 2.0, "«%s»: «дальше дальности» в журнале %.1f с, а не всё время" % [st, num(r["too_far"])])
-		ok(num(r["moved"]) < 0.5, "«%s»: с места не сошёл (сдвиг %.2f)" % [st, num(r["moved"])])
-		var o := _belt_first(st, true)
-		note("«%s»: по фрегату в поясе %d выстрелов, «дальше дальности» %.1f с; откат — %d и %.1f с" % [st, whole(r["at_fr"]), num(r["too_far"]), whole(o["mains"]), num(o["too_far"])])
-		ok(whole(o["mains"]) == 0 and num(o["too_far"]) > 10.0, "откат «захват одним счётом до R × reach» («%s»): выстрелов %d, «дальше дальности» %.1f с — проверка краснеет" % [st, whole(o["mains"]), num(o["too_far"])])
-	# в поясе никого — дальняя цель «Охоты» остаётся целью (стоит с ней, G4 подведёт)
+		var r := _far_target(st, false)
+		ok(flag(r["picked"]), "«%s»: одним счётом — крейсер в 950 весомее фрегата в 620 (вес эскорта 0,6)" % st)
+		ok(num(r["moved"]) > 100.0 and num(r["d"]) <= 780.0, "«%s»: тяжёлый сам вышел на дистанцию — сдвиг %.0f, до крейсера %.0f (R 780)" % [st, num(r["moved"]), num(r["d"])])
+		ok(whole(r["at_far"]) >= 1, "«%s»: и бьёт его главным калибром — %d выстрелов за 25 с" % [st, whole(r["at_far"])])
+		var o := _far_target(st, true)
+		note("«%s»: по дальнему %d выстрелов, «дальше дальности» %.1f с; откат «стоит, как в G2» — %d и %.1f с" % [st, whole(r["at_far"]), num(r["too_far"]), whole(o["mains"]), num(o["too_far"])])
+		ok(whole(o["mains"]) == 0 and num(o["too_far"]) > 10.0, "откат «тяжёлый стоит, как в G2» («%s»): выстрелов %d, «дальше дальности» %.1f с — проверка краснеет" % [st, whole(o["mains"]), num(o["too_far"])])
+	# «Держать» (захват 1,0 R) дальнего не берёт; «Охота» без целей в поясе — берёт
 	var b := _lab()
 	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))
 	tc.stance = &"hunt"
 	var far := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -950)))
-	ok(Weapons.acquire(b, tc) == far, "в поясе никого: «Охота» берёт дальнего в 950 (дальше пояса, в 1,8 R)")
+	ok(Weapons.acquire(b, tc) == far, "«Охота» берёт дальнего в 950 (дальше пояса, в 1,8 R)")
 	tc.stance = &"hold"
 	ok(Weapons.acquire(b, tc) == null, "«Держать» (захват 1,0 R): дальнего не берёт")
 	b.dispose()
@@ -564,29 +568,39 @@ func test_c100_unarmed_hold_position() -> void:
 	b.dispose()
 
 
-func _heavy_focus_case(rollback: bool, stance: StringName, dist: float) -> float:
-	Movement.rollback_heavy_approach = rollback
-	var b := _lab()
+## Фокус тяжёлому — «встань в пояс против цели» (09, 6.1–6.3): цель в поясе — стоит; дальше
+## 0,92 R — подходит на 0,8 R; ближе мёртвой зоны — отходит от неё (без поводка) и бьёт
+## батареей; «Держать» — стоит всегда (сам не отходит). Откат --legacy-approach — подход
+## «на 0,68 R», как в JS: к цели в 700 уходит на 530.
+func _heavy_focus_case(legacy: bool, stance: StringName, dist: float) -> Dictionary:
+	var b := _lab(&"troyden", &"plektor", {"legacy_approach": legacy})
 	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))
 	tc.stance = stance
+	tc.hp = BIG
+	tc.max_hp = BIG
 	var pc := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -dist)))
 	b.queue({"op": &"focus", "ids": [tc.uid], "target": pc.uid})
-	_steps(b, 15.0)
-	var moved := tc.pos.length()
+	var log := _log(b, 15.0)
+	var out := {"moved": tc.pos.length(), "d": tc.pos.distance_to(pc.pos), "sec": _shots(log, &"sec", tc.uid).size()}
 	b.dispose()
-	Movement.rollback_heavy_approach = false
-	return moved
+	return out
 
 
-func test_heavy_focus_stays_in_place() -> void:
-	for st: StringName in [&"guard", &"hunt", &"hold"]:
-		for dist: float in [700.0, 1100.0, 200.0]:
-			var m := _heavy_focus_case(false, st, dist)
-			ok(m < 0.5, "тяжёлый с фокусом на цель в %d (%s) за 15 с не сошёл с участка: сдвиг %.2f (план G2, п. 4)" % [roundi(dist), st, m])
+func test_heavy_focus_takes_belt() -> void:
+	var r := 780.0
+	for st: StringName in [&"guard", &"hunt"]:
+		var inb := _heavy_focus_case(false, st, 700.0)
+		ok(num(inb["moved"]) < 0.5, "фокус на цель в поясе (700, %s): стоит — сдвиг %.2f" % [st, num(inb["moved"])])
+		var fa := _heavy_focus_case(false, st, 1100.0)
+		ok(num(fa["d"]) <= 0.92 * r and num(fa["d"]) >= 0.75 * r, "фокус на цель в 1100 (%s): вышел на дистанцию — до цели %.0f (0,8 R = 624)" % [st, num(fa["d"])])
+		var dz := _heavy_focus_case(false, st, 200.0)
+		ok(num(dz["d"]) >= 0.5 * r - 10.0, "фокус на цель в мёртвой зоне (200, %s): отошёл задним ходом до %.0f (0,5 R = 390)" % [st, num(dz["d"])])
+		ok(whole(dz["sec"]) > 0, "и бьёт её батареей: %d выстрелов (03, 7.5 — не стоит молча)" % whole(dz["sec"]))
+	for dist: float in [700.0, 1100.0, 200.0]:
+		var h := _heavy_focus_case(false, &"hold", dist)
+		ok(num(h["moved"]) < 0.5, "«Держать» с фокусом на цель в %d: стоит (сдвиг %.2f) — приказ встать (09, 9.5 п. 2)" % [roundi(dist), num(h["moved"])])
 	var o := _heavy_focus_case(true, &"guard", 700.0)
-	ok(o > 100.0, "откат «подход на 0,68 R, как в JS»: от цели в 700 ушёл на %.0f к 530 — проверка краснеет" % o)
-	var o2 := _heavy_focus_case(true, &"guard", 1100.0)
-	ok(o2 > 100.0, "откат: к цели в 1100 — ушёл на %.0f" % o2)
+	ok(num(o["moved"]) > 100.0, "откат --legacy-approach: от цели в 700 ушёл на %.0f к 530 («на 0,68 R») — проверка краснеет" % num(o["moved"]))
 
 
 ## Фокус сильнее тактики и тактику не стирает (03, ловушка 16); цель погибла — участок
@@ -725,7 +739,10 @@ func test_ecm_silence_next_step() -> void:
 ## Тяжёлый под чужим куполом (09, 1.7): к глушителю не идёт ни на какой тактике; главный
 ## калибр бьёт и дальше lockRange, но таймер перезарядки идёт вдвое медленнее; батарея —
 ## только ближе lockRange. Откат «старые помехи» — главный калибр молчит (причина
-## «помехи»).
+## «помехи»). С G4 глушитель в 305 и корвет в 253 — в мёртвой зоне крейсера (D = 0,4 R =
+## 312): на «Охране» и «Охоте» он по доктрине ОТХОДИТ от них (09, 2.6) — то есть уходит
+## и от глушителя; на «Держать» стоит (ловушка 2). Темп и батарея поэтому меряются на
+## «Держать», а у остальных — что к глушителю он не пошёл и главный калибр бьёт.
 func _heavy_dome(stance: StringName, old: bool, focus: bool) -> Dictionary:
 	var b := _lab(&"troyden", &"plektor", {"old_ecm": old})
 	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0), Vector2(0, -600))
@@ -740,16 +757,23 @@ func _heavy_dome(stance: StringName, old: bool, focus: bool) -> Dictionary:
 	tc.main_cd = PackedFloat64Array([0.0])
 	if focus:
 		b.queue({"op": &"focus", "ids": [tc.uid], "target": pc.uid})
-	var log := _log(b, 40.0)
+	var jam0 := tc.pos.distance_to(jam.pos)
+	var nearest := jam0
+	var log: Array = []
+	for i in roundi(40.0 / Battle.STEP):
+		b.step()
+		nearest = minf(nearest, tc.pos.distance_to(jam.pos))
+		for e in b.events:
+			log.append([b.time, e])
 	var mains := _shots(log, &"main", tc.uid)
 	var gaps := PackedFloat64Array()
 	for i in range(1, mains.size()):
 		gaps.append(num(mains[i][0]) - num(mains[i - 1][0]))
-	var out := {"moved": tc.pos.length(), "mains": mains.size(), "gaps": gaps,
+	var out := {"moved": tc.pos.length(), "closer": jam0 - nearest, "mains": mains.size(), "gaps": gaps,
 		"sec_far": _shots(log, &"sec", tc.uid).size(), "jam_hp": jam.hp, "far_hp": far_l.hp,
 		"idle_jam": b.metrics.idle[Ship.ATTACKER].get(&"jam", 0.0), "jammed": tc.jam != null}
 	# вплотную подошёл корвет — батарея по нему бьёт (ближе lockRange)
-	far_l.pos = Vector2(120, -60)
+	far_l.pos = tc.pos + Vector2(120, -60)
 	var log2 := _log(b, 8.0)
 	out["sec_near"] = _shots(log2, &"sec", tc.uid).size()
 	b.dispose()
@@ -760,14 +784,19 @@ func test_heavy_under_dome() -> void:
 	for st: StringName in [&"hold", &"guard", &"hunt"]:
 		for focus: bool in [false, true]:
 			var r := _heavy_dome(st, false, focus)
-			ok(flag(r["jammed"]), "крейсер под чужим куполом (%s%s)" % [st, ", фокус" if focus else ""])
-			ok(num(r["moved"]) < 0.5, "%s%s: к глушителю не пошёл (сдвиг %.2f)" % [st, ", фокус" if focus else "", num(r["moved"])])
-			ok(whole(r["mains"]) >= 2, "%s: главный калибр бьёт на 600 (дальше lockRange 170): %d выстрелов за 40 с" % [st, whole(r["mains"])])
+			var tag := "%s%s" % [st, ", фокус" if focus else ""]
+			ok(num(r["closer"]) < 0.5, "%s: к глушителю не пошёл (ближе на %.2f)" % [tag, num(r["closer"])])
+			ok(whole(r["mains"]) >= 2, "%s: главный калибр бьёт на 600 (дальше lockRange 170): %d выстрелов за 40 с" % [tag, whole(r["mains"])])
+			ok(num(r["jam_hp"]) == BIG, "%s: глушитель не тронут" % tag)
+			ok(whole(r["sec_near"]) > 0, "%s: корвет подошёл на 134 — батарея бьёт" % tag)
+			if st != &"hold":
+				ok(num(r["moved"]) > 100.0, "%s: глушитель и корвет в мёртвой зоне — отходит от них (сдвиг %.0f, 09, 2.6)" % [tag, num(r["moved"])])
+				continue
+			ok(flag(r["jammed"]), "крейсер под чужим куполом (%s)" % tag)
+			ok(num(r["moved"]) < 0.5, "%s: стоит (сдвиг %.2f)" % [tag, num(r["moved"])])
 			var gaps: PackedFloat64Array = r["gaps"]
-			ok(gaps.size() > 0 and absf(gaps[0] - 16.2) <= Battle.STEP + 1e-6, "%s: между выстрелами %.2f с — перезарядка 8,1 вдвое медленнее" % [st, gaps[0] if gaps.size() > 0 else -1.0])
-			eq(whole(r["sec_far"]), 0, "%s: батарея по корвету в 253 (за lockRange) молчит" % st)
-			ok(whole(r["sec_near"]) > 0, "%s: корвет подошёл на 134 — батарея бьёт" % st)
-			ok(num(r["jam_hp"]) == BIG, "%s: глушитель не тронут" % st)
+			ok(gaps.size() > 0 and absf(gaps[0] - 16.2) <= Battle.STEP + 1e-6, "%s: между выстрелами %.2f с — перезарядка 8,1 вдвое медленнее" % [tag, gaps[0] if gaps.size() > 0 else -1.0])
+			eq(whole(r["sec_far"]), 0, "%s: батарея по корвету в 253 (за lockRange) молчит" % tag)
 	var o := _heavy_dome(&"hold", true, false)
 	eq(whole(o["mains"]), 0, "откат «старые помехи»: главный калибр под куполом молчит — проверка краснеет")
 	ok(num(o["idle_jam"]) > 30.0, "…и журнал называет причину «помехи» (%.1f с)" % num(o["idle_jam"]))

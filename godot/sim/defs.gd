@@ -355,6 +355,7 @@ class Doctrine:
 	var retreat_futile_forget_k: float
 	var retreat_futile_forget_min_s: float
 	var retreat_edge: float
+	var retreat_rear_mix: float         # доля тыловой оси в направлении отхода (2.6)
 	var leash_capital_k: float
 	var leash_frigate_ai: float
 	var line_L_k: float
@@ -375,6 +376,13 @@ class Doctrine:
 	var line_rear: float
 	var line_shift_max: float
 	var line_turn_max_deg: float
+	var line_lead_max: float            # P не впереди своей линии тяжёлых дальше (только вперёд)
+	var line_edge: float                # P не ближе к краю поля (ref retreat.edge)
+	var line_light_rank2: String        # правило словами: второй лёгкой шеренги нет (was — откат)
+	var line_umbrella_lat: float        # первый фрегат у носителя — вбок сверх двух корпусов
+	var line_lights_alone_back: float   # ПКМ без тяжёлых: фрегаты в 100 за корветами (6.4)
+	var reinforce_exit_pad: float       # точка выхода подкрепления: место + тормозной путь + запас
+	var reinforce_exit_edge: float      # точка выхода не ближе к краю поля (ref retreat.edge)
 	var hyper_exit_free_max_s: float    # окно после выхода из гипера — не дольше (вопрос 1 части 02)
 	var deploy_heavy_z: float
 	var deploy_station_back: float
@@ -415,6 +423,10 @@ class Doctrine:
 	# раскладываются по местам (DOCTRINE_SPECIAL), здесь — для справки и стенда
 	var sec_mounts: Dictionary[StringName, int] = {}
 	var ecm_main_slow_default: float
+	## Прежние числа записей («was»): ими и только ими живут флажки отката 09, 8.4
+	## (`--clear-055` — belt.clear_k, `--ecm-01L` — line.ecm_k и line.light_rank2,
+	## `--patrol-mid` — air.patrol_k). Путь записи → число.
+	var was: Dictionary[StringName, float] = {}
 
 
 # ───────────────────────────── что загружено ─────────────────────────────
@@ -1185,7 +1197,7 @@ func _build_doctrine(doc: Dictionary) -> void:
 		if not (usage & PROPERTY_USAGE_SCRIPT_VARIABLE):
 			continue
 		var pname: String = p["name"]
-		if pname in ["sec_mounts", "ecm_main_slow_default"]:
+		if pname in ["sec_mounts", "ecm_main_slow_default", "was"]:
 			continue
 		if not by_field.has(pname):
 			_err("doctrine", "нет записи для поля %s (ждали «%s»)" % [pname, pname.replace("_", ".")])
@@ -1201,6 +1213,11 @@ func _build_doctrine(doc: Dictionary) -> void:
 			doctrine.set(pname, conv)
 	for f: String in by_field:
 		_err("doctrine." + str(by_field[f]), "запись загрузчику неизвестна — заведи поле %s в Doctrine (sim/defs.gd)" % f)
+	for p: String in entries:
+		var e: Dictionary = entries[p]
+		if e.has("was") and typeof(e["was"]) in [TYPE_FLOAT, TYPE_INT]:
+			var wv: float = e["was"]
+			doctrine.was[StringName(p)] = wv
 	var mounts := _dict(_v_of(entries, "sec.mounts"), "doctrine.sec.mounts")
 	for id: Variant in mounts:
 		var n: Variant = _conv(mounts[id], TYPE_INT, "doctrine.sec.mounts." + str(id))

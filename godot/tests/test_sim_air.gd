@@ -749,7 +749,9 @@ func _polygon_place(launch_s: float, mode: StringName) -> Array[Dictionary]:
 	Air.rollback_patrol_ship_sticks = mode == &"sticks"
 	var out: Array[Dictionary] = []
 	for sd: int in [Polygon.SEED, 2, 3]:
-		var b := Battle.create(_defs(), Polygon.setup_dict(sd)) as Battle
+		var st := Polygon.setup_dict(sd)
+		st["patrol_mid"] = mode == &"patrol_mid"
+		var b := Battle.create(_defs(), st) as Battle
 		var car: Ship = null
 		for s in b.ships:
 			if s.side == Ship.ATTACKER and s.hangar != null and not s.station and car == null:
@@ -833,6 +835,13 @@ func test_interceptor_place_in_polygon() -> void:
 		ok(num(r["hang"]) >= 4.0, "зерно %d: перехватчики висят над своей линией %.1f с, пока к ней никто не подошёл" % [whole(r["seed"]), num(r["hang"])])
 		var ds: PackedFloat64Array = r["deaths"]
 		ok(ds.size() >= 3 and _deep_share(r) == 0.0, "зерно %d: звено воюет на своей половине — все %d гибелей на доле оси < 0,5 [%s]" % [whole(r["seed"]), ds.size(), _deaths_text(r)])
+	# флажок --patrol-mid (09, 8.4; хвост G3: свою беду он обязан показывать и на составе
+	# «Полигона», а не только в лаборатории): патруль посередине. Звено над своей линией не висит ни секунды — по пути
+	# к середине оно встречает чужих и ввязывается — и часть его гибнет у чужого строя (доля
+	# ≥ 0,5). Краснеют ОБЕ проверки выше, на каждом зерне
+	for o in _polygon_place(1.0, &"patrol_mid"):
+		note("откат «--patrol-mid», зерно %d: у точки с %.1f с, висело %.1f с, гибель на долях [%s]" % [whole(o["seed"]), num(o["arrived"]), num(o["hang"]), _deaths_text(o)])
+		ok(num(o["hang"]) < 4.0 and _deep_share(o) > 0.0, "откат «--patrol-mid», зерно %d: над своей линией висело %.1f с, у чужого строя %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), num(o["hang"]), _deep_share(o) * 100.0])
 	for o in _polygon_place(1.0, &"any_craft"):
 		note("откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, гибель на долях [%s]" % [whole(o["seed"]), num(o["hang"]), _deaths_text(o)])
 		ok(num(o["hang"]) < 4.0 and _deep_share(o) >= 0.5, "откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, у чужого строя (доля ≥ 0,5) — %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), num(o["hang"]), _deep_share(o) * 100.0])
@@ -846,9 +855,15 @@ func test_interceptor_meets_squads_in_polygon() -> void:
 		note("«Полигон», пуск на 20 с, зерно %d: по машинам %d шагов (на своей половине %d), по кораблям %d, гибель на долях [%s]" % [whole(r["seed"]), whole(r["craft"]), whole(r["own"]), whole(r["ship"]), _deaths_text(r)])
 		ok(whole(r["craft"]) > whole(r["ship"]), "зерно %d: перехватчики бросаются на чужие звенья — по машинам %d шагов против %d по кораблям" % [whole(r["seed"]), whole(r["craft"]), whole(r["ship"])])
 		ok(whole(r["own"]) >= roundi(0.9 * float(whole(r["craft"]))), "зерно %d: и бьют их на своей половине (%d из %d шагов)" % [whole(r["seed"]), whole(r["own"]), whole(r["craft"])])
+	# С G4 («Бой линий») чужие лёгкие держат строй у своих тяжёлых, а не бегут к нашей
+	# линии, и корвет в полосу патруля входит не в каждом зерне: на зёрнах 2 и 3 звену
+	# не из чего выбирать, и откат «прилипает» там ничего не ломает (само правило держит
+	# лаборатория test_patrol_band_craft). Краснеть он обязан на зерне «Полигона» — там
+	# корвет входит в полосу, когда к линии подходят чужие звенья
 	for o in _polygon_place(20.0, &"sticks"):
 		note("откат «цель-корабль прилипает», зерно %d: по машинам %d, по кораблям %d" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
-		ok(whole(o["craft"]) < whole(o["ship"]), "откат «цель-корабль прилипает», зерно %d: по машинам %d против %d по кораблям — проверка краснеет" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
+		if whole(o["seed"]) == Polygon.SEED:
+			ok(whole(o["craft"]) < whole(o["ship"]), "откат «цель-корабль прилипает», зерно «Полигона» %d: по машинам %d против %d по кораблям — проверка краснеет" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
 
 
 ## Звено бомбардировщиков с приказом «идти» летит в точку по прямой и ждёт там (09, 4.4:
@@ -873,9 +888,7 @@ func _bomber_move(route: bool) -> Array[Dictionary]:
 		var torp := 0
 		for i in roundi(20.0 / Battle.STEP):
 			b.step()
-			for e in b.events:
-				if e[0] == &"proj":
-					torp += 1
+			torp += _torps_of(b, q)
 			if q.dead:
 				break
 			best = minf(best, q.pos.distance_to(goal))
@@ -884,6 +897,20 @@ func _bomber_move(route: bool) -> Array[Dictionary]:
 		b.dispose()
 	Air.rollback_move_route = false
 	return out
+
+
+## Торпеды ЭТОГО звена, пущенные на шаге (в «Бое линий» рядом летают и ракеты «Синхо» —
+## событие proj у них то же).
+static func _torps_of(b: Battle, q: Squad) -> int:
+	var n := 0
+	for e in b.events:
+		if e[0] != &"proj":
+			continue
+		var u: int = e[1]
+		for p in b.projs:
+			if p.uid == u and p.key == &"torp" and p.owner is Craft and (p.owner as Craft).squad == q:
+				n += 1
+	return n
 
 
 func test_bomber_move_goes_straight() -> void:
@@ -920,9 +947,7 @@ func _recall_after_raid(keep_leg: bool) -> Dictionary:
 	var torps := 0
 	for i in roundi(40.0 / Battle.STEP):
 		b.step()
-		for e in b.events:
-			if e[0] == &"proj":
-				torps += 1
+		torps += _torps_of(b, q)
 		if torps >= 2:
 			break
 	var leg := (q.craft[0] as Craft).leg
@@ -1003,6 +1028,61 @@ func test_landing_from_all_sides() -> void:
 		ok(roundi(r.x) == 0, "%s, %s: V с 32 точек вокруг носителя — сели все и вернули место (дольше всего %.1f с)" % [clan, role, r.y])
 		var o := _land_all_sides(clan, role, true)
 		ok(roundi(o.x) > 0, "откат «на посадку полным газом» (как в JS): %s, %s — за 20 с не село %d из 32, кружат у носителя — проверка краснеет" % [clan, role, roundi(o.x)])
+
+
+## Посадка на УХОДЯЩИЙ носитель (хвост G3: LAND_CATCH в sim/air.gd стоял без проверки).
+## Носитель идёт полным ходом поперёк поля, звено «идти» в 300 от него с восьми сторон,
+## потом V. У дома газ не ниже «скорость дома + LAND_CATCH»: без этого бомбардировщик
+## на 0,35 газа (≈ 25) медленнее уходящего носителя и не садится вовсе. Истребителю
+## и перехватчику и 0,35 газа хватает (замер: откат на них не краснеет) — правило держит
+## именно бомбардировщиков. → [не село за 30 с, дольше всего].
+func _land_moving(clan: StringName, role: StringName, no_catch: bool) -> Vector2:
+	Air.rollback_land_no_catch = no_catch
+	var fails := 0
+	var worst := 0.0
+	var other: StringName = &"plektor" if clan != &"plektor" else &"troyden"
+	for k in 8:
+		var b := _lab(clan, other)
+		var car := _put(b, Ship.ATTACKER, &"carrier", Vector2(-1600, 900))
+		car.hp = BIG
+		car.max_hp = BIG
+		_still(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -2500)))
+		var q := Hangar.launch(b, car, role)
+		for c in q.craft:
+			c.hp = BIG
+			c.max_hp = BIG
+		var a := TAU * float(k) / 8.0
+		var goal := car.pos + Vector2(cos(a), sin(a)) * 300.0
+		b.queue({"op": &"move", "ids": PackedInt32Array([q.uid]), "x": goal.x, "z": goal.y})
+		_steps(b, 8.0)
+		b.queue({"op": &"move", "ids": PackedInt32Array([car.uid]), "x": 2300.0, "z": 900.0})
+		_steps(b, 6.0)                                   # носитель набрал ход
+		var free0 := car.hangar.free
+		b.queue({"op": &"recall", "ids": PackedInt32Array([q.uid])})
+		var landed := -1.0
+		for i in roundi(30.0 / Battle.STEP):
+			b.step()
+			if q.dead:
+				landed = float(i + 1) * Battle.STEP
+				break
+		if landed < 0.0 or car.hangar.free != free0 + 1:
+			fails += 1
+		else:
+			worst = maxf(worst, landed)
+		b.dispose()
+	Air.rollback_land_no_catch = false
+	return Vector2(float(fails), worst)
+
+
+func test_landing_on_moving_carrier() -> void:
+	for clan: StringName in _defs().faction_ids:
+		var role: StringName = &"bomber"
+		var r := _land_moving(clan, role, false)
+		note("посадка %s %s на уходящий носитель с 8 точек: не село %d, дольше всего %.1f с" % [clan, role, roundi(r.x), r.y])
+		ok(roundi(r.x) == 0, "%s, %s: носитель уходит полным ходом — V сажает все звенья (дольше всего %.1f с)" % [clan, role, r.y])
+		var o := _land_moving(clan, role, true)
+		note("откат «без LAND_CATCH», %s %s: не село %d из 8" % [clan, role, roundi(o.x)])
+		ok(roundi(o.x) > 0, "откат «у дома газ без LAND_CATCH»: %s, %s — за 30 с не село %d из 8, бомбардировщик медленнее уходящего носителя — проверка краснеет" % [clan, role, roundi(o.x)])
 
 
 # ───────────────────────── носитель в гипере, уборка launched ─────────────────────────

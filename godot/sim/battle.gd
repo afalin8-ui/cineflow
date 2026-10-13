@@ -18,6 +18,8 @@ const GroundGun := preload("res://sim/ground_gun.gd")
 const Vision := preload("res://sim/vision.gd")
 const Air := preload("res://sim/air.gd")
 const Hangar := preload("res://sim/hangar.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
+const LineStub := preload("res://sim/line_stub.gd")
 
 const ROMAN: Array[String] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
 # space.js:836 dropIn: разброс места выхода ±15 по x (по высоте — нет: бой плоский)
@@ -45,6 +47,18 @@ static var rollback_hunt_no_lead := false
 ## ТОЛЬКО для проверки отката (09, 4.6; 04, ловушка 2): тяжёлый по приказу на звено
 ## ИДЁТ к нему, «чтобы достало ПВО», как в JS, — уходит из пояса в свалку.
 static var rollback_heavy_to_squad := false
+## ТОЛЬКО для проверки отката (09, 5.5; план G4, п. 8): подкрепление выходит у своего края,
+## как в JS (z = ±1200, по 5 в ряд), хотя идёт на свои места, — носитель проносится на ~570
+## впереди своей линии тяжёлых. В бою всегда false.
+static var rollback_drop_at_edge := false
+## ТОЛЬКО для проверки отката: старт «как в JS» — флот стоит позади своих мест и получает
+## приказ «идти» на них (ловушка 28 части 02: свой флот на старте приказов не получает).
+static var rollback_start_move := false
+## ТОЛЬКО для проверки отката: точка выхода прибывших без края поля (reinforce.exit_edge).
+static var rollback_exit_no_edge := false
+## ТОЛЬКО для проверки отката (09, 6.4): ПКМ по полю — прежний квадрат «как стояли»,
+## без строя по ролям. В бою всегда false.
+static var rollback_move_keep_layout := false
 
 
 ## Бой из состава быстрого боя (часть 01, 2.15). setup:
@@ -78,6 +92,14 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	b.mp.guard_leash = gs.leash if gs != null else 0.0
 	b.mp.amove_resume = p_defs.doctrine.amove_resume_s
 	b.mp.clear_k = p_defs.doctrine.belt_clear_k
+	# флажки отката доктрины тяжёлых и строя (09, 8.4) — ключи состава боя
+	b.legacy_approach = p_setup.get("legacy_approach", false)
+	b.no_share_close = p_setup.get("no_share_close", false)
+	b.no_foe_brake = p_setup.get("no_foe_brake", false)
+	b.clear_055 = p_setup.get("clear_055", false)
+	b.ecm_01l = p_setup.get("ecm_01l", false)
+	if b.clear_055:
+		b.mp.clear_k = p_defs.doctrine.was.get(&"belt.clear_k", b.mp.clear_k)
 	b.mp.craft_cap_k = c.craft_speed_cap_k
 	b.old_ecm = p_setup.get("old_ecm", false)
 	b.bomber_direct = p_setup.get("bomber_direct", false)
@@ -93,13 +115,34 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 		s.sign_z = 1.0 if i == Ship.ATTACKER else -1.0
 		s.aim = 1.0 if i == b.player_side or dif == null else dif.aim
 		b.sides.append(s)
+	var side_ids: Array = []
+	# стенд (план G4): составы-сценарии — только эти виды кораблей (пусто — все):
+	# «линии» — только тяжёлые, подход линия на линию без лёгких посередине (09, 8.4:
+	# «подход без доли сближения» — М3); «заслон» — тяжёлые и корветы
+	var only: Variant = p_setup.get("only", [])
+	var keep: Array = only if typeof(only) == TYPE_ARRAY else []
 	for i in 2:
+		var all_ids := ids_of(compose(p_defs, size, b.sides[i].clan))
+		if not keep.is_empty():
+			var hv: Array[StringName] = []
+			for id in all_ids:
+				var dd := p_defs.ship(b.sides[i].clan, id)
+				if dd != null and ((dd.main != null and "heavy" in keep) or str(id) in keep):
+					hv.append(id)
+			all_ids = hv
+		side_ids.append(all_ids)
+	for i in 2:
+		# расстановка строем по ролям на ±650 (09, 5.5): места — как участки, приказов нет
 		var s := b.sides[i]
-		var ids := ids_of(compose(p_defs, size, s.clan))
-		for place: Array in Formation.start_places(p_defs, s.clan, ids, s.sign_z):
+		var ids: Array[StringName] = side_ids[i]
+		var foe_ids: Array[StringName] = side_ids[1 - i]
+		for place: Array in Formation.start_places(p_defs, s.clan, ids, s.sign_z, foe_ids, b.sides[1 - i].clan, b.ecm_01l):
 			var id: StringName = place[0]
 			var p: Vector2 = place[1]
-			b.spawn(i, p_defs.ship(s.clan, id), p)
+			var sh := b.spawn(i, p_defs.ship(s.clan, id), p + Vector2(0.0, s.sign_z * 300.0) if rollback_start_move else p)
+			if rollback_start_move:
+				sh.has_move = true
+				sh.move_to = p
 	if size in p_defs.quick.station_on:
 		b.spawn(Ship.DEFENDER, p_defs.station, Formation.station_place(p_defs, -1.0))
 	var extra: Variant = p_setup.get("extra", [])
@@ -142,6 +185,14 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 		var first: float = fad.get("first", 0.0)
 		b.foe_air_every = ev
 		b.foe_air_next = first
+	# заглушка строя (план G4, п. 6) — стороны, которые она ведёт: в «Бое линий» —
+	# противник, в стенде — обе. Ключ состава боя: запись его помнит.
+	var stub: Variant = p_setup.get("line_stub", [])
+	if typeof(stub) == TYPE_ARRAY:
+		var sa: Array = stub
+		for v: Variant in sa:
+			var sv: float = v
+			LineStub.arm(b, roundi(sv))
 	var with_reserve: bool = p_setup.get("reserve", true)
 	if with_reserve:
 		b.sides[Ship.ATTACKER].reserve = compose(p_defs, &"small", att)
@@ -213,6 +264,8 @@ func spawn(side: int, def: Defs.ShipDef, pos: Vector2) -> Ship:
 	s.set_yaw(0.0 if sd.sign_z > 0.0 else PI)          # нос к противнику
 	s.hp = def.hp
 	s.max_hp = def.hp
+	s.legacy = legacy_approach and def.main != null      # откат --legacy-approach (09, 8.4)
+	s.belt = HeavyDoctrine.IDLE
 	s.kind = Body.SHIP
 	s.cls_i = def.cls_i
 	s.hit_r = def.radius                                 # радиус КЛАССА, не модели (01, ловушка 8)
@@ -221,8 +274,9 @@ func spawn(side: int, def: Defs.ShipDef, pos: Vector2) -> Ship:
 		s.hangar = Hangar.make(def.hangar)              # ангар (04, 2.2): носитель и станция
 	var c := defs.consts
 	s.length = def.model_len if def.model_len > 0.0 else def.radius * c.len_fallback_k
-	# корпус — от длины МОДЕЛИ, а не от радиуса класса (C87, C88; ловушка 6 части 01)
-	s.hull = maxf(def.radius * c.hull_formula_radius_k, s.length * c.hull_formula_len_k)
+	# корпус — от длины МОДЕЛИ, а не от радиуса класса (C87, C88; ловушка 6 части 01); та же
+	# формула, по которой строит строй (sim/formation.gd → hull_of)
+	s.hull = Formation.hull_of(defs, def)
 	s.stance = c.default_stance_station if s.station else c.default_stance_ship
 	s.anchor = pos
 	s.jumped_at_step = steps
@@ -251,11 +305,14 @@ func step() -> void:
 	for c in cmds.take_due(steps):        # приказы, поставленные на этот шаг
 		_apply(c)
 	space.rebuild(ships)                  # живые + упакованный снимок, пары (2.5)
+	_side_lines()                         # центры линий и оси сторон (09, 5.1) — по началу шага
 	Ecm.update(self)                      # поля помех — один раз, по положениям начала шага
 	GroundGun.update(self)                # орудие планеты
 	Vision.update(self)                   # кто кого видит; seen_pos — ДО ИИ (05, ловушка 39)
 	_arrive_reinforcements()              # прибывшие — до ИИ
-	# ИИ: orders по одному снимку начала шага, потом применить — G5
+	# ИИ: orders по одному снимку начала шага, потом применить — G5; до него — заглушка
+	# строя (шаги 6–7 тика ИИ, план G4, п. 6) и сценарий пусков «Полигона»
+	LineStub.tick(self)
 	_foe_air()                            # сценарий «Полигона» до ИИ: пуски противника
 	for s in ships:
 		if not s.dead:
@@ -272,6 +329,7 @@ func step() -> void:
 	# _check_teeth() — G5 («нечем бить» — ДО конца боя)
 	_check_end()
 	_sample_air()                         # metrics.sample(self) целиком — G5; здесь М5
+	_sample_lines()                       # фазы, М1–М4, М6, М9, М10 (G4; 09, 8.2)
 
 
 # space.js:1211 updateShip · часть 03, 2.1 (порядок внутри)
@@ -295,9 +353,24 @@ func _update_ship(s: Ship) -> void:
 			Movement.face(s, t.pos - s.pos, STEP, time)
 	else:
 		var push := space.push[s.si] if s.si >= 0 else Vector2.ZERO
-		var nf := sqrt(space.near_d2[s.si]) if s.si >= 0 else INF
-		Movement.update(s, push, STEP, time, mp, nf)
+		if s.heavy() and not s.legacy:
+			HeavyDoctrine.update(self, s, push, STEP)     # пояс, подход, отход (09, 2.9)
+		else:
+			Movement.update(s, push, STEP, time, mp)
 	Weapons.fire(self, s)                 # оружие — ПОСЛЕ движения этого шага (03, 2.1 п. 6)
+
+
+## Центры линий и оси сторон на этом шаге (09, 5.1): от центра своей линии тяжёлых к центру
+## чужой. Отход тяжёлого вперёд по оси не ведёт (2.6); считается по началу шага.
+func _side_lines() -> void:
+	for i in sides.size():
+		var own := Formation.line_of(ships, i)
+		var foe := Formation.line_of(ships, 1 - i)
+		var sd := sides[i]
+		sd.has_line = own.heavy
+		sd.line = own.center
+		var v := foe.center - own.center
+		sd.ax = v.normalized() if own.has and foe.has and v.length() > 1.0 else Vector2(0.0, -sd.sign_z)
 
 
 ## Сценарий «Полигона» до ИИ (G5): противник раз в foe_air_every с поднимает с каждого
@@ -335,6 +408,157 @@ func _sample_air() -> void:
 			if home != null and not home.dead and c.pos.distance_squared_to(home.pos) < home_r * home_r:
 				continue
 		metrics.sample_craft(c.side, (c.pos - g.p).dot(g.ax), g.d, STEP)
+
+
+## Замеры доктрины тяжёлых и строя за шаг (09, 8.1–8.2; хранение — sim/metrics.gd).
+## Почти все — по фазе «бой»: от первого выстрела главного калибра по кораблю до первого
+## отхода стороны или конца боя; марш и развязка о доктрине не говорят.
+func _sample_lines() -> void:
+	var m := metrics
+	if m.phase == 0 and m.first_gun > 0.0:
+		m.phase = 1
+		m.fight_t0 = time
+	# «нечем бить» у стороны — тоже конец фазы «бой»: ИИ (G5) там уводит флот (05, 2.6 п. 5),
+	# а без него носители, оставшиеся одни, кружат по полю и портят доли
+	if m.phase == 1 and (over or sides[0].retreat or sides[1].retreat or not _armed(0) or not _armed(1) or _leaderless(0) or _leaderless(1)):
+		m.phase = 2
+		m.fight_t1 = time
+		m.close_episodes(time)
+	if m.phase != 1:
+		return
+	var dc := defs.doctrine
+	var edge := mp.field - dc.retreat_edge
+	var both := sides[0].has_line and sides[1].has_line
+	var l := sides[0].line.distance_to(sides[1].line)
+	if both:
+		m.m3.append(l)
+		if l < Metrics.M3_FLOOR:
+			m.m3_short += 1
+	var hcount := [0, 0]
+	for s in ships:
+		if s.dead or s.station or s.charging():
+			continue
+		var sd := sides[s.side]
+		if s.heavy():
+			hcount[s.side] += 1
+			m.r_line = minf(m.r_line, s.def.main.rng)
+			m.heavy_s += STEP
+			var t := s.target as Ship
+			if t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
+				m.m1_s += STEP
+			var close := false
+			for o in ships:
+				if not o.dead and o.side != s.side and Vision.sees(self, s.side, o) and s.pos.distance_to(o.pos) < s.def.main.dead:
+					close = true
+					break
+			if close:
+				m.m2_s += STEP
+			Metrics.episode(m.m2_run, m.m2_eps, s.uid, close, time)
+			var ret := s.belt == HeavyDoctrine.RETREAT
+			if ret:
+				m.m6_s += STEP
+			Metrics.episode(m.m6_run, m.m6_eps, s.uid, ret, time)
+			# «за рубежом» — дальше допуска прихода (8): место линии может стоять на самом рубеже
+			if sd.rear_z < INF and s.pos.y * sd.sign_z > sd.rear_z + HeavyDoctrine.ARRIVED:
+				m.m6_rear += 1
+			if absf(s.pos.x) > edge + HeavyDoctrine.ARRIVED or absf(s.pos.y) > edge + HeavyDoctrine.ARRIVED:
+				m.m6_edge += 1
+		elif s.def.cls == &"escort" and s.hp_frac() >= Metrics.M4_HURT and both and s.slot_band != Formation.UMBRELLA:
+			var p := (s.pos - sd.line).dot(sd.ax)
+			m.light_s += STEP
+			if p >= 0.0 and p <= l:
+				m.m4_mid_s += STEP
+			if p < -Metrics.M4_BEHIND:
+				m.m4_back_s += STEP
+		if s.has_slot and sd.stub:
+			var dd := s.pos.distance_to(s.slot)
+			if s.heavy():
+				m.m10_heavy.append(dd)
+			elif s.def.id == &"corvette":
+				m.m10_corvette.append(dd)
+			elif s.def.cls == &"escort":
+				m.m10_frigate.append(dd)
+	# М6: центр своей линии назад — сумма шагов назад по оси стороны, пока состав линии тот же
+	for i in 2:
+		var sd := sides[i]
+		if not sd.has_line:
+			m.m6_prev[i] = null
+			continue
+		var proj := sd.line.y * sd.sign_z
+		var prev: Variant = m.m6_prev[i]
+		if prev != null:
+			var pa: Array = prev
+			var pc: int = pa[0]
+			var pp: float = pa[1]
+			if pc == hcount[i] and proj > pp:
+				m.m6_back[i] += proj - pp
+		m.m6_prev[i] = [hcount[i], proj]
+	# М9: входы пар «свой в чужом» и пары чужих тяжёлых ближе 360
+	var now_in: Dictionary[int, bool] = {}
+	var n := ships.size()
+	# М10, строй против расталкивания: места двух своих ближе hull + hull (9.5 п. 20)
+	for i in n:
+		var a := ships[i]
+		if a.dead or not a.has_slot or not sides[a.side].stub or a.charging():
+			continue
+		for j in range(i + 1, n):
+			var c := ships[j]
+			if c.dead or not c.has_slot or c.side != a.side or c.charging():
+				continue
+			var mn := a.hull + c.hull
+			if a.slot.distance_squared_to(c.slot) < mn * mn:
+				m.m10_self += 1
+	for i in n:
+		var a := ships[i]
+		if a.dead:
+			continue
+		for j in range(i + 1, n):
+			var c := ships[j]
+			if c.dead or c.side == a.side:
+				continue
+			var d2 := a.pos.distance_squared_to(c.pos)
+			var mn := (a.hull + c.hull) * Metrics.M9_K
+			if d2 < mn * mn:
+				var key := mini(a.uid, c.uid) * 100000 + maxi(a.uid, c.uid)
+				now_in[key] = true
+				if not m.m9_in.has(key):
+					m.m9_entries += 1
+			if a.heavy() and c.heavy() and not a.station and not c.station and d2 < Metrics.M9_HEAVY * Metrics.M9_HEAVY:
+				m.m9_heavy += 1
+	m.m9_in = now_in
+
+
+## «Без тяжёлых — уход» (05, 2.6 п. 7): тяжёлые у стороны были и кончились, у противника
+## тяжёлые с орудиями есть, и он сильнее по сумме прочности. ИИ (G5) тут отдаёт приказ
+## отхода — конец фазы «бой» (09, 8.1); до ИИ стенд считает это тем же приказом, иначе
+## лёгкие без своей линии меряются как строй.
+func _leaderless(side: int) -> bool:
+	var sd := sides[side]
+	var mine_hp := 0.0
+	var foe_hp := 0.0
+	var mine_heavy := false
+	var foe_heavy := false
+	for s in ships:
+		if s.dead:
+			continue
+		if s.side == side:
+			mine_hp += maxf(0.0, s.hp)
+			mine_heavy = mine_heavy or (s.heavy() and not s.station)
+		else:
+			foe_hp += maxf(0.0, s.hp)
+			foe_heavy = foe_heavy or (s.heavy() and s.can_hurt())
+	if mine_heavy:
+		sd.had_heavy = true
+		return false
+	return sd.had_heavy and foe_heavy and mine_hp < foe_hp
+
+
+## Есть ли у стороны чем бить (корабль с оружием, не станция).
+func _armed(side: int) -> bool:
+	for s in ships:
+		if not s.dead and s.side == side and not s.station and s.can_hurt():
+			return true
+	return false
 
 
 ## Мёртвые снаряды — из списка в конце шага (space.js:3950).
@@ -464,13 +688,15 @@ func _arrive_reinforcements() -> void:
 				toast("Противник получил подкрепление")
 
 
-# space.js:827 dropIn · часть 02, 2.19
-## Выход из гипера у своего края (z = ±1200, по 5 в ряд), на 2,6 × maxSpeed к середине,
-## без предела скорости, пока не погасит её сама (вопрос 1 части 02).
-## ДОКТРИНА 09, 5.5 и 9.1: прибывшие идут НЕ в (x × 0,4; 0; ±120) — это середина поля,
-## пояс и мёртвая зона чужих тяжёлых, то есть свалка, внесённая заново. В G1 они
-## встают участком «Охраны» на своей линии старта (±deploy.heavy_z); свои места
-## по ролям и точка выхода от тормозного пути — G4, п. 8.
+# space.js:827 dropIn · часть 02, 2.19; ДОКТРИНА 09, 5.5 и 9.1, план G4, п. 8
+## Подкрепление — на СВОИ места: места той же sim/formation.gd от нынешней линии своей
+## стороны (под заглушкой строя — её P; у игрока — к своей линии тяжёлых, нет её — к линии
+## старта). Выход из гипера — 2,6 × maxSpeed к середине поля, без предела скорости, пока не
+## погасит её сама (вопрос 1 части 02), — и ТОЧКА ВЫХОДА от тормозного пути: место плюс
+## v² / (2 × reverse × thrust()) с выходной скорости и reinforce.exit_pad, не ближе
+## reinforce.exit_edge к краю поля (место у края — выход вбок, вдоль своей линии). Выход
+## «у своего края, как сейчас» проносил носитель на ~570 впереди своих тяжёлых — под чужие
+## главные калибры (откат rollback_drop_at_edge).
 func _drop_in(side: int, list: Array[Defs.FleetEntry]) -> Array[Ship]:
 	var sd := sides[side]
 	var c := defs.consts
@@ -481,16 +707,75 @@ func _drop_in(side: int, list: Array[Defs.FleetEntry]) -> Array[Ship]:
 		if def == null:
 			continue
 		for _n in e.count:
-			var x := float(i % c.reinforce_drop_per_row - 2) * c.reinforce_drop_step_x + rng.randf_range(-DROP_JITTER, DROP_JITTER)
+			var x := float(i % c.reinforce_drop_per_row - 2) * c.reinforce_drop_step_x
 			var z := sd.sign_z * c.reinforce_drop_base_z + sd.sign_z * floorf(float(i) / c.reinforce_drop_per_row) * c.reinforce_drop_step_z
 			var s := spawn(side, def, Vector2(x, z))
-			s.vel = Vector2(0.0, -sd.sign_z * def.max_speed * c.reinforce_drop_exit_speed_k)
-			s.exit_until = time + defs.doctrine.hyper_exit_free_max_s
-			s.anchor = Vector2(x, sd.sign_z * defs.doctrine.deploy_heavy_z)
-			events.append([&"jump_in", s.uid])
 			got.append(s)
 			i += 1
+	_place_arrivals(side, got)
+	for s in got:
+		events.append([&"jump_in", s.uid])
 	return got
+
+
+## Места и точки выхода прибывших (09, 5.5; план G4, п. 8).
+func _place_arrivals(side: int, got: Array[Ship]) -> void:
+	if got.is_empty():
+		return
+	var sd := sides[side]
+	var dc := defs.doctrine
+	var c := defs.consts
+	var spec := Formation.Spec.new()
+	if sd.stub and sd.stub_set:
+		spec.p = sd.stub_p
+		spec.ax = sd.stub_ax
+	elif sd.has_line:
+		spec.p = sd.line
+		spec.ax = sd.ax
+	else:
+		spec.p = Vector2(0.0, sd.sign_z * dc.deploy_heavy_z)
+		spec.ax = Vector2(0.0, -sd.sign_z)
+	var lat := Vector2(-spec.ax.y, spec.ax.x)
+	spec.foe_width = Formation.line_width(ships, 1 - side, lat)
+	for o in ships:
+		spec.foe_air = spec.foe_air or (not o.dead and o.side != side and o.hangar != null)
+	var mine: Array[Ship] = []
+	for s in ships:
+		if not s.dead and s.side == side and not s.station and not s.charging():
+			mine.append(s)
+	var members := Formation.members_from(mine)
+	for k in mine.size():
+		if mine[k] in got:
+			members[k].pos = spec.p - spec.ax * 2000.0          # ещё в гипере: места — по составу
+	var out := Formation.places(defs, members, spec)
+	var lim := c.field_half - dc.reinforce_exit_edge
+	for k in mine.size():
+		var s := mine[k]
+		if not (s in got):
+			continue
+		var place := out.at[k] if out.band[k] != Formation.NONE else spec.p
+		s.anchor = place
+		var v := s.def.max_speed * c.reinforce_drop_exit_speed_k
+		var u := spec.ax.normalized()
+		if not rollback_drop_at_edge:
+			# тормозной путь — от той же thrust(), что разгон (09, 9.5 п. 4); тормозят против носа
+			var brake := v * v / (2.0 * mp.rev * s.thrust())
+			var dist := brake + dc.reinforce_exit_pad
+			var exit := place - u * dist
+			if not rollback_exit_no_edge and (absf(exit.x) > lim or absf(exit.y) > lim):
+				# место у края: выход вбок, вдоль своей линии, со стороны середины
+				var sg := -signf(place.dot(lat)) if absf(place.dot(lat)) > 1.0 else 1.0
+				u = lat * sg
+				exit = place - u * dist
+			if not rollback_exit_no_edge:
+				exit.x = clampf(exit.x, -lim, lim)
+				exit.y = clampf(exit.y, -lim, lim)
+			s.pos = exit
+		else:
+			u = Vector2(0.0, -sd.sign_z)
+		s.vel = u * v
+		s.exit_until = time + dc.hyper_exit_free_max_s
+		s.seen_pos = s.pos
 
 
 # ───────────────────────────── команды (архитектура, 2.9) ─────────────────────────────
@@ -675,12 +960,13 @@ func _cmd_squads_move(list: Array[Squad], at: Vector2) -> void:
 		Air.order_move(list[i], at + Vector2((float(i) - float(n - 1) * 0.5) * SQUAD_STEP, 0.0))
 
 
-# space.js:3206 moveGroup (строй — G4)
-## ПКМ по полю: выделенные идут, СОХРАНЯЯ взаимное расположение (строй по ролям — G4),
-## со скоростью самого медленного (C70; ловушка 6 части 02). Любой приказ «идти»
-## выключает дрифт (ловушка 13). attack — атака с ходу (A + щелчок, 03, 2.15): та же
-## точка, но amove и БЕЗ скорости строя (03, ловушка 17 — у атаки с ходу своя защита:
-## встать на встречного); фокус, цель и охрана снимаются.
+# space.js:3206 moveGroup · часть 02, 2.15; ДОКТРИНА 09, 6.4
+## ПКМ по полю — строй по ролям (6.4): точка приказа — линия тяжёлых, ось — от неё к центру
+## видимых чужих тяжёлых (нет — видимых чужих; никого — по маршу от центра группы), места
+## той же sim/formation.gd, по нынешнему положению (5.4); скорость строя — по самому
+## медленному (C70; ловушка 6 части 02). Любой приказ «идти» выключает дрифт (ловушка 13).
+## attack — атака с ходу (A + щелчок, 03, 2.15): та же точка с сохранением взаимного
+## расположения, amove и БЕЗ скорости строя (03, ловушка 17); фокус, цель и охрана снимаются.
 func _cmd_move(list: Array[Ship], click: Vector2, attack: bool = false) -> void:
 	if list.is_empty():
 		return
@@ -690,8 +976,25 @@ func _cmd_move(list: Array[Ship], click: Vector2, attack: bool = false) -> void:
 		center += s.pos
 		slow = minf(slow, s.max_speed())
 	center /= float(list.size())
+	var dests := PackedVector2Array()
 	for s in list:
-		var dest := click if rollback_move_one_point else click + (s.pos - center)
+		dests.append(click if rollback_move_one_point else click + (s.pos - center))
+	var formed := not attack and not rollback_move_one_point and not rollback_move_keep_layout
+	var spec := Formation.Spec.new()
+	if formed:
+		spec.p = click
+		spec.ax = _order_axis(click, center)
+		spec.foe_width = Formation.line_width(ships, 1 - player_side, Vector2(-spec.ax.y, spec.ax.x))
+		for o in ships:
+			spec.foe_air = spec.foe_air or (not o.dead and o.side != player_side and o.hangar != null and Vision.sees(self, player_side, o))
+		var out := Formation.places(defs, Formation.members_from(list), spec)
+		for i in list.size():
+			if out.band[i] != Formation.NONE:
+				dests[i] = out.at[i]
+	var near_dead := 0.0
+	for i in list.size():
+		var s := list[i]
+		var dest := dests[i]
 		s.has_move = not attack
 		s.move_to = dest
 		s.has_amove = attack
@@ -704,15 +1007,50 @@ func _cmd_move(list: Array[Ship], click: Vector2, attack: bool = false) -> void:
 		s.drift = false
 		s.forced = null
 		s.jam_shot = null
+		if s.heavy() and not attack:
+			for o in ships:
+				if not o.dead and o.side != s.side and Vision.sees(self, s.side, o) and o.pos.distance_to(dest) < s.def.main.dead:
+					near_dead = maxf(near_dead, s.def.main.dead)
 	if attack:
 		toast("Атака с ходу: идут и встают на встречного")
+	elif near_dead > 0.0:
+		# 09, 6.7: приказ «идти» в точку ближе D к чужому — иначе «пошёл, пришёл и попятился»
+		toast("Тяжёлые дойдут и отойдут на дистанцию — ближе %d главный калибр не бьёт. Чтобы стояли — H" % roundi(near_dead))
+
+
+## Ось строя приказа (09, 6.4): от точки приказа к центру видимых чужих тяжёлых, нет их —
+## к центру видимых чужих, никого не видно — по направлению марша от центра группы к точке.
+func _order_axis(click: Vector2, center: Vector2) -> Vector2:
+	var fh := Vector2.ZERO
+	var nh := 0
+	var fa := Vector2.ZERO
+	var na := 0
+	for o in ships:
+		if o.dead or o.side == player_side or o.station or not Vision.sees(self, player_side, o):
+			continue
+		fa += o.pos
+		na += 1
+		if o.heavy():
+			fh += o.pos
+			nh += 1
+	var v := Vector2.ZERO
+	if nh > 0:
+		v = fh / float(nh) - click
+	elif na > 0:
+		v = fa / float(na) - click
+	if v.length_squared() < 1.0:
+		v = click - center
+	if v.length_squared() < 1.0:
+		v = Vector2(0.0, -sides[player_side].sign_z)
+	return v.normalized()
 
 
 # space.js:3094 issueOrder (по врагу) · часть 03, 2.14; ДОКТРИНА 09, 6.1–6.3
 ## ПКМ по врагу — фокус огня: сильнее тактики, тактику НЕ стирает (03, ловушка 16);
 ## снимает «идти» и атаку с ходу. Безоружные приказ не принимают и держатся, где стоят
-## (C100). Тяжёлый в G2 принимает фокус как ВЫБОР ЦЕЛИ и с места не сходит (план G2,
-## п. 4): цель в поясе — бьёт главным калибром, вплотную — батареей. Лёгкие идут на цель.
+## (C100). Тяжёлый встаёт в пояс против цели (09, 6.1–6.3; sim/heavy_doctrine.gd): дальше
+## 0,92 R — подходит на 0,8 R, если путь чист; вплотную — отходит от неё и бьёт батареей.
+## Лёгкие идут на цель.
 func _cmd_focus(list: Array[Ship], t: Ship) -> void:
 	if list.is_empty() or t == null or t.dead or t.side == player_side or not Vision.sees(self, player_side, t):
 		return
@@ -740,7 +1078,8 @@ func _cmd_focus(list: Array[Ship], t: Ship) -> void:
 			lights += 1
 	var parts := PackedStringArray()
 	if heavies > 0:
-		parts.append("тяжёлые бьют с места: главный калибр — от %d до %d" % [roundi(dz), roundi(far)])
+		# 09, 6.2: «бить» для тяжёлого — встать в пояс против цели, а не идти в упор
+		parts.append("тяжёлые встают на дистанцию %d–%d" % [roundi(dz), roundi(far)])
 	if lights > 0:
 		parts.append("лёгкие идут на цель")
 	if not parts.is_empty():
@@ -833,11 +1172,11 @@ func _set_stance(list: Array[Ship], id: StringName) -> void:
 			marching += 1
 	var st: Defs.StanceDef = defs.stances.get(id)
 	var nm := st.name if st != null else str(id)
-	# тексты — правда для G2: тяжёлые с места не сходят, пояс и отход — G4 (09, 6.7)
+	# тексты доктрины (09, 6.7: «тексты, которые станут неправдой, переписываются»)
 	var what := {
-		&"hold": "встают на месте и бьют, кого достают",
-		&"guard": "держат участок, лёгкие встречают подошедших",
-		&"hunt": "лёгкие сами ищут цели, тяжёлые бьют с места",
+		&"hold": "встают на месте. Тяжёлые бьют главным калибром тех, кто в поясе, батареей — подошедших; сами не отходят",
+		&"guard": "держат участок. Тяжёлые — на своей дистанции: подошёл враг — отходят в пределах участка и отстреливаются батареей",
+		&"hunt": "сами ищут цели. Тяжёлые встают на дистанцию, лёгкие идут в бой",
 	}
 	var tail: String = what.get(id, "")
 	if id == &"hold":
@@ -909,7 +1248,9 @@ func fingerprint() -> String:
 		a.append_array([1.0 if s.has_move else 0.0, s.move_to.x, s.move_to.y, 1.0 if s.has_amove else 0.0,
 			s.amove.x, s.amove.y, float(String(s.stance).hash()), s.anchor.x, s.anchor.y,
 			_uid_of(s.forced), _uid_of(s.target), _uid_of(s.sec_target), _uid_of(s.mis_target), _uid_of(s.guard_of),
-			1.0 if s.drift else 0.0, s.group_speed, s.retarget, s.ecm_power, float(String(s.ecm_mode).hash()), s.dealt])
+			1.0 if s.drift else 0.0, s.group_speed, s.retarget, s.ecm_power, float(String(s.ecm_mode).hash()), s.dealt,
+			float(s.belt), _uid_of(s.ret_foe), s.ret_clock, s.ret_gain, float(s.futile.size()), s.leash_set,
+			1.0 if s.has_slot else 0.0, s.slot.x, s.slot.y, s.amove_quiet])
 		a.append_array(s.main_cd)
 		a.append_array(s.sec_cd)
 		a.append_array(s.light_cd)
@@ -922,7 +1263,8 @@ func fingerprint() -> String:
 			var n := 0
 			for e in sd.reserve:
 				n += e.count
-			a.append_array([float(n), sd.reinforce_at, 1.0 if sd.retreat else 0.0, 1.0 if sd.conceded else 0.0, float(sd.jumped.size())])
+			a.append_array([float(n), sd.reinforce_at, 1.0 if sd.retreat else 0.0, 1.0 if sd.conceded else 0.0, float(sd.jumped.size()),
+				1.0 if sd.stub else 0.0, sd.stub_p.x, sd.stub_p.y, sd.stub_ax.x, sd.stub_ax.y, sd.stub_next])
 		a.append_array([1.0 if over else 0.0, float(winner)])
 		if gun != null:
 			a.append_array([gun.next, 1.0 if gun.warned else 0.0, gun.aim.x, gun.aim.y])
