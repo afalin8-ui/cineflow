@@ -61,7 +61,7 @@
           theme: {
             extend: {
               colors: {
-                indigo: { 50:'#fdf5f1',100:'#f9e5db',200:'#f3ccb8',300:'#eba98a',400:'#e28a63',500:'#d97757',600:'#c65d3d',700:'#a54a30',800:'#863e2b',900:'#6d3527',950:'#3a1a12' },
+                indigo: { 50:'#fbf6f3',100:'#f4e6e0',200:'#eacfc1',300:'#d5a893',400:'#c98d73',500:'#bf7c66',600:'#ab644f',700:'#8d503f',800:'#79473a',900:'#623c32',950:'#341e18' },
                 // Шкала zinc — те же шесть шагов поверхностей и четыре
                 // ступени текста, что и в :root. Классы zinc-* стоят в коде
                 // тысячами, и подгонять их по одному значило бы навсегда
@@ -146,10 +146,17 @@
           --muted: #a6a39a;       /* подписи, метки разделов */
           --muted-2: #6f6b63;     /* служебное, моно-метки */
 
-          --accent: #d97757;
-          --accent-hover: #e28a63;
-          --accent-soft: rgba(217,119,87,.12);  /* фон своего сообщения в чате */
-          --accent-line: rgba(217,119,87,.45);  /* рамка активного тега */
+          /* АКЦЕНТ ПРИГЛУШЁН до насыщенности остальной палитры (OKLCH: светлота
+             0,65, насыщенность 0,09 — у зелёного «готово» 0,082). Прежний
+             #d97757 был 0,131: в полтора раза громче всего вокруг, и на тёмном
+             холсте каждая ссылка и кнопка перекрикивала содержимое. Оттенок тот
+             же — терракота осталась терракотой. Контраст текстом на карточке
+             4,7 (норма 4,5), тёмного текста на заливке 5,3. Шкала indigo
+             в tailwind.config пересчитана тем же способом. */
+          --accent: #bf7c66;
+          --accent-hover: #c98d73;
+          --accent-soft: rgba(191,124,102,.12);  /* фон своего сообщения в чате */
+          --accent-line: rgba(191,124,102,.45);  /* рамка активного тега */
 
           --ok: #7a9d6b;          /* снято, сохранено */
           --warn: #facc15;        /* солнце, приборы на схеме света, стикеры */
@@ -224,7 +231,7 @@
             -webkit-tap-highlight-color: transparent;
             -webkit-font-smoothing: antialiased;
         }
-        ::selection { background: rgba(217,119,87,0.3); }
+        ::selection { background: rgba(191,124,102,0.3); }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-md); }
@@ -299,7 +306,7 @@
         .cf-card-text { white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden;
                         cursor: move; user-select: none; -webkit-user-select: none; }
         .cf-card-text:empty::before { content: ''; }
-        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(217,119,87,0.4); }
+        .scene-drop-target { box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(191,124,102,0.4); }
 
         /* ---------- утилиты редизайна ---------- */
         :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
@@ -676,7 +683,7 @@
               background: #1a1918 !important; color: #f0eee6 !important;
               -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .print-dark .print-head { border-bottom-color: #4a4741 !important; }
-            .print-dark .print-eyebrow { color: #d97757 !important; }
+            .print-dark .print-eyebrow { color: #bf7c66 !important; }
             .print-dark .print-meta, .print-dark .cf-print-dim { color: #a6a39a !important; }
             .print-dark td, .print-dark th { border-color: #4a4741 !important; }
             .print-dark img { border-color: #4a4741 !important; }
@@ -696,10 +703,10 @@
            (фон --bg, карточки нашими цветами), см. ExcBoard. */
         .cf-exc { background: var(--bg); }
         .cf-exc .excalidraw { --ui-font: var(--font-ui);
-          --color-primary: #d97757; --color-primary-darker: #c2410c; --color-primary-darkest: #9a3412;
-          --color-primary-light: #f6dfd6; --color-primary-light-darker: #efcdbf; --color-primary-hover: #c9663f;
+          --color-primary: #bf7c66; --color-primary-darker: #ab644f; --color-primary-darkest: #8d503f;
+          --color-primary-light: #f6dfd6; --color-primary-light-darker: #efcdbf; --color-primary-hover: #b06d57;
           --color-surface-primary-container: #f6dfd6; --color-on-primary-container: #5b2413;
-          --color-brand-hover: #c9663f; --color-brand-active: #b85a36; --color-selection: #d97757; }
+          --color-brand-hover: #b06d57; --color-brand-active: #a0614d; --color-selection: #bf7c66; }
         /* --theme-filter: none — холст и образцы цветов НЕ выворачиваются
            (JS-половина этой правки — в vendor/excalidraw/build.mjs). */
         .cf-exc .excalidraw.theme--dark {
@@ -1554,7 +1561,7 @@
           const g = cv.getContext('2d');
           g.fillStyle = '#242322'; g.fillRect(0, 0, w, h);
           g.fillStyle = '#33312d'; g.fillRect(0, h - 6, w, 6);
-          g.fillStyle = '#d97757';
+          g.fillStyle = '#bf7c66';
           const r = Math.min(w, h) * 0.13, cx = w / 2, cy = h / 2 - r * 0.15;
           g.beginPath(); g.moveTo(cx - r * 0.7, cy - r); g.lineTo(cx + r, cy); g.lineTo(cx - r * 0.7, cy + r); g.closePath(); g.fill();
           g.fillStyle = '#a6a39a'; g.font = `500 ${Math.round(h * 0.055)}px -apple-system, Helvetica, Arial, sans-serif`;
@@ -6704,7 +6711,7 @@
                 // чтобы линия на нём пропала.
                 ctx.lineWidth = lw * 2.4; ctx.strokeStyle = 'rgba(0,0,0,.35)';
                 ctx.setLineDash([]); ctx.strokeRect(x, y, w, h);
-                ctx.lineWidth = lw; ctx.strokeStyle = wide ? SIM_LINE : '#d97757';
+                ctx.lineWidth = lw; ctx.strokeStyle = wide ? SIM_LINE : '#bf7c66';   // = --accent, рамка на экране
                 ctx.strokeRect(x, y, w, h);
                 // Метка пропорции в углу рамки — единственная надпись
                 // на картинке, ровно как «2.35:1» у Cadrage.
@@ -8027,7 +8034,7 @@
         const EXC_EDGE = '#33312d';      // --border
         const EXC_DIM = '#6f6b63';       // --muted-2: рамка пустого окошка
         const EXC_STICKY_INK = '#1e1e1e';// по пастели стикера — тёмным
-        const EXC_LINK = '#d97757';      // --accent
+        const EXC_LINK = '#bf7c66';      // --accent
         const EXC_BG = '#1a1918';        // --bg: холст
         // Доски, нарисованные при ВЫВОРАЧИВАЮЩЕЙ тёмной теме, хранят цвета
         // «до фильтра»: чёрный карандаш на экране был светлым. Переводим их
@@ -8753,7 +8760,7 @@
         // обязаны читаться одинаково. Свёрнута ли — общий `cf_mini`.
         // Данные приходят из onChange доски через `bind`, а рисуем не чаще
         // десяти раз в секунду: onChange сыплет на каждое движение пальца.
-        const EXC_MINI_COL = { scene: '#d97757', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
+        const EXC_MINI_COL = { scene: '#bf7c66', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
         const excElBox = (e) => {
           if (Array.isArray(e.points) && e.points.length) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -10727,7 +10734,7 @@
               background: #1a1918 !important; color: #f0eee6 !important;
               -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .print-dark .print-head { border-bottom-color: #4a4741 !important; }
-            .print-dark .print-eyebrow { color: #d97757 !important; }
+            .print-dark .print-eyebrow { color: #bf7c66 !important; }
             .print-dark .print-meta, .print-dark .cf-print-dim { color: #a6a39a !important; }
             .print-dark td, .print-dark th { border-color: #4a4741 !important; }
             .print-dark img { border-color: #4a4741 !important; }
@@ -12575,7 +12582,7 @@
             });
             // Карточки — заливкой, цвет по виду: так на карте видно не только
             // «что-то лежит», но и что именно.
-            const COL = { scene: '#d97757', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
+            const COL = { scene: '#bf7c66', ref: '#7aa2c7', doc: '#a6a39a', sticky: '#fde68a', frame: '#9d8bc7' };
             boardCards().forEach(c => {
               ctx.fillStyle = c.t === 'sticky' ? ((c.o && c.o.color) || COL.sticky) : COL[c.t];
               ctx.globalAlpha = 0.9;
@@ -13307,7 +13314,7 @@
               if (h) {
                 const b = shapeBox(h);
                 ctx.save();
-                ctx.strokeStyle = 'rgba(217,119,87,0.95)'; ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(191,124,102,0.95)'; ctx.lineWidth = 2;
                 ctx.strokeRect(b.x * z + vv.x - 3, b.y * z + vv.y - 3, b.w * z + 6, b.h * z + 6);
                 ctx.restore();
               }
@@ -13324,14 +13331,14 @@
                 const b = shapeBox(s);
                 const [px, py] = toScr(b.x, b.y);
                 const pw = b.w * z, ph = b.h * z;
-                ctx.strokeStyle = 'rgba(217,119,87,0.9)'; ctx.lineWidth = 1;
+                ctx.strokeStyle = 'rgba(191,124,102,0.9)'; ctx.lineWidth = 1;
                 ctx.setLineDash([4, 3]);
                 ctx.strokeRect(px - 4, py - 4, pw + 8, ph + 8);
                 ctx.setLineDash([]);
                 shapeHandles(s).forEach(hd => {
                   const [hx, hy] = toScr(hd.x, hd.y);
                   ctx.fillStyle = '#1a1918';
-                  ctx.strokeStyle = 'rgba(217,119,87,1)'; ctx.lineWidth = 1.5;
+                  ctx.strokeStyle = 'rgba(191,124,102,1)'; ctx.lineWidth = 1.5;
                   ctx.beginPath(); ctx.rect(hx - 4.5, hy - 4.5, 9, 9); ctx.fill(); ctx.stroke();
                 });
               });
@@ -13341,7 +13348,7 @@
             // выглядит как «оно само куда-то прыгнуло».
             if (guides.current.length) {
               ctx.save();
-              ctx.strokeStyle = 'rgba(217,119,87,0.95)'; ctx.lineWidth = 1;
+              ctx.strokeStyle = 'rgba(191,124,102,0.95)'; ctx.lineWidth = 1;
               ctx.setLineDash([5, 4]);
               guides.current.forEach(g => {
                 ctx.beginPath();
@@ -13364,8 +13371,8 @@
               const ry = Math.min(od.y0, od.y1) * z + vv.y;
               const rw = Math.abs(od.x1 - od.x0) * z, rh = Math.abs(od.y1 - od.y0) * z;
               ctx.save();
-              ctx.fillStyle = 'rgba(217,119,87,0.12)'; ctx.fillRect(rx, ry, rw, rh);
-              ctx.strokeStyle = 'rgba(217,119,87,0.95)'; ctx.lineWidth = 1.5;
+              ctx.fillStyle = 'rgba(191,124,102,0.12)'; ctx.fillRect(rx, ry, rw, rh);
+              ctx.strokeStyle = 'rgba(191,124,102,0.95)'; ctx.lineWidth = 1.5;
               ctx.setLineDash([6, 4]); ctx.strokeRect(rx, ry, rw, rh);
               ctx.restore();
             }
@@ -14731,7 +14738,7 @@
             const c = document.createElement('canvas');
             c.width = c.height = 64;
             const x = c.getContext('2d');
-            x.fillStyle = '#d97757'; x.fillRect(0, 0, 64, 64);
+            x.fillStyle = '#bf7c66'; x.fillRect(0, 0, 64, 64);
             x.fillStyle = '#1a1918'; x.font = 'bold 22px sans-serif'; x.fillText('CF', 12, 40);
             c.toBlob(b => resolve(b), 'image/jpeg', 0.85);
           });
@@ -22709,7 +22716,7 @@
                             const t = boardScenes.find(s => s.id === item.sceneId); if (!t) return null;
                             const a = linkAnchor(item, type); const ex = t.x; const ey = t.y + 50;
                             const on = selectedWbItems.includes(item.id) || selectedWbItems.includes(t.id);
-                            return (<path key={`link-${item.id}`} d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={on ? "#d97757" : "rgba(217,119,87,0.6)"} strokeWidth={on ? "4" : "3"} strokeDasharray="6 6" />);
+                            return (<path key={`link-${item.id}`} d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke={on ? "#bf7c66" : "rgba(191,124,102,0.6)"} strokeWidth={on ? "4" : "3"} strokeDasharray="6 6" />);
                           })}
                           {linkingFrom && (() => {
                              const src = linkingFrom.type === 'sticky' ? stickies.find(x => x.id === linkingFrom.id)
@@ -22719,7 +22726,7 @@
                              if (!src) return null;
                              const a = linkAnchor(src, linkingFrom.type);
                              const { x: ex, y: ey } = inkPt(mousePos.x, mousePos.y);
-                             return <path d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#d97757" strokeWidth="4" />;
+                             return <path d={`M ${a.x} ${a.y} C ${(a.x + ex) / 2} ${a.y}, ${(a.x + ex) / 2} ${ey}, ${ex} ${ey}`} fill="none" stroke="#bf7c66" strokeWidth="4" />;
                           })()}
                         </svg>
 
@@ -24963,7 +24970,7 @@
                             <div key={i} className={m.role === 'me' ? 'text-right' : ''}>
                               <span className="inline-block text-left rounded-lg px-3 py-2 text-xs leading-relaxed"
                                     style={{ whiteSpace: 'pre-wrap', maxWidth: '92%',
-                                             background: m.role === 'me' ? 'var(--raised)' : 'rgba(217,119,87,.12)',
+                                             background: m.role === 'me' ? 'var(--raised)' : 'rgba(191,124,102,.12)',
                                              color: m.role === 'me' ? 'var(--text-2)' : 'var(--text)',
                                              border: '1px solid ' + (m.role === 'me' ? 'var(--border)' : 'var(--accent-line)') }}>
                                 {m.text}
