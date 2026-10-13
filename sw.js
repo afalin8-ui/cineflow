@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v14';
+const VERSION = 'cineflow-v15';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -102,6 +102,33 @@ self.addEventListener('message', event => {
   if (event.data === 'skip-waiting') self.skipWaiting();
 });
 
+// Сколько ждём сеть, прежде чем открыть приложение из копии на устройстве.
+// Целиком, вместе с телом: заголовки приходят быстро и на плохой связи,
+// а два мегабайта страницы после них могут ехать десятки секунд.
+const NET_WAIT = 3000;
+
+async function pageFirstNet(event, req, isApp) {
+  const cache = await caches.open(APP_CACHE);
+  const cached = isApp ? ((await cache.match('./index.html')) || (await cache.match('./')))
+                       : await cache.match(req);
+  const net = fetch(req.url, { cache: 'no-cache' }).then(async res => {
+    // Перенаправленный ответ в кэш не кладём: это чужая страница (вход
+    // в Wi-Fi гостиницы и т.п.), и офлайн вместо приложения открылась бы она.
+    if (isApp && res.ok && !res.redirected) await cache.put('./index.html', res.clone());
+    return res;
+  });
+  if (!cached) return net.catch(() => Response.error());
+  // Сеть дописывает свежую страницу в кэш и после того, как мы ответили
+  // копией: иначе браузер вправе усыпить service worker на полпути.
+  event.waitUntil(net.catch(() => {}));
+  if (self.navigator && self.navigator.onLine === false) return cached;
+  const res = await Promise.race([
+    net.catch(() => null),
+    new Promise(r => setTimeout(() => r(null), NET_WAIT))
+  ]);
+  return res && res.ok ? res : cached;
+}
+
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -125,10 +152,19 @@ self.addEventListener('fetch', event => {
   // в кэше './index.html' CineFlow на страницу игры.
   if (url.origin === self.location.origin && url.pathname.includes('/game/')) return;
 
-  // Сама страница: сначала сеть (чтобы приезжали обновления),
-  // при отсутствии связи — версия из кэша.
-  // cache:'reload' обязателен: иначе ответ может прийти из HTTP-кэша
-  // браузера, и пользователь после обновления увидит старое приложение.
+  // Сама страница: сначала сеть (чтобы приезжали обновления), но НЕ ДОЛЬШЕ
+  // NET_WAIT — дальше открываем копию с устройства, а сеть дописывает свежую
+  // в кэш к следующему запуску. Раньше предела не было, и это было главной
+  // причиной «без интернета долго открывается»: на площадке связь чаще
+  // не ОТСУТСТВУЕТ, а МОЛЧИТ (одна палка, Wi-Fi без интернета), и запрос
+  // висит минуту и больше. Замер: сеть молчит — приложение не открылось
+  // за 90 с; медленная связь — 11,4 с. Совсем без сети отказ приходит сразу,
+  // поэтому там было быстро, и беду на стенде не видно.
+  //
+  // cache:'no-cache', а НЕ 'reload': это условный запрос — без правок сервер
+  // отвечает 304 и страница (2 МБ) берётся из кэша браузера, а не качается
+  // заново на каждом запуске. Устаревшей она при этом не бывает: проверка
+  // у сервера идёт всегда.
   //
   // ВАЖНО: под именем './index.html' кэшируется ТОЛЬКО сама страница
   // приложения. Раньше туда попадала любая открытая страница из этой
@@ -139,39 +175,16 @@ self.addEventListener('fetch', event => {
     const appRoot = new URL('./', self.location).pathname;
     const isApp = url.origin === self.location.origin
                && (url.pathname === appRoot || url.pathname === appRoot + 'index.html');
-    event.respondWith((async () => {
-      try {
-        const fresh = await fetch(req.url, { cache: 'reload' });
-        if (isApp) {
-          const cache = await caches.open(APP_CACHE);
-          cache.put('./index.html', fresh.clone());
-        }
-        return fresh;
-      } catch (e) {
-        const cache = await caches.open(APP_CACHE);
-        if (isApp) return (await cache.match('./index.html')) || (await cache.match('./')) || Response.error();
-        return (await cache.match(req)) || Response.error();
-      }
-    })());
+    event.respondWith(pageFirstNet(event, req, isApp));
     return;
   }
 
   // index.html, запрошенный не как навигация (например проверка обновления):
-  // тоже сначала сеть, иначе отдадим устаревшую копию. Сверяем ПОЛНЫЙ
-  // путь, а не окончание: «любой index.html» затянул бы сюда страницы
-  // из соседних папок — та же ловушка, что и у навигации выше.
+  // так же. Сверяем ПОЛНЫЙ путь, а не окончание: «любой index.html» затянул
+  // бы сюда страницы из соседних папок — та же ловушка, что и у навигации.
   if (url.origin === self.location.origin
       && url.pathname === new URL('./index.html', self.location).pathname) {
-    event.respondWith((async () => {
-      try {
-        const fresh = await fetch(req.url, { cache: 'reload' });
-        const cache = await caches.open(APP_CACHE);
-        cache.put('./index.html', fresh.clone());
-        return fresh;
-      } catch (e) {
-        return (await caches.match('./index.html')) || Response.error();
-      }
-    })());
+    event.respondWith(pageFirstNet(event, req, true));
     return;
   }
 

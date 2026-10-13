@@ -2,16 +2,22 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <!-- viewport-fit=cover ОБЯЗАТЕЛЕН, и без него не работает то, чего
-         код уже ждёт. Строкой ниже стоит black-translucent: строка
-         состояния прозрачная, то есть содержимое уезжает под чёлку.
-         А env(safe-area-inset-*) без viewport-fit=cover возвращает НОЛЬ —
-         таб-бар телефона и шторка снизу просили у него отступ и получали
-         ничего. Ошибок при этом нет, просто последняя строка списка
-         оказывается под системной полосой. -->
+    <!-- viewport-fit=cover ОБЯЗАТЕЛЕН: без него env(safe-area-inset-*)
+         возвращает НОЛЬ, а на него опираются таб-бар телефона, шторка снизу
+         и вставки в горизонтальном положении (чёлка сбоку). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- СТРОКА СОСТОЯНИЯ НЕПРОЗРАЧНАЯ (black), а НЕ black-translucent.
+         С прозрачной в iOS 26 установленное приложение ломается с двух
+         сторон (WebKit 301108, 301994): окно начинается под часами, но
+         становится КОРОЧЕ на высоту строки состояния — внизу пустая полоса,
+         и она вне страницы, закрасить её нечем; а верх страницы система
+         накрывает размытием «жидкого стекла», и значки шапки режутся.
+         С непрозрачной страница начинается ПОД часами и идёт до самого
+         низа, вставка сверху равна нулю, и отступ шапки схлопывается сам.
+         iOS читает это при УСТАНОВКЕ на экран: старая иконка живёт
+         с прежней строкой, пока её не поставят заново. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#1a1918">
     <link rel="manifest" href="./manifest.webmanifest">
@@ -34,10 +40,13 @@
           });
           window.addEventListener('load', () => {
             navigator.serviceWorker.register('./sw.js').then(reg => {
-              reg.update();
+              // Без сети проверка обновления отказывает — это не ошибка,
+              // проверим при следующем возвращении.
+              const check = () => reg.update().catch(() => {});
+              check();
               // Проверяем обновление каждый раз, когда возвращаются во вкладку.
               document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) reg.update();
+                if (!document.hidden) check();
               });
             }).catch(err => {
               console.warn('Service worker не зарегистрирован:', err);
