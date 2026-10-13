@@ -40,6 +40,7 @@ jobs:
       release: ${{ steps.rel.outputs.tag }}
       publish: ${{ steps.rel.outputs.publish }}
       selftest: ${{ steps.linux.outputs.selftest }}
+      selftest_tune: ${{ steps.lintune.outputs.selftest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -144,6 +145,7 @@ jobs:
       # относительный путь — от папки, ИЗ КОТОРОЙ запустили (PWD): сборка сама уходит
       # в папку программы, и без launch_dirs «tune.json» искался бы там
       - name: Linux-сборка, --overrides=tune.json из чужой папки
+        id: lintune
         run: |
           set -uo pipefail
           exe="$GITHUB_WORKSPACE/godot/build/linux/capella.x86_64"
@@ -152,6 +154,7 @@ jobs:
           timeout 120 "$exe" --headless -- --selftest --overrides=tune.json > rel.log 2>&1
           code=$?
           cat rel.log
+          echo "selftest=$(grep -m1 '^SELFTEST' rel.log || true)" >> "$GITHUB_OUTPUT"
           if [ $code -ne 0 ] || ! grep -q '^SELFTEST ok: .*правок 1,' rel.log; then
             echo "::error::--overrides с относительным путём: код $code"; exit 1
           fi
@@ -326,6 +329,8 @@ jobs:
       # tune.json рядом с exe, запуск из другой папки
       - name: Windows-сборка, --overrides=tune.json рядом с программой
         shell: pwsh
+        env:
+          LINUX_TUNE: ${{ needs.test-build.outputs.selftest_tune }}
         run: |
           $ErrorActionPreference = 'Continue'
           Set-Content -Path win\tune.json -Value '{"main.dead_k": 0.43}' -Encoding ascii
@@ -335,6 +340,12 @@ jobs:
           Write-Host $out
           Write-Host "код выхода: $code"
           if ($code -ne 0 -or $out -notmatch 'SELFTEST ok: .*правок 1,') { Write-Host "::error::--overrides с относительным путём на Windows"; exit 1 }
+          # тот же бой с правкой числа — вторая сверка повторяемости между системами (G4:
+          # без правки бой совпадал, с правкой main.dead_k разошёлся — atan2/sin/cos библиотеки C)
+          $bW = [regex]::Match($out, 'бой (\w+)').Groups[1].Value
+          $bL = [regex]::Match($env:LINUX_TUNE, 'бой (\w+)').Groups[1].Value
+          Write-Host "отпечаток боя с правкой: Linux $bL, Windows $bW"
+          if ($bL -eq '' -or $bL -ne $bW) { Write-Host "::warning::отпечаток боя с правкой Linux и Windows разный: $bL / $bW" } else { Write-Host "бой с правкой Linux и Windows совпал до бита" }
           exit 0
 
   release:

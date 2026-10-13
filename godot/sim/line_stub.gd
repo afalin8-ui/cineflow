@@ -104,14 +104,20 @@ static func _plan(b: State, side: int) -> Variant:
 		# в чужую линию, найдено стендом G4). У ИИ это «без тяжёлых — уход» и «Охота» лёгких
 		# (05, 2.6 п. 7; 09, 7.2 leaderless) — G5; заглушка места не трогает
 		return null
-	# ось — от прежнего P к F_h, поворот не больше turn_max (5.6)
+	# ось — от прежнего P к F_h, поворот не больше turn_max (5.6). БЕЗ atan2/sin/cos
+	# библиотеки C: они у Linux (glibc) и Windows (MSVC) расходятся в последнем бите, и бой
+	# расходился между системами (найдено CI G4: с правкой main.dead_k отпечатки разные).
+	# Поворот на предел — сложением с постоянными cos/sin, посчитанными рядом (_cos_sin);
+	# в пределе — сама желаемая ось
 	var want_ax := f - sd.stub_p
 	if want_ax.length_squared() < 1.0:
 		want_ax = sd.stub_ax
 	want_ax = want_ax.normalized()
-	var turn := wrapf(want_ax.angle() - sd.stub_ax.angle(), -PI, PI)
-	var lim := deg_to_rad(d.line_turn_max_deg)
-	var ax := sd.stub_ax.rotated(clampf(turn, -lim, lim)).normalized()
+	var ax := want_ax
+	var cs := _cos_sin(deg_to_rad(d.line_turn_max_deg))
+	if sd.stub_ax.dot(want_ax) < cs.x:
+		var sgn := 1.0 if sd.stub_ax.cross(want_ax) >= 0.0 else -1.0
+		ax = (sd.stub_ax * cs.x + Vector2(-sd.stub_ax.y, sd.stub_ax.x) * (sgn * cs.y)).normalized()
 	var p_want := f - ax * l
 	var step := p_want - sd.stub_p
 	if step.length() > d.line_shift_max:
@@ -181,6 +187,23 @@ static func _plan(b: State, side: int) -> Variant:
 			spec.advance_dead = foe_dead
 	var o := Formation.places(b.defs, members, spec)
 	return [mine, o]
+
+
+## cos и sin малого угла рядом Тейлора — одни сложения и умножения, то есть одинаково
+## до бита на любой системе (в отличие от sin/cos библиотеки C). Для |x| ≤ π/2 двенадцати
+## членов хватает с запасом до точности double.
+static func _cos_sin(x: float) -> Vector2:
+	var x2 := x * x
+	var c := 1.0
+	var s := x
+	var tc := 1.0
+	var ts := x
+	for k in range(1, 13):
+		tc *= -x2 / float((2 * k - 1) * (2 * k))
+		ts *= -x2 / float((2 * k) * (2 * k + 1))
+		c += tc
+		s += ts
+	return Vector2(c, s)
 
 
 static func _apply(b: State, side: int, plan: Array) -> void:
