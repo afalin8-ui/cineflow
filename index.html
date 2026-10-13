@@ -15254,6 +15254,10 @@
           };
 
           const seededRef = useRef({});
+          // Облако ответило по сценам САМО, а не копией с устройства. Пока
+          // нет — на свежей установке экран пустой не потому, что проект
+          // пуст, а потому, что он ещё едет, и об этом надо сказать.
+          const [cloudLoaded, setCloudLoaded] = useState(false);
           useEffect(() => {
             if (!db || !user) return;
             const baseRef = db.collection('artifacts').doc(appId).collection('public').doc('data');
@@ -15284,7 +15288,22 @@
             // «удаление не работает»: окно подтвердили, схема мигнула
             // и вернулась. То же самое было с последней сценой, доской,
             // объектом, документом и референсом.
-            const subList = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
+            // ПУСТОЙ ОТВЕТ ИЗ КЭША УСТРОЙСТВА — НЕ «НОВАЯ КОМНАТА». Свежая
+            // установка в БОЛЬШОЙ комнате: облако ещё не ответило (проект
+            // весит десятки мегабайт), библиотека через 10 с объявляет себя
+            // офлайн и отдаёт пустую копию с устройства. Её принимали за
+            // новую комнату и засевали заготовкой — и сцена 1, гайд 1
+            // и каталог света в живом проекте ПЕРЕЗАПИСАЛИСЬ примерами
+            // («ИНТ. КАБИНЕТ — ДЕНЬ»), случилось у пользователя при
+            // переустановке иконки. Засеваем только по ответу САМОГО
+            // облака (`fromCache: false`), а пустую копию пропускаем, не
+            // тратя на неё «первый ответ». includeMetadataChanges нужен,
+            // чтобы ответ облака «да, пусто» после пустой копии вообще
+            // пришёл: изменений в документах у него нет.
+            const META = { includeMetadataChanges: true };
+            const subList = (coll, setter, seed, onSnap) => baseRef.collection(coll).onSnapshot(META, snap => {
+              if (onSnap) onSnap(snap);
+              if (!fresh[coll] && snap.empty && snap.metadata.fromCache) return;
               if (fresh[coll] && snap.docChanges().length === 0) return;
               const first = !fresh[coll];
               fresh[coll] = true;
@@ -15295,7 +15314,8 @@
               }
               setter(list);
             }, err => console.warn('sync ' + coll, err));
-            const subMap = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(snap => {
+            const subMap = (coll, setter, seed) => baseRef.collection(coll).onSnapshot(META, snap => {
+              if (!fresh[coll] && snap.empty && snap.metadata.fromCache) return;
               if (fresh[coll] && snap.docChanges().length === 0) return;
               const first = !fresh[coll];
               fresh[coll] = true;
@@ -15308,16 +15328,31 @@
               // раньше сюда не доходили, и последнюю позицию было не убрать.
               if (!first || Object.keys(obj).length) setter(obj);
             }, err => console.warn('sync ' + coll, err));
+            // ТЯЖЁЛОЕ — ПОСЛЕ СЦЕН. Все подписки идут одним потоком, и облако
+            // отдаёт согласованную картину, только когда доехали ВСЕ: фото
+            // проекта (у пользователя 797 штук, ~55 МБ) держали бы и список
+            // сцен. С кэшем на устройстве (не пусто) — сразу, как раньше.
+            const heavy = [];
+            let heavyOn = false;
+            const startHeavy = () => {
+              if (heavyOn) return;
+              heavyOn = true;
+              heavy.push(
+                subList('storyboard', setStoryboard, storyboard),
+                subList('references', setReferences, references),
+                subList('projectFiles', setProjectFiles, projectFiles),
+                subList('lightSchemes', setLightSchemes, lightSchemes));
+            };
+            const heavyTimer = setTimeout(startHeavy, 20000);   // облако молчит — не держим вечно
             const unsubs = [
-              subList('scenes', setScenes, scenes),
-              subList('storyboard', setStoryboard, storyboard),
-              subList('references', setReferences, references),
+              subList('scenes', setScenes, scenes, snap => {
+                if (!snap.metadata.fromCache) setCloudLoaded(true);
+                if (!snap.metadata.fromCache || !snap.empty) startHeavy();
+              }),
               subList('stickies', setStickies, stickies),
               subList('docs', setDocs, docs),
               subList('crew', setCrew, crew),
               subList('locations', setLocations, locations),
-              subList('projectFiles', setProjectFiles, projectFiles),
-              subList('lightSchemes', setLightSchemes, lightSchemes),
               subMap('gearTypes', setGearTypes, gearTypes),
               subMap('lightGearTypes', setLightGearTypes, lightGearTypes),
               subList('boards', setBoards, [DEFAULT_BOARD]),
@@ -15329,7 +15364,8 @@
                 fresh.messages = true;
                 const list = []; snap.forEach(d => list.push(d.data())); msgBatch.current++; setMessages(list.sort((a,b)=>a.timestamp-b.timestamp));
               }, err => console.warn('sync messages', err))
-            ]; return () => unsubs.forEach(u => u());
+            ];
+            return () => { clearTimeout(heavyTimer); unsubs.forEach(u => u()); heavy.forEach(u => u()); };
           }, [user]);
 
           // Рисунок активной доски. Отдельная подписка: при переключении
@@ -19323,6 +19359,22 @@
                   страницу не перезагрузят, правки никуда не уезжают, и
                   узнать об этом человек обязан сразу, а не через три часа
                   съёмки. Данные при этом целы — так и написано. */}
+              {/* ПРОЕКТ ЕЩЁ ЕДЕТ ИЗ ОБЛАКА. На свежей установке (переустановили
+                  иконку, новое устройство) большой проект грузится минутами,
+                  и всё это время экран выглядел ПУСТЫМ ПРОЕКТОМ — человек
+                  решал, что проект пропал, и начинал что-то делать. Полоска
+                  стоит, пока облако само не ответило по сценам, и только
+                  там, где на устройстве ничего своего нет. */}
+              {db && user && !cloudLoaded && isOnline && !cloudBroken
+                && scenes.every(sc => sc.id === 'scene-1') && (
+                <div data-cf="cloud-loading" className="fixed left-1/2 -translate-x-1/2 z-[450] glass-panel text-white px-4 py-2.5 flex items-center gap-2.5"
+                     style={{ top: 'calc(var(--header-h) + var(--sat) + 10px)', borderRadius: 14, maxWidth: 'min(92vw, 440px)' }}>
+                  <span className="w-4 h-4 shrink-0 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                  <span className="text-[length:var(--fs-2)] leading-snug">
+                    Загружаю проект из облака… Большой проект на новом устройстве грузится несколько минут — не закрывайте приложение.
+                  </span>
+                </div>
+              )}
               {cloudBroken && (
                 <div className="fixed top-0 left-0 right-0 z-[500] px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-center"
                      style={{ background: '#7f1d1d', color: '#fee2e2' }}>

@@ -54,7 +54,8 @@ const FAKE_CLOUD = (seed) => {
     // `__cfDocDelay[коллекция]` — медленное облако: первый ответ по
     // документу приходит через столько миллисекунд (проверка того, что
     // приложение его ДОЖИДАЕТСЯ, а не берёт то, что есть).
-    onSnapshot: (cb) => {
+    onSnapshot: (a, b) => {
+      const cb = typeof a === 'function' ? a : b;   // (опции, обработчик) — как у Firestore
       const m = dsubs[coll] = dsubs[coll] || {}; (m[id] = m[id] || []).push(cb);
       setTimeout(() => { try { cb(dsnap(coll, id)); } catch (e) {} }, (window.__cfDocDelay || {})[coll] || 30);
       return () => {};
@@ -63,7 +64,9 @@ const FAKE_CLOUD = (seed) => {
   });
   const query = (name, filter) => ({
     get: () => Promise.resolve(snapOf(name, filter)),
-    onSnapshot: (cb) => {
+    limit: () => query(name, filter),
+    onSnapshot: (a, b) => {
+      const cb = typeof a === 'function' ? a : b;   // (опции, обработчик) — как у Firestore
       const fn = () => cb(snapOf(name, filter));
       (subs[name] = subs[name] || []).push(fn);
       setTimeout(() => { try { fn(); } catch (e) {} }, 30);
