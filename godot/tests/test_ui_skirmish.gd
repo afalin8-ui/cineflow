@@ -23,6 +23,7 @@ const Picking := preload("res://input/picking.gd")
 const MainScript := preload("res://main.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const Weapons := preload("res://sim/weapons.gd")
+const BenchCore := preload("res://tools/bench_core.gd")
 
 const BIG := 1.0e9
 
@@ -290,7 +291,7 @@ func _focus_line(rollback: bool) -> Dictionary:
 func test_focus_toast_and_doing() -> void:
 	var r := await _focus_line(false)
 	var all := str(r["said"])
-	ok(all.contains("тяжёлые бьют с места: главный калибр — от 312 до 900") and all.contains("лёгкие идут на цель"), "полоска на фокус: «%s»" % all.replace("\n", " / "))
+	ok(all.contains("тяжёлые встают на дистанцию 312–900") and all.contains("лёгкие идут на цель"), "полоска на фокус: «%s»" % all.replace("\n", " / "))
 	ok(all.contains("безоружны — держатся позади"), "носитель и РЭБ безоружны — сказано")
 	var line := str(r["line"])
 	note("фокус всего флота: крейсер — «%s»" % line)
@@ -437,23 +438,34 @@ func test_domes_and_belts_by_shown() -> void:
 	ok(flag(ao["dome"]) and flag(ao["hover"]) and flag(ao["focus"]), "откат «купол и пояса мимо фильтра»: скрытые нарисованы (%s) — проверка краснеет" % str(ao))
 
 
-# ───────────────────────── флажок отката --old-ecm ─────────────────────────
+# ───────────────────────── флажки отката 09, 8.4 ─────────────────────────
 
-## `-- --old-ecm` (план G2, п. 5 и «Проверки»): флажок доходит до боя «Полигона», запись
-## боя его помнит (повтор — тот же бой), заголовок называет. Контроль — без флажка
-## бой обычный: проверка краснела бы, если бы флажок включался сам.
-func test_old_ecm_flag() -> void:
-	for on: bool in [true, false]:
-		MainScript.apply_flags(PackedStringArray(["--old-ecm"] if on else ["--table"]))
-		eq(Polygon.old_ecm, on, "флажок %s" % ("--old-ecm передан" if on else "не передан"))
+## Каждый флажок отката (`-- --old-ecm`, `--legacy-approach`… — BenchCore.FLAGS) доходит
+## до боя «Полигона», запись боя его помнит (повтор — тот же бой), заголовок называет его
+## словами. Контроль — без флажков бой обычный: проверка краснела бы, если бы флажок
+## включался сам.
+func test_rollback_flags() -> void:
+	var keys: Array = BenchCore.FLAGS.keys()
+	keys.append("")
+	for f: String in keys:
+		var key: String = BenchCore.FLAGS.get(f, "")
+		MainScript.apply_flags(PackedStringArray([f] if f != "" else ["--table"]))
+		eq(Polygon.flags.size(), 1 if f != "" else 0, "флажок %s дошёл до «Полигона»" % (f if f != "" else "(нет)"))
 		var p := await _polygon()
-		eq(p.battle.old_ecm, on, "бой «Полигона» с флажком %s" % str(on))
-		ok(p.hud.title.contains("--old-ecm") == on, "заголовок: «%s»" % p.hud.title)
+		var on := PackedStringArray()
+		for k: String in Polygon.FLAG_NAMES:
+			var v: bool = p.battle.get(k)
+			if v:
+				on.append(k)
+		eq(",".join(on), key, "бой «Полигона» с флажком %s — включён ровно он" % (f if f != "" else "(нет)"))
+		var name: String = Polygon.FLAG_NAMES.get(key, "откат")
+		ok(p.hud.title.contains(name) == (f != ""), "заголовок называет откат словами: «%s»" % p.hud.title)
 		var why := PackedStringArray()
 		var rec := p.battle.record()
 		var again := Battle.from_record(_get_defs(), rec, "проверка", why) as Battle
-		ok(again != null and again.old_ecm == on, "повтор записи — с тем же флажком (%s)" % "; ".join(why))
+		var same := again != null and (key == "" or flag(again.get(key)))
+		ok(same, "%s: повтор записи — с тем же флажком (%s)" % [f, "; ".join(why)])
 		if again != null:
 			again.dispose()
 		await _drop(p)
-	Polygon.old_ecm = false
+	Polygon.flags = {}

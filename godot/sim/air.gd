@@ -98,6 +98,9 @@ static var rollback_patrol_ship_sticks := false
 ## на посадке машина идёт к дому на полном газу, как в JS (04, ловушка 31: вираж шире круга
 ## посадки — звено кружит у носителя вечно);
 static var rollback_land_full_throttle := false
+## ТОЛЬКО для проверки отката: у дома газ без «не медленнее дома + LAND_CATCH» — за
+## уходящим носителем машина на 0,35 газа его не догоняет.
+static var rollback_land_no_catch := false
 ## бомбардировщик с приказом «идти» сначала обходит строй и берёт свои цели — как в G3
 ## до доработки (09, 4.4: «идти» — по прямой).
 static var rollback_move_route := false
@@ -618,6 +621,8 @@ static func _go_home(b: State, c: Craft, q: Squad, throttle: float, landing: boo
 		var d := c.pos.distance_to(goal)
 		if d < land_r * LAND_SLOW:
 			var floor_t := clampf((home.vel.length() + LAND_CATCH) / c.def.max_speed, LAND_SLOW_MIN, 1.0)
+			if rollback_land_no_catch:
+				floor_t = LAND_SLOW_MIN
 			throttle = minf(throttle, maxf(floor_t, d / (land_r * LAND_SLOW)))
 	fly(b, c, goal, throttle)
 

@@ -21,8 +21,8 @@
 # по приказу на звено — его машины (C14: звено — не цель, а приказ бить машины; урон
 # «по звену» отбрасывается — у звена нет прочности, и оно не Body).
 #
-# Тяжёлые в G2 приказы огня принимают как ВЫБОР ЦЕЛИ и с места не сходят (план G2,
-# п. 4): пояс, подход и отход — G4. Прежнего подхода «на 0,68 R» у тяжёлых нет нигде.
+# Тяжёлые приказ огня принимают как «встань в пояс против цели» (09, 6.1; G4 —
+# sim/heavy_doctrine.gd). Прежний подход «на 0,68 R» — только флажок отката --legacy-approach.
 extends RefCounted
 
 const State := preload("res://sim/state.gd")
@@ -75,9 +75,6 @@ static var rollback_quiet_shots := false
 static var rollback_quiet_main := false
 static var rollback_quiet_light := false
 static var rollback_quiet_missile := false
-## Своя цель главного калибра — одним счётом по стойке до R × reach (как было до
-## доработки G2): тяжёлый брал цель дальше дальности, хотя враг стоял в поясе, и молчал.
-static var rollback_far_capture := false
 ## Урон снаряда не засчитывается владельцу (07, ловушка 57): М7 и dealt «Синхо» пустые.
 static var rollback_proj_no_owner := false
 ## Под чужим куполом ПВО бьёт в полную силу (09, 1.5: ПВО × pdPenalty).
@@ -126,7 +123,7 @@ static func _timers(b: State, w: Defs.WeaponDef) -> PackedFloat64Array:
 ## −1 ближе мёртвой зоны, 0 в поясе, 1 дальше дальности.
 static func main_reach(s: Ship, d: float) -> int:
 	var w := s.def.main
-	if d < w.dead and not rollback_no_dead_zone:
+	if d < w.dead and not rollback_no_dead_zone and not s.legacy:
 		return -1
 	return 1 if d > w.rng else 0
 
@@ -215,7 +212,7 @@ static func _forced_primary(s: Ship) -> Ship:
 	var fz := s.forced as Ship
 	if fz == null:
 		return null
-	if s.heavy() and main_reach(s, s.pos.distance_to(fz.pos)) != 0 and not Movement.rollback_heavy_approach:
+	if s.heavy() and main_reach(s, s.pos.distance_to(fz.pos)) != 0 and not s.legacy:
 		return null
 	return fz
 
@@ -246,18 +243,16 @@ static func _stance(b: State, s: Ship) -> Defs.StanceDef:
 
 
 # ДОКТРИНА 09, 1.2 main_acquire (вместо space.js:1037 shipAcquire по guns[0])
-## Своя цель главного калибра: в поясе и в досягаемости тактики (R × reach); вес
-## эскорта — main.escort_weight (тяжёлые и носители первыми). «Охрана» без приказа
-## идти — не дальше поводка 0,5 R + R от участка. «Охота» без целей — ближайший, но
-## тоже НЕ ближе мёртвой зоны (иначе встала бы молча с целью под носом, 03, 7.2 п. 2).
+## Своя цель главного калибра — ОДНИМ счётом по стойке: в досягаемости тактики (R ×
+## reach: «Держать» 1,0, «Охрана» 1,3, «Охота» 1,8), НЕ ближе мёртвой зоны; вес эскорта —
+## main.escort_weight (тяжёлые и носители первыми). «Охрана» без приказа идти — не дальше
+## поводка 0,5 R + R от участка. «Охота» без целей — ближайший, но тоже НЕ ближе мёртвой
+## зоны (иначе встала бы молча с целью под носом, 03, 7.2 п. 2).
 ##
-## ДО G4 (план G2, п. 4): тяжёлый к цели не ходит, поэтому цель берётся СНАЧАЛА В ПОЯСЕ
-## (0,4 R…R), и только если там никого — дальняя по стойке (1,3 R «Охраны», 1,8 R
-## «Охоты»). Одним счётом дальний крейсер на 950 перевешивал фрегата в поясе на 620
-## (вес эскорта 0,6), и главный калибр стоял с целью, которую достать нечем: в
-## «Перестрелке» — половина времени «дальше дальности» при враге в поясе (замечание
-## к G2; 09, 1.2 и 6.3: «главный калибр не стоит молча»). С G4, когда тяжёлый пойдёт
-## в пояс сам, — снова одним счётом по стойке.
+## С G4 тяжёлый к дальней цели идёт САМ (09, 2.1: дальше 0,92 R — подход на 0,8 R, если
+## путь чист), поэтому правило G2 «сначала в поясе» снято: одним счётом дальний крейсер
+## на 950 перевешивает фрегата в поясе на 620 (вес эскорта 0,6) — и тяжёлый подходит к нему
+## (tests/test_sim_weapons.gd, откат «тяжёлый стоит, как в G2» — 0 выстрелов).
 static func main_acquire(b: State, s: Ship) -> Ship:
 	var w := s.def.main
 	var d_ := b.defs.doctrine
@@ -265,10 +260,8 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 	var fence := 0.0
 	if s.stance == &"guard" and not s.station and not s.has_move and not s.has_amove:
 		fence = d_.leash_capital_k * w.rng + w.rng
-	var best: Ship = null            # в поясе
+	var best: Ship = null
 	var best_score := -INF
-	var far: Ship = null             # дальше дальности, но в досягаемости тактики
-	var far_score := -INF
 	var near: Ship = null
 	var nd := INF
 	for o in b.ships:
@@ -277,8 +270,7 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 		if b.defs.dmg_mult(w.key, o.def.cls_i) <= 0.0:
 			continue                 # ноль в таблице — не цель (09, 9.5 п. 6)
 		var d := s.pos.distance_to(o.pos)
-		var reach_k := main_reach(s, d)
-		if reach_k < 0:
+		if main_reach(s, d) < 0:
 			continue                 # ДОКТРИНА 09, 1.2: в мёртвой зоне — не цель главного калибра
 		if d < nd:
 			nd = d
@@ -289,15 +281,9 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 			continue
 		var wgt := d_.main_escort_weight if o.def.cls == &"escort" else 1.0
 		var score := wgt * SCORE - d + (1.0 - o.hp_frac()) * HURT_BONUS + (CARRIER_BONUS if o.def.cls == &"carrier" else 0.0)
-		if reach_k == 0 or rollback_far_capture:
-			if score > best_score:
-				best_score = score
-				best = o
-		elif score > far_score:
-			far_score = score
-			far = o
-	if best == null:
-		best = far
+		if score > best_score:
+			best_score = score
+			best = o
 	if best == null and s.stance == &"hunt" and not s.station:
 		return near
 	return best
@@ -305,6 +291,8 @@ static func main_acquire(b: State, s: Ship) -> Ship:
 
 ## Поводок «Охраны» лёгкого (space.js:1031 leashOf): max(240; 0,4 × дальность).
 static func leash_of(b: State, s: Ship) -> float:
+	if s.leash_set > 0.0:
+		return s.leash_set               # фрегаты под заглушкой строя — 100 (09, 3.1)
 	var g: Defs.StanceDef = b.defs.stances.get(&"guard")
 	return maxf(g.leash, s.range0() * 0.4)
 

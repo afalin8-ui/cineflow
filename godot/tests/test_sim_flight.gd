@@ -7,6 +7,7 @@ const Defs := preload("res://sim/defs.gd")
 const Battle := preload("res://sim/battle.gd")
 const Ship := preload("res://sim/ship.gd")
 const Movement := preload("res://sim/movement.gd")
+const Formation := preload("res://sim/formation.gd")
 
 const CLASSES: Array[StringName] = [&"corvette", &"frigate", &"ecm", &"cruiser", &"carrier", &"capital", &"sinho"]
 ## Таблица 2.22 части 02 (проба в JS, шаг 1/30): вперёд 600, вбок 400, назад 600, с.
@@ -457,53 +458,196 @@ func test_exit_from_hyper_no_jump() -> void:
 	ok(num(r6["jump"]) > 10.0, "откат «окно ровно 6 с»: скачок %.1f за шаг (%s) — проверка краснеет" % [num(r6["jump"]), str(r6["who"])])
 
 
-## Куда идут прибывшие: ЦЕЛЬ — своя линия старта (±deploy.heavy_z), а не середина
-## поля (x × 0,4; 0; ±120) из JS — пояс и мёртвая зона чужих тяжёлых (09, 5.5 и 9.1;
-## план G1, п. 3). Проверяется цель, а не место: проскок с 2,6 × maxSpeed мимо неё —
-## G4, п. 8.
-static func arrivals_target_problems(anchors: PackedFloat64Array, line_z: float, sign_z: float) -> PackedStringArray:
+## Куда идут прибывшие (09, 5.5; план G4, п. 8): каждый — на СВОЁ место в строю от
+## нынешней линии стороны (той же sim/formation.gd → places(), что строй на старте и ПКМ),
+## а не в середину поля (x × 0,4; 0; ±120) из JS — пояс и мёртвая зона чужих тяжёлых. Точка
+## выхода — тормозной путь с 2,6 × maxSpeed от той же thrust(), что разгон, плюс
+## reinforce.exit_pad перед местом, не ближе reinforce.exit_edge к краю: корабль гасит
+## скорость ровно к своему месту, а не пролетает его. Откат `rollback_drop_at_edge` —
+## выход у своего края, как в JS.
+static func arrivals_target_problems(rows: Array, l: float, carrier_back: float) -> PackedStringArray:
 	var out := PackedStringArray()
-	for z in anchors:
-		if absf(z - sign_z * line_z) > 1e-6:
-			out.append("участок прибывшего на z = %.0f, а линия старта — %.0f" % [z, sign_z * line_z])
-		if absf(z) < line_z * 0.5:
-			out.append("участок прибывшего на z = %.0f — середина поля" % z)
+	for r: Dictionary in rows:
+		var ax: Vector2 = r["ax"]
+		var anc: Vector2 = r["anchor"]
+		var ln: Vector2 = r["line"]
+		var off := (anc - ln).dot(ax)
+		var band: int = r["band"]
+		var ok_band := true
+		match band:
+			Formation.HEAVY, Formation.HEAVY2:
+				ok_band = off <= 1.0 and off >= -151.0
+			Formation.CORVETTE, Formation.FRIGATE, Formation.FRIGATE2, Formation.ECM_OLD:
+				# фрегат может встать зонтом у носителя (09, 3.3)
+				ok_band = (off > 1.0 and off <= 0.35 * l + 1.0) or (band == Formation.FRIGATE and off <= -carrier_back + 1.0)
+			Formation.CARRIER:
+				ok_band = off <= -carrier_back + 1.0
+		if not ok_band:
+			out.append("%s: место в %.0f от линии по оси (полоса %d)" % [str(r["id"]), off, band])
+	return out
+
+
+## Прибытие резерва Тройдена в «Сражении» (seed 9). calm — без боя рядом: у противника
+## один неподвижный крейсер в 3000 от своей линии, никто никого не видит в дальности, и
+## проскок мимо места меряется чистым (иначе «Охрана» на поводке уводит корабль к цели —
+## это не проскок). line_z — куда сдвинуть свой флот (край поля — выход вбок).
+func _reinforce_run(calm: bool, line_z: float = 0.0) -> Dictionary:
+	var d := _defs()
+	var b := Battle.create(d, {"attacker": &"troyden", "defender": &"plektor", "size": &"mid", "seed": 9, "reserve": true}) as Battle
+	if calm:
+		var keep: Array[Ship] = []
+		for s in b.ships:
+			if s.side == Ship.ATTACKER:
+				s.pos.y += line_z
+				s.anchor.y += line_z
+				keep.append(s)
+		b.ships.assign(keep)
+		var foe := b.spawn(Ship.DEFENDER, d.ship(&"plektor", &"cruiser"), Vector2(0.0, d.doctrine.deploy_heavy_z + line_z - 3000.0))
+		foe.switch_off(&"engines", 1.0e9)
+		foe.stance = &"hold"
+		foe.main_cd = PackedFloat64Array()
+		foe.sec_cd = PackedFloat64Array()
+		foe.pd_cd = PackedFloat64Array()
+	b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
+	b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
+	var t_in := -1.0
+	var rows: Array = []
+	var by: Dictionary = {}
+	var lim := d.consts.field_half - d.doctrine.reinforce_exit_edge
+	var car_ahead := -INF
+	for i in roundi(70.0 / Battle.STEP):
+		b.step()
+		for ev in b.events:
+			if ev[0] == &"jump_in":
+				var u: int = ev[1]
+				var s := b.ship_by_uid(u)
+				var sd := b.sides[s.side]
+				var r := {"id": s.def.id, "uid": u, "anchor": s.anchor, "line": sd.line, "ax": sd.ax, "exit": s.pos,
+					"band": Formation.role_of(s.def), "over": 0.0, "settled": false,
+					"edge": absf(s.pos.x) <= lim + 1e-6 and absf(s.pos.y) <= lim + 1e-6, "stop_t": -1.0, "rest": INF}
+				rows.append(r)
+				by[u] = r
+				if t_in < 0.0:
+					t_in = b.time
+		# носитель впереди своей линии тяжёлых — ни на одном шаге (план G4, п. 8). Линия —
+		# та, что стояла в миг выхода: прибывший крейсер сам двигает центр тяжёлых, и мерить
+		# от него значило бы мерить носитель от проскочившего вместе с ним крейсера
+		for u: int in by:
+			var cs := b.ship_by_uid(u)
+			var cr: Dictionary = by[u]
+			if cs != null and not cs.dead and cs.hangar != null:
+				var lax: Vector2 = cr["ax"]
+				var lln: Vector2 = cr["line"]
+				car_ahead = maxf(car_ahead, (cs.pos - lln).dot(lax))
+		# проскок мимо места — по оси линии, пока корабль впервые не встал
+		for u: int in by:
+			var r: Dictionary = by[u]
+			if flag(r["settled"]):
+				continue
+			var s := b.ship_by_uid(u)
+			if s == null or s.dead:
+				r["settled"] = true
+				continue
+			var ax: Vector2 = r["ax"]
+			var anc: Vector2 = r["anchor"]
+			r["over"] = maxf(num(r["over"]), (s.pos - anc).dot(ax))
+			if b.time > t_in + 1.0 and s.vel.length() < 0.05 * s.max_speed():
+				r["settled"] = true
+				r["stop_t"] = b.time - t_in
+				r["rest"] = s.pos.distance_to(anc)
+	var t_call: float = b.toast_log[0]["t"] if not b.toast_log.is_empty() else 0.0
+	var texts := PackedStringArray()
+	for t: Dictionary in b.toast_log:
+		texts.append(str(t["text"]))
+	var out := {"rows": rows, "waited": t_in - t_call, "texts": "\n".join(texts), "l": 0.0, "car_ahead": car_ahead}
+	var mine: Array[Ship] = []
+	for s in b.ships:
+		if not s.dead and s.side == Ship.ATTACKER and not s.station:
+			mine.append(s)
+	out["l"] = Formation.line_l(d, Formation.members_from(mine))
+	b.dispose()
 	return out
 
 
 func test_reinforcement_goes_to_own_line() -> void:
 	var d := _defs()
-	var b := Battle.create(d, {"attacker": &"troyden", "defender": &"plektor", "size": &"mid", "seed": 9, "reserve": true}) as Battle
-	b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
-	b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
-	var t_in := -1.0
-	var anchors := PackedFloat64Array()
-	var n_in := 0
-	for i in roundi(40.0 / Battle.STEP):
-		b.step()
-		for ev in b.events:
-			if ev[0] == &"jump_in":
-				var u: int = ev[1]
-				anchors.append(b.ship_by_uid(u).anchor.y)
-				n_in += 1
-				if t_in < 0.0:
-					t_in = b.time
-	var t_call: float = b.toast_log[0]["t"] if not b.toast_log.is_empty() else 0.0
-	var waited := t_in - t_call
+	var r := _reinforce_run(false)
+	var waited := num(r["waited"])
 	ok(waited >= d.hyper.reinforce_delay - 1e-6 and waited < d.hyper.reinforce_delay + Battle.STEP, "резерв вышел через %.3f с после вызова по игровым часам (32)" % waited)
-	eq(n_in, 5, "вышли все пять кораблей резерва Тройдена")
-	var texts := PackedStringArray()
-	for t: Dictionary in b.toast_log:
-		texts.append(str(t["text"]))
-	ok("\n".join(texts).contains("уже в пути"), "второй вызов не зовёт резерв второй раз — полоска «уже в пути»: %s" % " | ".join(texts))
-	var bad := arrivals_target_problems(anchors, d.doctrine.deploy_heavy_z, 1.0)
-	ok(bad.is_empty(), "прибывшие встают на своей линии старта: %s" % "; ".join(bad))
+	var rows: Array = r["rows"]
+	eq(rows.size(), 5, "вышли все пять кораблей резерва Тройдена")
+	ok(str(r["texts"]).contains("уже в пути"), "второй вызов не зовёт резерв второй раз — полоска «уже в пути»: %s" % str(r["texts"]))
+	var bad := arrivals_target_problems(rows, num(r["l"]), d.doctrine.line_carrier_back)
+	ok(bad.is_empty(), "прибывшие встают на свои места в строю от линии стороны: %s" % "; ".join(bad))
 	# откат: цель из JS — (x × 0,4; 0; +120), середина поля
-	var js := PackedFloat64Array()
-	for z in anchors:
-		js.append(d.consts.reinforce_drop_goto_z)
-	ok(not arrivals_target_problems(js, d.doctrine.deploy_heavy_z, 1.0).is_empty(), "откат «цель — середина поля, как в JS» краснеет")
-	b.dispose()
+	var js: Array = []
+	for row: Dictionary in rows:
+		var j := row.duplicate()
+		var anc: Vector2 = row["anchor"]
+		j["anchor"] = Vector2(anc.x * d.consts.reinforce_drop_goto_x_k, d.consts.reinforce_drop_goto_z)
+		js.append(j)
+	ok(not arrivals_target_problems(js, num(r["l"]), d.doctrine.line_carrier_back).is_empty(), "откат «цель — середина поля, как в JS» краснеет")
+
+
+## Выход — тормозной путь + reinforce.exit_pad перед местом: встаёт на месте без проскока.
+## Без боя рядом (проскок «Охраны» к цели — не проскок). Откат — выход у края, как в JS.
+static func _overshoot(rows: Array) -> Array:
+	var worst := 0.0
+	var who := ""
+	var parts := PackedStringArray()
+	var all_settled := true
+	for row: Dictionary in rows:
+		all_settled = all_settled and flag_of(row["settled"])
+		var o: float = row["over"]
+		if o > worst:
+			worst = o
+			who = str(row["id"])
+		var st: float = row["stop_t"]
+		var rest: float = row["rest"]
+		parts.append("%s %.0f (встал на %.1f с в %.0f от места)" % [str(row["id"]), o, st, rest])
+	return [worst, who, ", ".join(parts), all_settled]
+
+
+static func flag_of(v: Variant) -> bool:
+	var b: bool = v
+	return b
+
+
+func test_reinforcement_stops_at_place() -> void:
+	var d := _defs()
+	var r := _reinforce_run(true)
+	var rows: Array = r["rows"]
+	eq(rows.size(), 5, "без боя: вышли все пять")
+	var w := _overshoot(rows)
+	ok(flag(w[3]), "все встали")
+	ok(num(w[0]) <= d.doctrine.reinforce_exit_pad, "проскок мимо своего места не больше reinforce.exit_pad: худший %.1f (%s)" % [num(w[0]), str(w[1])])
+	for row: Dictionary in rows:
+		ok(num(row["rest"]) < 30.0, "%s встал у своего места (в %.0f)" % [str(row["id"]), num(row["rest"])])
+	note("подкрепление: проскок по оси — %s; носитель от своей линии тяжёлых не ближе %.0f позади" % [str(w[2]), -num(r["car_ahead"])])
+	ok(num(r["car_ahead"]) < 0.0, "носитель ни на одном шаге не впереди своей линии тяжёлых (ближе всего %.0f позади)" % -num(r["car_ahead"]))
+	Battle.rollback_drop_at_edge = true
+	var o := _reinforce_run(true)
+	Battle.rollback_drop_at_edge = false
+	var ow := _overshoot(arr(o["rows"]))
+	ok(num(ow[0]) > d.doctrine.reinforce_exit_pad, "откат «выход у края, как в JS»: проскок %.0f (%s) — проверка краснеет" % [num(ow[0]), str(ow[1])])
+	ok(num(o["car_ahead"]) > 0.0, "откат «выход у края»: носитель выходит на %.0f впереди своей линии тяжёлых — проверка краснеет" % num(o["car_ahead"]))
+	note("откат «выход у края»: %s; носитель на %.0f впереди своей линии" % [str(ow[2]), num(o["car_ahead"])])
+	# линия у самого края поля: выход вбок, не ближе reinforce.exit_edge к краю
+	var shift := 1900.0 - d.doctrine.deploy_heavy_z
+	var e := _reinforce_run(true, shift)
+	for row: Dictionary in arr(e["rows"]):
+		ok(flag(row["edge"]), "линия у края: %s выходит не ближе reinforce.exit_edge к краю (%s)" % [str(row["id"]), str(row["exit"])])
+	var we := _overshoot(arr(e["rows"]))
+	ok(num(we[0]) <= d.doctrine.reinforce_exit_pad, "линия у края: проскок не больше exit_pad (%.0f, %s)" % [num(we[0]), str(we[1])])
+	Battle.rollback_exit_no_edge = true
+	var eo := _reinforce_run(true, shift)
+	Battle.rollback_exit_no_edge = false
+	var out_n := 0
+	var eor := arr(eo["rows"])
+	for row: Dictionary in eor:
+		if not flag(row["edge"]):
+			out_n += 1
+	ok(out_n > 0, "откат «выход без края»: за краем %d из %d — проверка краснеет" % [out_n, eor.size()])
 
 
 # ───────────────────────── составы и имена ─────────────────────────
@@ -717,12 +861,16 @@ func test_memory_after_battles() -> void:
 
 # ───────────────────────── хвосты G1: строй «идти» и отпечаток ─────────────────────────
 
-## ПКМ по полю: выделенные идут со скоростью самого медленного (ловушка 6 части 02,
-## C70) и СОХРАНЯЯ взаимное расположение (строй по ролям — G4). Было закрыто в коде,
-## но не проверкой. Откаты — «каждый своей скоростью» и «все в одну точку».
-func _march(own_speed: bool, one_point: bool) -> Dictionary:
+## ПКМ по полю (09, 6.4; план G4, п. 2): выделенные идут со скоростью самого медленного
+## (ловушка 6 части 02, C70) и встают СТРОЕМ ПО РОЛЯМ у точки — той же sim/formation.gd →
+## places(), что строй на старте и места прибывших: тяжёлые линией через точку (шаг
+## hull + hull + 60 — шире расталкивания, ловушка 9), корветы на 0,35 L впереди по оси.
+## Ось — от точки к чужим; никого не видно — по ходу марша. Откаты — «каждый своей
+## скоростью», «все в одну точку» и «как стояли» (прежнее «клик + своё место от центра»).
+func _march(own_speed: bool, one_point: bool, keep_layout: bool = false) -> Dictionary:
 	Battle.rollback_move_own_speed = own_speed
 	Battle.rollback_move_one_point = one_point
+	Battle.rollback_move_keep_layout = keep_layout
 	var b := _lab()
 	var list: Array[Ship] = [_one(b, &"corvette", Vector2(-150, 0)), _one(b, &"cruiser", Vector2(0, 60)), _one(b, &"capital", Vector2(170, -20))]
 	var ids := PackedInt32Array()
@@ -734,12 +882,19 @@ func _march(own_speed: bool, one_point: bool) -> Dictionary:
 		slow = minf(slow, s.max_speed())
 	center /= 3.0
 	var click := Vector2(40.0, -900.0)
-	var before: Array[Vector2] = [list[0].pos, list[1].pos, list[2].pos]
+	var ax := (click - center).normalized()
+	var lat := Vector2(-ax.y, ax.x)
+	var l := Formation.line_l(b.defs, Formation.members_from(list))
 	b.queue({"op": &"move", "ids": ids, "x": click.x, "z": click.y})
 	b.step()
-	var layout_err := 0.0
+	var corv := (list[0].move_to - click).dot(ax)
+	var heavy_ax := maxf(absf((list[1].move_to - click).dot(ax)), absf((list[2].move_to - click).dot(ax)))
+	var heavy_gap := absf((list[1].move_to - list[2].move_to).dot(lat))
+	var need := Formation.hull_of(b.defs, list[1].def) + Formation.hull_of(b.defs, list[2].def)
+	var spread_dest := 0.0
 	for k in 3:
-		layout_err = maxf(layout_err, list[k].move_to.distance_to(click + (before[k] - center)))
+		for j in 3:
+			spread_dest = maxf(spread_dest, list[k].move_to.distance_to(list[j].move_to))
 	var fastest := 0.0
 	var arrive: Array[float] = [-1.0, -1.0, -1.0]
 	for i in roundi(90.0 / Battle.STEP):
@@ -752,23 +907,44 @@ func _march(own_speed: bool, one_point: bool) -> Dictionary:
 	for k in 3:
 		for j in 3:
 			spread = maxf(spread, absf(arrive[k] - arrive[j]))
-	var out := {"layout": layout_err, "fastest": fastest, "slow": slow, "spread": spread, "all": arrive.min() > 0.0,
-		"gap": list[0].pos.distance_to(list[2].pos)}
+	var out := {"corv": corv, "want_corv": b.defs.doctrine.line_corvette_k * l, "heavy_ax": heavy_ax, "heavy_gap": heavy_gap,
+		"need": need, "dest_spread": spread_dest, "fastest": fastest, "slow": slow, "spread": spread, "all": arrive.min() > 0.0}
 	b.dispose()
 	Battle.rollback_move_own_speed = false
 	Battle.rollback_move_one_point = false
+	Battle.rollback_move_keep_layout = false
+	return out
+
+
+static func march_layout_problems(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var corv: float = r["corv"]
+	var want: float = r["want_corv"]
+	if absf(corv - want) > 1.0:
+		out.append("корвет в %.0f впереди точки по оси, а не в 0,35 L = %.0f" % [corv, want])
+	var hx: float = r["heavy_ax"]
+	if hx > 1.0:
+		out.append("тяжёлые не на линии через точку (до %.0f по оси)" % hx)
+	var gap: float = r["heavy_gap"]
+	var need: float = r["need"]
+	if gap < need:
+		out.append("тяжёлые ближе hull + hull (%.0f < %.0f)" % [gap, need])
 	return out
 
 
 func test_move_group_slowest_and_layout() -> void:
 	var r := _march(false, false)
-	ok(num(r["layout"]) < 1e-6, "ПКМ по полю: каждому — точка «клик + своё место относительно центра группы» (расхождение %.6f)" % num(r["layout"]))
+	var bad := march_layout_problems(r)
+	ok(bad.is_empty(), "ПКМ по полю: строй по ролям у точки — %s" % ("; ".join(bad) if not bad.is_empty() else "корвет %.0f впереди (0,35 L), тяжёлые на линии через точку, между ними %.0f (hull + hull %.0f)" % [num(r["corv"]), num(r["heavy_gap"]), num(r["need"])]))
 	ok(num(r["fastest"]) <= num(r["slow"]) + 0.5, "корвет в строю не быстрее самого медленного: %.1f при %.1f (ловушка 6 части 02)" % [num(r["fastest"]), num(r["slow"])])
-	ok(flag(r["all"]) and num(r["spread"]) < 6.0, "строй пришёл вместе: разброс прихода %.1f с" % num(r["spread"]))
+	ok(flag(r["all"]) and num(r["spread"]) < 8.0, "строй пришёл вместе: разброс прихода %.1f с" % num(r["spread"]))
+	note("ПКМ по полю: корвет %.0f впереди, тяжёлые через %.0f, приход разошёлся на %.1f с" % [num(r["corv"]), num(r["heavy_gap"]), num(r["spread"])])
 	var own := _march(true, false)
 	ok(num(own["fastest"]) > num(own["slow"]) * 1.3, "откат «каждый своей скоростью»: корвет %.1f при самом медленном %.1f — проверка краснеет" % [num(own["fastest"]), num(own["slow"])])
 	var one := _march(false, true)
-	ok(num(one["layout"]) > 100.0, "откат «все в одну точку»: расстановка разошлась на %.0f — проверка краснеет" % num(one["layout"]))
+	ok(num(one["dest_spread"]) < 1.0 and not march_layout_problems(one).is_empty(), "откат «все в одну точку»: строя нет — проверка краснеет")
+	var keep := _march(false, false, true)
+	ok(not march_layout_problems(keep).is_empty(), "откат «как стояли» (клик + место от центра): %s — проверка краснеет" % "; ".join(march_layout_problems(keep)))
 
 
 ## Отпечаток боя видит и ПРИКАЗЫ, и состояние СТОРОН (хвост G1): повтор, потерявший
@@ -782,7 +958,14 @@ func _lost_order(kind: String) -> Array:
 			if i == 299 and with_last:
 				match kind:
 					"stance":
-						b.queue({"op": &"stance", "ids": [mine[0].uid], "stance": &"hunt"})
+						# «Держать» кораблю, который стоит без цели: в этот шаг он не сдвинется
+						# (с G4 «Охота» сразу ищет цель дальше и трогается с места)
+						var calm := mine[0]
+						for s in mine:
+							if s.target == null and s.vel.length() < 1e-3 and not s.has_move:
+								calm = s
+								break
+						b.queue({"op": &"stance", "ids": [calm.uid], "stance": &"hold"})
 					"reserve":
 						b.queue({"op": &"reinforce", "side": Ship.ATTACKER})
 					"drift":

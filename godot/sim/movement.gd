@@ -28,9 +28,8 @@ const BOUNCE := -0.3              # space.js:1147: у края скорость 
 const HYPER_RUN := 2.0            # space.js:770: последние 2 с гипера — разгон по носу
 const HYPER_RUN_K := 2.2          # space.js:771: thrust × 2,2
 # Подход ЛЁГКОГО к цели (space.js:1180 approach, 1197 guardStation · часть 03, 2.13) —
-# «как сейчас» (09, 6.1). У тяжёлых этого подхода нет ни в одном пакете: в G2 они
-# приказ огня принимают как выбор цели и с места не сходят, в G4 — пояс доктрины
-# (план G2, п. 4; архитектура, 2.14).
+# «как сейчас» (09, 6.1). У тяжёлых этого подхода нет: пояс доктрины (sim/heavy_doctrine.gd);
+# «на 0,68» тяжёлый идёт ТОЛЬКО под флажком отката --legacy-approach (09, 8.4).
 const LIGHT_WANT_K := 0.68        # рабочая дистанция лёгкого — 0,68 дальности его орудия
 const BAND_FAR := 1.08            # полоса покоя [0,55; 1,08] × рабочей дистанции
 const BAND_NEAR := 0.55
@@ -51,10 +50,6 @@ const CRAFT_NO_PD_K := 0.5
 ## из таблицы, а не от thrust() корабля. С двигателями × 0,5 так возвращается
 ## проскок — проверка «двигатели × 0,5» обязана это увидеть. В бою всегда false.
 static var rollback_brake_table := false
-## ТОЛЬКО для проверки отката (план G2, п. 4): тяжёлый с целью подходит к ней «на 0,68
-## дальности», как в JS, — проверка «тяжёлый с фокусом не сошёл с участка» обязана
-## краснеть. В бою всегда false.
-static var rollback_heavy_approach := false
 ## ТОЛЬКО для проверки отката (03, ловушка 8): «Держать» с целью подходит к ней, как
 ## «Охота», — и к глушителю тоже (sim/weapons.gd → jam_pick читает этот же флажок).
 static var rollback_hold_approach := false
@@ -71,7 +66,7 @@ class Params:
 	var field: float              # battle_constants.field_half — половина поля
 	var guard_leash: float        # space_stances.guard.leash — поводок «Охраны» лёгкого (240)
 	var amove_resume: float       # doctrine amove.resume_s — тяжёлый идёт дальше через 3 с без встречи
-	var clear_k: float            # doctrine belt.clear_k — «путь чист»: никого ближе 0,45 R
+	var clear_k: float            # doctrine belt.clear_k — «путь чист»: никого ближе 0,45 R (--clear-055 — было)
 	var craft_cap_k: float        # battle_constants.craft_speed_cap_k — предел машины 1,15 × maxSpeed
 
 
@@ -195,7 +190,7 @@ static func guard_station(s: Ship, t: Body, range0: float, p: Params) -> Vector2
 	var r := want if (d > want * BAND_FAR or d < want * BAND_NEAR) else d
 	var at := t.pos + v * (r / d)
 	var off := at - s.anchor
-	var leash := maxf(p.guard_leash, range0 * 0.4)        # space.js:1031 leashOf
+	var leash := s.leash_set if s.leash_set > 0.0 else maxf(p.guard_leash, range0 * 0.4)        # space.js:1031 leashOf; фрегаты под заглушкой строя — 100 (09, 3.1)
 	if off.length() > leash:
 		at = s.anchor + off * (leash / off.length())
 	if at.distance_to(s.pos) < STATION_SLOP:
@@ -204,17 +199,46 @@ static func guard_station(s: Ship, t: Body, range0: float, p: Params) -> Vector2
 
 
 # space.js:1211 updateShip (движение) · часть 02, 2.8; часть 03, 2.13
-## Чего корабль хочет на этом шаге и как летит. Звать для живого, не станции и не
-## копящего гипер (их ведёт battle.gd). push — толчок расталкивания из снимка
-## начала шага (sim/space.gd); near_foe — расстояние до ближайшего чужого корабля
-## по тому же снимку («путь чист» атаки с ходу тяжёлого, 09, 6.5).
-static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params, near_foe: float = INF) -> void:
-	var rev := p.rev
-	var brake_k := p.brake_k
-	var cap_k := p.cap_k
-	var field := p.field
+## Чего корабль хочет на этом шаге и как летит — у ЛЁГКИХ, носителей, РЭБ и тяжёлых под
+## флажком отката --legacy-approach (у них — подход лёгкого «на 0,68», как в JS). Тяжёлых
+## доктрины ведёт sim/heavy_doctrine.gd → тот же fly() (09, 2.9: «дальше — как в части 02»).
+## Звать для живого, не станции и не копящего гипер (их ведёт battle.gd). push — толчок
+## расталкивания из снимка начала шага (sim/space.gd).
+static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params) -> void:
 	var vmax := s.group_speed if s.group_speed > 0.0 else s.max_speed()       # C70
-	# охраняемый погиб или ушёл — сторожим то место, где стоим (space.js:1268)
+	sync_ward(s)
+	var desired := Vector2.ZERO
+	var t := s.target as Body              # корабль или машина звена-цели (C14)
+	if t != null and t.dead:
+		t = null
+	var range0 := s.range0()
+	# атака с ходу: встретил — встал (03, 2.15)
+	var fighting := s.has_amove and t != null and s.pos.distance_to(t.pos) < range0 * FIGHT_K
+	# space.js:1275: приказ «идти» (moveTo) важнее всего; атака с ходу — пока не бьёт
+	# встречного
+	if s.has_move:
+		desired = go_to(s, s.move_to, vmax, dt, p)
+	elif s.has_amove and not fighting:
+		desired = go_to(s, s.amove, vmax, dt, p)
+	# space.js:1291–1293: подход к цели и «Охрана» с целью (03, 2.13)
+	elif t != null and (s.forced != null or fighting or s.stance == &"hunt" or rollback_hold_approach):
+		desired = approach(s, t, range0, vmax, p)
+	elif t != null and s.stance == &"guard":
+		desired = guard_station(s, t, range0, p)
+	elif (s.stance == &"guard" or (s.stance == &"hunt" and not s.can_hurt() and not rollback_unarmed_hunt_stays)) and s.pos.distance_to(s.anchor) > ANCHOR_SLOP:
+		# безоружному «Охота» — та же «Охрана» (P5): целей нет — назад, на участок
+		desired = arrive(s, s.anchor, vmax, rev_of(p), p.brake_k)
+	# иначе — «Держать» и пустой участок: стоим (desired = 0)
+	fly(s, desired, push, dt, now, p, look_of(s, desired + push))
+
+
+static func rev_of(p: Params) -> float:
+	return p.rev
+
+
+## Охраняемый погиб или ушёл — сторожим то место, где стоим (space.js:1268); жив —
+## участок едет за ним.
+static func sync_ward(s: Ship) -> void:
 	var ward := s.guard_of as Ship
 	if ward != null and (ward.dead or ward.charging()):
 		s.guard_of = null
@@ -222,78 +246,61 @@ static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params, nea
 		s.anchor = s.pos
 	if ward != null:
 		s.anchor = ward.pos + s.guard_off
-	var desired := Vector2.ZERO
-	var goal_on := false
-	var goal := Vector2.ZERO
-	var heavy := s.heavy()
-	var t := s.target as Body              # корабль или машина звена-цели (C14)
+
+
+## К точке приказа («идти», атака с ходу) приходом; пришёл — точка становится участком
+## (ловушка 5); соседи могут не пустить в саму точку: «рядом и стоит» 2,5 с — тоже приход
+## (ловушка 4). → желаемая скорость.
+static func go_to(s: Ship, goal: Vector2, vmax: float, dt: float, p: Params) -> Vector2:
+	var desired := arrive(s, goal, vmax, p.rev, p.brake_k)
+	var d := s.pos.distance_to(goal)
+	var v := s.vel.length()
+	s.arrive_t = s.arrive_t + dt if d < ARRIVE_SLOW_D and v < ARRIVE_SLOW_V else 0.0
+	if (d < ARRIVED_D and v < ARRIVED_V) or s.arrive_t > ARRIVE_SLOW_T:
+		if s.guard_of == null:
+			s.anchor = goal
+		if s.has_move:
+			s.has_move = false
+		else:
+			s.has_amove = false
+		s.group_speed = 0.0
+		s.arrive_t = 0.0
+	return desired
+
+
+# space.js:1338 куда смотрит нос (часть 02, 2.11): цель важнее курса; в дрифте — всегда
+# на цель. У тяжёлых доктрины — свой порядок (09, 2.8; sim/heavy_doctrine.gd → look).
+static func look_of(s: Ship, want: Vector2) -> Vector2:
+	var t := s.target as Body
 	if t != null and t.dead:
 		t = null
 	var range0 := s.range0()
-	# атака с ходу: встретил — встал (09, 6.5; 03, 2.15)
-	var fighting := false
-	if s.has_amove:
-		if heavy:
-			# ДОКТРИНА 09, 6.5: встреча — цель главного калибра в R или чужой ближе D;
-			# марш дальше — через amove.resume_s без встречи и если путь чист (0,45 R).
-			# Отхода от встречного в G2 нет (пояс — G4): тяжёлый просто стоит.
-			var meet := (t != null and s.pos.distance_to(t.pos) <= s.def.main.rng) or near_foe < s.def.main.dead
-			s.amove_quiet = 0.0 if meet else s.amove_quiet + dt
-			fighting = s.amove_quiet < p.amove_resume or near_foe < p.clear_k * s.def.main.rng
-		else:
-			fighting = t != null and s.pos.distance_to(t.pos) < range0 * FIGHT_K
-	# space.js:1275: приказ «идти» (moveTo) важнее всего; атака с ходу — пока не бьёт
-	# встречного
-	if s.has_move:
-		goal_on = true
-		goal = s.move_to
-	elif s.has_amove and not fighting:
-		goal_on = true
-		goal = s.amove
-	if goal_on:
-		desired = arrive(s, goal, vmax, rev, brake_k)
-		var d := s.pos.distance_to(goal)
-		var v := s.vel.length()
-		# пришёл — точка становится участком (ловушка 5); соседи могут не пустить
-		# в саму точку: «рядом и стоит» 2,5 с — тоже приход (ловушка 4)
-		s.arrive_t = s.arrive_t + dt if d < ARRIVE_SLOW_D and v < ARRIVE_SLOW_V else 0.0
-		if (d < ARRIVED_D and v < ARRIVED_V) or s.arrive_t > ARRIVE_SLOW_T:
-			if s.guard_of == null:
-				s.anchor = goal
-			if s.has_move:
-				s.has_move = false
-			else:
-				s.has_amove = false
-			s.group_speed = 0.0
-			s.arrive_t = 0.0
-	elif heavy and not rollback_heavy_approach:
-		# ДОКТРИНА (план G2, п. 4): тяжёлый приказ огня — фокус, «Охота», атака с ходу —
-		# принимает как ВЫБОР ЦЕЛИ и с места не сходит; пояс, подход и отход — G4.
-		# «Охрана» без приказов — назад на участок, как всегда.
-		if s.stance == &"guard" and s.forced == null and not s.has_amove and s.pos.distance_to(s.anchor) > ANCHOR_SLOP:
-			desired = arrive(s, s.anchor, vmax, rev, brake_k)
-	# space.js:1291–1293: лёгкие — подход к цели и «Охрана» с целью (03, 2.13)
-	elif t != null and (s.forced != null or fighting or s.stance == &"hunt" or rollback_hold_approach):
-		desired = approach(s, t, range0, vmax, p)
-	elif t != null and s.stance == &"guard":
-		desired = guard_station(s, t, range0, p)
-	elif (s.stance == &"guard" or (s.stance == &"hunt" and not s.can_hurt() and not rollback_unarmed_hunt_stays)) and s.pos.distance_to(s.anchor) > ANCHOR_SLOP:
-		# безоружному «Охота» — та же «Охрана» (P5): целей нет — назад, на участок
-		desired = arrive(s, s.anchor, vmax, rev, brake_k)
-	# иначе — «Держать» и пустой участок: стоим (desired = 0)
+	var look_r := (range0 if range0 > 0.0 else LOOK_UNARMED) * LOOK_K
+	if s.drift and t != null:
+		return t.pos - s.pos
+	if t != null and s.pos.distance_to(t.pos) < look_r:
+		return t.pos - s.pos
+	if want.length_squared() > LOOK_MIN_V2:
+		return want
+	if s.vel.length_squared() > LOOK_MIN_V2:
+		return s.vel
+	return Vector2.ZERO
 
+
+## Полёт по желаемой скорости: расталкивание, тяга (в дрифте — нет), предел скорости,
+## нос и перемещение — одно на всех (часть 02, 2.4–2.12).
+static func fly(s: Ship, desired: Vector2, push: Vector2, dt: float, now: float, p: Params, look: Vector2) -> void:
 	# space.js:1309 расталкивание — через двигатель, в желаемую скорость (C87, C59)
-	desired += push
-
+	var want := desired + push
 	# space.js:1327 дрифт: тяги нет совсем, предела скорости нет (часть 02, 2.12)
 	if not s.drift:
-		thrust_to(s, desired, dt, rev, now)
+		thrust_to(s, want, dt, p.rev, now)
 		# space.js:1332 предел 1,25 × maxSpeed — кроме окна после выхода из гипера.
 		# ОТЛИЧИЕ (вопрос 1 части 02, по умолчанию плана): окно держится, пока скорость
 		# сама не опустится до предела (но не дольше hyper.exit_free_max_s), — а не
 		# ровно 6 с: у тяжёлых в момент exitUntil скорость срезалась скачком (крейсер
 		# 65,3 → 47,3 за шаг, часть 02, 2.22)
-		var cap := s.max_speed() * cap_k
+		var cap := s.max_speed() * p.cap_k
 		var spd := s.vel.length()
 		if s.exit_until > now:
 			if spd <= cap:
@@ -303,21 +310,8 @@ static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params, nea
 	else:
 		s.thrust_fwd = 0.0
 		s.thrust_rev = 0.0
-
-	# space.js:1338 куда смотрит нос (часть 02, 2.11): цель важнее курса; в дрифте —
-	# всегда на цель. ДОКТРИНА 09, 2.8 (нос по главному калибру и на чужого тяжёлого) — G4
-	var look := Vector2.ZERO
-	var look_r := (range0 if range0 > 0.0 else LOOK_UNARMED) * LOOK_K
-	if s.drift and t != null:
-		look = t.pos - s.pos
-	elif t != null and s.pos.distance_to(t.pos) < look_r:
-		look = t.pos - s.pos
-	elif desired.length_squared() > LOOK_MIN_V2:
-		look = desired
-	elif s.vel.length_squared() > LOOK_MIN_V2:
-		look = s.vel
 	face(s, look, dt, now)
-	integrate(s, dt, field)
+	integrate(s, dt, p.field)
 
 
 # space.js:752 updateHyper · часть 02, 2.17
