@@ -611,14 +611,142 @@ func test_interceptor_patrol_over_own_line() -> void:
 	ok(num(o["off"]) > 300.0, "откат «--patrol-mid»: кружат над серединой, в %.0f от своей линии — проверка краснеет" % num(o["off"]))
 
 
-## То же на НАСТОЯЩЕМ составе «Полигона» (замечание к G3: лаборатория выше — противник без
-## машин и эскорта, — а в игре звено с патруля сразу уходило на чужие корветы): Z/X/C на
-## первой секунде, как жмёт пользователь, три зерна, 40 с. Перехватчики висят у точки
-## патруля, пока целей нет, первая их цель — чужая машина, и за машинами они гоняются
-## больше, чем за кораблями. Откат — «эскорт ≤ 1000 от машины», как в G3 до доработки
-## (09, 4.2): у точки 0%, первая цель — корвет через 3 с.
-func _polygon_patrol(any_escort: bool) -> Array[Dictionary]:
-	Air.rollback_patrol_any_escort = any_escort
+## Полоса патруля в лаборатории (09, 4.2; вторая доработка G3): линии в 1300 друг от друга
+## по оси −z, точка патруля — на air.patrol_k. Перехватчики висят у неё, ставим цель в
+## нужное место и спрашиваем у модели, взята ли она (Air.acquire) и брошена ли (шаг машины).
+## Места считаются от чисел доктрины, а откаты — правкой этих чисел (как --set): проверка
+## следует за числом, а не за константой в тесте.
+class BandLab:
+	var b: Battle
+	var q: Squad
+	var pp := Vector2.ZERO
+	var fcar: Ship
+	var cv: Ship                      # чужой корвет (или null)
+	var fq: Squad                     # чужое звено истребителей (или null)
+
+
+func _band_lab(d: Defs) -> BandLab:
+	var r := BandLab.new()
+	r.b = _lab(&"troyden", &"plektor", {}, d)
+	_still(_put(r.b, Ship.ATTACKER, &"cruiser", Vector2(0, 650)))
+	var car := _still(_put(r.b, Ship.ATTACKER, &"carrier", Vector2(260, 1090)))
+	_still(_put(r.b, Ship.DEFENDER, &"cruiser", Vector2(0, -650)))
+	r.fcar = _still(_put(r.b, Ship.DEFENDER, &"carrier", Vector2(-260, -1090)))
+	r.q = Hangar.launch(r.b, car, &"interceptor")
+	for c in r.q.craft:
+		c.hp = BIG
+		c.max_hp = BIG
+	_steps(r.b, 20.0)
+	r.pp = Air.patrol_point(r.b, Ship.ATTACKER)
+	return r
+
+
+## Чужой корвет — на dist от точки патруля (по оси к противнику, < 0 — не ставить), чужое
+## звено истребителей — на глубину depth_k отрезка между линиями, на фланге (400 вбок).
+func _band_put(r: BandLab, dist: float, depth_k: float) -> void:
+	var g := Air.geo_of(r.b, Ship.ATTACKER)
+	if dist >= 0.0:
+		r.cv = _still(_put(r.b, Ship.DEFENDER, &"corvette", r.pp + g.ax * dist))
+	if depth_k >= 0.0:
+		r.fq = Hangar.launch(r.b, r.fcar, &"fighter")
+		_park(r.fq, g.p + g.ax * (depth_k * g.d) + g.lat * 400.0)
+	Air.prepare(r.b)
+
+
+static func _kind_text(t: Body, same: Body) -> String:
+	if t == null:
+		return "ничего"
+	if same != null and t == same:
+		return "та же"
+	return "корабль" if t.kind == Body.SHIP else "машина"
+
+
+## Что звено с патруля берёт, если поставить корвет на dist и машину на depth_k.
+func _band_take(d: Defs, dist: float, depth_k: float) -> String:
+	var r := _band_lab(d)
+	_band_put(r, dist, depth_k)
+	var c: Craft = r.q.craft[0]
+	var out := _kind_text(Air.acquire(r.b, c, c.pos), null)
+	r.b.dispose()
+	return out
+
+
+## Звено уже бьёт цель (корабль на at0 от точки патруля или машину на глубине at0), цель
+## уходит на at1; шаг машины → «та же», «ничего», «корабль» или «машина».
+func _band_drop(d: Defs, ship: bool, at0: float, at1: float) -> String:
+	var r := _band_lab(d)
+	_band_put(r, at0 if ship else -1.0, -1.0 if ship else at0)
+	var t0: Body = r.cv if ship else r.fq.craft[0]
+	var c: Craft = r.q.craft[0]
+	c.target = t0
+	var g := Air.geo_of(r.b, Ship.ATTACKER)
+	if ship:
+		t0.pos = r.pp + g.ax * at1
+	else:
+		_park(r.fq, g.p + g.ax * (at1 * g.d) + g.lat * 400.0)
+	Air.update_craft(r.b, c)
+	var out := _kind_text(c.target as Body, t0)
+	r.b.dispose()
+	return out
+
+
+func test_patrol_band_escort() -> void:
+	var dc := _defs().doctrine
+	var take := dc.air_patrol_escort_take
+	var drop := dc.air_patrol_escort_drop
+	eq(_band_take(_defs(), take - 50.0, -1.0), "корабль", "чужой корвет в %.0f от точки патруля (ближе air.patrol_escort_take = %.0f) звено с патруля берёт" % [take - 50.0, take])
+	eq(_band_take(_defs(), take + 50.0, -1.0), "ничего", "в %.0f — не берёт: прорвался не к нашей линии" % (take + 50.0))
+	var wide := Defs.load_default({"air.patrol_escort_take": 1000.0}) as Defs
+	eq(_band_take(wide, take + 50.0, -1.0), "корабль", "откат «take = 1000» (как в 0.4): тот же корвет в %.0f взят — проверка краснеет" % (take + 50.0))
+	eq(_band_drop(_defs(), true, take - 50.0, drop + 50.0), "ничего", "корвет, взятый в %.0f, ушёл в %.0f (дальше air.patrol_escort_drop = %.0f) — цель снята" % [take - 50.0, drop + 50.0, drop])
+	eq(_band_drop(_defs(), true, take - 50.0, drop - 50.0), "та же", "в %.0f — ещё в полосе, звено его держит" % (drop - 50.0))
+	var sticky := Defs.load_default({"air.patrol_escort_drop": 1.0e6}) as Defs
+	eq(_band_drop(sticky, true, take - 50.0, drop + 50.0), "та же", "откат «без drop»: звено гонится за корветом в %.0f — проверка краснеет" % (drop + 50.0))
+
+
+func test_patrol_band_craft() -> void:
+	var dc := _defs().doctrine
+	var tk := dc.air_patrol_craft_take_k
+	var dk := dc.air_patrol_craft_drop_k
+	eq(_band_take(_defs(), -1.0, tk - 0.05), "машина", "чужое звено на фланге на глубине %.2f отрезка (ближе air.patrol_craft_take_k = %.2f) звено с патруля берёт" % [tk - 0.05, tk])
+	eq(_band_take(_defs(), -1.0, tk + 0.1), "ничего", "на глубине %.2f — не берёт: оно ещё не на нашей стороне" % (tk + 0.1))
+	Air.rollback_patrol_any_craft = true
+	var any := _band_take(_defs(), -1.0, tk + 0.1)
+	Air.rollback_patrol_any_craft = false
+	eq(any, "машина", "откат «машина ≤ 1000 от самой машины» (как в 0.4.1): то же звено взято — проверка краснеет")
+	var deep := Defs.load_default({"air.patrol_craft_take_k": tk + 0.2}) as Defs
+	eq(_band_take(deep, -1.0, tk + 0.1), "машина", "правка числа take_k = %.2f — то же звено взято (проверка следует за доктриной)" % (tk + 0.2))
+	eq(_band_drop(_defs(), false, tk - 0.05, dk + 0.1), "ничего", "звено, взятое на %.2f, ушло на %.2f (дальше air.patrol_craft_drop_k = %.2f) — цель снята" % [tk - 0.05, dk + 0.1, dk])
+	eq(_band_drop(_defs(), false, tk - 0.05, dk - 0.05), "та же", "на %.2f — ещё наша сторона, звено его держит" % (dk - 0.05))
+	var sticky := Defs.load_default({"air.patrol_craft_drop_k": 5.0}) as Defs
+	eq(_band_drop(sticky, false, tk - 0.05, dk + 0.1), "та же", "откат «без drop»: звено гонится за чужим на %.2f — проверка краснеет" % (dk + 0.1))
+	# машина в полосе важнее чужого лёгкого: звено бьёт корвет, вошла машина — переключилось
+	for sticks: bool in [false, true]:
+		Air.rollback_patrol_ship_sticks = sticks
+		var r := _band_lab(_defs())
+		_band_put(r, dc.air_patrol_escort_take - 50.0, tk - 0.05)
+		var c: Craft = r.q.craft[0]
+		c.target = r.cv
+		Air.update_craft(r.b, c)
+		var got := _kind_text(c.target as Body, r.cv)
+		Air.rollback_patrol_ship_sticks = false
+		if not sticks:
+			eq(got, "машина", "звено бьёт прорвавшийся корвет, в полосу вошла чужая машина — переключилось на неё (машина важнее лёгкого)")
+		else:
+			eq(got, "та же", "откат «цель-корабль прилипает» (как в JS): звено осталось на корвете — проверка краснеет")
+		r.b.dispose()
+
+
+## Место боя перехватчиков на НАСТОЯЩЕМ составе «Полигона» (замечание ко второй проверке
+## G3): Z/X/C, как жмёт пользователь, три зерна. Доля оси — 0 у центра своих тяжёлых,
+## 1 у чужих (Air.geo_of). mode: &"ok"; откаты Air — &"any_craft" (машина с патруля в 1000
+## от самой машины, как в 0.4.1: патрули сторон друг друга «видят», и звено улетало за чужим
+## звеном к чужой линии), &"sticks" (цель-корабль прилипает — машина не важнее лёгкого).
+## → по зерну: «висело» (с прихода к точке патруля до первой цели, с), доли оси гибели,
+## машино-шаги с целью-машиной (и сколько из них на своей половине), с целью-кораблём.
+func _polygon_place(launch_s: float, mode: StringName) -> Array[Dictionary]:
+	Air.rollback_patrol_any_craft = mode == &"any_craft"
+	Air.rollback_patrol_ship_sticks = mode == &"sticks"
 	var out: Array[Dictionary] = []
 	for sd: int in [Polygon.SEED, 2, 3]:
 		var b := Battle.create(_defs(), Polygon.setup_dict(sd)) as Battle
@@ -626,17 +754,25 @@ func _polygon_patrol(any_escort: bool) -> Array[Dictionary]:
 		for s in b.ships:
 			if s.side == Ship.ATTACKER and s.hangar != null and not s.station and car == null:
 				car = s
-		for role: StringName in [&"interceptor", &"fighter", &"bomber"]:
-			b.queue({"op": &"launch", "ids": PackedInt32Array([car.uid]), "role": role})
 		var iq: Squad = null
-		var steps := 0
-		var near := 0
-		var on_ship := 0
-		var on_craft := 0
-		var first := &""
+		var mine: Dictionary[int, bool] = {}
+		var deaths := PackedFloat64Array()
+		var arrived := -1.0
 		var first_t := -1.0
-		for i in roundi(40.0 / Battle.STEP):
+		var on_craft := 0
+		var own_half := 0
+		var on_ship := 0
+		for i in roundi((launch_s + 40.0) / Battle.STEP):
+			if b.steps == roundi(launch_s / Battle.STEP):
+				for role: StringName in [&"interceptor", &"fighter", &"bomber"]:
+					b.queue({"op": &"launch", "ids": PackedInt32Array([car.uid]), "role": role})
 			b.step()
+			var g := Air.geo_of(b, Ship.ATTACKER)
+			for e in b.events:
+				var du: int = e[1] if e[0] == &"craft_dead" else -1
+				if du >= 0 and mine.has(du) and g != null and g.ok:
+					var at: Vector2 = e[2]
+					deaths.append((at - g.p).dot(g.ax) / g.d)
 			if iq == null:
 				for q in b.squads:
 					if q.side == Ship.ATTACKER and q.role == &"interceptor":
@@ -645,37 +781,74 @@ func _polygon_patrol(any_escort: bool) -> Array[Dictionary]:
 					continue
 			var pp: Variant = Air.patrol_point(b, Ship.ATTACKER)
 			for c in iq.craft:
-				steps += 1
+				mine[c.uid] = true
 				var t := c.target as Body
 				if t == null:
-					if pp != null:
+					if arrived < 0.0 and pp != null:
 						var ppv: Vector2 = pp
-						if c.pos.distance_to(ppv) < 250.0:
-							near += 1
+						if c.pos.distance_to(ppv) < 150.0:
+							arrived = b.time
 					continue
-				if t.kind == Body.SHIP:
-					on_ship += 1
-				elif t.kind == Body.CRAFT:
-					on_craft += 1
-				if first == &"":
-					first = &"корабль" if t.kind == Body.SHIP else (&"машина" if t.kind == Body.CRAFT else &"снаряд")
+				if first_t < 0.0:
 					first_t = b.time
-		out.append({"seed": sd, "near": float(near) / maxf(float(steps), 1.0), "first": first, "first_t": first_t,
-			"ship": on_ship, "craft": on_craft})
+				if t.kind == Body.CRAFT:
+					on_craft += 1
+					if g != null and g.ok and (c.pos - g.p).dot(g.ax) / g.d < 0.5:
+						own_half += 1
+				elif t.kind == Body.SHIP:
+					on_ship += 1
+		var hang := (first_t - arrived) if arrived >= 0.0 and first_t >= arrived else 0.0
+		out.append({"seed": sd, "hang": hang, "arrived": arrived, "first": first_t, "deaths": deaths,
+			"craft": on_craft, "own": own_half, "ship": on_ship})
 		b.dispose()
-	Air.rollback_patrol_any_escort = false
+	Air.rollback_patrol_any_craft = false
+	Air.rollback_patrol_ship_sticks = false
 	return out
 
 
-func test_interceptor_patrol_in_polygon() -> void:
-	for r in _polygon_patrol(false):
-		note("«Полигон», зерно %d: у точки патруля %.0f%% машино-шагов, первая цель — %s на %.1f с, по машинам %d шагов, по кораблям %d" % [whole(r["seed"]), num(r["near"]) * 100.0, str(r["first"]), num(r["first_t"]), whole(r["craft"]), whole(r["ship"])])
-		ok(num(r["near"]) >= 0.2, "зерно %d: перехватчики висят над своей лёгкой линией — у точки патруля %.0f%% времени" % [whole(r["seed"]), num(r["near"]) * 100.0])
-		eq(str(r["first"]), "машина", "зерно %d: первая цель перехватчиков — чужое звено" % whole(r["seed"]))
-		ok(whole(r["craft"]) > 2 * whole(r["ship"]), "зерно %d: за машинами — больше, чем за кораблями (%d против %d)" % [whole(r["seed"]), whole(r["craft"]), whole(r["ship"])])
-	for o in _polygon_patrol(true):
-		note("откат «эскорт ≤ 1000», зерно %d: у точки %.0f%%, первая цель — %s на %.1f с, по машинам %d, по кораблям %d" % [whole(o["seed"]), num(o["near"]) * 100.0, str(o["first"]), num(o["first_t"]), whole(o["craft"]), whole(o["ship"])])
-		ok(num(o["near"]) < 0.2 and str(o["first"]) == "корабль", "откат «эскорт ≤ 1000 от машины», зерно %d: у точки %.0f%%, первая цель — %s — проверка краснеет" % [whole(o["seed"]), num(o["near"]) * 100.0, str(o["first"])])
+static func _deaths_text(r: Dictionary) -> String:
+	var parts := PackedStringArray()
+	var ds: PackedFloat64Array = r["deaths"]
+	for x in ds:
+		parts.append("%.2f" % x)
+	return ", ".join(parts)
+
+
+static func _deep_share(r: Dictionary) -> float:
+	var ds: PackedFloat64Array = r["deaths"]
+	var n := 0
+	for x in ds:
+		if x >= 0.5:
+			n += 1
+	return float(n) / maxf(float(ds.size()), 1.0)
+
+
+## Пуск на первой секунде: звено висит над своей линией (6–8 с), пока к ней не подошли чужие
+## корветы, и гибнет на СВОЕЙ половине (доля оси < 0,5). Откат «машина ≤ 1000 от самой машины»
+## — первая цель через 2,4 с после прихода, чужой перехватчик за чужой линией (доля 1,12),
+## 80–100% гибелей у чужого строя.
+func test_interceptor_place_in_polygon() -> void:
+	for r in _polygon_place(1.0, &"ok"):
+		note("«Полигон», пуск на 1 с, зерно %d: у точки патруля с %.1f с, первая цель на %.1f с (висело %.1f с), гибель на долях оси [%s]; по машинам %d, по кораблям %d" % [whole(r["seed"]), num(r["arrived"]), num(r["first"]), num(r["hang"]), _deaths_text(r), whole(r["craft"]), whole(r["ship"])])
+		ok(num(r["hang"]) >= 4.0, "зерно %d: перехватчики висят над своей линией %.1f с, пока к ней никто не подошёл" % [whole(r["seed"]), num(r["hang"])])
+		var ds: PackedFloat64Array = r["deaths"]
+		ok(ds.size() >= 3 and _deep_share(r) == 0.0, "зерно %d: звено воюет на своей половине — все %d гибелей на доле оси < 0,5 [%s]" % [whole(r["seed"]), ds.size(), _deaths_text(r)])
+	for o in _polygon_place(1.0, &"any_craft"):
+		note("откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, гибель на долях [%s]" % [whole(o["seed"]), num(o["hang"]), _deaths_text(o)])
+		ok(num(o["hang"]) < 4.0 and _deep_share(o) >= 0.5, "откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, у чужого строя (доля ≥ 0,5) — %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), num(o["hang"]), _deep_share(o) * 100.0])
+
+
+## Пуск на 20-й секунде, когда к нашей линии подходят чужие бомбардировщики: звено бросается
+## на чужие звенья (машинам — больше, чем кораблям) и бьёт их на своей половине. Откат
+## «цель-корабль прилипает»: звено держится за подошедший корвет — кораблям больше.
+func test_interceptor_meets_squads_in_polygon() -> void:
+	for r in _polygon_place(20.0, &"ok"):
+		note("«Полигон», пуск на 20 с, зерно %d: по машинам %d шагов (на своей половине %d), по кораблям %d, гибель на долях [%s]" % [whole(r["seed"]), whole(r["craft"]), whole(r["own"]), whole(r["ship"]), _deaths_text(r)])
+		ok(whole(r["craft"]) > whole(r["ship"]), "зерно %d: перехватчики бросаются на чужие звенья — по машинам %d шагов против %d по кораблям" % [whole(r["seed"]), whole(r["craft"]), whole(r["ship"])])
+		ok(whole(r["own"]) >= roundi(0.9 * float(whole(r["craft"]))), "зерно %d: и бьют их на своей половине (%d из %d шагов)" % [whole(r["seed"]), whole(r["own"]), whole(r["craft"])])
+	for o in _polygon_place(20.0, &"sticks"):
+		note("откат «цель-корабль прилипает», зерно %d: по машинам %d, по кораблям %d" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
+		ok(whole(o["craft"]) < whole(o["ship"]), "откат «цель-корабль прилипает», зерно %d: по машинам %d против %d по кораблям — проверка краснеет" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
 
 
 ## Звено бомбардировщиков с приказом «идти» летит в точку по прямой и ждёт там (09, 4.4:
@@ -720,6 +893,116 @@ func test_bomber_move_goes_straight() -> void:
 		eq(whole(r["torp"]), 0, "по дороге налёта нет — торпед не пущено")
 	for o in _bomber_move(true):
 		ok(num(o["best"]) > 300.0, "откат «маршрут раньше приказа»: звено уходит на обход, к точке %s ближе %.0f не подошло — проверка краснеет" % [str(o["goal"]), num(o["best"])])
+
+
+## Звено бомбардировщиков после налёта (пройдены обе точки обхода, leg = 2) получает
+## «идти» к своему носителю, а там — V (замечание ко второй проверке G3, 09, 4.4: назад через
+## точки 2 и 1 — только после захода с фланга). Машины бессмертны: меряется путь, а не ПВО.
+## Откат — «идти» не бросает пройденные точки, как в 0.4.1: звено уходило до 1055 от носителя
+## к флангу чужой линии и садилось через 33,6 с.
+func _recall_after_raid(keep_leg: bool) -> Dictionary:
+	Air.rollback_move_keeps_leg = keep_leg
+	var b := Battle.create(_defs(), Polygon.setup_dict(Polygon.SEED)) as Battle
+	var car: Ship = null
+	var foe: Ship = null
+	for s in b.ships:
+		if s.side == Ship.ATTACKER and s.hangar != null and not s.station and car == null:
+			car = s
+		if s.side == Ship.DEFENDER and s.def.cls == &"capital" and foe == null:
+			foe = s
+	b.queue({"op": &"launch", "ids": PackedInt32Array([car.uid]), "role": &"bomber"})
+	_steps(b, 2.0 * Battle.STEP)
+	var q: Squad = b.squads[0]
+	for c in q.craft:
+		c.hp = BIG
+		c.max_hp = BIG
+	b.queue({"op": &"focus", "ids": PackedInt32Array([q.uid]), "target": foe.uid})
+	var torps := 0
+	for i in roundi(40.0 / Battle.STEP):
+		b.step()
+		for e in b.events:
+			if e[0] == &"proj":
+				torps += 1
+		if torps >= 2:
+			break
+	var leg := (q.craft[0] as Craft).leg
+	var goal := car.pos + Vector2(-250, 0)
+	b.queue({"op": &"move", "ids": PackedInt32Array([q.uid]), "x": goal.x, "z": goal.y})
+	_steps(b, 30.0)
+	var at_goal := q.pos.distance_to(goal)
+	b.queue({"op": &"recall", "ids": PackedInt32Array([q.uid])})
+	var far := 0.0
+	var landed := -1.0
+	for i in roundi(60.0 / Battle.STEP):
+		b.step()
+		if q.dead:
+			landed = float(i + 1) * Battle.STEP
+			break
+		far = maxf(far, q.pos.distance_to(car.pos))
+	Air.rollback_move_keeps_leg = false
+	b.dispose()
+	return {"torps": torps, "leg": leg, "at_goal": at_goal, "far": far, "landed": landed}
+
+
+func test_recall_after_raid_goes_straight() -> void:
+	var r := _recall_after_raid(false)
+	note("налёт: торпед %d, пройдено точек %d; «идти» — у точки в %.0f; после V дальше всего от носителя %.0f, село через %.1f с" % [whole(r["torps"]), whole(r["leg"]), num(r["at_goal"]), num(r["far"]), num(r["landed"])])
+	ok(whole(r["torps"]) >= 2 and whole(r["leg"]) == 2, "звено сходило в налёт с фланга (торпед %d, пройдено точек %d)" % [whole(r["torps"]), whole(r["leg"])])
+	ok(num(r["far"]) < 400.0 and num(r["landed"]) >= 0.0 and num(r["landed"]) < 15.0, "после «идти» к носителю V сажает звено прямо: дальше %.0f от носителя не уходит, село через %.1f с" % [num(r["far"]), num(r["landed"])])
+	var o := _recall_after_raid(true)
+	note("откат «идти» не бросает точки обхода: дальше всего %.0f, село через %.1f с" % [num(o["far"]), num(o["landed"])])
+	ok(num(o["far"]) > 600.0 and (num(o["landed"]) < 0.0 or num(o["landed"]) > 15.0), "откат «идти» не бросает пройденные точки (как в 0.4.1): по V звено уходит к флангу чужой линии (%.0f от носителя) — проверка краснеет" % num(o["far"]))
+
+
+## Посадка со всех сторон (04, ловушка 31, найдено при второй доработке G3): звено «идти»
+## в 150 и 300 от неподвижного носителя по 16 направлениям, ждёт, потом V. На полном газу
+## вираж шире круга посадки (бомбардировщик ≈ 44 при круге 36, истребитель Плэктора ≈ 52),
+## и звено кружило у носителя вечно, не возвращая место. → [не село за 20 с, дольше всего].
+func _land_all_sides(clan: StringName, role: StringName, full: bool) -> Vector2:
+	Air.rollback_land_full_throttle = full
+	var fails := 0
+	var worst := 0.0
+	var other: StringName = &"plektor" if clan != &"plektor" else &"troyden"
+	for k in 16:
+		for r: float in [150.0, 300.0]:
+			var b := _lab(clan, other)
+			var car := _put(b, Ship.ATTACKER, &"carrier", Vector2(0, 900))
+			_still(car)
+			_still(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -2500)))
+			var q := Hangar.launch(b, car, role)
+			for c in q.craft:
+				c.hp = BIG
+				c.max_hp = BIG
+			var a := TAU * float(k) / 16.0
+			var goal := car.pos + Vector2(cos(a), sin(a)) * r
+			b.queue({"op": &"move", "ids": PackedInt32Array([q.uid]), "x": goal.x, "z": goal.y})
+			_steps(b, 10.0 + float(k % 8))
+			var free0 := car.hangar.free
+			b.queue({"op": &"recall", "ids": PackedInt32Array([q.uid])})
+			var landed := -1.0
+			for i in roundi(20.0 / Battle.STEP):
+				b.step()
+				if q.dead:
+					landed = float(i + 1) * Battle.STEP
+					break
+			if landed < 0.0 or car.hangar.free != free0 + 1:
+				fails += 1
+			else:
+				worst = maxf(worst, landed)
+			b.dispose()
+	Air.rollback_land_full_throttle = false
+	return Vector2(float(fails), worst)
+
+
+func test_landing_from_all_sides() -> void:
+	for cr: Array in [[&"troyden", &"bomber"], [&"plektor", &"fighter"]]:
+		var clan: StringName = cr[0]
+		var role: StringName = cr[1]
+		var r := _land_all_sides(clan, role, false)
+		note("посадка %s %s с 32 точек: не село %d, дольше всего %.1f с" % [clan, role, roundi(r.x), r.y])
+		ok(roundi(r.x) == 0, "%s, %s: V с 32 точек вокруг носителя — сели все и вернули место (дольше всего %.1f с)" % [clan, role, r.y])
+		var o := _land_all_sides(clan, role, true)
+		ok(roundi(o.x) > 0, "откат «на посадку полным газом» (как в JS): %s, %s — за 20 с не село %d из 32, кружат у носителя — проверка краснеет" % [clan, role, roundi(o.x)])
 
 
 # ───────────────────────── носитель в гипере, уборка launched ─────────────────────────
@@ -774,6 +1057,54 @@ func _launched(keep: bool) -> int:
 func test_dead_squads_leave_launched() -> void:
 	eq(_launched(false), 0, "выбитое звено ушло из списка носителя")
 	ok(_launched(true) > 0, "откат «не убирать»: мёртвое звено числится за носителем — проверка краснеет")
+
+
+# ───────────────────────── показательная запись: приказы звеньям ─────────────────────────
+
+## Показательный бой (его гоняют повтор с видом в обёртке и в CI, C99 и М7) несёт приказы
+## СВОИМ звеньям: пуск Z/X/C, фокус своего звена на чужое звено и посадку V (замечание ко
+## второй проверке G3: на шагах 720 и 900 свои перехватчики и истребители были уже сбиты,
+## и приказ мёртвому не отдавался вовсе — в журнале их не было). Откат — прежние шаги.
+func _demo_air(late: bool) -> Dictionary:
+	Polygon.rollback_late_air_orders = late
+	var side_of: Dictionary[int, int] = {}
+	var each := func(bb: Battle) -> void:
+		for q in bb.squads:
+			side_of[q.uid] = q.side
+	var b := Polygon.demo_battle(_defs(), "capella-проверка", Polygon.DEMO_STEPS, each)
+	var rec := b.record()
+	b.dispose()
+	Polygon.rollback_late_air_orders = false
+	var launch := 0
+	var recall := 0
+	var squad_on_squad := 0
+	for c: Variant in arr(rec["cmds"]):
+		var cmd := dict(c)
+		var op := str(cmd.get("op", ""))
+		var ids := arr(cmd.get("ids", []))
+		var own_sq := false
+		for u: Variant in ids:
+			var ui: int = roundi(num(u))
+			own_sq = own_sq or (side_of.has(ui) and side_of[ui] == Ship.ATTACKER)
+		match op:
+			"launch":
+				launch += 1
+			"recall":
+				if own_sq:
+					recall += 1
+			"focus":
+				var tu: int = roundi(num(cmd.get("target", 0.0)))
+				if own_sq and side_of.has(tu) and side_of[tu] == Ship.DEFENDER:
+					squad_on_squad += 1
+	return {"launch": launch, "recall": recall, "focus": squad_on_squad}
+
+
+func test_demo_record_air_orders() -> void:
+	var r := _demo_air(false)
+	note("показательная запись: пусков %d, посадок своих звеньев %d, фокусов своего звена на чужое %d" % [whole(r["launch"]), whole(r["recall"]), whole(r["focus"])])
+	ok(whole(r["launch"]) >= 3 and whole(r["recall"]) >= 1 and whole(r["focus"]) >= 1, "в журнале показательного боя есть пуски (%d), посадка своего звена (%d) и фокус своего звена на чужое (%d)" % [whole(r["launch"]), whole(r["recall"]), whole(r["focus"])])
+	var o := _demo_air(true)
+	ok(whole(o["recall"]) == 0 and whole(o["focus"]) == 0, "откат «прежние шаги 720 и 900»: своих звеньев к ним нет, приказов в журнале ни одного — проверка краснеет")
 
 
 # ───────────────────────── длинный бой: C99 и прочность в каждом шаге ─────────────────────────

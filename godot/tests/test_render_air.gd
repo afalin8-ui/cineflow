@@ -25,6 +25,7 @@ const Hangar := preload("res://sim/hangar.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
 const AirView := preload("res://view/air_view.gd")
+const PolygonHud := preload("res://ui/polygon_hud.gd")
 const MainScene := preload("res://main.tscn")
 
 const BIG := 1.0e9
@@ -594,6 +595,112 @@ func test_shot_at_downed_target_ends_at_its_place() -> void:
 	var l := await _downed_shots(&"lost", &"light")
 	var lo: Array[float] = l["light"]
 	ok(not lo.is_empty() and lo[0] == INF, "%s: откат «луч по ушедшей цели не рисуется»: у сбитых лучей нет (%d) — проверка краснеет" % [renderer(), lo.size()])
+
+
+## Трасса ПВО по машине, сбитой этой же очередью (замечание ко второй проверке G3): машину
+## Hangar.tick убирает в конце шага, вид разбирает события после, и конец трассы ложился на
+## высоту СТРЕЛЯВШЕГО корабля, а вспышка гибели — на высоту машины (разрыв до 80–120).
+## Свой носитель с ПВО против чужого звена бомбардировщиков с прочностью 0,01: каждая
+## очередь сбивает. Мерило — расстояние В 3D (вместе с высотой) от конца трассы до точки,
+## где машину нарисовали в последнем кадре. Откат — высота стрелявшего, как в 0.4.1.
+func _pd_downed(ship_y: bool) -> Array[float]:
+	BattleFx.rollback_pd_ship_y = ship_y
+	var v := await _lab_view(func(b: Battle) -> void:
+		var car := _put(b, Ship.ATTACKER, &"carrier", Vector2(0, 250), Vector2(0, -300))
+		car.main_cd = PackedFloat64Array()
+		_quiet(_put(b, Ship.DEFENDER, &"carrier", Vector2(0, -700), Vector2(0, 0)))
+		_quiet(_put(b, Ship.DEFENDER, &"cruiser", Vector2(-250, -700), Vector2(0, 0))))
+	var b := v.battle
+	Hangar.launch(b, b.ships[1], &"bomber")
+	var out: Array[float] = []
+	var drawn: Dictionary[int, Vector3] = {}
+	for i in roundi(40.0 / Battle.STEP):
+		drawn.clear()
+		for c in b.crafts:
+			if c.side == Ship.DEFENDER:
+				c.hp = minf(c.hp, 0.01)
+				if v.air.drawn.has(c.uid):
+					drawn[c.uid] = v.air.drawn[c.uid]
+		var tw0 := v.bfx.gfx.tracers_written
+		_step_draw(v)
+		var ends := _ends(v.bfx.gfx.tracers, tw0, v.bfx.gfx.tracers_written, BattleFx.PD_OWN)
+		for e in b.events:
+			if e[0] != &"pd":
+				continue
+			var tu: int = e[4]
+			if b.body_by_uid(tu) != null or not drawn.has(tu):
+				continue
+			var best := INF
+			for p in ends:
+				best = minf(best, p.distance_to(drawn[tu]))
+			out.append(best)
+		if i > 30 and b.crafts.filter(func(c: Craft) -> bool: return c.side == Ship.DEFENDER).is_empty():
+			break
+	await _drop(v)
+	BattleFx.rollback_pd_ship_y = false
+	out.sort()
+	note("%s · трасса ПВО по сбитой машине (%s): очередей %d, конец от нарисованной машины — %s" % [renderer(), "высота стрелявшего" if ship_y else "как в игре", out.size(),
+		", ".join(out.map(func(x: float) -> String: return "%.1f" % x))])
+	return out
+
+
+func test_pd_at_downed_craft_ends_at_its_place() -> void:
+	var r := await _pd_downed(false)
+	ok(r.size() >= 3 and r[-1] < 5.0, "%s: ПВО сбивает машины (%d очередей), и конец каждой трассы — у нарисованной машины, вместе с высотой (дальше всего %.1f)" % [renderer(), r.size(), r[-1] if not r.is_empty() else INF])
+	var o := await _pd_downed(true)
+	ok(not o.is_empty() and o[-1] > 15.0, "%s: откат «высота стрелявшего корабля» (как в 0.4.1): конец трассы в %.0f от машины — проверка краснеет" % [renderer(), o[-1] if not o.is_empty() else -1.0])
+
+
+# ───────────────────────── нижняя панель на 1366 ─────────────────────────
+
+## Нижняя панель при выборе ВСЕХ своих кораблей в бою (замечание ко второй проверке G3):
+## строка занятий тяжёлых («главным по … · батареей по … · под помехами …») переноса не
+## имела, и на 1366 панель уходила за оба края (x −117…1483 на 20-й секунде) — срезались
+## начало «Выбрано: …» и строка приказов. Главная сцена, 1366 × 768, выбор всех своих каждые
+## 5 с до 40-й. → [моментов, когда панель за краем окна, самый широкий выход за край].
+func _panel_1366(nowrap: bool) -> Vector2:
+	PolygonHud.rollback_panel_nowrap = nowrap
+	var got := await hooks.set_window_size(Vector2i(1366, 768))
+	var main := MainScene.instantiate()
+	tree.root.add_child(main)
+	await hooks.frames(4)
+	var poly: Node = main.get("polygon")
+	var view: BattleView = poly.get("view")
+	var hud: PolygonHud = poly.get("hud")
+	var b := view.battle
+	view.paused = true
+	var cut := 0
+	var worst := 0.0
+	for t: float in [5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0]:
+		while b.time < t and not b.over:
+			view.paused = false
+			view.advance(Battle.STEP)
+			view.paused = true
+		var own: Array[int] = []
+		for s in b.ships:
+			if not s.dead and s.side == Ship.ATTACKER and not s.station:
+				own.append(s.uid)
+		view.selection = own
+		view.draw_state()
+		await hooks.frames(3)
+		var r := hud.panel.get_global_rect()
+		var out := maxf(-r.position.x, r.end.x - float(got.x))
+		if out > 0.5:
+			cut += 1
+			worst = maxf(worst, out)
+		if t == 20.0:
+			note("%s · панель на 1366, 20-я секунда (%s): x %.0f…%.0f, строк %d" % [renderer(), "без переноса" if nowrap else "как в игре", r.position.x, r.end.x, hud.sel_label.get_line_count()])
+	main.queue_free()
+	await hooks.frames(3)
+	PolygonHud.rollback_panel_nowrap = false
+	return Vector2(float(cut), worst)
+
+
+func test_bottom_panel_fits_1366() -> void:
+	var r := await _panel_1366(false)
+	ok(roundi(r.x) == 0, "%s: на 1366 при выборе всех своих в бою нижняя панель целиком в окне (8 моментов с 5-й по 40-ю секунду)" % renderer())
+	var o := await _panel_1366(true)
+	ok(roundi(o.x) > 0, "%s: откат «панель без переноса»: за краем окна в %d из 8 моментов, до %.0f точек — проверка краснеет" % [renderer(), roundi(o.x), o.y])
 
 
 # ───────────────────────── «Полигон»: воздушный бой на снимке ─────────────────────────

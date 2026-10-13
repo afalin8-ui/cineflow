@@ -41,6 +41,15 @@ const FOE_ADVANCE := 900.0
 ## секунде, встречало первым корвет, а не звенья, ради которых его поднимают.
 const FOE_AIR := {"roles": ["bomber", "interceptor", "bomber", "fighter"], "every": 6.0, "first": 4.0}
 
+## Показательный бой: свои перехватчики бьют чужое звено бомбардировщиков (приказ звену на
+## звено) и свои истребители садятся (V) — на 9-й и 11-й секунде, пока оба звена живы
+## (к 20-й их сбивают; на шагах 720 и 900 приказов не было вовсе).
+const AIR_FOCUS_STEP := 270
+const AIR_RECALL_STEP := 330
+## ТОЛЬКО для проверки отката: приказы своим звеньям на прежних шагах 720 и 900, когда
+## звеньев уже нет, — в журнале их нет (tests/test_sim_air.gd).
+static var rollback_late_air_orders := false
+
 var defs: Defs
 var battle: Battle
 var view: BattleView
@@ -254,19 +263,22 @@ static func demo_battle(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 				b.queue({"op": &"launch", "ids": PackedInt32Array([carrier]), "role": &"interceptor"})
 			60:
 				b.queue({"op": &"launch", "ids": PackedInt32Array([carrier]), "role": &"fighter"})
-			720:
-				var foe_q := _squad_of(b, Ship.DEFENDER, &"")
-				var own_int := _squad_of(b, Ship.ATTACKER, &"interceptor")
-				if foe_q > 0 and own_int > 0:
-					b.queue({"op": &"focus", "ids": PackedInt32Array([own_int]), "target": foe_q})
 			780:
 				var foe_q2 := _squad_of(b, Ship.DEFENDER, &"")
 				if foe_q2 > 0:
 					b.queue({"op": &"focus", "ids": PackedInt32Array([light[0]]), "target": foe_q2})
-			900:
-				var own_fig := _squad_of(b, Ship.ATTACKER, &"fighter")
-				if own_fig > 0:
-					b.queue({"op": &"recall", "ids": PackedInt32Array([own_fig])})
+		# приказы СВОИМ звеньям — пока они живы (вторая доработка G3): на шагах 720 и 900 свои
+		# перехватчики и истребители были уже сбиты, приказ мёртвому не отдавался вовсе, и в
+		# журнале показательного боя не было ни фокуса звена на звено, ни посадки V
+		if b.steps == (720 if rollback_late_air_orders else AIR_FOCUS_STEP):
+			var foe_q := _squad_of(b, Ship.DEFENDER, &"bomber")
+			var own_int := _squad_of(b, Ship.ATTACKER, &"interceptor")
+			if foe_q > 0 and own_int > 0:
+				b.queue({"op": &"focus", "ids": PackedInt32Array([own_int]), "target": foe_q})
+		if b.steps == (900 if rollback_late_air_orders else AIR_RECALL_STEP):
+			var own_fig := _squad_of(b, Ship.ATTACKER, &"fighter")
+			if own_fig > 0:
+				b.queue({"op": &"recall", "ids": PackedInt32Array([own_fig])})
 		if i == steps_n - 2:
 			# последний приказ — ЖИВОМУ кораблю и с новой стойкой: его потерю в повторе
 			# обязан увидеть отпечаток (run_tests.sh, откат «потерян последний приказ»);

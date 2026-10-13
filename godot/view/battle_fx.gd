@@ -74,6 +74,9 @@ static var rollback_no_shown := false
 static var rollback_end_center := false
 ## Выстрел корабля по цели, сбитой этим же выстрелом, не рисуется вовсе, как было в G3.
 static var rollback_fire_lost := false
+## трасса ПВО по машине, сбитой этой очередью, — на высоте стрелявшего корабля, как в 0.4.1
+## (вспышка гибели при этом — на высоте машины, разрыв до 80–120);
+static var rollback_pd_ship_y := false
 ## Радиус попадания ушедшей цели (машина — 2,6, space.js:449): её самой уже нет.
 const GONE_HIT_R := 2.6
 ## Свой нижний предел в точках экрана (хвост G2; 09, 11.8): общий «не меньше 1,6»
@@ -297,6 +300,11 @@ func consume(e: Array) -> void:
 				var tc := battle.craft_by_uid(tu) if not _proj_at.has(tu) else null
 				if tc != null:
 					to = _body_pt(tc, to2)            # ПВО по машине (04, 2.12)
+				elif not _proj_at.has(tu) and not rollback_pd_ship_y:
+					# машина, сбитая этой очередью, уже убрана (Hangar.tick в конце шага): место —
+					# из события, высота — у вида авиации, как у fire и craft_fire (вторая
+					# доработка G3); снаряд, не успевший в кадр, — на высоте пускавшего
+					to = _gone_pt(tu, to2)
 				var from := _node_pt(s, "pd_", barrel)
 				var col := PD_OWN if s.side == my_side else PD_FOE
 				gfx.tracer(from, to, col, 0.55, 780.0, 46.0, 2.0, 0.0, _px(PD_PX, &"pd"))

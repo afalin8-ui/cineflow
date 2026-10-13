@@ -32,6 +32,9 @@ const HINTS_MAX := 2
 const TOAST_Y := 70.0
 ## Зазор полосок до края экрана и до строки статуса справа.
 const TOAST_GAP := 16.0
+## Нижняя панель не шире окна без этих полей с каждой стороны: длинная строка (занятия
+## всего флота) переносится по словам, а не уводит панель за края.
+const PANEL_GAP := 16.0
 
 ## ТОЛЬКО для проверок отката (замечания к G2), в игре всегда false:
 ## полоски — по середине экрана, как было: на 1366 длинная полоса фокуса всего флота
@@ -48,6 +51,9 @@ static var rollback_hints_last := false
 ## тяжёлый со своей целью вне пояса пишет «охота · целей не видно», а лёгкий под
 ## помехами дальше lockRange — «бьёт X», хотя выстрел невозможен.
 static var rollback_doing_g2 := false
+## нижняя панель без переноса строк, как было: на 1366 строка занятий всего флота делала
+## её шире окна, и панель уходила за оба края (вторая проверка G3).
+static var rollback_panel_nowrap := false
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
@@ -66,6 +72,7 @@ var _local: Array[Array] = []
 var _last_status := ""
 var _last_sel := ""
 var _last_toasts := ""
+var _last_panel_vw := 0.0
 
 
 func _ready() -> void:
@@ -149,10 +156,11 @@ func _process(_delta: float) -> void:
 		toasts.text = tt
 	_place_toasts(vs)
 	var sl := _sel_text(b)
-	if sl != _last_sel:
+	if sl != _last_sel or vs.x != _last_panel_vw:
 		_last_sel = sl
+		_last_panel_vw = vs.x
 		sel_label.text = sl
-		panel.reset_size()
+		_fit_panel(vs)
 	panel.position = Vector2(((vs.x - panel.size.x) * 0.5), vs.y - panel.size.y - 14.0)
 	banner.visible = over
 	if over:
@@ -161,6 +169,22 @@ func _process(_delta: float) -> void:
 		banner.text = "Бой окончен: %s.\nF8 — начать заново" % ("ничья" if w < 0 else ("наша сторона держит орбиту" if w == my_side else "орбиту держит противник"))
 		banner.reset_size()
 		banner.position = ((vs - banner.size) * 0.5).floor() - Vector2(0.0, vs.y * 0.18)
+
+
+## Нижняя панель по тексту, но не шире окна без PANEL_GAP с каждой стороны: длинные строки
+## переносятся по словам (на 1366 строка занятий всего флота — «главным по … · батареей
+## по … · под помехами …» — была шире окна, и панель уходила за оба края).
+func _fit_panel(vs: Vector2) -> void:
+	sel_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	sel_label.custom_minimum_size = Vector2.ZERO
+	panel.reset_size()
+	var room := vs.x - 2.0 * PANEL_GAP
+	if not rollback_panel_nowrap and panel.size.x > room:
+		var pad := panel.size.x - sel_label.size.x
+		sel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sel_label.custom_minimum_size = Vector2(maxf(room - pad, 120.0), 0.0)
+		sel_label.size = Vector2(sel_label.custom_minimum_size.x, 0.0)
+		panel.reset_size()
 
 
 ## Полоски — по середине экрана, если там им хватает места; иначе — в промежутке

@@ -391,6 +391,8 @@ class Doctrine:
 	var air_patrol_k: float
 	var air_patrol_escort_take: float
 	var air_patrol_escort_drop: float
+	var air_patrol_craft_take_k: float
+	var air_patrol_craft_drop_k: float
 	var air_bomber_flank_extra: float
 	var air_bomber_flank_points_k: PackedFloat64Array
 	var amove_resume_s: float
