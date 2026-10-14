@@ -600,7 +600,7 @@ static func _doing_belt(s: Ship, b: State, jam: String) -> String:
 		HeavyDoctrine.MOVE:
 			if s.has_amove:
 				return "идёт с боем%s%s" % [bat, jam]
-			if HeavyDoctrine.escorting(s) and not rollback_escort_text:
+			if HeavyDoctrine.escorting(b, s) and not rollback_escort_text:
 				return "идёт за %s%s%s" % [Weapons.short_name(s.guard_of as Ship), bat, jam]
 			return "идёт на участок%s%s" % [bat, jam]
 	if main != "":

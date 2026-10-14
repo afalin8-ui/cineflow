@@ -549,7 +549,7 @@ func _escort_fighting(ward_id: StringName, amove: bool, rollback: bool) -> Vecto
 	var esc_end := 0.0
 	for i in roundi(60.0 / Battle.STEP):
 		b.step()
-		if HeavyDoctrine.escorting(s):
+		if HeavyDoctrine.escorting(b, s):
 			esc += Battle.STEP
 			esc_end = b.time
 		if s.belt == HeavyDoctrine.BELT or s.belt == HeavyDoctrine.RETREAT:
@@ -577,6 +577,107 @@ func test_escort_of_fighting_light_keeps_belt() -> void:
 	ok(o.x >= 50.0 and o.z >= 40.0, "откат «на ходу — по скорости охраняемого»: «на ходу» %.1f с, чужой ближе D %.1f с — проверка краснеет" % [o.x, o.z])
 	var oa := _escort_fighting(&"corvette", true, true)
 	ok(oa.w >= 50.0, "откат «по скорости»: атака с ходу — «на ходу» и после встречи, до %.1f с — проверка краснеет" % oa.w)
+
+
+## Тяжёлый охраняет ТЯЖЁЛОГО в атаке с ходу (третье замечание к G4; 09, 6.5 и 6.6 п. 2):
+## крейсер на «Охране» или «Охоте» идёт атакой с ходу к (0, −1600), флагман его охраняет,
+## неподвижный чужой крейсер — в стороне от пути, на 1,3–1,8 R от охраняемого. «На ходу» —
+## до ВСТРЕЧИ: цель главного калибра в R охраняемого или чужой ближе его D. Откат «идёт — пока
+## состояние «идёт»» (вторая доработка G4): охраняемый, захватив цель на 1,3 / 1,8 R, уходит
+## в подход раньше встречи — охрана кончалась на захвате, а на «Охоте» её не было вовсе.
+## → [секунд «на ходу», когда «на ходу» кончилось (−1 — не было), когда встреча].
+func _escort_heavy_amove(stance: StringName, foe_at: Vector2, rollback: bool) -> Vector3:
+	HeavyDoctrine.rollback_amove_by_belt = rollback
+	var b := _lab()
+	var w := _put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 0))
+	w.stance = stance
+	var s := _put(b, Ship.ATTACKER, &"troyden", &"capital", Vector2(0, 150))
+	var foe := _dummy(_put(b, Ship.DEFENDER, &"plektor", &"cruiser", foe_at))
+	for x: Ship in [w, s]:
+		x.hp = BIG                       # оружие есть — охраняемый берёт цель главного калибра
+		x.max_hp = BIG
+	b.queue({"op": &"guard", "ids": [s.uid], "target": w.uid})
+	b.step()
+	b.queue({"op": &"amove", "ids": [w.uid], "x": 0.0, "z": -1600.0})
+	var r := w.def.main.rng
+	var dead := w.def.main.dead
+	var esc := 0.0
+	var esc_end := -1.0
+	var meet := -1.0
+	for i in roundi(30.0 / Battle.STEP):
+		b.step()
+		var d := w.pos.distance_to(foe.pos)
+		if meet < 0.0 and (d <= r or d < dead):
+			meet = b.time
+		if HeavyDoctrine.escorting(b, s):
+			esc += Battle.STEP
+			esc_end = b.time
+	b.dispose()
+	HeavyDoctrine.rollback_amove_by_belt = false
+	return Vector3(esc, esc_end, meet)
+
+
+func test_escort_of_heavy_amove_until_meeting() -> void:
+	for c: Array in [[&"guard", Vector2(700, -1100)], [&"hunt", Vector2(900, -1100)]]:
+		var st: StringName = c[0]
+		var at: Vector2 = c[1]
+		var r := _escort_heavy_amove(st, at, false)
+		note("флагман охраняет крейсер в атаке с ходу («%s», чужой в %s): «на ходу» %.1f с, до %.1f с; встреча на %.1f с" % [st, str(at), r.x, r.y, r.z])
+		ok(r.z >= 8.0, "встреча («%s») — не сразу: цель входит в R охраняемого на %.1f с" % [st, r.z])
+		ok(r.x >= r.z - 1.0, "«на ходу» с приказа до встречи («%s»): %.1f с из %.1f" % [st, r.x, r.z])
+		ok(r.y >= r.z - 0.5 and r.y <= r.z + 0.5, "«на ходу» кончается встречей («%s»): на %.1f с, встреча на %.1f с" % [st, r.y, r.z])
+		var o := _escort_heavy_amove(st, at, true)
+		note("откат «идёт — пока состояние «идёт»» («%s»): «на ходу» %.1f с, до %.1f с; встреча на %.1f с" % [st, o.x, o.y, o.z])
+		ok(o.y < o.z - 3.0, "откат «по состоянию «идёт»» («%s»): «на ходу» кончилось на %.1f с, за %.1f с до встречи — проверка краснеет" % [st, o.y, o.z - o.y])
+
+
+## Охраняемый тяжёлый в атаке с ходу ВСТРЕТИЛ чужого и пятится (09, 6.5: после встречи — как
+## п. 5), а тот держится в 0,46 R — ближе конца отхода, но дальше D, и цель главного калибра —
+## носитель за R (вес носителя). Встречи после первой нет, часы встречи переходят 3 с — но
+## охраняемый не идёт, а отходит, и охрана «на ходу» не начинается. Откат «только по часам
+## встречи» — охрана идёт за пятящимся без пояса и самоотхода. → [секунд «на ходу», пока
+## охраняемый не в пути; секунд, когда часы встречи ≥ resume_s и он не в пути — контроль].
+func _escort_of_backing_heavy(rollback: bool) -> Vector2:
+	HeavyDoctrine.rollback_amove_quiet_only = rollback
+	var b := _lab()
+	var w := _put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 0))
+	w.stance = &"hunt"
+	w.hp = BIG
+	w.max_hp = BIG
+	var s := _tough(_put(b, Ship.ATTACKER, &"troyden", &"capital", Vector2(0, 150)))
+	_dummy(_put(b, Ship.DEFENDER, &"plektor", &"carrier", Vector2(0, -880)))
+	var cv := _dummy(_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2(0, -260)))
+	b.queue({"op": &"guard", "ids": [s.uid], "target": w.uid})
+	b.step()
+	b.queue({"op": &"amove", "ids": [w.uid], "x": 0.0, "z": -1600.0})
+	var keep := b.defs.doctrine.belt_back_off_k * w.def.main.rng - 0.04 * w.def.main.rng     # 0,46 R
+	var esc := 0.0
+	var quiet := 0.0
+	for i in roundi(12.0 / Battle.STEP):
+		if b.time >= 0.5:
+			cv.pos = w.pos + Vector2(0.0, -keep)       # держится рядом: ближе конца отхода, дальше D
+			cv.vel = w.vel
+		b.step()
+		var going := w.belt == HeavyDoctrine.MOVE or w.belt == HeavyDoctrine.APPROACH
+		if going:
+			continue
+		if HeavyDoctrine.escorting(b, s):
+			esc += Battle.STEP
+		if w.has_amove and w.amove_quiet >= b.mp.amove_resume:
+			quiet += Battle.STEP
+	b.dispose()
+	HeavyDoctrine.rollback_amove_quiet_only = false
+	return Vector2(esc, quiet)
+
+
+func test_escort_of_backing_heavy_not_on_the_move() -> void:
+	var r := _escort_of_backing_heavy(false)
+	note("охраняемый крейсер пятится после встречи, чужой в 0,46 R: «на ходу» %.1f с; часы встречи ≥ 3 с, а он не в пути, %.1f с" % [r.x, r.y])
+	ok(r.y >= 3.0, "контроль: охраняемый не в пути, а встречи нет дольше 3 с — %.1f с" % r.y)
+	ok(r.x < 0.1, "пятящийся охраняемый — не «на ходу»: %.1f с" % r.x)
+	var o := _escort_of_backing_heavy(true)
+	note("откат «только по часам встречи»: «на ходу» %.1f с" % o.x)
+	ok(o.x >= 3.0, "откат «только по часам встречи»: «на ходу» %.1f с за пятящимся — проверка краснеет" % o.x)
 
 
 # ───────────────────────── строй (09, раздел 5; 9.5 пп. 9, 10, 20) ─────────────────────────

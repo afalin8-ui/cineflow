@@ -84,6 +84,15 @@ static var rollback_futile_stamp_all := false
 ## выигрыш окна «не оторваться» не обнуляется с новым эпизодом: F4 показывал «окно 0,0 с +93»
 ## — выигрыш ПРОШЛОГО окна (второе замечание к G4).
 static var rollback_keep_gain := false
+## охраняемый ТЯЖЁЛЫЙ в атаке с ходу «идёт», только пока его состояние — «идёт» (MOVE), как во
+## второй доработке G4: захватив цель главного калибра на 1,3–1,8 R (Weapons, по тактике), он
+## уходит в «выходит на дистанцию» РАНЬШЕ встречи 6.5 — и охрана на ходу кончалась на захвате,
+## а на «Охоте» не начиналась вовсе (третье замечание к G4).
+static var rollback_amove_by_belt := false
+## …или только по часам встречи, без «в пути» (предложение третьего замечания к G4 как есть):
+## охраняемый, пятящийся от чужого в 0,4–0,5 R дольше 3 с после встречи, считался бы идущим —
+## и охрана шла бы за ним без пояса и самоотхода, хотя он не идёт, а отходит (09, 6.5).
+static var rollback_amove_quiet_only := false
 
 
 ## Шаг тяжёлого доктрины: состояние, желаемая скорость, нос и полёт. Звать для живого
@@ -133,7 +142,7 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 		# приказ игрока на движение сильнее всего: на ходу самоотхода нет (6.6, п. 2)
 		desired = Movement.go_to(s, s.move_to, vmax, dt, p)
 		st = MOVE
-	elif escorting(s) and not rollback_escort_retreats:
+	elif escorting(b, s) and not rollback_escort_retreats:
 		# охрана своего НА ХОДУ — тоже прямой приказ на движение (6.6, п. 2): за своим местом
 		# в кольце, без самоотхода и без торможения у чужих («даже сквозь чужой строй»).
 		# Охраняемый встал — дальше «Охрана» вокруг места в кольце, с самоотходом в поводке
@@ -195,24 +204,33 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 ## Иначе — «Охрана» вокруг места в кольце, с поясом и самоотходом в поводке. По скорости
 ## охраняемого судить нельзя (второе замечание к G4): лёгкий на «Охоте» или «Охране» облетает
 ## свою цель весь бой, и тяжёлый шёл бы за ним в чужой строй, бросив пояс.
-static func escorting(s: Ship) -> bool:
+static func escorting(b: State, s: Ship) -> bool:
 	var ward := s.guard_of as Ship
 	if ward == null or ward.dead or ward.charging():
 		return false
 	if rollback_escort_by_speed:
 		return ward.has_move or ward.has_amove or ward.vel.length() > Movement.ARRIVED_V
-	return ward.has_move or amove_going(ward)
+	return ward.has_move or amove_going(b, ward)
 
 
-## Атака с ходу ещё идёт — встречи не было (09, 6.5): у тяжёлого доктрины встреча — цель
-## главного калибра в R или чужой корабль ближе D, и марш идёт веткой «идёт» (MOVE; в шаге
-## раньше охраняющего — этого шага, позже — прошлого); у лёгкого, носителя и под флажком
-## --legacy-approach — «встречный ближе 1,3 дальности» (03, 2.15; Movement.amove_fighting).
-static func amove_going(w: Ship) -> bool:
+## Атака с ходу ещё идёт — встречи не было (09, 6.5). У тяжёлого доктрины встреча — цель
+## главного калибра в R или чужой корабль ближе D: при ней update() обнуляет amove_quiet, и
+## «идёт» он, пока встречи не было resume_s (3 с: приказ ставит это значение сразу) и он
+## действительно в пути — марш («идёт») или подход к цели («выходит на дистанцию»). По одному
+## состоянию «идёт» судить нельзя (третье замечание к G4): захватив цель главного калибра на
+## 1,3–1,8 R, он уходит в подход РАНЬШЕ встречи. Стоит («путь закрыт») или пятится от чужого
+## в 0,4–0,5 R — не в пути. Значения — этого шага, если охраняемый шагал раньше охраняющего,
+## иначе прошлого. У лёгкого, носителя и под флажком --legacy-approach — «встречный ближе
+## 1,3 дальности» (03, 2.15; Movement.amove_fighting).
+static func amove_going(b: State, w: Ship) -> bool:
 	if not w.has_amove:
 		return false
 	if w.heavy() and not w.legacy and not w.station:
-		return w.belt == MOVE
+		if rollback_amove_by_belt:
+			return w.belt == MOVE
+		if rollback_amove_quiet_only:
+			return w.amove_quiet >= b.mp.amove_resume
+		return w.amove_quiet >= b.mp.amove_resume and (w.belt == MOVE or w.belt == APPROACH)
 	return not Movement.amove_fighting(w)
 
 
