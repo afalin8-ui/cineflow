@@ -224,7 +224,9 @@ static func kill_squad(b: State, q: Squad, landed: bool) -> void:
 	if not landed:
 		b.sides[q.side].sq_lost += 1
 		var what := "звено %s %s" % [ROLE_GEN.get(q.role, ""), q.def.name]
-		if q.side == b.player_side:
+		if b.watch:
+			b.feed("%s: сбито %s" % [b.clan_tag(q.side), what], &"warn")
+		elif q.side == b.player_side:
 			b.feed("Потеряно наше " + what, &"bad")
 		else:
 			b.feed("Сбито вражеское " + what, &"good")

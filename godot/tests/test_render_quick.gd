@@ -63,6 +63,23 @@ static func _overlaps(btns: Array[Button], vs: Vector2) -> PackedStringArray:
 	return out
 
 
+## Кнопки, чья надпись не влезает в кнопку хоть в одном виде (обычный, выбранный): текст шириной
+## по шрифту кнопки плюс поля её стиля. Найдено снимком: выбранный клан «Клан Тройде» — рамка
+## выбранного стиля шире полей обычного, а ширину кнопке давал обычный.
+static func _clipped(btns: Array[Button]) -> PackedStringArray:
+	var out := PackedStringArray()
+	for b in btns:
+		var font := b.get_theme_font("font")
+		var fs := b.get_theme_font_size("font_size")
+		var w := font.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		for st: String in ["normal", "pressed"]:
+			var sb := b.get_theme_stylebox(st)
+			var need := w + sb.get_margin(SIDE_LEFT) + sb.get_margin(SIDE_RIGHT)
+			if need > b.size.x + 0.5:
+				out.append("«%s» (%s: %.0f > %.0f)" % [b.text, st, need, b.size.x])
+	return out
+
+
 func test_menu_and_card_layout() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var main := await _main(size, "render_quick_%d" % size.x)
@@ -81,6 +98,8 @@ func test_menu_and_card_layout() -> void:
 			btns.append(m.buttons[k])
 		var bad := _overlaps(btns, vs)
 		ok(bad.is_empty(), "%d: кнопки меню не наезжают друг на друга: %s" % [size.x, ", ".join(bad)])
+		var cut := _clipped(btns)
+		ok(cut.is_empty(), "%d: надпись кнопки меню целиком — и у выбранной (рамкой), и у обычной: %s" % [size.x, ", ".join(cut)])
 		await _shot("quick_menu_%d" % size.x)
 		# «Смотреть: ИИ против ИИ» — до первых строк ленты, потом итог
 		var w: Button = m.buttons["watch"]

@@ -171,16 +171,20 @@ func _choice(key: String, text: String, g: ButtonGroup) -> Button:
 	b.toggle_mode = true
 	b.button_group = g
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(120.0, 34.0)
+	b.custom_minimum_size = Vector2(128.0, 34.0)
 	b.add_theme_font_size_override("font_size", 16)
 	# выбранное — рамкой и светлым текстом: штатная тёмная заливка «нажатой» кнопки на тёмной
-	# панели почти не отличается от обычной (снимок меню)
+	# панели почти не отличается от обычной (снимок меню). Поля по бокам — как у обычной (4):
+	# ширину кнопке даёт обычный стиль, и с полями 6 выбранный клан читался «Клан Тройде»
+	# (снимок; test_render_quick меряет надпись в обоих видах)
 	var on := StyleBoxFlat.new()
 	on.bg_color = Color(0.16, 0.22, 0.32)
 	on.border_color = Color(1.0, 0.85, 0.5)
 	on.set_border_width_all(2)
 	on.set_corner_radius_all(4)
 	on.set_content_margin_all(6)
+	on.content_margin_left = 4.0
+	on.content_margin_right = 4.0
 	b.add_theme_stylebox_override("pressed", on)
 	b.add_theme_stylebox_override("hover_pressed", on)
 	b.add_theme_color_override("font_pressed_color", Color(1.0, 0.95, 0.8))

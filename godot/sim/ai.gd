@@ -33,6 +33,7 @@ const Formation := preload("res://sim/formation.gd")
 const Vision := preload("res://sim/vision.gd")
 const Ecm := preload("res://sim/ecm.gd")
 const Hangar := preload("res://sim/hangar.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 
 # space.js:1757 aiThink — как часто думает ИИ: первый тик на 3 × tempo, дальше
 # rnd(2,5; 4) × tempo (battle_constants.ai_think — «переносятся кодом»)
@@ -641,11 +642,13 @@ func _old_center(b: State, heavies: Array[Ship], foes: Array[Ship]) -> Vector2:
 	return f + back.normalized() * b.defs.doctrine.ai_leaderless_back
 
 
-## Точка за тыловым рубежом стороны — на рубеж, вдоль оси ax (как P в плане линии).
+## Точка за тыловым рубежом стороны — на рубеж, вдоль оси ax (как P в плане линии), с допуском
+## прихода внутрь (HeavyDoctrine.ARRIVED) — как гасит ход у рубежа отход (HeavyDoctrine.rear_gap).
 static func _not_past_rear(sd: State.SideState, p: Vector2, ax: Vector2) -> Vector2:
-	if sd.rear_z == INF or p.y * sd.sign_z <= sd.rear_z:
+	var lim := sd.rear_z - HeavyDoctrine.ARRIVED
+	if sd.rear_z == INF or p.y * sd.sign_z <= lim:
 		return p
-	var lim_y := sd.sign_z * sd.rear_z
+	var lim_y := sd.sign_z * lim
 	if absf(ax.y) > 1e-6:
 		p += ax * ((lim_y - p.y) / ax.y)
 	p.y = lim_y

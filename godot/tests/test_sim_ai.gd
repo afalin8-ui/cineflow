@@ -480,20 +480,21 @@ func test_m6_rear_skips_arrivals() -> void:
 	ok(n > 0, "откат «считать и подходящих»: %d шагов за рубежом — проверка краснеет" % n)
 
 
-## Толчок расталкивания за тыловой рубеж не выносит: «Стычка» Тройден × Плэктор, зерно 1023 —
-## прижатого у рубежа «Ховарда» свой фрегат выталкивал за рубеж на 52, и он стоял там до гибели.
-func _rear_pushed(old: bool) -> int:
-	HeavyDoctrine.rollback_push_past_rear = old
-	var b := Battle.create(_defs(), BenchCore.setup_for("skirmish", 1023, false, {}), "capella-проверка") as Battle
-	while not b.over and b.time < 150.0:
+## Отход у тылового рубежа гасит ход с допуском прихода внутрь (`rear_gap`): гася ровно
+## на рубеже, тяжёлый перелетал его на 8–13 и стоял там до конца боя — за допуском замера М6.
+## «Сражение» Плэктор × Тройден, зерно 1045 (флагман Тройдена).
+func _rear_exact(old: bool) -> int:
+	HeavyDoctrine.rollback_rear_exact = old
+	var b := Battle.create(_defs(), BenchCore.setup_for("battle", 1045, false, {}, "plektor,troyden"), "capella-проверка") as Battle
+	while not b.over and b.time < 300.0:
 		b.step()
 	var n := b.metrics.m6_rear
-	HeavyDoctrine.rollback_push_past_rear = false
+	HeavyDoctrine.rollback_rear_exact = false
 	b.dispose()
 	return n
 
 
-func test_push_not_past_rear() -> void:
-	eq(_rear_pushed(false), 0, "М6 за рубежом: толчок своих и чужих тяжёлого за рубеж не выносит")
-	var n := _rear_pushed(true)
-	ok(n > 0, "откат «толчок без рубежа»: %d шагов за рубежом — проверка краснеет" % n)
+func test_rear_gap_with_pad() -> void:
+	eq(_rear_exact(false), 0, "М6 за рубежом: отход у рубежа гасит ход с допуском прихода — перелёта нет")
+	var n := _rear_exact(true)
+	ok(n > 0, "откат «гасить ровно на рубеже»: %d шагов за рубежом — проверка краснеет" % n)

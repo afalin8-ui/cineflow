@@ -245,5 +245,12 @@ func toast(text: String) -> void:
 	toast_log.append({"t": time, "step": steps, "text": text})
 
 
+## «ИИ против ИИ»: строка ленты называет сторону кланом («Тройден: …»), а не «наш» и «противник»
+## — человек ни за одну из сторон не играет, и «наш» у атакующего читалось бы как чей-то выбор.
+func clan_tag(side: int) -> String:
+	var f: Defs.FactionDef = defs.factions.get(sides[side].clan)
+	return f.short if f != null else str(sides[side].clan)
+
+
 func feed(text: String, kind: StringName) -> void:
 	feed_log.append({"t": time, "step": steps, "text": text, "kind": kind})

@@ -445,17 +445,18 @@ static func missile_pick(b: State, s: Ship) -> Ship:
 
 # space.js:1254 — свои под помехами одной строкой ленты, не чаще раза в 25 с на флот
 static func _jam_feed(b: State, s: Ship, lock: float) -> void:
-	if s.jam == null or s.side != b.player_side or s.station or b.time - b.jam_feed_at <= JAM_FEED_GAP:
+	if s.jam == null or (s.side != b.player_side and not b.watch) or s.station or b.time - b.jam_feed_at <= JAM_FEED_GAP:
 		return
 	var t := s.target as Ship
+	var who := ("%s: " % b.clan_tag(s.side)) if b.watch else "Наш "
 	if s.heavy():
 		# ДОКТРИНА 09, 1.7: главный калибр под помехами бьёт, но вдвое реже
 		b.jam_feed_at = b.time
 		var jp: Defs.EcmDef = s.jam
-		b.feed("Наш %s под помехами РЭБ — главный калибр %s" % [short_name(s), slower(jp.main_slow)], &"warn")
+		b.feed("%s%s под помехами РЭБ — главный калибр %s" % [who, short_name(s), slower(jp.main_slow)], &"warn")
 	elif t != null and s.pos.distance_to(t.pos) > lock:
 		b.jam_feed_at = b.time
-		b.feed("Наш %s под помехами РЭБ — бьёт только вблизи" % short_name(s), &"warn")
+		b.feed("%s%s под помехами РЭБ — бьёт только вблизи" % [who, short_name(s)], &"warn")
 
 
 static func _times(k: float) -> String:
@@ -855,12 +856,15 @@ static func _credit(b: State, by: Body, dealt: float, book: StringName, cls_i: i
 
 # space.js:928 underFire — тревога у своих крупных, редко (03, ловушка 30)
 static func _under_fire(b: State, t: Ship) -> void:
-	if t.side != b.player_side or (t.def.cls != &"capital" and t.def.cls != &"carrier"):
+	if (t.side != b.player_side and not b.watch) or (t.def.cls != &"capital" and t.def.cls != &"carrier"):
 		return
 	if b.time - t.alarm_at < ALARM_GAP:
 		t.alarm_at = maxf(t.alarm_at, b.time - ALARM_QUIET)
 		return
 	t.alarm_at = b.time
+	if b.watch:
+		b.feed("%s: %s под огнём" % [b.clan_tag(t.side), short_name(t)], &"warn")
+		return
 	b.feed("%s %s под огнём" % ["Наша" if t.station else "Наш", short_name(t)], &"warn")
 
 
@@ -881,7 +885,9 @@ static func destroy_ship(b: State, e: Ship, by: Body) -> void:
 	b.events.append([&"destroyed", e.uid, by.uid if by != null else 0])
 	# свой или чужой — словом (03, ловушка 31); имя с номером
 	var nm := e.name.substr(0, 1).to_lower() + e.name.substr(1)
-	if e.side == b.player_side:
+	if b.watch:
+		b.feed(("%s: потеряна %s" if e.station else "%s: потерян %s") % [b.clan_tag(e.side), nm], &"warn")
+	elif e.side == b.player_side:
 		b.feed(("Потеряна наша %s" if e.station else "Потерян наш %s") % nm, &"bad")
 	else:
 		b.feed(("Уничтожена вражеская %s" if e.station else "Уничтожен вражеский %s") % nm, &"good")

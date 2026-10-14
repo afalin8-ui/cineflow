@@ -448,8 +448,8 @@ func _ai_tick() -> void:
 			# отход всем флотом (05, 2.6 пп. 5, 7) — строкой в ленте с подсказкой, чем ответить:
 			# копящий гипер беззащитен, а «Охрана» за ним не пойдёт (05, ловушка 13)
 			if order_retreat(a.side) > 0:
-				if a.side == player_side and watch:
-					feed("Наш флот отходит: копит гипер", &"warn")
+				if watch:
+					feed("%s отходит всем флотом: копит гипер" % clan_tag(a.side), &"warn")
 				elif a.side != player_side:
 					feed("Противник отходит: копит гипер — добить: «Охота» (T) или ПКМ по кораблю", &"warn")
 			continue
@@ -468,10 +468,10 @@ func _flee_note(s: Ship) -> void:
 	if sd.retreat or s.flee_told:
 		return
 	s.flee_told = true
-	if s.side != player_side:
+	if watch:
+		feed("%s: %s копит гипер" % [clan_tag(s.side), Weapons.short_name(s)], &"warn")
+	elif s.side != player_side:
 		feed("Противник: %s копит гипер — добить, пока не ушёл" % Weapons.short_name(s), &"warn")
-	elif watch:
-		feed("Наш %s копит гипер" % Weapons.short_name(s), &"warn")
 
 
 # space.js:2051 canHurt · часть 05, 2.12 — щедрый намеренно (ловушка 27): ангар со свободным
@@ -532,6 +532,8 @@ func _check_teeth() -> void:
 			continue
 		if human:
 			feed("Нечем бить — уцелевшие уходят в гипер", &"bad")
+		elif watch:
+			feed("%s: нечем бить — флот уходит в гипер" % clan_tag(side), &"warn")
 		elif side != player_side:
 			feed("Противнику нечем бить — его флот уходит в гипер", &"good")
 		else:
@@ -839,7 +841,9 @@ func _complete_jump(s: Ship) -> void:
 	var sd := sides[s.side]
 	sd.jumped.append(s.def.id)
 	events.append([&"jump_out", s.uid])
-	if s.side != player_side and not sd.retreat:
+	if watch and not sd.retreat:
+		feed("%s: %s ушёл в гипер" % [clan_tag(s.side), s.name], &"warn")
+	elif s.side != player_side and not sd.retreat:
 		feed("Противник: %s ушёл в гипер" % s.name, &"warn")
 	# уход носителя = отход всей стороны, честно, накачкой (C17; ловушка 22 части 02)
 	if s.def.cls == &"carrier" and not sd.conceded:
