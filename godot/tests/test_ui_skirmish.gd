@@ -557,6 +557,48 @@ func test_doing_belt_states() -> void:
 	ok(bad >= 6, "откат «строка как в G3»: %d строк из 7 не говорят, что делает тяжёлый — проверка краснеет" % bad)
 
 
+## Охрана своего на ходу (09, 6.6 п. 2): крейсер охраняет носитель, носитель идёт по приказу —
+## строка «идёт за «Хантер»» (второе замечание к G4: её не охраняла ни одна проверка). Встал
+## носитель — «на ходу» кончилось, строки «идёт за» нет. Откат — строка без охраны («идёт на
+## участок»). → [строка на ходу, состояние, строка после прихода, имя носителя].
+func _escort_line(rollback: bool) -> Array:
+	PolygonHud.rollback_escort_text = rollback
+	var b := _lab(func(bb: Battle, c: Ship) -> void:
+		c.stance = &"guard"
+		var car := bb.spawn(Ship.ATTACKER, bb.defs.ship(&"troyden", &"carrier"), Vector2(0, 250))
+		car.hp = BIG
+		car.max_hp = BIG
+		bb.queue({"op": &"guard", "ids": [c.uid], "target": car.uid})
+		bb.queue({"op": &"move", "ids": [car.uid], "x": -500.0, "z": 250.0}))
+	var c := b.ships[0]
+	var name := Weapons.short_name(b.ships[1])
+	for i in roundi(4.0 / Battle.STEP):
+		b.step()
+	var going := PolygonHud.doing(c, b)
+	var st := c.belt
+	for i in roundi(40.0 / Battle.STEP):
+		b.step()
+	var after := PolygonHud.doing(c, b)
+	b.dispose()
+	PolygonHud.rollback_escort_text = false
+	return [going, st, after, name]
+
+
+func test_doing_escort_on_the_move() -> void:
+	var r := _escort_line(false)
+	var line: String = r[0]
+	var st: int = r[1]
+	var after: String = r[2]
+	var nm: String = r[3]
+	note("крейсер охраняет идущий носитель — «%s»: «%s»; носитель пришёл — «%s»" % [HeavyDoctrine.NAMES[st], line, after])
+	ok(st == HeavyDoctrine.MOVE and line.begins_with("идёт за %s" % nm), "охрана на ходу: «%s» (ждали «идёт за %s»)" % [line, nm])
+	ok(not after.begins_with("идёт за"), "носитель пришёл — «на ходу» кончилось: «%s»" % after)
+	var o := _escort_line(true)
+	var ol: String = o[0]
+	note("откат «строка без охраны»: «%s»" % ol)
+	ok(not ol.begins_with("идёт за"), "откат «строка без охраны»: «%s» — проверка краснеет" % ol)
+
+
 ## «Не оторваться» держится, пока тот корвет ближе 0,5 R (09, 2.6 и 6.3), и строка это говорит,
 ## хотя у тяжёлого есть и цель главного калибра. Откаты: «не оторваться» на один шаг (как
 ## в первой выкладке G4 — дальше «держит дистанцию») и строка «держит дистанцию · 148 до …»

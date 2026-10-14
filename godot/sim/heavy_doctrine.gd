@@ -72,6 +72,18 @@ static var rollback_futile_one_foe := false
 ## охрана своего на ходу — как «Охрана» на месте: самоотход и торможение у чужих (замечание
 ## к G4: крейсер отходил от корвета и отставал от идущего носителя на ~600; 09, 6.6 п. 2).
 static var rollback_escort_retreats := false
+## «на ходу» — по СКОРОСТИ охраняемого, как в первой доработке G4: корвет или фрегат на «Охоте»
+## или «Охране» облетает свою цель весь бой, и тяжёлый, охраняющий его, бросал пояс и самоотход
+## и шёл за ним в чужой строй (второе замечание к G4: «идёт» 59,8 с из 60, чужой ближе D 52,9 с).
+static var rollback_escort_by_speed := false
+## «не оторваться» стаей — отметка всем, кто держится рядом, по МГНОВЕННОЙ скорости, без
+## разбора, кто это (первая доработка G4): проходящий рядом чужой тяжёлый, сближаясь, тоже
+## «держался рядом», и от него переставали отходить — а по 09, 2.5 от чужого тяжёлого отход
+## работает (второе замечание к G4);
+static var rollback_futile_stamp_all := false
+## выигрыш окна «не оторваться» не обнуляется с новым эпизодом: F4 показывал «окно 0,0 с +93»
+## — выигрыш ПРОШЛОГО окна (второе замечание к G4).
+static var rollback_keep_gain := false
 
 
 ## Шаг тяжёлого доктрины: состояние, желаемая скорость, нос и полёт. Звать для живого
@@ -178,14 +190,30 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 	Movement.fly(s, desired, push, dt, b.time, p, look(b, s, desired + push))
 
 
-## Охрана своего на ходу (09, 6.6, п. 2): охраняемый жив и идёт — по приказу «идти» или
-## атаки с ходу, или просто движется (быстрее «пришёл», space.js:1287). Тогда для тяжёлого это
-## приказ движения: самоотхода нет. Охраняемый встал — «Охрана» вокруг места в кольце.
+## Охрана своего на ходу (09, 6.6, п. 2): охраняемый жив и идёт ПО ПРИКАЗУ ИГРОКА — «идти»
+## или атака с ходу до встречи (6.5). Тогда для тяжёлого это приказ движения: самоотхода нет.
+## Иначе — «Охрана» вокруг места в кольце, с поясом и самоотходом в поводке. По скорости
+## охраняемого судить нельзя (второе замечание к G4): лёгкий на «Охоте» или «Охране» облетает
+## свою цель весь бой, и тяжёлый шёл бы за ним в чужой строй, бросив пояс.
 static func escorting(s: Ship) -> bool:
 	var ward := s.guard_of as Ship
 	if ward == null or ward.dead or ward.charging():
 		return false
-	return ward.has_move or ward.has_amove or ward.vel.length() > Movement.ARRIVED_V
+	if rollback_escort_by_speed:
+		return ward.has_move or ward.has_amove or ward.vel.length() > Movement.ARRIVED_V
+	return ward.has_move or amove_going(ward)
+
+
+## Атака с ходу ещё идёт — встречи не было (09, 6.5): у тяжёлого доктрины встреча — цель
+## главного калибра в R или чужой корабль ближе D, и марш идёт веткой «идёт» (MOVE; в шаге
+## раньше охраняющего — этого шага, позже — прошлого); у лёгкого, носителя и под флажком
+## --legacy-approach — «встречный ближе 1,3 дальности» (03, 2.15; Movement.amove_fighting).
+static func amove_going(w: Ship) -> bool:
+	if not w.has_amove:
+		return false
+	if w.heavy() and not w.legacy and not w.station:
+		return w.belt == MOVE
+	return not Movement.amove_fighting(w)
 
 
 ## Смена состояния — в журнал боя (архитектура, 2.7; 09, 8.4: первый шаг поиска ошибки).
@@ -346,6 +374,8 @@ static func _futile_tick(b: State, s: Ship, foe: Ship, d: float, dt: float) -> b
 		s.ret_foe = foe
 		s.ret_clock = 0.0
 		s.ret_hist = PackedFloat64Array()
+		if not rollback_keep_gain:
+			s.ret_gain = 0.0             # выигрыш — ЭТОГО окна; прошлый F4 не показывает
 		return false
 	s.ret_foe = foe
 	var away := s.vel.dot((s.pos - foe.pos) / d) if d > 1e-6 else 0.0
@@ -371,15 +401,20 @@ static func _futile_tick(b: State, s: Ship, foe: Ship, d: float, dt: float) -> b
 		return false
 	s.futile[foe.uid] = b.time
 	if not rollback_futile_one_foe:
-		# отходят от ВСЕХ, кто ближе 0,5 R (_retreat), и «не оторваться» — от всех, кто так же
-		# держится рядом: расстояние до них растёт не быстрее порога окна (gain / окно, 5 ед/с).
+		# отходят от ВСЕХ, кто ближе 0,5 R (_retreat), и «не оторваться» — от всех ЛЁГКИХ, кто так
+		# же держится рядом: расстояние до них растёт не быстрее порога окна (gain / окно, 5 ед/с).
 		# Иначе погоня двумя-тремя корветами запускала отход заново от каждого — тяжёлый уползал
 		# на 430–730 вместо одного отхода (замечание к G4; 9.5 п. 13 — помнится по каждому врагу).
-		# Чужой тяжёлый, сам отходящий, расходится быстрее порога — от него отход работает (2.5)
+		# Чужой тяжёлый и носитель — НЕ стая (09, 2.5: от них отход работает): скорость тут
+		# мгновенная, и тяжёлый, проходящий рядом, на этом шаге тоже «держится рядом» — а через
+		# секунду в мёртвой зоне от него уже не отходили бы (второе замечание к G4). Догоняет он
+		# по-настоящему — «не оторваться» от него сработает своим окном, как от любого
 		var keep := dc.retreat_futile_gain / dc.retreat_futile_window_s
 		var close := dc.belt_back_off_k * s.def.main.rng
 		for o in b.ships:
 			if o == foe or o.dead or o.side == s.side or s.futile.has(o.uid) or not Vision.sees(b, s.side, o):
+				continue
+			if (o.heavy() or o.hangar != null) and not rollback_futile_stamp_all:
 				continue
 			var off := s.pos - o.pos
 			var dd := off.length()

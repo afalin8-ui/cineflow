@@ -213,7 +213,7 @@ static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params) -> 
 		t = null
 	var range0 := s.range0()
 	# атака с ходу: встретил — встал (03, 2.15)
-	var fighting := s.has_amove and t != null and s.pos.distance_to(t.pos) < range0 * FIGHT_K
+	var fighting := amove_fighting(s)
 	# space.js:1275: приказ «идти» (moveTo) важнее всего; атака с ходу — пока не бьёт
 	# встречного
 	if s.has_move:
@@ -230,6 +230,16 @@ static func update(s: Ship, push: Vector2, dt: float, now: float, p: Params) -> 
 		desired = arrive(s, s.anchor, vmax, rev_of(p), p.brake_k)
 	# иначе — «Держать» и пустой участок: стоим (desired = 0)
 	fly(s, desired, push, dt, now, p, look_of(s, desired + push))
+
+
+## Атака с ходу встретила врага (03, 2.15; space.js:1272): цель ближе 1,3 дальности своего
+## оружия — встал и бьёт. Одно правило на полёт лёгкого и на «охрану на ходу» тяжёлого
+## (sim/heavy_doctrine.gd → amove_going).
+static func amove_fighting(s: Ship) -> bool:
+	var t := s.target as Body
+	if t != null and t.dead:
+		t = null
+	return s.has_amove and t != null and s.pos.distance_to(t.pos) < s.range0() * FIGHT_K
 
 
 static func rev_of(p: Params) -> float:

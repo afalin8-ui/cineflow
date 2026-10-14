@@ -334,6 +334,83 @@ func test_chase_by_pack_does_not_crawl() -> void:
 	ok(o.x > 400.0 and roundi(o.y) >= 2, "откат «не оторваться только от одного»: %.0f, отходов %d — проверка краснеет" % [o.x, roundi(o.y)])
 
 
+## Стая из двух корветов гонится, рядом ПРОХОДИТ чужой крейсер (идёт в (1500, 150) мимо нас).
+## «Не оторваться» от стаи срабатывает, когда крейсер уже ближе 0,5 R и сближается, — по
+## мгновенной скорости он тоже «держался рядом» и получал отметку стаи, и от него, вошедшего
+## в мёртвую зону, тяжёлый не отходил вовсе (второе замечание к G4; 09, 2.5: от чужого тяжёлого
+## отход работает). Отметка стаи — только лёгким. Откат — отметка всем, кто рядом.
+## → [секунд отхода, пока чужой крейсер ближе D после «не оторваться», отмечен ли он стаей].
+func _pack_and_heavy(rollback: bool) -> Vector2:
+	HeavyDoctrine.rollback_futile_stamp_all = rollback
+	var b := _lab()
+	var s := _tough(_put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 0)))
+	s.stance = &"hunt"
+	for k in 2:
+		var c := _tough(_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2((k - 0.5) * 80.0, -250.0)))
+		c.stance = &"hunt"
+		b.queue({"op": &"focus", "ids": [c.uid], "target": s.uid})
+	var h := _tough(_put(b, Ship.DEFENDER, &"plektor", &"cruiser", Vector2(-300, 150)))
+	h.stance = &"hold"
+	h.has_move = true                    # приказы — только своей стороне: чужому «идти» ставим сами
+	h.move_to = Vector2(1500, 150)
+	var fired := false
+	var at_fire := false
+	var ret := 0.0
+	for i in roundi(40.0 / Battle.STEP):
+		b.step()
+		if not fired and s.belt == HeavyDoctrine.FUTILE:
+			fired = true
+			at_fire = s.futile.has(h.uid)
+		if fired and s.pos.distance_to(h.pos) < s.def.main.dead and (s.belt == HeavyDoctrine.RETREAT or s.belt == HeavyDoctrine.PINNED):
+			ret += Battle.STEP
+	b.dispose()
+	HeavyDoctrine.rollback_futile_stamp_all = false
+	return Vector2(ret, 1.0 if at_fire else 0.0)
+
+
+func test_pack_stamp_spares_heavy() -> void:
+	var r := _pack_and_heavy(false)
+	note("стая корветов и проходящий чужой крейсер: отход от крейсера в мёртвой зоне %.1f с, отмечен стаей — %s" % [r.x, str(r.y > 0.5)])
+	ok(r.y < 0.5 and r.x >= 2.0, "«не оторваться» от стаи не задевает чужой крейсер: от него отход %.1f с (≥ 2)" % r.x)
+	var o := _pack_and_heavy(true)
+	note("откат «отметка стаи всем»: отход от крейсера %.1f с, отмечен — %s" % [o.x, str(o.y > 0.5)])
+	ok(o.y > 0.5 and o.x < 0.5, "откат «отметка стаи всем»: крейсер отмечен, отхода от него %.1f с — проверка краснеет" % o.x)
+
+
+## F4 (PolygonHud.belt_line) показывает выигрыш ЭТОГО окна «не оторваться»: новый эпизод отхода
+## начинается с +0, а не с выигрыша прошлого (второе замечание к G4). Корвет-мишень в 200 —
+## отход до 0,5 R, окно набирается; корвет снова в 200 — новый эпизод. Откат — выигрыш не
+## обнуляется. → [выигрыш прошлого окна, выигрыш в начале нового].
+func _gain_reset(rollback: bool) -> Vector2:
+	HeavyDoctrine.rollback_keep_gain = rollback
+	var b := _lab()
+	var s := _tough(_put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 0)))
+	s.stance = &"hunt"
+	var c := _dummy(_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2(0, -200)))
+	var first := 0.0
+	for i in roundi(20.0 / Battle.STEP):
+		b.step()
+		first = maxf(first, s.ret_gain)
+		if first > 0.0 and s.belt != HeavyDoctrine.RETREAT:
+			break
+	c.pos = s.pos + Vector2(0, -200)
+	b.step()
+	var again := s.ret_gain if s.ret_foe != null else -1.0
+	b.dispose()
+	HeavyDoctrine.rollback_keep_gain = false
+	return Vector2(first, again)
+
+
+func test_futile_window_gain_resets() -> void:
+	var r := _gain_reset(false)
+	note("выигрыш окна: прошлый эпизод +%.0f, новый эпизод начинается с +%.0f" % [r.x, r.y])
+	ok(r.x > 20.0, "прошлый эпизод: окно набралось, выигрыш +%.0f" % r.x)
+	ok(r.y == 0.0, "новый эпизод отхода — выигрыш с нуля: +%.0f" % r.y)
+	var o := _gain_reset(true)
+	note("откат «выигрыш не обнуляется»: новый эпизод начинается с +%.0f" % o.y)
+	ok(o.y > 20.0, "откат «выигрыш не обнуляется»: новый эпизод показывает +%.0f прошлого — проверка краснеет" % o.y)
+
+
 # ───────────────────────── отход не ведёт вперёд, «прижат», «Держать» ─────────────────────────
 
 ## Чужой крейсер — цель в поясе впереди (−z), корвет-мишень вплотную СЗАДИ: «прочь от него»
@@ -439,6 +516,67 @@ func test_escort_no_self_retreat_on_the_move() -> void:
 	var o := _escort(true)
 	note("откат «охрана на ходу как на месте»: отставание %.0f, отход %s" % [num(o[0]), str(flag(o[1]))])
 	ok(flag(o[1]) and num(o[0]) > 500.0, "откат «охрана на ходу отходит сама»: отставание %.0f — проверка краснеет" % num(o[0]))
+
+
+## Тяжёлый охраняет свой ВОЮЮЩИЙ лёгкий (второе замечание к G4; 09, 6.6 п. 2 и 6.5): корвет
+## или фрегат на «Охоте» облетает свою цель весь бой, и это не приказ игрока на движение —
+## тяжёлый держит пояс вокруг места в кольце и сам отходит в поводке. Атака с ходу охраняемого —
+## движение только ДО ВСТРЕЧИ. Откат «на ходу — по скорости охраняемого» (первая доработка G4):
+## «идёт» весь бой, и чужой корвет почти всё время ближе мёртвой зоны. → [секунд «на ходу»,
+## секунд в поясе и отходе, секунд чужой ближе D, когда кончилось «на ходу»].
+func _escort_fighting(ward_id: StringName, amove: bool, rollback: bool) -> Vector4:
+	HeavyDoctrine.rollback_escort_by_speed = rollback
+	var b := _lab()
+	var w := _put(b, Ship.ATTACKER, &"troyden", ward_id, Vector2(0, 0))
+	w.stance = &"hunt"
+	var s := _put(b, Ship.ATTACKER, &"troyden", &"cruiser", Vector2(0, 150))
+	var foes: Array[Ship] = [_put(b, Ship.DEFENDER, &"plektor", &"corvette", Vector2(-100, -550)),
+		_put(b, Ship.DEFENDER, &"plektor", &"cruiser", Vector2(0, -1150))]
+	var all: Array[Ship] = [w, s]
+	all.append_array(foes)
+	for x in all:
+		x.hp = BIG                       # оружие есть — бой настоящий, но без гибели
+		x.max_hp = BIG
+	foes[0].stance = &"hunt"
+	foes[1].stance = &"hunt"
+	b.queue({"op": &"guard", "ids": [s.uid], "target": w.uid})
+	if amove:
+		b.step()
+		b.queue({"op": &"amove", "ids": [w.uid], "x": 0.0, "z": -900.0})
+	var esc := 0.0
+	var belt := 0.0
+	var near := 0.0
+	var esc_end := 0.0
+	for i in roundi(60.0 / Battle.STEP):
+		b.step()
+		if HeavyDoctrine.escorting(s):
+			esc += Battle.STEP
+			esc_end = b.time
+		if s.belt == HeavyDoctrine.BELT or s.belt == HeavyDoctrine.RETREAT:
+			belt += Battle.STEP
+		if s.pos.distance_to(foes[0].pos) < s.def.main.dead or s.pos.distance_to(foes[1].pos) < s.def.main.dead:
+			near += Battle.STEP
+	b.dispose()
+	HeavyDoctrine.rollback_escort_by_speed = false
+	return Vector4(esc, belt, near, esc_end)
+
+
+func test_escort_of_fighting_light_keeps_belt() -> void:
+	for ward_id: StringName in [&"corvette", &"frigate"]:
+		var r := _escort_fighting(ward_id, false, false)
+		note("крейсер охраняет %s на «Охоте», 60 с: «на ходу» %.1f с, в поясе и отходе %.1f с, чужой ближе D %.1f с" % [ward_id, r.x, r.y, r.z])
+		ok(r.x < 0.5, "охраняемый %s воюет, а не идёт по приказу — «на ходу» нет: %.1f с" % [ward_id, r.x])
+		ok(r.y >= 25.0, "крейсер держит пояс и отходит сам: %.1f с из 60" % r.y)
+		ok(r.z <= 20.0, "чужой ближе мёртвой зоны мало: %.1f с из 60" % r.z)
+	var a := _escort_fighting(&"corvette", true, false)
+	note("охраняемый корвет в атаке с ходу: «на ходу» %.1f с, до %.1f с; в поясе и отходе %.1f с, чужой ближе D %.1f с" % [a.x, a.w, a.y, a.z])
+	ok(a.x >= 1.5 and a.w <= 8.0, "атака с ходу охраняемого — «на ходу» только до встречи (09, 6.5): %.1f с, кончилось на %.1f с" % [a.x, a.w])
+	ok(a.z <= 20.0, "после встречи — пояс и самоотход: чужой ближе D %.1f с" % a.z)
+	var o := _escort_fighting(&"corvette", false, true)
+	note("откат «на ходу — по скорости охраняемого»: «на ходу» %.1f с, в поясе и отходе %.1f с, чужой ближе D %.1f с" % [o.x, o.y, o.z])
+	ok(o.x >= 50.0 and o.z >= 40.0, "откат «на ходу — по скорости охраняемого»: «на ходу» %.1f с, чужой ближе D %.1f с — проверка краснеет" % [o.x, o.z])
+	var oa := _escort_fighting(&"corvette", true, true)
+	ok(oa.w >= 50.0, "откат «по скорости»: атака с ходу — «на ходу» и после встречи, до %.1f с — проверка краснеет" % oa.w)
 
 
 # ───────────────────────── строй (09, раздел 5; 9.5 пп. 9, 10, 20) ─────────────────────────
@@ -705,7 +843,7 @@ func test_bench_battle_measures() -> void:
 ## Откат — правка числа line.lead_max = 1e9 (--set).
 func test_bench_lead_max() -> void:
 	var dc := _defs().doctrine
-	var base := _bench("skirmish", 1000, 2, {})
+	var base := _skirmish()
 	var off := Defs.load_default({"line.lead_max": 1.0e9}) as Defs
 	var o: Array[Dictionary] = []
 	for i in 2:
@@ -718,8 +856,35 @@ func test_bench_lead_max() -> void:
 	for r in o:
 		omin = minf(omin, num(r["p_min"]))
 	note("«Стычка», 2 боя: места линий двух сторон не ближе %.0f (L = %.0f); откат line.lead_max = 1e9 — %.0f" % [pmin, l, omin])
+	# замер обязан БЫТЬ: p_min = −1 — места не раздавались ни разу, и «−1 < 0,7 L» зеленило бы
+	# откат на пустом месте (второе замечание к G4)
+	ok(pmin >= 0.0 and omin >= 0.0 and pmin < 1.0e9 and omin < 1.0e9, "замер мест линий есть в обоих прогонах (p_min %.0f и %.0f)" % [pmin, omin])
 	ok(pmin >= 0.7 * l, "места линий P двух сторон не съезжаются: ближе всего %.0f (≥ 0,7 L = %.0f)" % [pmin, 0.7 * l])
-	ok(omin < 0.7 * l, "откат line.lead_max = 1e9: места линий съехались до %.0f — проверка краснеет" % omin)
+	ok(omin >= 0.0 and omin < 0.7 * l, "откат line.lead_max = 1e9: места линий съехались до %.0f — проверка краснеет" % omin)
+
+
+## «Стычка» без флажков, зёрна 1000–1001 — общая для проверок места линий и М9 (каждый бой
+## стенда — секунды, считать его дважды незачем).
+var _skirm: Array[Dictionary] = []
+
+func _skirmish() -> Array[Dictionary]:
+	if _skirm.is_empty():
+		_skirm = _bench("skirmish", 1000, 2, {})
+	return _skirm
+
+
+## М9 «свой в чужом» (пары ближе (hull + hull) × 1,15 — space.foe_in) обязан ВИДЕТЬ входы
+## (второе замечание к G4): в «Сражении» их 0 и без флажков, и под --legacy-approach, и порча
+## замера (foe_in не пишется) там не краснила ничего. Ненулевой случай — «Стычка» под
+## --legacy-approach: тяжёлые подходом лёгкого «на 0,68» сходятся с чужими корветами вплотную
+## (зёрна 1000–1001: 3 и 0 входов; 1002, 1003 — 4 и 3). Без флажка — порог 09, 8.2 (≤ 10).
+func test_bench_m9_sees_entries() -> void:
+	var base := _skirmish()
+	var lg := _bench("skirmish", 1000, 2, {"legacy_approach": true})
+	note("«Стычка», 2 боя: М9 входов «свой в чужом» — %.0f (худший %.0f); под --legacy-approach — худший %.0f, пар тяжёлых ближе 360 — %.0f" % [
+		_med(base, "m9_entries"), _worst(base, "m9_entries"), _worst(lg, "m9_entries"), _worst(lg, "m9_heavy")])
+	ok(_med(base, "m9_entries") <= 10.0, "«Стычка»: М9 входов «свой в чужом» %.0f (≤ 10)" % _med(base, "m9_entries"))
+	ok(_worst(lg, "m9_entries") > 0.0, "«Стычка» под --legacy-approach: М9 видит входы «свой в чужом» — %.0f (> 0)" % _worst(lg, "m9_entries"))
 
 
 ## Флажки, беда которых видна только там, где правило решает исход (09, 8.4): «линии» —

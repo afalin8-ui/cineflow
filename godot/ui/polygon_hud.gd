@@ -62,6 +62,10 @@ static var rollback_doing_g3 := false
 ## ТОЛЬКО для проверки отката (замечание к G4): «держит дистанцию · 148 до «Исса»», хотя 148 —
 ## в мёртвой зоне и главный калибр молчит.
 static var rollback_belt_dead_text := false
+## ТОЛЬКО для проверки отката (второе замечание к G4): тяжёлый, идущий за охраняемым по
+## приказу, — «идёт на участок», как будто охрану забыли (строку «идёт за «…»» не охраняла
+## ни одна проверка).
+static var rollback_escort_text := false
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
@@ -596,7 +600,7 @@ static func _doing_belt(s: Ship, b: State, jam: String) -> String:
 		HeavyDoctrine.MOVE:
 			if s.has_amove:
 				return "идёт с боем%s%s" % [bat, jam]
-			if HeavyDoctrine.escorting(s):
+			if HeavyDoctrine.escorting(s) and not rollback_escort_text:
 				return "идёт за %s%s%s" % [Weapons.short_name(s.guard_of as Ship), bat, jam]
 			return "идёт на участок%s%s" % [bat, jam]
 	if main != "":
