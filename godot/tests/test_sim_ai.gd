@@ -480,6 +480,26 @@ func test_m6_rear_skips_arrivals() -> void:
 	ok(n > 0, "откат «считать и подходящих»: %d шагов за рубежом — проверка краснеет" % n)
 
 
+## Толчок расталкивания за тыловой рубеж не выносит (режется тем же `rear_gap`): прижатого у
+## рубежа тяжёлого корвет врага или свой фрегат выталкивали за рубеж, и он стоял там до гибели.
+## «Сражение» Тройден × Плэктор без РЭБ у защитника, зерно 1030 (до правки — 2757 шагов).
+func _rear_pushed(old: bool) -> int:
+	HeavyDoctrine.rollback_push_past_rear = old
+	var b := Battle.create(_defs(), BenchCore.setup_for("battle_noecm_d", 1030, false, {}), "capella-проверка") as Battle
+	while not b.over and b.time < 300.0:
+		b.step()
+	var n := b.metrics.m6_rear
+	HeavyDoctrine.rollback_push_past_rear = false
+	b.dispose()
+	return n
+
+
+func test_push_not_past_rear() -> void:
+	eq(_rear_pushed(false), 0, "М6 за рубежом: толчок своих и чужих тяжёлого за рубеж не выносит")
+	var n := _rear_pushed(true)
+	ok(n > 0, "откат «толчок без рубежа»: %d шагов за рубежом — проверка краснеет" % n)
+
+
 ## Отход у тылового рубежа гасит ход с допуском прихода внутрь (`rear_gap`): гася ровно
 ## на рубеже, тяжёлый перелетал его на 8–13 и стоял там до конца боя — за допуском замера М6.
 ## «Сражение» Плэктор × Тройден, зерно 1045 (флагман Тройдена).

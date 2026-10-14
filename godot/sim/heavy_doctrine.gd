@@ -93,6 +93,11 @@ static var rollback_amove_by_belt := false
 ## охраняемый, пятящийся от чужого в 0,4–0,5 R дольше 3 с после встречи, считался бы идущим —
 ## и охрана шла бы за ним без пояса и самоотхода, хотя он не идёт, а отходит (09, 6.5).
 static var rollback_amove_quiet_only := false
+## расталкивание выносит тяжёлого за тыловой рубеж стороны под ИИ (до находки стенда G5:
+## прижатого у рубежа корвет врага или свой фрегат выталкивали за него, и тяжёлый там стоял
+## до гибели — отход сам за рубеж не ведёт, а толчок вёл; «Сражение» без РЭБ у одной из сторон,
+## зёрна 1002, 1017, 1000, 1030 и другие — до 2757 шагов за рубежом).
+static var rollback_push_past_rear := false
 ## отход у тылового рубежа гасит ход ровно на рубеже, а не на допуск прихода внутри (до
 ## находки стенда G5: тяжёлый, пятящийся к рубежу или скользящий вдоль него, перелетал его
 ## на 8–13 и стоял там до конца боя — за допуском замера М6; «Сражение» Плэктор × Тройден,
@@ -201,6 +206,11 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 	if st != RETREAT and st != PINNED and st != FUTILE:
 		s.ret_foe = null
 	set_state(b, s, st)
+	# толчок расталкивания — тоже двигатель своего корабля (sim/space.gd), и за тыловой рубеж
+	# стороны он не ведёт, как и отход (2.6): у рубежа выход наружу гасится приходом
+	var sd := b.sides[s.side]
+	if sd.rear_z < INF and not rollback_push_past_rear and push != Vector2.ZERO:
+		push = _limit(b, s, desired + push, Vector2(0.0, sd.sign_z), rear_gap(sd, s)) - desired
 	Movement.fly(s, desired, push, dt, b.time, p, look(b, s, desired + push))
 
 
@@ -367,6 +377,7 @@ static func _retreat(b: State, s: Ship, r: float, dt: float, intr: Ship, intr_d:
 
 ## Сколько ещё до тылового рубежа стороны (под ИИ) — с допуском прихода внутрь: гасить ход
 ## ровно на рубеже значит перелетать его на несколько единиц (откат `rollback_rear_exact`).
+## Им же режется толчок расталкивания (откат `rollback_push_past_rear`).
 static func rear_gap(sd: State.SideState, s: Ship) -> float:
 	var lim := sd.rear_z if rollback_rear_exact else sd.rear_z - ARRIVED
 	return lim - s.pos.y * sd.sign_z
