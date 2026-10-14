@@ -554,6 +554,8 @@ static func fire_missile(b: State, c: Craft, t: Body) -> Proj:
 	var miss := b.rng.randf() < c.def.miss_chance
 	var co := b.defs.consts
 	var spd := c.def.missile_speed if c.def.missile_speed > 0.0 else co.missile_defaults_speed
+	if b.old_pd and c.def.torpedo:
+		spd = b.defs.doctrine.was.get(&"torp.speed", spd)   # откат «старое ПВО» (`--old-pd`): торпеда 88
 	var hp := c.def.missile_hp if c.def.missile_hp > 0.0 else co.missile_defaults_hp
 	var p := Weapons.spawn_proj(b, c, t, c.def.dmg, c.def.weapon, spd, hp, (t.pos - c.pos).normalized())
 	if miss:

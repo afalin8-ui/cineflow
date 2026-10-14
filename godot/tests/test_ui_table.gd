@@ -17,6 +17,7 @@ const Showcase := preload("res://tools/showcase.gd")
 const ShipModels := preload("res://view/ship_models.gd")
 const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
+const QuickMenu := preload("res://ui/quick_menu.gd")
 
 const FACTION := &"plektor"
 
@@ -172,10 +173,25 @@ func test_missing_models_are_loud() -> void:
 	var t2: String = r2["text"]
 	ok(not flag(r2["view"]) and not flag(r2["bench"]), "пропала одна .glb: «Стола» и замера нет")
 	ok(t2.contains("plektor.cruiser") and t2.contains("plektor_cruiser_пропал.glb"), "пропала одна .glb: беда называет корабль и файл — «%s»" % t2.replace("\n", " / "))
-	# то же у «Полигона» (с G1 он открывается по умолчанию): пустого места молча нет
-	var r2p := await _main_with(broken, &"")
+	# то же у «Полигона»-лаборатории: пустого места молча нет
+	var r2p := await _main_with(broken, &"polygon")
 	var t2p: String = r2p["text"]
 	ok(not flag(r2p["view"]) and not flag(r2p["bench"]) and t2p.contains("plektor.cruiser"), "«Полигон» с пропавшей .glb не собирается: «%s»" % t2p.replace("\n", " / "))
+	# и у быстрого боя из меню (с G5 главная сцена начинается с меню — ему модели не нужны):
+	# «В бой» с пропавшей .glb не начинает бой, а называет беду
+	ShipModels.use_file(broken)
+	var main := MainScene.instantiate()
+	tree.root.add_child(main)
+	await hooks.frames(2)
+	eq(str(main.get("mode")), "menu", "меню открывается и с пропавшей .glb")
+	var md: Defs = main.get("defs")
+	var started: bool = main.call("open_battle", QuickMenu.default_cfg(md))
+	await hooks.frames(2)
+	var tq := str(main.get("error_text"))
+	ok(not started and main.get("polygon") == null and tq.contains("plektor.cruiser"), "«В бой» с пропавшей .glb: бой не начат, беда на экране — «%s»" % tq.replace("\n", " / "))
+	main.queue_free()
+	await hooks.frames(2)
+	ShipModels.use_file("")
 	# та же беда — у самого «Стола», ДО расстановки: пустого места молча нет
 	ShipModels.use_file(broken)
 	var defs := Defs.load_default({}) as Defs

@@ -657,8 +657,10 @@ func test_new_ship_not_blended() -> void:
 
 func test_main_polygon_table_keys() -> void:
 	await hooks.set_window_size(Vector2i(1366, 768))
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(3)
 	var poly: Node = main.get("polygon")
 	ok(poly != null and main.get("view") == null, "по умолчанию — «Полигон»")
@@ -717,8 +719,10 @@ func test_main_polygon_table_keys() -> void:
 func _f4(rollback: bool) -> Dictionary:
 	MainScript.rollback_no_f4 = rollback
 	await hooks.set_window_size(Vector2i(1366, 768))
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(3)
 	var poly: Node = main.get("polygon")
 	var hud: Object = poly.get("hud")

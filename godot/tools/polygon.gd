@@ -1,9 +1,18 @@
-# tools/polygon.gd — «Полигон», с G4 — «Бой линий» (план G4): два флота «Сражения»
-# (Тройден — игрок, атакующий, × Плэктор) расставлены строем по ролям на ±650 (09, 5.5),
-# свой флот приказов не получает; противника до ИИ (G5) ведёт заглушка строя
-# (sim/line_stub.gd — шаги 6–7 тика ИИ), и ТОЛЬКО его: у игрока она переписывала бы стойку
-# и участок, то есть отдавала бы приказы (09, 9.5 п. 16; 5.6 — «следить за линией» у флота
-# игрока нет). Чужая линия сходится с нашей на L = 0,85 R_line, тяжёлые держат пояс и отходят
+# tools/polygon.gd — экран боя: «Быстрый бой» из меню (план G5, п. 3) и лаборатория «Бой линий».
+#
+# «Быстрый бой» (setup с cfg из ui/quick_menu.gd): клан игрока — атакующий, резерв игрока
+# («Стычка» своего клана), орудие планеты защитника; противника ведёт ИИ целиком (sim/ai.gd),
+# в «ИИ против ИИ» — обе стороны, человек только смотрит (приказов нет). Бой кончается итогом:
+# карточка (ui/result_card.gd) с выжимкой отчёта, строка отчёта JSON и запись боя — в папку
+# рядом с программой (план G5, п. 5).
+#
+# Лаборатория «Бой линий» (без cfg; для проверок — пользователь входит через меню): два флота
+# «Сражения» (Тройден — игрок, атакующий, × Плэктор) расставлены строем по ролям на ±650 (09,
+# 5.5), свой флот приказов не получает; противника ведёт ИИ ТОЛЬКО СТРОЕМ (шаги 6–7, бывшая
+# заглушка G4) — у игрока он переписывал бы стойку и участок, то есть отдавал бы приказы (09,
+# 9.5 п. 16; 5.6 — «следить за линией» у флота игрока нет), — плюс сценарий пусков звеньев
+# FOE_AIR; показательный бой её даёт тот же отпечаток, что в G4. Чужая линия сходится с нашей
+# на L = 0,85 R_line, тяжёлые держат пояс и отходят
 # задним ходом; наш флот без приказов стоит на местах старта (тяжёлые — пояс в поводке
 # 0,5 R), и чужие лёгкие доходят до НАШЕЙ линии. Выбор мышью
 # и рамкой, ПКМ по полю — строй по ролям (09, 6.4), по врагу — встать в пояс против него,
@@ -20,6 +29,9 @@
 extends Node3D
 
 signal replay_checked(ok: bool, text: String)
+## Карточка итога: «Ещё раз» и «В меню» (решает main.gd).
+signal again_pressed
+signal menu_pressed
 
 const Defs := preload("res://sim/defs.gd")
 const Battle := preload("res://sim/battle.gd")
@@ -28,6 +40,8 @@ const BattleView := preload("res://view/battle_view.gd")
 const BattleInput := preload("res://input/battle_input.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const ShipModels := preload("res://view/ship_models.gd")
+const Report := preload("res://sim/report.gd")
+const ResultCard := preload("res://ui/result_card.gd")
 
 const ATTACKER := &"troyden"
 const DEFENDER := &"plektor"
@@ -70,15 +84,42 @@ var replay: Dictionary = {}
 var replay_done := false
 var replay_ok := false
 var replay_text := ""
+## «Быстрый бой» из меню (пусто — лаборатория «Бой линий»): attacker, defender, size,
+## difficulty, watch, seed.
+var cfg: Dictionary = {}
+## Куда класть отчёт и запись боя (main.gd даёт папку рядом с программой; пусто — не писать:
+## так зовут проверки без главной сцены, им файлы в user:// не нужны).
+var out_dir := ""
+var card: ResultCard
+## Итог показан: отчёт, его выжимка и файл.
+var report: Dictionary = {}
+var brief := ""
+var report_file := ""
+var replay_file := ""
+## Окно «Выйти в меню?» (кнопка в углу экрана боя).
+var leave_panel: PanelContainer
+var leave_btn: Button
 
 
-## «Бой линий» (G4): «Сражение» быстрого боя как есть — резерв игрока, орудие планеты
-## защитника (01, ловушка 16), — плюс «Синхо» у Плэктора (в быстрый бой он не попадает,
-## а без его ракет ПВО на экране нечего сбивать); противника ведёт заглушка строя
-## (line_stub), его авиация — сценарий пусков FOE_AIR (ИИ — G5).
+## Лаборатория «Бой линий» (G4): «Сражение» быстрого боя как есть — резерв игрока, орудие
+## планеты защитника (01, ловушка 16), — плюс «Синхо» у Плэктора (в быстрый бой он не попадает,
+## а без его ракет ПВО на экране нечего сбивать); противника ведёт ИИ только строем (ai_lines),
+## его авиация — сценарий пусков FOE_AIR.
 static func setup_dict(seed_n: int) -> Dictionary:
 	var d := {"attacker": ATTACKER, "defender": DEFENDER, "size": SIZE, "seed": seed_n, "reserve": true,
-		"ground_gun": "defender", "extra": EXTRA, "line_stub": [Ship.DEFENDER], "foe_air": FOE_AIR}
+		"ground_gun": "defender", "extra": EXTRA, "ai_lines": [Ship.DEFENDER], "foe_air": FOE_AIR}
+	d.merge(flags, true)
+	return d
+
+
+## «Быстрый бой» (01, 1.1; план, раздел 1): игрок — атакующий, резерв — «Стычка» своего клана,
+## у планеты защитника — орудие его клана; противника ведёт ИИ целиком, в «ИИ против ИИ» —
+## обе стороны (сложность — у обоих ИИ).
+static func quick_setup(c: Dictionary, seed_n: int) -> Dictionary:
+	var watch: bool = c.get("watch", false)
+	var d := {"attacker": StringName(str(c.get("attacker", "troyden"))), "defender": StringName(str(c.get("defender", "plektor"))),
+		"size": StringName(str(c.get("size", "mid"))), "seed": seed_n, "reserve": true, "ground_gun": "defender",
+		"difficulty": str(c.get("difficulty", "normal")), "ai": [Ship.ATTACKER, Ship.DEFENDER] if watch else [Ship.DEFENDER]}
 	d.merge(flags, true)
 	return d
 
@@ -93,15 +134,20 @@ static var flags: Dictionary = {}
 
 ## Собрать «Полигон». rec — запись боя для повтора (пусто — новый бой).
 ## false — есть беды (problems).
-func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}) -> bool:
+func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}, p_cfg: Dictionary = {}) -> bool:
 	defs = p_defs
 	build = p_build
+	cfg = p_cfg
 	problems.clear()
-	problems.append_array(models_problems(defs))
+	if cfg.is_empty():
+		problems.append_array(models_problems(defs))
+	else:
+		problems.append_array(quick_models_problems(defs, cfg))
 	if not problems.is_empty():
 		return false
 	if rec.is_empty():
-		battle = Battle.create(defs, setup_dict(SEED), build) as Battle
+		var sf: float = cfg.get("seed", float(SEED))
+		battle = Battle.create(defs, setup_dict(SEED) if cfg.is_empty() else quick_setup(cfg, roundi(sf)), build) as Battle
 	else:
 		var why := PackedStringArray()
 		battle = Battle.from_record(defs, rec, build, why) as Battle
@@ -118,17 +164,28 @@ func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}) -> bool:
 	hud.view = view
 	# коротко: на 1366 строка справа сверху встаёт рядом с подсказкой клавиш слева
 	# (tests/test_render_skirmish.gd меряет, что они не наезжают)
-	hud.title = "«Бой линий»: %s × %s%s" % [_clan_name(ATTACKER), _clan_name(DEFENDER),
-		(" · повтор записи" if not replay.is_empty() else "") + flags_text(battle)]
+	hud.title = title_of(battle) + (" · повтор записи" if not replay.is_empty() else "") + flags_text(battle)
+	hud.watch = battle.watch
+	hud.quick = quick()
+	hud.show_feed = hud.quick
 	add_child(hud)
 	input = BattleInput.new()
 	input.name = "Input"
 	input.view = view
 	input.say = hud.say
 	input.box_changed = hud.show_box
-	input.orders_enabled = replay.is_empty()
+	input.orders_enabled = replay.is_empty() and not battle.watch
+	if battle.watch and replay.is_empty():
+		input.orders_off_text = "ИИ против ИИ: ты только смотришь — приказов нет"
 	add_child(input)
 	hud.input = input
+	card = ResultCard.new()
+	card.name = "ResultCard"
+	add_child(card)
+	card.again.connect(func() -> void: again_pressed.emit())
+	card.to_menu.connect(func() -> void: menu_pressed.emit())
+	if quick():
+		_leave_ui()
 	if not replay.is_empty():
 		var st: float = replay.get("steps", 0.0)
 		view.stop_at_step = roundi(st)
@@ -141,6 +198,7 @@ const FLAG_NAMES := {
 	"old_ecm": "РЭБ по-старому", "bomber_direct": "бомбардировщики напрямик", "patrol_mid": "патруль над серединой",
 	"legacy_approach": "тяжёлые по-старому", "no_share_close": "подход без доли сближения",
 	"no_foe_brake": "подход без торможения у чужих", "clear_055": "путь чист 0,55 R", "ecm_01l": "РЭБ на 0,1 L",
+	"old_ai": "ИИ по-старому", "old_pd": "ПВО по-старому",
 }
 
 
@@ -156,6 +214,42 @@ static func flags_text(b: Battle) -> String:
 func _clan_name(id: StringName) -> String:
 	var f: Defs.FactionDef = defs.factions.get(id)
 	return f.short if f != null else str(id)
+
+
+## Быстрый бой из меню (а не лаборатория).
+func quick() -> bool:
+	return not cfg.is_empty() or battle.has_full_ai()
+
+
+## Заголовок справа сверху — КОРОТКО (на 1366 он встаёт рядом с подсказкой клавиш слева,
+## tests/test_render_skirmish.gd меряет, что они не наезжают).
+func title_of(b: Battle) -> String:
+	if not quick():
+		return "«Бой линий»: %s × %s" % [_clan_name(ATTACKER), _clan_name(DEFENDER)]
+	var size := StringName(str(b.setup.get("size", "mid")))
+	return "%s«%s»: %s × %s" % ["ИИ против ИИ · " if b.watch else "", defs.quick.size_names.get(size, str(size)),
+		_clan_name(b.sides[0].clan), _clan_name(b.sides[1].clan)]
+
+
+## Модели быстрого боя: обе стороны, резерв игрока, станция — ДО сцены (как у «Стола»).
+static func quick_models_problems(p_defs: Defs, c: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var size := StringName(str(c.get("size", "mid")))
+	var att := StringName(str(c.get("attacker", "troyden")))
+	var dfn := StringName(str(c.get("defender", "plektor")))
+	for clan: StringName in [att, dfn]:
+		var ids: Array[StringName] = []
+		for e in Battle.compose(p_defs, size, clan):
+			if e.id not in ids:
+				ids.append(e.id)
+		if clan == att:
+			for e in Battle.compose(p_defs, &"small", clan):
+				if e.id not in ids:
+					ids.append(e.id)
+		if clan == dfn and size in p_defs.quick.station_on:
+			ids.append(&"station")
+		out.append_array(ShipModels.problems(clan, ids, [&"interceptor", &"fighter", &"bomber"]))
+	return out
 
 
 ## Модели кораблей «Полигона» (обе стороны, резерв игрока) — ДО сцены (как у «Стола»).
@@ -181,6 +275,8 @@ static func models_problems(p_defs: Defs) -> PackedStringArray:
 
 
 func _process(_delta: float) -> void:
+	if battle != null and battle.over and card != null and not card.is_open() and replay.is_empty():
+		finish_card()
 	if replay.is_empty() or replay_done or battle == null:
 		return
 	var want: float = replay.get("steps", 0.0)
@@ -192,6 +288,127 @@ func _process(_delta: float) -> void:
 		replay_text = ("совпало: шаг %d, отпечаток боя %s" % [battle.steps, fp]) if replay_ok else ("РАЗОШЛОСЬ: шаг %d, отпечаток боя %s, в записи %s" % [battle.steps, fp, rec_fp])
 		hud.say("Повтор записи: " + replay_text)
 		replay_checked.emit(replay_ok, replay_text)
+
+
+# ───────────────────────── итог (план G5, пп. 3, 5) ─────────────────────────
+
+## Итог боя: отчёт (sim/report.gd, тот же, что у стенда) — строкой JSON в файл рядом
+## с программой, туда же запись боя (её проигрывает --replay); карточка с выжимкой.
+func finish_card() -> void:
+	report = Report.of(battle, view.step_ms, build, OS.get_name())
+	brief = Report.brief(report, defs)
+	report_file = ""
+	replay_file = ""
+	if out_dir != "":
+		var stamp := Time.get_datetime_string_from_system(false, true).replace(":", "-").replace(" ", "_")
+		DirAccess.make_dir_recursive_absolute(out_dir)
+		report_file = _write(out_dir.path_join("capella_battle_%s.json" % stamp), Report.line(report))
+		var rec := battle.record()
+		rec["fp"] = battle.fingerprint()
+		replay_file = _write(out_dir.path_join("capella_replay_%s.json" % stamp), JSON.stringify(rec))
+	_hide_leave()
+	card.show_result(battle, defs, brief, report_file)
+
+
+static func _write(path: String, text: String) -> String:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return ""
+	f.store_string(text + "\n")
+	f.close()
+	return path
+
+
+## Кнопка «В меню» в углу экрана быстрого боя и окно «Выйти в меню?» (бой на это время стоит).
+func _leave_ui() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "Leave"
+	layer.layer = 30
+	add_child(layer)
+	leave_btn = Button.new()
+	leave_btn.name = "LeaveBtn"
+	leave_btn.text = "В меню"
+	leave_btn.focus_mode = Control.FOCUS_NONE
+	leave_btn.custom_minimum_size = Vector2(110.0, 32.0)
+	leave_btn.pressed.connect(_ask_leave)
+	layer.add_child(leave_btn)
+	leave_panel = PanelContainer.new()
+	leave_panel.name = "LeavePanel"
+	leave_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.03, 0.04, 0.07, 0.95)
+	sb.border_color = Color(0.35, 0.55, 0.8, 0.8)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(18)
+	leave_panel.add_theme_stylebox_override("panel", sb)
+	leave_panel.visible = false
+	layer.add_child(leave_panel)
+	var box := VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_constant_override("separation", 12)
+	leave_panel.add_child(box)
+	var l := Label.new()
+	l.text = "Выйти в меню? Бой не будет засчитан." if not battle.watch else "Выйти в меню?"
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_font_size_override("font_size", 18)
+	box.add_child(l)
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 10)
+	box.add_child(row)
+	for k: String in ["yes", "no"]:
+		var b := Button.new()
+		b.name = k
+		b.text = "Выйти" if k == "yes" else "Продолжить бой"
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(150.0, 36.0)
+		b.pressed.connect(_leave_answer.bind(k == "yes"))
+		row.add_child(b)
+	_place_leave()
+
+
+var _paused_before := false
+
+
+func _ask_leave() -> void:
+	if card.is_open():
+		menu_pressed.emit()
+		return
+	_paused_before = view.paused
+	view.paused = true
+	leave_panel.visible = true
+	_place_leave()
+
+
+func _leave_answer(yes: bool) -> void:
+	leave_panel.visible = false
+	if yes:
+		menu_pressed.emit()
+	else:
+		view.paused = _paused_before
+
+
+func _hide_leave() -> void:
+	if leave_panel != null:
+		leave_panel.visible = false
+	if leave_btn != null:
+		leave_btn.visible = false
+
+
+func _place_leave() -> void:
+	if leave_btn == null:
+		return
+	var vs := get_viewport().get_visible_rect().size
+	leave_btn.position = Vector2(vs.x - leave_btn.size.x - 16.0, vs.y - leave_btn.size.y - 14.0)
+	if leave_panel.visible:
+		leave_panel.reset_size()
+		leave_panel.position = ((vs - leave_panel.size) * 0.5).floor()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_SIZE_CHANGED:
+		_place_leave()
 
 
 # ───────────────────────── показательная запись ─────────────────────────

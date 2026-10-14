@@ -19,7 +19,7 @@ const Vision := preload("res://sim/vision.gd")
 const Air := preload("res://sim/air.gd")
 const Hangar := preload("res://sim/hangar.gd")
 const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
-const LineStub := preload("res://sim/line_stub.gd")
+const Ai := preload("res://sim/ai.gd")
 
 const ROMAN: Array[String] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
 # space.js:836 dropIn: разброс места выхода ±15 по x (по высоте — нет: бой плоский)
@@ -62,6 +62,18 @@ static var rollback_move_keep_layout := false
 ## ТОЛЬКО для проверки отката (09, 6.4; замечание к G4): ось строя ПКМ всегда по ходу марша,
 ## а не к центру видимых чужих тяжёлых. В бою всегда false.
 static var rollback_axis_march := false
+## ТОЛЬКО для проверки отката (05, ловушка 26; 2.12): «нечем бить» не проверяется — сторона
+## с одним безоружным РЭБ стоит вечно, итога нет. В бою всегда false.
+static var rollback_no_teeth := false
+## ТОЛЬКО для проверки отката (05, ловушки 30–32): итог «Отход» — у любого проигрыша, где кто-то
+## ушёл в гипер, а в снимок итога резерв не входит (как до P1). В бою всегда false.
+static var rollback_outcome_old := false
+## ТОЛЬКО для проверки отката (замер М6, находка стенда G5): подкрепление на подходе к месту
+## считается «за тыловым рубежом», как до G5. В бою всегда false.
+static var rollback_rear_arrivals := false
+
+## ИИ сторон (sim/ai.gd): объект на сторону, в порядке сторон.
+var ai: Array[Ai] = []
 
 
 ## Бой из состава быстрого боя (часть 01, 2.15). setup:
@@ -98,6 +110,8 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	b.space.heavy_r2 = Metrics.M9_HEAVY * Metrics.M9_HEAVY     # М9: пары чужих тяжёлых — проходом пар снимка
 	# флажки отката доктрины тяжёлых и строя (09, 8.4) — ключи состава боя
 	b.legacy_approach = p_setup.get("legacy_approach", false)
+	b.old_ai = p_setup.get("old_ai", false)
+	b.old_pd = p_setup.get("old_pd", false)
 	b.no_share_close = p_setup.get("no_share_close", false)
 	b.no_foe_brake = p_setup.get("no_foe_brake", false)
 	b.clear_055 = p_setup.get("clear_055", false)
@@ -134,6 +148,18 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 				if dd != null and ((dd.main != null and "heavy" in keep) or str(id) in keep):
 					hv.append(id)
 			all_ids = hv
+		# стенд, М12 (09, 8.2; план G5, п. 4): те же составы БЕЗ кораблей РЭБ у стороны — отдельная
+		# строка составов, а не флажок: «разница в победах с РЭБ и без»
+		var ne: Variant = p_setup.get("no_ecm", [])
+		if typeof(ne) == TYPE_ARRAY:
+			var nea: Array = ne
+			if float(i) in nea or i in nea:
+				var keep_ids: Array[StringName] = []
+				for id in all_ids:
+					var dd := p_defs.ship(b.sides[i].clan, id)
+					if dd != null and not dd.ecm:
+						keep_ids.append(id)
+				all_ids = keep_ids
 		side_ids.append(all_ids)
 	for i in 2:
 		# расстановка строем по ролям на ±650 (09, 5.5): места — как участки, приказов нет
@@ -166,8 +192,8 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	# сценарий «Перестрелки» (G2, ИИ — G5): противник с первого шага идёт атакой с ходу
 	# на foe_amove вперёд — тяжёлые встают на встречного, лёгкие сходятся. Это
 	# расстановка с заданием, а не приказ игрока: в журнал команд не пишется, в записи
-	# боя едет вместе с setup. С G4 «Бой линий» его не ставит (противника ведёт заглушка
-	# строя, line_stub) — ключ остался для проб.
+	# боя едет вместе с setup. С G4 лаборатория «Бой линий» его не ставит (противника ведёт
+	# ИИ строем, ai_lines) — ключ остался для проб.
 	var adv: float = p_setup.get("foe_amove", 0.0)
 	if adv != 0.0:
 		var foe := 1 - b.player_side
@@ -190,14 +216,28 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 		var first: float = fad.get("first", 0.0)
 		b.foe_air_every = ev
 		b.foe_air_next = first
-	# заглушка строя (план G4, п. 6) — стороны, которые она ведёт: в «Бое линий» —
-	# противник, в стенде — обе. Ключ состава боя: запись его помнит.
-	var stub: Variant = p_setup.get("line_stub", [])
-	if typeof(stub) == TYPE_ARRAY:
-		var sa: Array = stub
+	# ИИ (sim/ai.gd): «ai» — стороны, которые он ведёт ЦЕЛИКОМ (быстрый бой — противник,
+	# «ИИ против ИИ» и стенд — обе); «ai_lines» — только строем (шаги 6–7, бывшая заглушка
+	# G4): так лаборатория «Бой линий» ведёт противника. Ключи состава боя: запись их помнит.
+	var full_sides: Array[int] = []
+	for key: String in ["ai", "ai_lines"]:
+		var lst: Variant = p_setup.get(key, [])
+		if typeof(lst) != TYPE_ARRAY:
+			continue
+		var sa: Array = lst
 		for v: Variant in sa:
 			var sv: float = v
-			LineStub.arm(b, roundi(sv))
+			var si := roundi(sv)
+			if si < 0 or si >= b.sides.size() or b.sides[si].ai_on:
+				continue
+			b.ai.append(Ai.arm(b, si, key == "ai"))
+			if key == "ai":
+				full_sides.append(si)
+	# «ИИ против ИИ»: ИИ у обеих сторон — человек смотрит; сложность — у ОБОИХ ИИ (03, ловушка
+	# 27 — сложность только у ИИ; у игрока её нет, потому что игрока нет)
+	b.watch = full_sides.size() == 2
+	for si in full_sides:
+		b.sides[si].aim = dif.aim if dif != null else 1.0
 	var with_reserve: bool = p_setup.get("reserve", true)
 	if with_reserve:
 		b.sides[Ship.ATTACKER].reserve = compose(p_defs, &"small", att)
@@ -306,6 +346,7 @@ func queue(c: Dictionary) -> void:
 func step() -> void:
 	steps += 1
 	time = float(steps) * STEP            # часы — от числа шагов: без накопления ошибки
+	metrics.now = time
 	events.clear()
 	for c in cmds.take_due(steps):        # приказы, поставленные на этот шаг
 		_apply(c)
@@ -315,10 +356,10 @@ func step() -> void:
 	GroundGun.update(self)                # орудие планеты
 	Vision.update(self)                   # кто кого видит; seen_pos — ДО ИИ (05, ловушка 39)
 	_arrive_reinforcements()              # прибывшие — до ИИ
-	# ИИ: orders по одному снимку начала шага, потом применить — G5; до него — заглушка
-	# строя (шаги 6–7 тика ИИ, план G4, п. 6) и сценарий пусков «Полигона»
-	LineStub.tick(self)
-	_foe_air()                            # сценарий «Полигона» до ИИ: пуски противника
+	# ИИ обеих сторон — по ОДНОМУ состоянию начала шага: сначала планы, потом применить
+	# (архитектура, 2.4; 09, 4.5 и 8.1); тик каждого — по своему таймеру
+	_ai_tick()
+	_foe_air()                            # сценарий лаборатории «Бой линий»: пуски противника
 	for s in ships:
 		if not s.dead:
 			_update_ship(s)               # гипер → ион → цели → движение → оружие → ПВО
@@ -331,7 +372,7 @@ func step() -> void:
 			Weapons.update_proj(self, p)  # снаряд, пущенный на этом шаге, летит уже сейчас (03, 2.1)
 	_clean_projs()
 	Hangar.tick(self)                     # места ангаров, уборка, звенья (04, 2.2)
-	# _check_teeth() — G5 («нечем бить» — ДО конца боя)
+	_check_teeth()                        # «нечем бить» — ДО конца боя (05, ловушка 39)
 	_check_end()
 	_sample_air()                         # metrics.sample(self) целиком — G5; здесь М5
 	_sample_lines()                       # фазы, М1–М4, М6, М9, М10 (G4; 09, 8.2)
@@ -347,8 +388,10 @@ func _update_ship(s: Ship) -> void:
 	# флагман и «Синхо» ниже flee — в гипер сами (space.js:1220)
 	if s.def.flee > 0.0 and not s.station and s.hp_frac() < s.def.flee:
 		if _begin_jump(s):
-			if s.side == player_side:
+			if s.side == player_side and not watch:
 				toast("%s: повреждения критические, уходим в гипер" % s.name)
+			else:
+				_flee_note(s)
 		return
 	Weapons.think(self, s)                # цели по ролям оружия и помехи (03, 2.7–2.9)
 	if s.station:
@@ -376,6 +419,123 @@ func _side_lines() -> void:
 		sd.line = own.center
 		var v := foe.center - own.center
 		sd.ax = v.normalized() if own.has and foe.has and v.length() > 1.0 else Vector2(0.0, -sd.sign_z)
+
+
+## ИИ сторон (sim/ai.gd; архитектура, 2.4): кому пора — думают по ОДНОМУ состоянию начала
+## шага (планы обеих сторон собираются до того, как применяется первый), потом планы
+## применяются по порядку сторон. Гипер, отход всем флотом и резерв — здесь: это двери боя.
+func _ai_tick() -> void:
+	if ai.is_empty():
+		return
+	var plans: Array = []
+	for a in ai:
+		plans.append(a.think(self) if a.due(self) else null)
+	for i in ai.size():
+		var a := ai[i]
+		var pl: Ai.Plan = plans[i]
+		if pl == null:
+			continue
+		if not a.full:
+			a.apply(self, pl)
+			continue
+		if pl.reserve and call_reinforcements(a.side) and a.side != player_side:
+			toast("Противник вызвал подкрепление")
+		a.set_dome(self, pl.dome)
+		for l: Array in pl.launch:
+			var c: Ship = l[0]
+			a.launch_q.append([c.uid, l[1]])
+		if pl.retreat:
+			# отход всем флотом (05, 2.6 пп. 5, 7) — строкой в ленте с подсказкой, чем ответить:
+			# копящий гипер беззащитен, а «Охрана» за ним не пойдёт (05, ловушка 13)
+			if order_retreat(a.side) > 0:
+				if a.side == player_side and watch:
+					feed("Наш флот отходит: копит гипер", &"warn")
+				elif a.side != player_side:
+					feed("Противник отходит: копит гипер — добить: «Охота» (T) или ПКМ по кораблю", &"warn")
+			continue
+		for s in pl.jumps:
+			if _begin_jump(s):
+				_flee_note(s)
+		a.apply(self, pl)
+	for a in ai:
+		a.step(self)
+
+
+## «Противник: «…» копит гипер — добить, пока не ушёл» — раз на корабль, не при отходе всем
+## флотом (05, 2.16; ловушка 14): иначе игрок не узнает, что его можно добить.
+func _flee_note(s: Ship) -> void:
+	var sd := sides[s.side]
+	if sd.retreat or s.flee_told:
+		return
+	s.flee_told = true
+	if s.side != player_side:
+		feed("Противник: %s копит гипер — добить, пока не ушёл" % Weapons.short_name(s), &"warn")
+	elif watch:
+		feed("Наш %s копит гипер" % Weapons.short_name(s), &"warn")
+
+
+# space.js:2051 canHurt · часть 05, 2.12 — щедрый намеренно (ловушка 27): ангар со свободным
+## местом, место на постройке, звено в воздухе, ракетная машина с запасом или на перезарядке,
+## резерв в пути — всё это «есть чем бить».
+func can_hurt_side(side: int) -> bool:
+	for s in ships:
+		if s.dead or s.side != side or s.charging():
+			continue
+		if s.can_hurt():
+			return true
+		if s.hangar != null and (s.hangar.free > 0 or not s.hangar.rebuild.is_empty()):
+			return true
+		if s.hangar != null:
+			for q: RefCounted in s.hangar.launched:
+				var sq := q as Squad
+				if sq != null and not sq.dead:
+					return true
+	for c in crafts:
+		if c.side == side and not c.dead and not c.leaving and (c.def.weapon_kind != &"missile" or c.ammo > 0 or c.reloads > 0 or c.reloading > 0.0):
+			return true
+	return sides[side].reinforce_at > 0.0
+
+
+# space.js:2062 checkTeeth · часть 05, 2.12 — каждый шаг, для обеих сторон, ДО конца боя
+## (05, ловушка 39): сторона, которой НЕЧЕМ бить, уходит сама (ловушка 26). Игроку — строка
+## в ленте и ai.teeth_player_s на вызов резерва; ИИ сперва зовёт свой резерв, потом уходит
+## через ai.teeth_ai_s.
+func _check_teeth() -> void:
+	# бой кончен — «нечем бить» не о чем (лаборатории с одной стороной кончаются на первом шаге,
+	# а шагают дальше: без этого одинокий РЭБ таблицы прихода 2.22 уходил в гипер на 12-й с)
+	if rollback_no_teeth or over:
+		return
+	var dc := defs.doctrine
+	for side in sides.size():
+		var sd := sides[side]
+		var any := false
+		for s in ships:
+			any = any or (not s.dead and not s.charging() and s.side == side)
+		if sd.retreat or not any or can_hurt_side(side):
+			sd.teeth = -1.0
+			continue
+		var human := side == player_side and not watch
+		var spare := 0
+		for e in sd.reserve:
+			spare += e.count
+		if sd.teeth < 0.0:
+			sd.teeth = time
+			if not human and spare > 0 and call_reinforcements(side):
+				sd.teeth = -1.0
+				continue
+			if human:
+				feed("Флоту нечем бить: ни орудий, ни авиации — через %d с уцелевшие уйдут в гипер%s" % [roundi(dc.ai_teeth_player_s), " · B — вызвать резерв" if spare > 0 else ""], &"bad")
+		if time - sd.teeth < (dc.ai_teeth_player_s if human else dc.ai_teeth_ai_s) - 1e-9:
+			continue
+		sd.teeth = -1.0
+		if order_retreat(side) == 0:
+			continue
+		if human:
+			feed("Нечем бить — уцелевшие уходят в гипер", &"bad")
+		elif side != player_side:
+			feed("Противнику нечем бить — его флот уходит в гипер", &"good")
+		else:
+			feed("Нашему флоту нечем бить — уходит в гипер", &"bad")
 
 
 ## Сценарий «Полигона» до ИИ (G5): противник раз в foe_air_every с поднимает с каждого
@@ -439,8 +599,8 @@ func _sample_lines() -> void:
 		m.m3.append(l)
 		if l < Metrics.M3_FLOOR:
 			m.m3_short += 1
-	if sides[0].stub and sides[1].stub:
-		m.p_min = minf(m.p_min, sides[0].stub_p.distance_to(sides[1].stub_p))
+	if sides[0].ai_on and sides[1].ai_on:
+		m.p_min = minf(m.p_min, sides[0].line_p.distance_to(sides[1].line_p))
 	var hcount := [0, 0]
 	for s in ships:
 		if s.dead or s.station or s.charging():
@@ -461,13 +621,18 @@ func _sample_lines() -> void:
 			if close:
 				m.m2_s += STEP
 			Metrics.episode(m.m2_run, m.m2_eps, s.uid, close, time)
+			if s.jam != null:
+				m.m12_jam_s += STEP           # М12: под чужими помехами (Weapons.think этого шага)
 			var ret := s.belt == HeavyDoctrine.RETREAT
 			if ret:
 				m.m6_s += STEP
 			Metrics.episode(m.m6_run, m.m6_eps, s.uid, ret, time)
 			# «за рубежом» — дальше допуска прихода (8): место линии может стоять на самом рубеже
 			if sd.rear_z < INF and s.pos.y * sd.sign_z > sd.rear_z + HeavyDoctrine.ARRIVED:
-				m.m6_rear += 1
+				if not m.m6_arriving.has(s.uid) or rollback_rear_arrivals:
+					m.m6_rear += 1
+			elif m.m6_arriving.has(s.uid):
+				m.m6_arriving.erase(s.uid)
 			if absf(s.pos.x) > edge + HeavyDoctrine.ARRIVED or absf(s.pos.y) > edge + HeavyDoctrine.ARRIVED:
 				m.m6_edge += 1
 		elif s.def.cls == &"escort" and s.hp_frac() >= Metrics.M4_HURT and both and s.slot_band != Formation.UMBRELLA:
@@ -477,7 +642,7 @@ func _sample_lines() -> void:
 				m.m4_mid_s += STEP
 			if p < -Metrics.M4_BEHIND:
 				m.m4_back_s += STEP
-		if s.has_slot and sd.stub:
+		if s.has_slot and sd.ai_on:
 			var dd := s.pos.distance_to(s.slot)
 			if s.heavy():
 				m.m10_heavy.append(dd)
@@ -501,11 +666,11 @@ func _sample_lines() -> void:
 				m.m6_back[i] += proj - pp
 		m.m6_prev[i] = [hcount[i], proj]
 	# М10, строй против расталкивания: места двух своих ближе hull + hull (9.5 п. 20) — пары
-	# посчитаны, когда заглушка раздавала места (line_stub → slot_clash); здесь — пока оба
-	# живы и в строю
+	# посчитаны, когда ИИ раздавал места (sim/ai.gd → slot_clash); здесь — пока оба живы
+	# и в строю
 	for i in 2:
 		var cl := sides[i].slot_clash
-		if not sides[i].stub or cl.is_empty():
+		if not sides[i].ai_on or cl.is_empty():
 			continue
 		for k in range(0, cl.size(), 2):
 			var a := ship_by_uid(cl[k])
@@ -567,16 +732,68 @@ func _clean_projs() -> void:
 	projs = keep
 
 
-# space.js:3785 sideOut, 3903 checkEnd (итог — G5)
+# space.js:3785 sideOut, 3903 checkEnd, 3792 finish · часть 05, 2.13
+## Бой кончается, когда сторона ушла с орбиты ЦЕЛИКОМ (ловушка 28). Итог игрока: «Отход» —
+## только если флот правда отходил (по приказу, за носителем, «нечем бить») или ушёл весь
+## без потерь (ловушка 30); иначе «Флот разбит»; противник ушёл — «Орбита за нами». «ИИ против
+## ИИ» — ничья, если обе стороны ушли на одном шаге (план, раздел 1). Снимок итога — в этот
+## же миг (ловушки 31–32): живые не-станции, ушедшие в гипер и невышедший резерв.
 func _check_end() -> void:
 	if over:
 		return
 	var a_out := _side_out(Ship.ATTACKER)
 	var d_out := _side_out(Ship.DEFENDER)
 	if a_out or d_out:
-		over = true
-		winner = -1 if (a_out and d_out) else (Ship.DEFENDER if a_out else Ship.ATTACKER)
-		events.append([&"over", winner])
+		finish(Ship.DEFENDER if a_out and not d_out else (Ship.ATTACKER if d_out and not a_out else -1))
+
+
+## Итог боя: winner — сторона, удержавшая орбиту (−1 — никто). Зовёт и стенд на пределе
+## времени (result = &"limit").
+func finish(p_winner: int, limit: bool = false) -> void:
+	if over:
+		return
+	over = true
+	winner = p_winner
+	var p := player_side
+	if limit:
+		result = &"limit"
+	elif watch:
+		result = &"draw" if winner < 0 else (&"victory" if winner == p else &"defeat")
+	elif winner != p:
+		# орбиту игрок не удержал (ушёл сам, разбит или обе стороны ушли на одном шаге)
+		var lost := false
+		for s in ships:
+			lost = lost or (s.dead and not s.fled and s.side == p and not s.station)
+		var jumped := sides[p].jumped.size() > 0
+		if rollback_outcome_old:
+			result = &"retreat" if jumped else &"defeat"
+		else:
+			result = &"retreat" if jumped and (sides[p].retreat or not lost) else &"defeat"
+	else:
+		result = &"victory"
+	outcome = {"result": result, "attacker": survivors(Ship.ATTACKER), "defender": survivors(Ship.DEFENDER)}
+	events.append([&"over", winner])
+
+
+## Уцелевшие стороны по id (05, 2.13): живые не-станции (копящие гипер тоже), ушедшие в гипер
+## и резерв, который так и не вышел (вызванный, но не прибывший — тоже; C15).
+func survivors(side: int) -> Dictionary:
+	var out: Dictionary = {}
+	for s in ships:
+		if s.dead or s.side != side or s.station:
+			continue
+		_add(out, str(s.def.id), 1)
+	for id in sides[side].jumped:
+		_add(out, str(id), 1)
+	if not rollback_outcome_old:
+		for e in sides[side].reserve:
+			_add(out, str(e.id), e.count)
+	return out
+
+
+static func _add(d: Dictionary, k: String, n: int) -> void:
+	var v: int = d.get(k, 0)
+	d[k] = v + n
 
 
 ## Сторона больше не держит орбиту: живых нет, или отход и живы одни станции.
@@ -710,6 +927,7 @@ func _drop_in(side: int, list: Array[Defs.FleetEntry]) -> Array[Ship]:
 	_place_arrivals(side, got)
 	for s in got:
 		events.append([&"jump_in", s.uid])
+		metrics.m6_arriving[s.uid] = true
 	return got
 
 
@@ -721,9 +939,9 @@ func _place_arrivals(side: int, got: Array[Ship]) -> void:
 	var dc := defs.doctrine
 	var c := defs.consts
 	var spec := Formation.Spec.new()
-	if sd.stub and sd.stub_set:
-		spec.p = sd.stub_p
-		spec.ax = sd.stub_ax
+	if sd.ai_on and sd.line_set:
+		spec.p = sd.line_p
+		spec.ax = sd.line_ax
 	elif sd.has_line:
 		spec.p = sd.line
 		spec.ax = sd.ax
@@ -1261,7 +1479,7 @@ func fingerprint() -> String:
 			for e in sd.reserve:
 				n += e.count
 			a.append_array([float(n), sd.reinforce_at, 1.0 if sd.retreat else 0.0, 1.0 if sd.conceded else 0.0, float(sd.jumped.size()),
-				1.0 if sd.stub else 0.0, sd.stub_p.x, sd.stub_p.y, sd.stub_ax.x, sd.stub_ax.y, sd.stub_next])
+				1.0 if sd.ai_on else 0.0, sd.line_p.x, sd.line_p.y, sd.line_ax.x, sd.line_ax.y, sd.ai_next])
 		a.append_array([1.0 if over else 0.0, float(winner)])
 		if gun != null:
 			a.append_array([gun.next, 1.0 if gun.warned else 0.0, gun.aim.x, gun.aim.y])
@@ -1280,7 +1498,27 @@ func fingerprint() -> String:
 		for sd in sides:
 			a.append_array([float(sd.sq_up), float(sd.sq_lost)])
 		a.append_array([foe_air_next, float(foe_air_i)])
+		# ИИ целиком (G5): общая цель, помощь, очередь пусков, «нечем бить», итог. У лаборатории
+		# «Бой линий» (ИИ только строем) этого нет — её отпечаток тот же, что в G4
+		for x in ai:
+			if x.full:
+				a.append_array([float(x.side), _uid_of(x.focus), x.hp0, 1.0 if x.had_heavy else 0.0, float(x.helps.size()),
+					float(x.launch_q.size()), float(x.dome_flips), float(x.intercepts), float(x.help_calls)])
+				for s in ships:
+					if s.side == x.side:
+						a.append(1.0 if s.flee_told else 0.0)
+		if watch or has_full_ai():
+			for sd in sides:
+				a.append(sd.teeth)
+			a.append(float(String(result).hash()))
 	return a.to_byte_array().hex_encode().sha256_text().substr(0, 16)
+
+
+func has_full_ai() -> bool:
+	for x in ai:
+		if x.full:
+			return true
+	return false
 
 
 ## Номер цели в отпечатке: корабль, машина, снаряд или звено; 0 — нет.
@@ -1319,6 +1557,9 @@ static func from_record(p_defs: Defs, rec: Dictionary, p_build: String, why: Pac
 
 ## Разорвать кольца ссылок после боя: RefCounted их не собирает (архитектура, 2.12).
 func dispose() -> void:
+	for x in ai:
+		x.unlink()
+	ai.clear()
 	for q in squads:
 		q.unlink()
 	squads.clear()

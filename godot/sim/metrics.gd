@@ -20,7 +20,11 @@
 #   М10 (строй ИИ держится: до своего места). Сами шаги замера — в battle.gd
 #   (_sample_lines): метрикам нельзя грузить состояние боя (кольцо preload). Журнал смен
 #   состояния пояса — battle.belt_log. Сводка — summary() одной строкой JSON (стенд).
-# М5, М7, М8, М11 — выше; М12, М13 — G5.
+# - часть 2 (G5; 09, 8.2): М7 доли урона по источникам за бой, М8 урон авиации на поднятое
+#   звено и доля сбитых, М11 самый долгий промежуток без урона по кораблям после первого
+#   попадания, М12 доля тяжёлый-секунд под чужими помехами и доля готового времени главного
+#   калибра, сорванного помехами (журнал причин); М13 — победы, считает tools/summarize.py по
+#   итогам боёв. Отчёт боя одной строкой JSON — sim/report.gd (стенд и бой человека — один).
 extends RefCounted
 
 ## Причины молчания готового главного калибра (03, 7.5) — по порядку проверок выстрела.
@@ -54,6 +58,13 @@ var idle: Array[Dictionary] = [{}, {}]
 var main_shots: PackedInt32Array = PackedInt32Array([0, 0])
 var first_hit := 0.0
 var first_gun := 0.0
+## М11: часы боя на этом шаге (battle → step), последний урон по кораблям не с планеты
+## после первого попадания и самый долгий промежуток без него.
+var now := 0.0
+var last_hit := -1.0
+var max_gap := 0.0
+## М12: тяжёлый-секунды фазы «бой» под чужими помехами (09, 8.2).
+var m12_jam_s := 0.0
 ## М5: машина-секунды в воздухе (без взлёта и посадки) и из них — в середине; [сторона].
 var craft_s := PackedFloat64Array([0.0, 0.0])
 var craft_mid_s := PackedFloat64Array([0.0, 0.0])
@@ -90,6 +101,10 @@ var m6_back := PackedFloat64Array([0.0, 0.0])
 var m6_prev: Array = [null, null]
 var m6_rear := 0
 var m6_edge := 0
+## Вышедшие из гипера, ещё не дошедшие до своей стороны рубежа: точка выхода — место минус
+## тормозной путь (09, 5.5), то есть за рубежом по построению, и подход к месту — не отход
+## (найдено стендом G5: весь «М6 за рубежом» «Генерального» был подкреплением на подходе).
+var m6_arriving: Dictionary[int, bool] = {}
 ## М9: пары «свой в чужом» ближе (hull + hull) × 1,15 сейчас, сколько было входов; шаги, когда
 ## пара чужих тяжёлых ближе M9_HEAVY.
 var m9_in: Dictionary[int, bool] = {}
@@ -122,6 +137,11 @@ const M9_HEAVY := 360.0
 
 
 func book(side: int, key: StringName, cls_i: int, dealt: float) -> void:
+	if key != &"planet" and cls_i != TORPEDO_CLS and cls_i != STRIKE_CLS and dealt > 0.0:
+		# М11: промежуток без урона по кораблям — после первой стычки, без залпов планеты
+		if last_hit >= 0.0:
+			max_gap = maxf(max_gap, now - last_hit)
+		last_hit = now
 	var d: Dictionary = dmg[side]
 	var row: PackedFloat64Array = d.get(key, PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0]))
 	row[cls_i] += dealt
@@ -271,6 +291,34 @@ static func share(part: float, whole_: float) -> float:
 	return part / whole_ if whole_ > 0.0 else -1.0
 
 
+## М7 (09, 8.2): доли урона стороны по КОРАБЛЯМ — главный калибр, батарея, лёгкие (с ракетами
+## «Синхо»), авиация, ПВО и планета; −1 — урона не было.
+func m7(side: int) -> Dictionary:
+	var all := 0.0
+	for k in KEYS:
+		all += to_ships(side, k)
+	if all <= 0.0:
+		return {}
+	return {"main": to_ships(side, &"heavy") / all, "sec": to_ships(side, &"sec") / all,
+		"light": (to_ships(side, &"light") + to_ships(side, &"missile")) / all, "air": air_to_ships(side) / all,
+		"pd": to_ships(side, &"pd") / all, "planet": to_ships(side, &"planet") / all, "total": all}
+
+
+## Доля готового времени главного калибра, сорванного помехами (журнал причин; план G5 —
+## свой замер отката --old-ecm): секунды «помехи» / (секунды молчания + выстрелы × шаг).
+func jam_block(step: float) -> float:
+	var idle_all := 0.0
+	var jam := 0.0
+	for side in 2:
+		for r in REASONS:
+			var v: float = idle[side].get(r, 0.0)
+			idle_all += v
+			if r == &"jam":
+				jam += v
+	var ready := idle_all + float(main_shots[0] + main_shots[1]) * step
+	return jam / ready if ready > 0.0 else -1.0
+
+
 ## Сводка замеров G4 одним словарём (стенд пишет её строкой JSON; 09, 8.2).
 func lines_summary() -> Dictionary:
 	return {
@@ -286,4 +334,5 @@ func lines_summary() -> Dictionary:
 		"m10_heavy": median(m10_heavy), "m10_corvette": median(m10_corvette), "m10_frigate": median(m10_frigate),
 		"m10_self": m10_self, "p_min": p_min if p_min < INF else -1.0,
 		"first_hit": first_hit, "first_gun": first_gun,
+		"m11_gap": max_gap, "m12_jam": share(m12_jam_s, heavy_s),
 	}

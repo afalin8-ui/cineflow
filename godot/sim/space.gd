@@ -68,7 +68,11 @@ func rebuild(all: Array[Ship]) -> void:
 		near[i] = -1
 		near_d2[i] = INF
 		uid[i] = s.uid
-		heavy[i] = 1 if (s.heavy() and not s.station) else 0
+		# М9 «пары чужих тяжёлых ближе 360» — тяжёлые В СТРОЮ: без станции и без копящих гипер
+		# (как F_h у ИИ и М10 у своих мест). Найдено стендом G5: единственный случай за 24 боя —
+		# флагман у крейсера с 2% прочности, копящего гипер, который дрейфует к нему сам, а
+		# флагман при этом отходит (зерно 1007, 97,6–98,7 с)
+		heavy[i] = 1 if (s.heavy() and not s.station and not s.charging()) else 0
 	foe_in.clear()
 	heavy_close = 0
 	_pairs()

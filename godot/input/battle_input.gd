@@ -43,6 +43,8 @@ var view: Node3D
 ## false — приказы не принимаются (повтор записи боя): мышь выбирает, клавиши
 ## вида (пауза, скорость) работают, а команд в бой нет.
 var orders_enabled := true
+## Что сказать на приказ, когда приказы выключены: повтор записи или «ИИ против ИИ».
+var orders_off_text := "Повтор записи боя: приказы не принимаются"
 ## Короткие полоски интерфейса, не о приказе (06, 1.5: «Сначала выбери…»).
 ## Зовёт хозяин: say.call(текст).
 var say: Callable
@@ -144,7 +146,7 @@ func own_orders() -> PackedInt32Array:
 
 func _queue(c: Dictionary) -> void:
 	if not orders_enabled:
-		_say("Повтор записи боя: приказы не принимаются")
+		_say(orders_off_text)
 		return
 	_battle().call("queue", c)
 

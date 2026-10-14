@@ -67,8 +67,23 @@ static var rollback_belt_dead_text := false
 ## ни одна проверка).
 static var rollback_escort_text := false
 
+## Строки ленты (feed_log модели: «Противник отходит…», «… копит гипер», «нечем бить») —
+## сколько и сколько игровых секунд живут. Лента — у быстрого боя (show_feed): в лаборатории
+## её строки о помехах и огне по станции закрывали бы поле, а читать там нечего.
+const FEED_MAX := 4
+const FEED_GAME_S := 7.0
+const FEED_COLORS := {&"good": Color(0.6, 1.0, 0.7), &"warn": Color(1.0, 0.86, 0.45), &"bad": Color(1.0, 0.55, 0.5)}
+
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
+## «ИИ против ИИ»: человек только смотрит — в панели нет приказов, у резерва нет «B».
+var watch := false
+## Быстрый бой: лента видна, итог — карточкой (ui/result_card.gd), а не баннером «F8».
+var show_feed := false
+var quick := false
+var feed_box: VBoxContainer
+var _feed: Array[Label] = []
+var _last_feed := ""
 ## Ввод (input/battle_input.gd): ждёт ли A щелчка — подсказка держится, пока ждёт.
 var input: Node
 var title := ""
@@ -123,6 +138,16 @@ func _ready() -> void:
 	box.add_theme_stylebox_override("panel", bs)
 	box.visible = false
 	add_child(box)
+	feed_box = VBoxContainer.new()
+	feed_box.name = "Feed"
+	feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	feed_box.add_theme_constant_override("separation", 2)
+	add_child(feed_box)
+	for i in FEED_MAX:
+		var fl := _label(16, Color.WHITE)
+		fl.visible = false
+		feed_box.add_child(fl)
+		_feed.append(fl)
 	banner = _label(24, Color(1.0, 0.9, 0.6))
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.visible = false
@@ -180,13 +205,45 @@ func _process(_delta: float) -> void:
 		_fit_panel(vs)
 	panel.position = Vector2(((vs.x - panel.size.x) * 0.5), vs.y - panel.size.y - 14.0)
 	_draw_belt_debug(b)
-	banner.visible = over
+	_show_feed(b, vs)
+	banner.visible = over and not quick
 	if over:
 		var w: int = b.get("winner")
 		var my_side: int = view.get("my_side")
 		banner.text = "Бой окончен: %s.\nF8 — начать заново" % ("ничья" if w < 0 else ("наша сторона держит орбиту" if w == my_side else "орбиту держит противник"))
 		banner.reset_size()
 		banner.position = ((vs - banner.size) * 0.5).floor() - Vector2(0.0, vs.y * 0.18)
+
+
+## Лента: последние строки feed_log моложе FEED_GAME_S игровых секунд — слева над нижней
+## панелью, цветом по виду (хорошо · внимание · плохо). Часы игровые: на паузе строка стоит.
+func _show_feed(b: Object, vs: Vector2) -> void:
+	var lines: Array[Dictionary] = []
+	if show_feed:
+		var log: Array[Dictionary] = b.get("feed_log")
+		var t: float = b.get("time")
+		var i := log.size() - 1
+		while i >= 0 and lines.size() < FEED_MAX:
+			var e: Dictionary = log[i]
+			var et: float = e["t"]
+			if t - et > FEED_GAME_S:
+				break
+			lines.push_front(e)
+			i -= 1
+	var key := ""
+	for e in lines:
+		key += str(e["step"]) + str(e["text"]) + "|"
+	if key != _last_feed:
+		_last_feed = key
+		for j in FEED_MAX:
+			var fl := _feed[j]
+			fl.visible = j < lines.size()
+			if fl.visible:
+				fl.text = str(lines[j]["text"])
+				var col: Color = FEED_COLORS.get(lines[j]["kind"], Color(0.85, 0.92, 1.0))
+				fl.add_theme_color_override("font_color", col)
+		feed_box.reset_size()
+	feed_box.position = Vector2(PANEL_GAP, vs.y - panel.size.y - 14.0 - feed_box.size.y - 10.0)
 
 
 ## Нижняя панель по тексту, но не шире окна без PANEL_GAP с каждой стороны: длинные строки
@@ -246,7 +303,7 @@ func _status_text(b: Object) -> String:
 		for e: Object in reserve:
 			var c: int = e.get("count")
 			n += c
-		lines.append("В резерве %d %s · B — вызвать" % [n, FrameBench.plural(n, "корабль", "корабля", "кораблей")])
+		lines.append("В резерве %d %s%s" % [n, FrameBench.plural(n, "корабль", "корабля", "кораблей"), "" if watch else " · B — вызвать"])
 	# часы «Давления Земли» (03, 2.17): «залп», если осталось меньше секунды
 	var gun: Object = b.get("gun")
 	if gun != null:
@@ -309,6 +366,8 @@ func _toast_text(b: Object) -> String:
 func _sel_text(b: Object) -> String:
 	var sel: Array[int] = view.get("selection")
 	var my_side: int = view.get("my_side")
+	if sel.is_empty() and watch:
+		return "ИИ против ИИ — ты только смотришь, приказов нет · ЛКМ — выбрать корабль и прочитать, чем он занят\nПробел — пауза · 1, 2, 4 — скорость · колесо — ближе и дальше · Q/E — повернуть"
 	if sel.is_empty():
 		return "Ничего не выбрано · ЛКМ — выбрать, протяжка — рамка, щелчок по машине — её звено\nНоситель: Z / X / C — поднять звено · B — подкрепление · Пробел — пауза · 1, 2, 4 — скорость"
 	var names := PackedStringArray()
@@ -343,6 +402,12 @@ func _sel_text(b: Object) -> String:
 			var a := doing(s, b as State)
 			var c: int = acts.get(a, 0)
 			acts[a] = c + 1
+		elif watch:
+			# «ИИ против ИИ»: смотрят обе стороны — чем занят и корабль противника (подсказка
+			# панели это обещает; в бою с приказами чужое занятие не показываем, как в G4)
+			var fa := doing(s, b as State)
+			var fc: int = acts.get(fa, 0)
+			acts[fa] = fc + 1
 	var head := "Выбрано: %d" % sel.size() if own > 0 else "Противник"
 	var act_list := PackedStringArray()
 	for a: String in acts:
@@ -351,6 +416,8 @@ func _sel_text(b: Object) -> String:
 	var line := "%s — %s%s" % [head, ", ".join(names), more]
 	if not act_list.is_empty():
 		line += "\n" + ", ".join(act_list)
+	if watch:
+		return line
 	if own_carriers > 0:
 		line += "\nZ — перехватчики · X — истребители · C — бомбардировщики · свободно мест в ангаре: %d" % free_bays
 	if own_squads > 0 and own_squads == own:

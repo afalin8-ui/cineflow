@@ -798,6 +798,9 @@ static func damage(b: State, t: RefCounted, amount: float, key: StringName, src:
 		return 0.0
 	var cls_i := body.cls_i
 	var mult := b.defs.dmg_mult(key, cls_i)
+	if b.old_pd and key == &"pd" and cls_i == Metrics.TORPEDO_CLS:
+		# откат 09, 8.4 «старое ПВО» (`--old-pd`): ПВО по снарядам — прежнее число (was)
+		mult = b.defs.doctrine.was.get(&"space_dmg.pd_torpedo", mult)
 	if mult <= 0.0:
 		return 0.0
 	var before := body.hp

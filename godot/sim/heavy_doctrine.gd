@@ -93,6 +93,10 @@ static var rollback_amove_by_belt := false
 ## охраняемый, пятящийся от чужого в 0,4–0,5 R дольше 3 с после встречи, считался бы идущим —
 ## и охрана шла бы за ним без пояса и самоотхода, хотя он не идёт, а отходит (09, 6.5).
 static var rollback_amove_quiet_only := false
+## расталкивание выносит тяжёлого за тыловой рубеж стороны под ИИ (до находки стенда G5:
+## прижатого у рубежа корвет врага или свой фрегат выталкивали за него на 13–52 и тяжёлый там
+## стоял до гибели — отход сам за рубеж не ведёт, а толчок вёл).
+static var rollback_push_past_rear := false
 
 
 ## Шаг тяжёлого доктрины: состояние, желаемая скорость, нос и полёт. Звать для живого
@@ -196,6 +200,11 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 	if st != RETREAT and st != PINNED and st != FUTILE:
 		s.ret_foe = null
 	set_state(b, s, st)
+	# толчок расталкивания — тоже двигатель своего корабля (sim/space.gd), и за тыловой рубеж
+	# стороны он не ведёт, как и отход (2.6): у рубежа выход наружу гасится приходом
+	var sd := b.sides[s.side]
+	if sd.rear_z < INF and not rollback_push_past_rear and push != Vector2.ZERO:
+		push = _limit(b, s, desired + push, Vector2(0.0, sd.sign_z), sd.rear_z - s.pos.y * sd.sign_z) - desired
 	Movement.fly(s, desired, push, dt, b.time, p, look(b, s, desired + push))
 
 

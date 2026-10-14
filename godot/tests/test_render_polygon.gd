@@ -196,8 +196,10 @@ static func _parse_record(text: String) -> Dictionary:
 ## зелёным во всех ярусах). Буфер под xvfb настоящий.
 func test_f9_record_in_clipboard() -> void:
 	await hooks.set_window_size(Vector2i(1366, 768))
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(10)            # бой идёт: в записи есть шаги
 	var poly: Node = main.get("polygon")
 	ok(poly != null, "главная сцена открыла «Полигон»")
@@ -239,8 +241,10 @@ func test_f9_record_in_clipboard() -> void:
 
 func test_f11_by_key_event() -> void:
 	await hooks.set_window_size(Vector2i(1366, 768))
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(3)
 	var m0 := DisplayServer.window_get_mode()
 	await hooks.key(KEY_F11)
@@ -272,8 +276,10 @@ func test_f11_by_key_event() -> void:
 func test_polygon_snapshots() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var got := await hooks.set_window_size(size)
+		MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 		var main := MainScene.instantiate()
 		tree.root.add_child(main)
+		MainScript.boot = &""
 		await hooks.frames(8)
 		var poly: Node = main.get("polygon")
 		var view: Node3D = poly.get("view")

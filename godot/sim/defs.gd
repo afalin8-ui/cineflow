@@ -396,6 +396,20 @@ class Doctrine:
 	var ai_air_e_over_i: int
 	var ai_air_bomber_slots_k: float
 	var ai_air_bomber_min: int
+	var ai_flee_hp: float              # тяжёлый ИИ ниже — в гипер (7.2)
+	var ai_hurt_hp: float              # побитый (7.2; 5.1)
+	var ai_hurt_back: float            # побитые лёгкие — за линию на столько (5.1)
+	var ai_hurt_lat: float             # и вбок по доле корабля в пределах ±половины (5.1)
+	var ai_leaderless_back: float      # без своих тяжёлых P — во столько от центра противника (7.2)
+	var ai_retreat_hp_k: float         # отход всем флотом: меньше этой доли от наибольшей прочности (7.6)
+	var ai_retreat_foe_k: float        # …и противник во столько раз сильнее
+	var ai_focus_keep: float           # общую цель держать, пока не хуже лучшей во столько раз (7.3)
+	var ai_threat_hangar: float        # угроза цели: за ангар (7.3)
+	var ai_threat_dome: float          # за развёрнутый купол РЭБ
+	var ai_threat_dome_weak: float     # за купол без мощности
+	var ai_threat_dome_power: float    # купол «развёрнут» при мощности больше
+	var ai_teeth_player_s: float       # «нечем бить»: игроку — столько на вызов резерва (7.7)
+	var ai_teeth_ai_s: float           # «нечем бить»: ИИ уходит через столько
 	var air_patrol_k: float
 	var air_patrol_escort_take: float
 	var air_patrol_escort_drop: float

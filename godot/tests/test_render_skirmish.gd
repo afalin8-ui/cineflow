@@ -23,6 +23,7 @@ const Weapons := preload("res://sim/weapons.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
 const MainScene := preload("res://main.tscn")
+const MainScript := preload("res://main.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 
@@ -359,8 +360,10 @@ func test_four_sources_drawn_differently() -> void:
 func test_skirmish_snapshots() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var got := await hooks.set_window_size(size)
+		MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 		var main := MainScene.instantiate()
 		tree.root.add_child(main)
+		MainScript.boot = &""
 		await hooks.frames(6)
 		var poly: Polygon = main.get("polygon")
 		var view := poly.view
@@ -407,8 +410,10 @@ func test_skirmish_snapshots() -> void:
 func test_toast_not_on_status() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var got := await hooks.set_window_size(size)
+		MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 		var main := MainScene.instantiate()
 		tree.root.add_child(main)
+		MainScript.boot = &""
 		await hooks.frames(6)
 		var poly: Polygon = main.get("polygon")
 		var view := poly.view
@@ -464,8 +469,10 @@ func test_toast_not_on_status() -> void:
 ## съезжаются до 627, это 0,40 высоты) — его ловит М3 (tests/test_sim_doctrine.gd).
 func _lines_view(flags: Dictionary, size: Vector2i, save: bool, dist_k: float = 1.0) -> Dictionary:
 	var got := await hooks.set_window_size(size)
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(6)
 	# флажки главная сцена берёт из командной строки в _ready — «Бой линий» заново с ними
 	Polygon.flags = flags

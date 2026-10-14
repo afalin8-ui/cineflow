@@ -10,6 +10,9 @@
 #   capella.x86_64 -- --ship-models=ФАЙЛ обмер моделей из другого файла (проверки громкого
 #                                       отказа: пропал файл моделей или одна .glb)
 #   capella.x86_64 -- --table           сразу «Стол» (без замера)
+#   capella.x86_64 -- --polygon         сразу лаборатория «Бой линий» (G4; проверки и разработчик)
+#   capella.x86_64 -- --quick, --watch  сразу «Быстрый бой» с выбором меню по умолчанию —
+#                                       играть или смотреть «ИИ против ИИ» (проверка с окном)
 #   capella.x86_64 -- --make-replay=ФАЙЛ показательный бой «Полигона» БЕЗ вида → запись боя
 #                                       (зерно + журнал команд + отпечаток на последнем шаге)
 #   capella.x86_64 -- --replay=ФАЙЛ     проиграть запись боя на «Полигоне»; --replay-check —
@@ -24,9 +27,10 @@
 #                                       --no-share-close, --no-foe-brake, --clear-055, --ecm-01L); код 0/1
 # Беда в данных или в моделях — текст на экране и в stderr, сцена и замер не
 # начинаются; в режимах --selftest, --bench-render и --replay-check — ещё и код выхода 1.
-# Без режима — «Полигон» (G1): два флота «Сражения», полёт по приказам. «Стол» (G0b) —
-# по F6 или F5 (минута замера кадров на нём); F3 — счётчик кадров, F8 — «Полигон»
-# заново, F9 — запись боя, F11 — окно / полный экран.
+# Без режима — меню «Быстрый бой» (G5): клан, противник, масштаб, сложность, «В бой» или
+# «Смотреть: ИИ против ИИ»; бой кончается карточкой итога («Ещё раз», «В меню»). «Стол» (G0b) —
+# по F6 из меню или F5 (минута замера кадров на нём); F3 — счётчик кадров, F8 — бой заново,
+# F9 — запись боя, F11 — окно / полный экран.
 extends Node
 
 const Defs := preload("res://sim/defs.gd")
@@ -38,14 +42,27 @@ const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
 const ShipModels := preload("res://view/ship_models.gd")
 const BenchCore := preload("res://tools/bench_core.gd")
+const QuickMenu := preload("res://ui/quick_menu.gd")
+const SpaceEnv := preload("res://view/space_env.gd")
 ## ТОЛЬКО для проверки отката: F4 (отладка пояса) не слушается.
 static var rollback_no_f4 := false
 
-const HINT_TABLE := "F3 — счётчик кадров · F5 — минута замера кадров · F6 — «Полигон» · F11 — окно / полный экран\nкамера: колесо — ближе и дальше, Q/E или правая кнопка — повернуть, стрелки и край экрана — сдвинуть"
+const HINT_TABLE := "F3 — счётчик кадров · F5 — минута замера кадров · F6 — %s · F11 — окно / полный экран\nкамера: колесо — ближе и дальше, Q/E или правая кнопка — повернуть, стрелки и край экрана — сдвинуть"
+const HINT_MENU := "F3 — счётчик кадров · F5 — замер кадров на «Столе» · F6 — «Стол» · F11 — окно / полный экран"
+const HINT_BATTLE := "F3 — счётчик кадров · F8 — начать заново · F9 — запись боя · F11 — полный экран\nкамера: колесо — ближе и дальше · Q/E или правая кнопка с протяжкой — повернуть · стрелки и край экрана — сдвинуть"
 const HINT_POLYGON := "F3 — счётчик кадров · F5 — замер кадров на «Столе» · F6 — «Стол» · F8 — начать заново · F9 — запись боя · F11 — полный экран\nкамера: колесо — ближе и дальше · Q/E или правая кнопка с протяжкой — повернуть · стрелки и край экрана — сдвинуть"
 
-## Только для проверок: с чего начать, если аргументов нет (&"table" — «Стол»).
+## --selftest: столько шагов «ИИ против ИИ» (60 с) — успевают первые тики обоих ИИ, общая цель,
+## пуски звеньев и первые попадания.
+const AI_SELFTEST_STEPS := 1800
+
+## Только для проверок: с чего начать, если аргументов нет (&"table" — «Стол», &"polygon» —
+## лаборатория «Бой линий»; пусто — меню «Быстрый бой»).
 static var boot := &""
+## Только для проверок: куда класть отчёт и запись быстрого боя (пусто — рядом с программой,
+## как у замера кадров) и зерно боя (−1 — от часов).
+static var out_override := ""
+static var seed_override := -1
 
 var defs: Defs
 ## «Стол» (tools/showcase.gd) — когда открыт.
@@ -53,6 +70,14 @@ var view: Showcase
 ## «Полигон» (tools/polygon.gd) — когда открыт.
 var polygon: Polygon
 var mode := &""
+## Меню «Быстрый бой» (ui/quick_menu.gd) и звёздное небо за ним — когда открыто.
+var menu: QuickMenu
+var menu_back: Node3D
+## Последний выбор меню: «Ещё раз» и F8 начинают тот же бой с новым зерном, меню открывается
+## с ним же.
+var last_cfg: Dictionary = {}
+## Откуда открыт «Стол» — туда же F6 возвращает (&"menu" или &"polygon").
+var table_from := &"menu"
 var fps: FpsCounter
 var bench: FrameBench
 var report: BenchReport
@@ -106,8 +131,12 @@ func _ready() -> void:
 	var ok := false
 	if bench_cli or "--table" in args or boot == &"table":
 		ok = open_table()
-	else:
+	elif not rec.is_empty() or "--polygon" in args or boot == &"polygon":
 		ok = open_polygon(rec)
+	elif "--quick" in args or "--watch" in args:
+		ok = open_battle(QuickMenu.default_cfg(defs, "--watch" in args))
+	else:
+		ok = open_menu()
 	if not ok:
 		return
 	print("Капелла: отрисовщик %s · %s, видеокарта %s" % [RenderingServer.get_current_rendering_method(), RenderingServer.get_current_rendering_driver_name(), RenderingServer.get_video_adapter_name()])
@@ -137,9 +166,91 @@ func _ensure_ui() -> void:
 	bench.finished.connect(_bench_done)
 
 
+## Открыть меню «Быстрый бой» (G5): выбор боя на фоне неба и планеты.
+func open_menu() -> bool:
+	_close_table()
+	_close_polygon()
+	_close_menu()
+	menu_back = Node3D.new()
+	menu_back.name = "MenuBack"
+	add_child(menu_back)
+	var cam := Camera3D.new()
+	cam.fov = defs.doctrine.camera_fov_deg
+	cam.far = defs.doctrine.camera_far
+	menu_back.add_child(cam)
+	cam.look_at_from_position(Vector3(0.0, 600.0, 3200.0), SpaceEnv.PLANET_CENTER * 0.55)
+	var env := SpaceEnv.new()
+	env.name = "SpaceEnv"
+	menu_back.add_child(env)
+	menu = QuickMenu.new()
+	menu.name = "QuickMenu"
+	menu.setup(defs, release_name())
+	if not last_cfg.is_empty():
+		menu.cfg = last_cfg.duplicate()
+		menu.cfg["watch"] = false
+	add_child(menu)
+	menu.start.connect(_start_from_menu)
+	mode = &"menu"
+	_ensure_ui()
+	fps.set_hint_text(HINT_MENU)
+	return true
+
+
+func _close_menu() -> void:
+	if menu != null:
+		menu.queue_free()
+		remove_child(menu)
+		menu = null
+	if menu_back != null:
+		menu_back.queue_free()
+		remove_child(menu_back)
+		menu_back = null
+
+
+## Кнопка меню жмётся посреди обработки ввода самого меню — бой открывается следующим
+## кадром, когда меню уже ничего не обрабатывает.
+func _start_from_menu(c: Dictionary) -> void:
+	open_battle.call_deferred(c)
+
+
+## Быстрый бой по выбору меню (план G5, п. 3): зерно — от часов (тесты дают своё), отчёт
+## и запись — в папку рядом с программой (как файл замера кадров).
+func open_battle(c: Dictionary) -> bool:
+	var cc := c.duplicate()
+	if not cc.has("seed"):
+		var sd := seed_override if seed_override >= 0 else int(Time.get_ticks_usec() % 1000000007)
+		cc["seed"] = float(sd)
+	last_cfg = c.duplicate()
+	last_cfg.erase("seed")
+	_close_table()
+	_close_polygon()
+	_close_menu()
+	polygon = Polygon.new()
+	polygon.name = "Polygon"
+	add_child(polygon)
+	if not polygon.setup(defs, release_name(), {}, cc):
+		var problems := polygon.problems
+		polygon.free()
+		polygon = null
+		_fail("Бой не начался: модели кораблей с ошибкой.", "МОДЕЛИ", problems, OS.get_cmdline_user_args())
+		return false
+	mode = &"battle"
+	_ensure_ui()
+	polygon.out_dir = out_override if out_override != "" else bench.folder()
+	polygon.again_pressed.connect(func() -> void: open_battle.call_deferred(last_cfg))
+	polygon.menu_pressed.connect(func() -> void: open_menu.call_deferred())
+	fps.set_hint_text(HINT_BATTLE)
+	return true
+
+
 ## Открыть «Стол» (G0b): худший бой без самого боя, на нём — минута замера кадров.
 func open_table() -> bool:
+	if mode == &"polygon":
+		table_from = &"polygon"
+	elif mode == &"menu":
+		table_from = &"menu"
 	_close_polygon()
+	_close_menu()
 	if view != null:
 		return true
 	view = Showcase.new()
@@ -155,7 +266,8 @@ func open_table() -> bool:
 		return false
 	mode = &"table"
 	_ensure_ui()
-	fps.set_hint_text(HINT_TABLE)
+	# F6 ведёт туда, откуда пришли, — подсказка называет куда (лаборатория или меню)
+	fps.set_hint_text(HINT_TABLE % ("«Полигон»" if table_from == &"polygon" else "меню «Быстрый бой»"))
 	bench.driver = view.drive
 	bench.extra_line = "На столе: %d %s, %d %s; синхронизация с экраном на время замера выключена" % [
 		view.ship_count(), FrameBench.plural(view.ship_count(), "корабль", "корабля", "кораблей"),
@@ -167,6 +279,7 @@ func open_table() -> bool:
 func open_polygon(rec: Dictionary = {}) -> bool:
 	_close_table()
 	_close_polygon()
+	_close_menu()
 	polygon = Polygon.new()
 	polygon.name = "Polygon"
 	add_child(polygon)
@@ -354,26 +467,35 @@ func _input(event: InputEvent) -> void:
 				_cancel_bench()
 			elif mode == &"table":
 				start_bench()
-			else:
+			elif mode == &"polygon" or mode == &"menu":
 				_bench_from_polygon()
+			else:
+				return
 		KEY_F6:
+			# «Стол» — из меню и из лаборатории; из быстрого боя нет: бой пропал бы молча
 			if mode == &"table":
-				open_polygon()
-			elif mode == &"polygon":
+				if table_from == &"polygon":
+					open_polygon()
+				else:
+					open_menu()
+			elif mode == &"polygon" or mode == &"menu":
 				open_table()
 			else:
 				return
 		KEY_F8:
-			if mode != &"polygon":
+			if mode == &"polygon":
+				open_polygon()
+			elif mode == &"battle":
+				open_battle(last_cfg)
+			else:
 				return
-			open_polygon()
 		KEY_F9:
-			if mode != &"polygon" or polygon == null:
+			if (mode != &"polygon" and mode != &"battle") or polygon == null:
 				return
 			save_record()
 		KEY_F4:
 			# строка-отладка пояса над тяжёлыми (09, 6.7; только разработчику — в подсказке нет)
-			if mode != &"polygon" or polygon == null or rollback_no_f4:
+			if (mode != &"polygon" and mode != &"battle") or polygon == null or rollback_no_f4:
 				return
 			polygon.hud.belt_debug = not polygon.hud.belt_debug
 		_:
@@ -473,8 +595,20 @@ func _selftest() -> void:
 			if again.fingerprint() != battle_fp:
 				fails.append("повтор записи разошёлся: %s против %s" % [again.fingerprint(), battle_fp])
 			again.dispose()
-	var line := "SELFTEST %s: данные %s, бой %s, правок %d, отрисовщик %s, ОС %s, сборка %s" % [
-		"ok" if fails.is_empty() else "ПРОВАЛ", defs.fingerprint, battle_fp, defs.overrides_applied.size(),
+	# «ИИ против ИИ» (G5): быстрый бой по выбору меню по умолчанию, обе стороны под ИИ, 60 с без
+	# вида — второй отпечаток для сверки Linux и Windows (ИИ думает по жребию боя и считает углы
+	# векторами: разойтись тут — находка о повторяемости, а не провал)
+	var ai_fp := "—"
+	if defs.ok:
+		var ab := Battle.create(defs, Polygon.quick_setup(QuickMenu.default_cfg(defs, true), Polygon.SEED), release_name()) as Battle
+		for i in AI_SELFTEST_STEPS:
+			ab.step()
+		if not ab.watch:
+			fails.append("«ИИ против ИИ»: бой не под двумя ИИ")
+		ai_fp = ab.fingerprint()
+		ab.dispose()
+	var line := "SELFTEST %s: данные %s, бой %s, ИИ %s, правок %d, отрисовщик %s, ОС %s, сборка %s" % [
+		"ok" if fails.is_empty() else "ПРОВАЛ", defs.fingerprint, battle_fp, ai_fp, defs.overrides_applied.size(),
 		RenderingServer.get_current_rendering_method(), OS.get_name(), "выгружена" if OS.has_feature("template") else "редактор"]
 	print(line)
 	printerr(line)

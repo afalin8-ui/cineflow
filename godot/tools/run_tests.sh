@@ -41,6 +41,10 @@ export XDG_DATA_HOME="$LOGS/xdg"
 mkdir -p "$XDG_DATA_HOME"
 TIERS=(sim ui)
 if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility); fi
+# `run_tests.sh bench` — тяжёлые проверки стенда (флажки 09, 8.4 под ИИ — десятки боёв целиком,
+# план G5, п. 4): отдельный ярус, чтобы ярус sim держался под пределом 900 с. Его гоняет
+# задание CI «стенд» (по метке [стенд] в сообщении коммита или кнопкой)
+if [[ "${1:-}" == "bench" ]]; then TIERS=(bench); fi
 FAILED=0
 
 say() { printf '%s\n' "$*"; }
@@ -127,6 +131,31 @@ run_tier() {
 }
 for t in "${TIERS[@]}"; do run_tier "$t"; done
 
+# ── стенд целиком (план G5, п. 4): процессы по 25 боёв (tools/bench_run.sh) и сводка
+# (tools/summarize.py). В режиме bench — ещё и короткий прогон «зеркала»; остальное обёртки
+# в этом режиме не нужно (его гоняет обычный прогон того же коммита)
+say "── сводка стенда: summarize.py --selftest"
+if ! python3 "$PROJ/tools/summarize.py" --selftest >"$LOGS/summarize_self.log" 2>&1; then
+  fail "summarize.py --selftest"; cat "$LOGS/summarize_self.log" >&2
+else
+  say "   $(tail -1 "$LOGS/summarize_self.log")"
+fi
+say "── стенд процессами: bench_run.sh («Стычка», 2 боя, 2 процесса)"
+bdir="$(mktemp -d)"
+code=0
+GODOT="$GODOT" JOBS=2 timeout 600 "$PROJ/tools/bench_run.sh" "$bdir" --load skirmish --n 2 --seed 1 >"$LOGS/bench_run.log" 2>&1 || code=$?
+nb=$(cat "$bdir"/bench_skirmish_*.log 2>/dev/null | grep -c '^BENCH {')
+if [[ $code -ne 0 ]] || [[ "$nb" -ne 2 ]] || ! grep -q '^== «Стычка» troyden (атакующий) × plektor: боёв 2' "$LOGS/bench_run.log" || grep -q 'SCRIPT ERROR' "$bdir"/*.log; then
+  fail "bench_run.sh (код $code, боёв $nb)"; tail -20 "$LOGS/bench_run.log" >&2
+else
+  say "   боёв $nb, сводка: $(grep -m1 '^== «Стычка»' "$LOGS/bench_run.log")"
+fi
+rm -rf "$bdir"
+if [[ "${1:-}" == "bench" ]]; then
+  if [[ $FAILED -eq 0 ]]; then say "ИТОГ (стенд): всё зелёное"; else say "ИТОГ (стенд): есть провалы" >&2; fi
+  exit $FAILED
+fi
+
 # ── сторож user:// после ярусов (замечание к G2): ни один тест не оставил capella_*
 # в user:// этого прогона — всё временное идёт через tests/case.gd → tmp. Откат —
 # проба, которая пишет туда файл, как F9 до правки: сторож обязан его найти.
@@ -155,13 +184,22 @@ if [[ $code -ne 0 ]] || ! grep -q '^SELFTEST ok' "$LOGS/selftest.log" || grep -q
 fi
 
 # ── главная сцена С ОКНОМ: тот путь, что увидит игрок (--selftest выходит раньше вида) ──
-say "── главная сцена с окном (--quit-after 60)"
-timeout 120 "$GODOT" --headless --path "$PROJ" --quit-after 60 >"$LOGS/window.log" 2>&1
-code=$?
-grep -m1 '^Капелла: отрисовщик' "$LOGS/window.log"
-if [[ $code -ne 0 ]] || ! grep -q '^Капелла: отрисовщик' "$LOGS/window.log" || grep -q 'SCRIPT ERROR' "$LOGS/window.log"; then
-  fail "окно (код $code)"; show_tail "$LOGS/window.log"
-fi
+# С G5 без режима это меню «Быстрый бой»; бой с видом — `-- --watch` («ИИ против ИИ», тот же
+# экран боя, что у «В бой») и `-- --quick`
+for mode in "" --watch --quick; do
+  say "── главная сцена с окном (--quit-after 60)${mode:+ $mode}"
+  wl="$LOGS/window${mode//-/_}.log"
+  code=0
+  if [[ -z "$mode" ]]; then
+    timeout 120 "$GODOT" --headless --path "$PROJ" --quit-after 60 >"$wl" 2>&1 || code=$?
+  else
+    timeout 120 "$GODOT" --headless --path "$PROJ" --quit-after 60 -- "$mode" >"$wl" 2>&1 || code=$?
+  fi
+  grep -m1 '^Капелла: отрисовщик' "$wl"
+  if [[ $code -ne 0 ]] || ! grep -q '^Капелла: отрисовщик' "$wl" || grep -q 'SCRIPT ERROR' "$wl"; then
+    fail "окно${mode:+ $mode} (код $code)"; show_tail "$wl"
+  fi
+done
 
 # ── минута замера кадров из командной строки (G0b, п. 7): короткая, итог в выводе, файл ──
 say "── главная сцена -- --bench-render (2 с)"

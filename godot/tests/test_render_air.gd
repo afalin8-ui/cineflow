@@ -27,6 +27,7 @@ const BattleFx := preload("res://view/battle_fx.gd")
 const AirView := preload("res://view/air_view.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const MainScene := preload("res://main.tscn")
+const MainScript := preload("res://main.gd")
 
 const BIG := 1.0e9
 const WORK := 2400.0
@@ -661,8 +662,10 @@ func test_pd_at_downed_craft_ends_at_its_place() -> void:
 func _panel_1366(nowrap: bool) -> Vector2:
 	PolygonHud.rollback_panel_nowrap = nowrap
 	var got := await hooks.set_window_size(Vector2i(1366, 768))
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(4)
 	var poly: Node = main.get("polygon")
 	var view: BattleView = poly.get("view")
@@ -712,8 +715,10 @@ func test_bottom_panel_fits_1366() -> void:
 func _air_battle(size: Vector2i, no_dots: bool) -> Dictionary:
 	AirView.rollback_no_dots = no_dots
 	var got := await hooks.set_window_size(size)
+	MainScript.boot = &"polygon"        # с G5 по умолчанию — меню «Быстрый бой»
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
+	MainScript.boot = &""
 	await hooks.frames(4)
 	var poly: Node = main.get("polygon")
 	var view: BattleView = poly.get("view")

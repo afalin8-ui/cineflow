@@ -75,6 +75,14 @@ var stop_at_step := -1
 ## Настоящее время вида: покачивание, вспышки приказов — идут и на паузе.
 var clock := 0.0
 
+## ТОЛЬКО для проверки отката (05, ловушка 31; C65): после итога вид шагает модель дальше —
+## корабли гибли бы за карточкой итога. Модель сама после итога шагать может (лабораториям
+## проверок с одной стороной так и надо): бой «стоит насовсем» держит вид. В игре false.
+static var rollback_step_after_over := false
+
+## Время каждого шага модели, мс (отчёт боя человека: p50, p99, худший — как у стенда).
+var step_ms := PackedFloat64Array()
+
 ## Выбранные (uid). Состояние вида, а не модели: модель о выборе не знает.
 var selection: Array[int] = []
 
@@ -311,7 +319,7 @@ func _process(delta: float) -> void:
 ## → сколько сделано. Тесты зовут её с постоянным delta.
 func advance(delta: float) -> int:
 	var n := 0
-	if not paused and not battle.over:
+	if not paused and (not battle.over or rollback_step_after_over):
 		acc += minf(delta, 0.1) * float(speed)
 		# допуск на двоичную дробь: 2 × (1/60) обязан дать ровно один шаг
 		while acc >= Battle.STEP - 1e-9 and n < MAX_STEPS:
@@ -319,10 +327,15 @@ func advance(delta: float) -> int:
 				acc = 0.0
 				break
 			_remember_prev()
+			var t0 := Time.get_ticks_usec()
 			battle.step()
+			step_ms.append(float(Time.get_ticks_usec() - t0) / 1000.0)
 			_consume(battle.events)
 			acc -= Battle.STEP
 			n += 1
+			if battle.over and not rollback_step_after_over:
+				acc = 0.0           # итог — бой стоит насовсем (05, ловушка 31; C65)
+				break
 		if n == MAX_STEPS:
 			acc = 0.0               # не копим долг: лучше медленнее, чем рывками
 		acc = maxf(acc, 0.0)
