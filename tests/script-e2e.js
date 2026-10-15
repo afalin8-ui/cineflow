@@ -56,7 +56,11 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
                                                headers: { 'Access-Control-Allow-Origin': '*' } });
       route.continue();
     });
+    // Только на первом заходе: перезагрузка не должна затирать проект,
+    // который проверка подготовила сама.
     await ctx.addInitScript(() => {
+      if (sessionStorage.getItem('__seeded')) return;
+      sessionStorage.setItem('__seeded', '1');
       localStorage.setItem('cf_room', 'script-room-test-0001');
       localStorage.setItem('cf_user_name', 'Тест');
       localStorage.setItem('cf_scenes', JSON.stringify([{ id: 'scene-x', number: '1', title: '', content: 'своя экспликация',
@@ -87,16 +91,14 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
       content: 'своя экспликация', date: '', gear: {}, lightGear: {}, lightSchemeId: null }])));
     await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await page.waitForTimeout(700);
     await pick(page, file);
-    const okBtn = page.locator('[data-cf="confirm-ok"]');
+    const okBtn = page.locator('[data-cf="script-apply"]');
     await okBtn.waitFor({ timeout: 30000 }).catch(() => {});
-    const msg = await page.locator('[role="dialog"]').last().innerText().catch(() => '');
-    ok(`${file}: найдено три сцены, одна ляжет в существующую`, /Найдено сцен: 3/.test(msg) && /по номеру: 1/.test(msg),
+    const msg = await page.locator('[data-cf="script-summary"]').innerText().catch(() => '');
+    ok(`${file}: сверка нашла три сцены, две новые`, /Сцен в сценарии: 3/.test(msg) && /новых: 2/.test(msg),
        msg.replace(/\s+/g, ' ').slice(0, 160));
     await okBtn.click().catch(() => {});
     await page.waitForTimeout(1200);
-    // Окно обязано закрыться: раньше оно оставалось (обращение к снятой
-    // функции после записи), и второе «Подтвердить» заводило сцены заново.
-    ok(`${file}: окно закрылось после «Подтвердить»`, await page.locator('[data-cf="confirm-ok"]').count() === 0);
+    ok(`${file}: окно закрылось после «Применить»`, await page.locator('[data-cf="script-apply"]').count() === 0);
     const list = await scenes(page);
     const by = n => list.find(s => s.number === n) || {};
     ok(`${file}: сцена 1 получила название и текст, экспликация цела`,
@@ -110,6 +112,67 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
       ok('pdf: номер страницы не попал ни в заголовок, ни в текст сцены',
          !/\d\.$/.test(by('1').title) && list.every(s => !/^\s*\d+\.?\s*$/m.test(s.script || '')), JSON.stringify(list.map(s => s.script)));
   }
+
+  // ---- НОВАЯ РЕДАКЦИЯ С ДРУГОЙ НУМЕРАЦИЕЙ. Было: 1 КУХНЯ, 2 ДВОР, 3 КОРИДОР,
+  // 4 КРЫША. Стало: вставили сцену 2 (ЛИФТ), двор и коридор сдвинулись на 3 и 4,
+  // крышу вычеркнули, у коридора поправили реплику. Раскладка по номеру положила
+  // бы текст лифта во двор, двор — в коридор и т. д.
+  const OLD = [
+    ['s-k', '1', 'ИНТ. КУХНЯ — ДЕНЬ', 'Анна режет хлеб. Чайник свистит на плите. Она не оборачивается к двери.', '2026-06-29'],
+    ['s-d', '2', 'НАТ. ДВОР ШКОЛЫ — ВЕЧЕР', 'Дети расходятся по домам. Фонари зажигаются один за другим вдоль забора.', '2026-06-30'],
+    ['s-c', '3', 'ИНТ. КОРИДОР — НОЧЬ', 'Свет из-под двери. Шаги приближаются медленно и замирают у самого порога.', '2026-07-01'],
+    ['s-r', '4', 'НАТ. КРЫША — РЕЖИМ', 'Город внизу. Ветер треплет простыни на верёвках между антеннами.', '2026-07-02']
+  ];
+  const NEW_TXT = [
+    '1. ИНТ. КУХНЯ — ДЕНЬ', 'Анна режет хлеб. Чайник свистит на плите. Она не оборачивается к двери.', '',
+    '2. ИНТ. ЛИФТ — ДЕНЬ', 'Кабина ползёт вверх. Мигает лампа над кнопками этажей.', '',
+    '3. НАТ. ДВОР ШКОЛЫ — ВЕЧЕР', 'Дети расходятся по домам. Фонари зажигаются один за другим вдоль забора.', '',
+    '4. ИНТ. КОРИДОР — НОЧЬ', 'Свет из-под двери. Шаги приближаются медленно и замирают у самого порога. Кто-то дышит.', ''
+  ].join('\n');
+  fs.writeFileSync(path.join(FIX, 'v2.txt'), NEW_TXT);
+  await page.evaluate((OLD) => {
+    localStorage.setItem('cf_scenes', JSON.stringify(OLD.map(([id, number, title, script, date]) =>
+      ({ id, number, title, script, date, content: 'экспликация ' + id, gear: { cam: 1 }, lightGear: {}, lightSchemeId: null }))));
+    localStorage.setItem('cf_storyboard', JSON.stringify([{ id: 'f-c1', sceneId: 's-c', frameNum: '3.1', description: 'дверь' }]));
+  }, OLD);
+  await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await page.waitForTimeout(700);
+  await pick(page, 'v2.txt');
+  await page.locator('[data-cf="script-apply"]').waitFor({ timeout: 20000 });
+  const sum = await page.locator('[data-cf="script-summary"]').innerText();
+  ok('сверка: двое сменят номер, одна новая', /сменят номер: 2/.test(sum) && /новых: 1/.test(sum), sum.replace(/\s+/g, ' '));
+  const rowsTxt = await page.$$eval('[data-cf="script-row"]', els => els.map(e => e.dataset.kind + ' ' + e.innerText.replace(/\s+/g, ' ').slice(0, 60)));
+  ok('сверка показывает «#2 → #3» и «#3 → #4»', rowsTxt.some(t => /#2 → #3/.test(t)) && rowsTxt.some(t => /#3 → #4/.test(t)), JSON.stringify(rowsTxt));
+  await page.click('[data-cf="script-gone"] summary');
+  const goneTxt = await page.locator('[data-cf="script-gone"]').innerText().catch(() => '');
+  const clashTxt = await page.locator('[data-cf="script-row"][data-kind="renum"]').last().innerText();
+  ok('коридор предупреждён, что #4 сейчас у крыши', /#4 сейчас у сцены «НАТ\. КРЫША/.test(clashTxt), clashTxt.replace(/\s+/g, ' ').slice(-140));
+  ok('крыша названа как «нет в новом сценарии»', /КРЫША/.test(goneTxt), goneTxt.replace(/\s+/g, ' '));
+  ok('до «Применить» в проекте ничего не поменялось',
+     (await scenes(page)).map(s => s.number + s.id).join() === '1s-k,2s-d,3s-c,4s-r');
+  await page.click('[data-cf="script-apply"]');
+  await page.waitForTimeout(1200);
+  const after = await scenes(page);
+  const by = id => after.find(s => s.id === id) || {};
+  ok('двор и коридор — те же сцены с новыми номерами, дата и техника на месте',
+     by('s-d').number === '3' && by('s-d').date === '2026-06-30' && by('s-d').gear.cam === 1 &&
+     by('s-c').number === '4' && by('s-c').date === '2026-07-01', JSON.stringify(after.map(s => [s.id, s.number, s.date])));
+  ok('текст коридора обновился, экспликация цела', /Кто-то дышит/.test(by('s-c').script) && by('s-c').content === 'экспликация s-c');
+  ok('лифт заведён новой сценой №2', after.some(s => s.number === '2' && /ЛИФТ/.test(s.title) && !OLD.some(o => o[0] === s.id)));
+  ok('крыша осталась как была', by('s-r').number === '4' && /Ветер/.test(by('s-r').script));
+  const fr = await page.evaluate(() => JSON.parse(localStorage.getItem('cf_storyboard') || '[]'));
+  ok('кадр коридора перенумерован 3.1 → 4.1', (fr.find(f => f.id === 'f-c1') || {}).frameNum === '4.1', JSON.stringify(fr));
+
+  // Пару можно сменить руками: новая сцена ЛИФТ → «Не загружать».
+  await page.evaluate((OLD) => localStorage.setItem('cf_scenes', JSON.stringify(OLD.map(([id, number, title, script, date]) =>
+    ({ id, number, title, script, date, content: '', gear: {}, lightGear: {}, lightSchemeId: null })))), OLD);
+  await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await page.waitForTimeout(700);
+  await pick(page, 'v2.txt');
+  await page.locator('[data-cf="script-apply"]').waitFor({ timeout: 20000 });
+  const lift = page.locator('[data-cf="script-row"][data-kind="new"] select').first();
+  await lift.selectOption('skip');
+  await page.click('[data-cf="script-apply"]');
+  await page.waitForTimeout(1000);
+  ok('«Не загружать» не завёл сцену', !(await scenes(page)).some(s => /ЛИФТ/.test(s.title)));
 
   for (const [file, re] of [['scan.pdf', /скан/], ['old.doc', /старый формат Word/]]) {
     const before = (await scenes(page)).length;

@@ -1235,6 +1235,65 @@
           return t;
         };
 
+        // СВЕРКА СЦЕНАРИЯ С ПРОЕКТОМ — ПО СОДЕРЖАНИЮ, А НЕ ПО НОМЕРУ.
+        // Новая редакция сценария почти всегда приходит ПЕРЕНУМЕРОВАННОЙ:
+        // вставили сцену в начало — и все номера после неё сдвинулись.
+        // Раскладка «по совпадению номера» клала тогда текст новой сцены 5
+        // в старую сцену 5, то есть в ДРУГУЮ сцену, вместе с её датой,
+        // техникой и раскадровкой. Поэтому пару ищем по тексту сцены
+        // (тройки слов подряд — переписанная реплика их почти не трогает)
+        // и по названию; номер — только подсказка при равенстве и
+        // последний выход для сцен, у которых ещё нет ни текста, ни
+        // своего названия (первая загрузка поверх КПП).
+        const SCRIPT_STOP = new Set(['инт', 'нат', 'int', 'ext', 'день', 'ночь', 'утро', 'вечер', 'режим',
+          'сцена', 'эпизод', 'и', 'в', 'во', 'на', 'с', 'со', 'по', 'к', 'у', 'из', 'за', 'от', 'не', 'а']);
+        const scriptWords = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е')
+          .split(/[^a-zа-я0-9]+/i).filter(Boolean);
+        const jaccard = (a, b) => {
+          if (!a.size || !b.size) return 0;
+          let n = 0; a.forEach(x => { if (b.has(x)) n++; });
+          return n / (a.size + b.size - n);
+        };
+        const titleSet = (t) => new Set(scriptWords(t).filter(w => !SCRIPT_STOP.has(w)));
+        const shingles = (txt) => {
+          const w = scriptWords(txt), out = new Set();
+          for (let i = 0; i + 2 < w.length; i++) out.add(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]);
+          if (!out.size && w.length) out.add(w.join(' '));
+          return out;
+        };
+        const matchScriptToScenes = (parsed, scenes) => {
+          const nn = (v) => String(v || '').replace(/\s/g, '').toLowerCase();
+          const old = scenes.map(s => ({ s, t: titleSet(s.title), sh: (s.script || '').trim() ? shingles(s.script) : null }));
+          const fresh = parsed.map(p => ({ p, t: titleSet(p.title), sh: shingles(p.script) }));
+          const pairs = [];
+          fresh.forEach((f, i) => old.forEach((o, j) => {
+            const ts = jaccard(f.t, o.t);
+            const xs = o.sh ? jaccard(f.sh, o.sh) : null;
+            let score = -1, how = '';
+            if (xs != null && (xs >= 0.25 || (xs >= 0.1 && ts >= 0.6))) { score = xs * 0.75 + ts * 0.25; how = 'text'; }
+            else if (xs == null && ts >= 0.5) { score = ts * 0.8; how = 'title'; }
+            if (score < 0) return;
+            if (nn(f.p.number) && nn(f.p.number) === nn(o.s.number)) score += 0.05;
+            pairs.push({ i, j, score, how, sim: xs != null ? xs : ts });
+          }));
+          pairs.sort((a, b) => b.score - a.score);
+          const rowOf = parsed.map(() => null), took = new Set();
+          pairs.forEach(pr => {
+            if (rowOf[pr.i] || took.has(pr.j)) return;
+            rowOf[pr.i] = { target: old[pr.j].s.id, how: pr.how, sim: pr.sim }; took.add(pr.j);
+          });
+          // Последний выход — номер, и только для сцены БЕЗ текста (первая
+          // загрузка поверх КПП, где названия свои). Сцену с текстом номером
+          // не связываем никогда: раз текст не совпал, это другая сцена.
+          // В сверке такая пара помечена «по номеру — проверьте».
+          parsed.forEach((p, i) => {
+            if (rowOf[i] || !nn(p.number)) return;
+            const j = old.findIndex((o, k) => !took.has(k) && nn(o.s.number) === nn(p.number) && !o.sh);
+            if (j >= 0) { rowOf[i] = { target: old[j].s.id, how: 'num', sim: 0 }; took.add(j); }
+          });
+          return parsed.map((p, i) => ({ p, ...(rowOf[i] || { target: 'new', how: '', sim: 0 }) }));
+        };
+
         const readScriptFile = async (file) => {
           if (isPdfFile(file)) return pdfToText(file);
           if (/\.docx?$/i.test(file.name || '') || /wordprocessingml|msword/.test(file.type || '')) return docxToText(file);
@@ -10649,6 +10708,8 @@
           const [agentBusy, setAgentBusy] = useState(false);
           // Предложенные правки, которые ждут вашего «Применить».
           const [agentPlan, setAgentPlan] = useState(null);
+          // Сверка нового сценария с проектом — ждёт «Применить».
+          const [scriptPlan, setScriptPlan] = useState(null);
           const [tagSearch, setTagSearch] = useState('');
           // Панель тегов в галерее: сворачивается в полоску 40px.
           const [galleryTagsOpen, setGalleryTagsOpen] = useState(true);
@@ -15486,56 +15547,60 @@
 
           const normNum = (v) => String(v || '').replace(/\s/g, '').toLowerCase();
 
-          // Раскладываем разобранное по сценам: совпал номер — текст ложится
-          // в существующую сцену, нет — заводим новую. Именно ради этого
-          // из сценария и берутся номера.
+          // Разобранный сценарий НЕ пишется сразу: сначала сверка (окно
+          // «Сверка сценария»). Пара каждой сцене ищется по тексту и названию
+          // (`matchScriptToScenes`), и человек видит, у кого сменился номер,
+          // что добавилось и чего в новой редакции нет, — и может поправить
+          // пару руками. Записывает только «Применить» (`applyScriptPlan`).
           const applyScript = (parsed, source) => {
-            const byNum = {};
-            scenes.forEach(s => { const n = normNum(s.number); if (n) byNum[n] = s; });
-            const matched = [], created = [];
-            let willOverwrite = 0;
-            parsed.forEach(p => {
-              const hit = normNum(p.number) && byNum[normNum(p.number)];
-              if (hit) { matched.push({ id: hit.id, p }); if ((hit.script || '').trim()) willOverwrite++; }
-              else created.push(p);
+            if (READ_ONLY) return;
+            setScriptPlan({ source, rows: matchScriptToScenes(parsed, scenesRef.current), all: false });
+          };
+
+          const applyScriptPlan = (plan) => {
+            if (READ_ONLY || !plan) return;
+            const rows = plan.rows.filter(r => r.target !== 'skip');
+            const into = rows.filter(r => r.target !== 'new');
+            // Номер меняем через updateSceneNumber: он же переносит номера
+            // кадров раскадровки. Сцена остаётся ТОЙ ЖЕ записью — дата,
+            // техника, свет, референсы и кадры едут вместе с ней.
+            let renum = 0;
+            into.forEach(r => {
+              const sc = scenesRef.current.find(s => s.id === r.target);
+              if (sc && r.p.number && normNum(sc.number) !== normNum(r.p.number)) { updateSceneNumber(sc.id, r.p.number); renum++; }
             });
-            setConfirmAction({
-              title: 'Загрузить текст сценария?',
-              message: `${source}\n\nНайдено сцен: ${parsed.length}\nЛягут в существующие по номеру: ${matched.length}`
-                       + (willOverwrite ? ` (перезапишут текст у ${willOverwrite})` : '')
-                       + `\nБудут созданы новые: ${created.length}`,
-              onConfirm: () => {
-                let up = scenes.map(s => {
-                  const hit = matched.find(m => m.id === s.id);
-                  return hit ? { ...s, script: hit.p.script, title: s.title || hit.p.title } : s;
-                });
-                matched.forEach(m => { const t = up.find(s => s.id === m.id); if (t) syncDoc('scenes', t.id, t); });
-                // Свободный номер считаем на месте: nextSceneNumber смотрит
-                // в состояние, и все новые сцены получили бы один и тот же.
-                let maxNum = 0;
-                const учесть = (v) => { const m = String(v || '').match(/\d+/); if (m && +m[0] > maxNum) maxNum = +m[0]; };
-                up.forEach(s => учесть(s.number));
-                // И те номера, что придут В ЭТОЙ ЖЕ партии: иначе сцена без
-                // номера получала «1», хотя сцена №1 приезжала рядом с ней.
-                created.forEach(p => учесть(p.number));
-                const stamp = Date.now();
-                const fresh = created.map((p, i) => ({
-                  id: `sc-${stamp}-${i}`,
-                  number: p.number || String(++maxNum),
-                  title: p.title || 'Сцена', content: '', script: p.script,
-                  // На доску не сыплем: доска — текущая работа, а сценарий
-                  // может принести сотню сцен разом.
-                  boardId: '',
-                  x: (150 - canvasOffset.x) / zoom + (i % 6) * 40,
-                  y: (150 - canvasOffset.y) / zoom + Math.floor(i / 6) * 40,
-                  date: '', gear: {}, lightGear: {}, lightSchemeId: null
-                }));
-                up = [...up, ...fresh];
-                setScenes(up);
-                fresh.forEach(ns => syncDoc('scenes', ns.id, ns));
-                showToast(`Текст сценария загружен · сцен: ${parsed.length}`);
-              }
+            let up = scenesRef.current.map(s => {
+              const hit = into.find(r => r.target === s.id);
+              return hit ? { ...s, script: hit.p.script, title: s.title || hit.p.title } : s;
             });
+            into.forEach(r => { const t = up.find(s => s.id === r.target); if (t) syncDoc('scenes', t.id, t); });
+            // Свободный номер считаем на месте: nextSceneNumber смотрит
+            // в состояние, и все новые сцены получили бы один и тот же.
+            let maxNum = 0;
+            const учесть = (v) => { const m = String(v || '').match(/\d+/); if (m && +m[0] > maxNum) maxNum = +m[0]; };
+            up.forEach(s => учесть(s.number));
+            // И те номера, что придут В ЭТОЙ ЖЕ партии: иначе сцена без
+            // номера получала «1», хотя сцена №1 приезжала рядом с ней.
+            const created = rows.filter(r => r.target === 'new').map(r => r.p);
+            created.forEach(p => учесть(p.number));
+            const stamp = Date.now();
+            const fresh = created.map((p, i) => ({
+              id: `sc-${stamp}-${i}`,
+              number: p.number || String(++maxNum),
+              title: p.title || 'Сцена', content: '', script: p.script,
+              // На доску не сыплем: доска — текущая работа, а сценарий
+              // может принести сотню сцен разом.
+              boardId: '',
+              x: (150 - canvasOffset.x) / zoom + (i % 6) * 40,
+              y: (150 - canvasOffset.y) / zoom + Math.floor(i / 6) * 40,
+              date: '', gear: {}, lightGear: {}, lightSchemeId: null
+            }));
+            up = [...up, ...fresh];
+            scenesRef.current = up; setScenes(up);
+            fresh.forEach(ns => syncDoc('scenes', ns.id, ns));
+            setScriptPlan(null);
+            showToast(`Сценарий загружен: текст у ${into.length} ${plur(into.length, 'сцены', 'сцен', 'сцен')}`
+              + (renum ? `, сменили номер ${renum}` : '') + (fresh.length ? `, новых ${fresh.length}` : ''));
           };
 
           const handleScriptFile = async (e) => {
@@ -25332,6 +25397,107 @@
                 </Modal>
               )}
 
+              {scriptPlan && (() => {
+                // СВЕРКА СЦЕНАРИЯ. Каждая строка — сцена новой редакции и то,
+                // куда ляжет её текст. Пара подобрана по тексту и названию,
+                // и её можно сменить руками: машина ошибается, а сцену знает
+                // тот, кто её снимает.
+                const byId = {}; scenes.forEach(sc => { byId[sc.id] = sc; });
+                const used = new Set(scriptPlan.rows.map(r => r.target));
+                const gone = scenes.filter(sc => !used.has(sc.id));
+                const sorted = [...scenes].sort((a, b) => String(a.number || '').localeCompare(String(b.number || ''), 'ru', { numeric: true }));
+                const kind = (r) => {
+                  if (r.target === 'skip') return 'skip';
+                  if (r.target === 'new') return 'new';
+                  const sc = byId[r.target];
+                  if (!sc) return 'new';
+                  if (r.p.number && normNum(sc.number) !== normNum(r.p.number)) return 'renum';
+                  return (sc.script || '').trim() === (r.p.script || '').trim() ? 'same' : 'text';
+                };
+                const rows = scriptPlan.rows.map((r, i) => ({ ...r, i, k: kind(r) }));
+                const cnt = (k) => rows.filter(r => r.k === k).length;
+                const shown = scriptPlan.all ? rows : rows.filter(r => r.how === 'hand' || (r.k !== 'same' && !(r.k === 'text' && r.how === 'text')));
+                // Новый номер, который уже носит сцена, ушедшая из сценария, —
+                // после «Применить» номера повторятся. Это не запрещено
+                // (повторы подсвечены и в списке сцен), но сказать надо.
+                const goneNums = {}; gone.forEach(sc => { if (normNum(sc.number)) goneNums[normNum(sc.number)] = sc; });
+                const setTarget = (i, t) => setScriptPlan(pl => ({ ...pl, rows: pl.rows.map((r, k) => {
+                  if (k === i) return { ...r, target: t, how: 'hand' };
+                  // Одна сцена — одна пара: забрали у соседа — сосед станет новой.
+                  if (t !== 'new' && t !== 'skip' && r.target === t) return { ...r, target: 'new', how: '' };
+                  return r;
+                }) }));
+                const tag = { renum: ['сменит номер', 'var(--accent)'], new: ['новая', 'var(--ok)'], text: ['текст обновится', 'var(--text-2)'],
+                              same: ['без изменений', 'var(--muted-2)'], skip: ['не загружать', 'var(--muted-2)'] };
+                return (
+                  <Modal onClose={() => setScriptPlan(null)} z={300} box="p-6 max-w-3xl" label="Сверка сценария">
+                    <h3 className="text-xl font-bold text-white mb-1">Сверка сценария</h3>
+                    <p className="text-sm text-zinc-400 mb-4" style={{ whiteSpace: 'pre-line' }}>
+                      {scriptPlan.source} Сцены сопоставлены по тексту и названию, а не по номеру: если нумерация
+                      сменилась, сцена сохранит свою дату, технику, свет и раскадровку и получит новый номер.
+                      Ничего не записано, пока не нажата «Применить».
+                    </p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm mb-3" data-cf="script-summary">
+                      <span>Сцен в сценарии: <b>{rows.length}</b></span>
+                      <span style={{ color: 'var(--accent)' }}>сменят номер: <b>{cnt('renum')}</b></span>
+                      <span style={{ color: 'var(--ok)' }}>новых: <b>{cnt('new')}</b></span>
+                      <span className="text-zinc-400">текст обновится: <b>{cnt('text')}</b></span>
+                      <span className="text-zinc-500">без изменений: <b>{cnt('same')}</b></span>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-zinc-400 mb-2 cursor-pointer">
+                      <input type="checkbox" checked={!!scriptPlan.all} onChange={(e) => setScriptPlan(pl => ({ ...pl, all: e.target.checked }))} />
+                      показать все сцены, а не только изменения
+                    </label>
+                    {!shown.length && <div className="text-sm text-zinc-500 py-4">Изменений нет — все сцены на своих местах.</div>}
+                    <div className="flex flex-col">
+                      {shown.map(r => {
+                        const sc = byId[r.target];
+                        const clash = r.k === 'renum' && goneNums[normNum(r.p.number)];
+                        return (
+                          <div key={r.i} data-cf="script-row" data-kind={r.k} className="py-2.5 flex flex-col gap-1.5" style={{ borderBottom: '1px solid var(--line)' }}>
+                            <div className="flex items-baseline gap-2 flex-wrap">
+                              <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>
+                                {r.k === 'renum' ? <>#{sc.number || '—'} → #{r.p.number}</> : <>#{r.p.number || '—'}</>}
+                              </span>
+                              <span className="text-sm text-zinc-300 min-w-0" style={{ overflowWrap: 'anywhere' }}>{r.p.title || 'без названия'}</span>
+                              <span className="text-xs ml-auto" style={{ color: tag[r.k][1] }}>{tag[r.k][0]}</span>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <select value={r.target} onChange={(e) => setTarget(r.i, e.target.value)} data-cf="script-target"
+                                      className="glass-input rounded-lg px-2 text-sm min-w-0 flex-1" style={{ height: 'var(--tap-sm)', maxWidth: 420 }}>
+                                <option value="new">Новая сцена</option>
+                                <option value="skip">Не загружать</option>
+                                {sorted.map(o => <option key={o.id} value={o.id}>{'#' + (o.number || '—') + ' · ' + (o.title || 'без названия').slice(0, 60)}</option>)}
+                              </select>
+                              {r.how === 'text' && <span className="text-xs text-zinc-500">совпал текст · {Math.round(r.sim * 100)}%</span>}
+                              {r.how === 'title' && <span className="text-xs text-zinc-500">совпало название</span>}
+                              {r.how === 'num' && <span className="text-xs" style={{ color: 'var(--warn)' }}>только по номеру — проверьте</span>}
+                            </div>
+                            {clash && <div className="text-xs" style={{ color: 'var(--warn)' }}>
+                              Номер #{r.p.number} сейчас у сцены «{clash.title || 'без названия'}», которой нет в новом сценарии, — номера совпадут.
+                            </div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {gone.length > 0 && (
+                      <details className="mt-4" data-cf="script-gone">
+                        <summary className="text-sm cursor-pointer" style={{ color: 'var(--text-2)' }}>
+                          Нет в новом сценарии: {gone.length} — остаются в проекте как есть
+                        </summary>
+                        <div className="text-sm text-zinc-400 mt-2 flex flex-col gap-1">
+                          {gone.map(sc => <div key={sc.id}><span className="font-mono">#{sc.number || '—'}</span> {sc.title || 'без названия'}</div>)}
+                        </div>
+                      </details>
+                    )}
+                    <div className="flex gap-3 mt-5">
+                      <button onClick={() => setScriptPlan(null)} className="flex-1 glass-panel hover:bg-white/10 text-zinc-300 rounded-lg text-sm font-bold" style={{ height: 'var(--tap)' }}>Отмена</button>
+                      <button onClick={() => applyScriptPlan(scriptPlan)} data-cf="script-apply"
+                              className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold" style={{ height: 'var(--tap)' }}>Применить</button>
+                    </div>
+                  </Modal>
+                );
+              })()}
               {showAgentModal && (
                 <Modal onClose={() => setShowAgentModal(false)} z={200} box="p-8 max-w-2xl" label="Агент импорта: КПП и сценарий">
                   <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Bot/> Агент импорта: КПП и сценарий</h3>
@@ -25350,9 +25516,9 @@
                       <h4 className="text-sm font-bold text-amber-300 mb-2">Сценарий (PDF / Word / .txt / .fdx)</h4>
                       <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
                         Разбирается по заголовкам сцен — «СЦЕНА 5. ИНТ. КАБИНЕТ — ДЕНЬ» или «5. НАТ. ДВОР — ДЕНЬ».
-                        Номер берётся из заголовка: если сцена с таким номером уже есть, текст ляжет в неё,
-                        а не создаст вторую. Текст каждой сцены попадёт в её вкладку «Текст сцены».
-                        Перед записью покажу, что нашлось. PDF подойдёт выгруженный из программы,
+                        Новая редакция сверяется с проектом по тексту и названию сцен, а не по номеру:
+                        если нумерация сменилась, покажу, какая сцена какой номер получит, что добавилось
+                        и чего больше нет, — и ничего не запишу до «Применить». PDF подойдёт выгруженный из программы,
                         где писали сценарий (скан — картинки, текста в нём нет); старый .doc пересохраните в .docx.
                       </p>
                       <label className="w-full bg-amber-600/30 hover:bg-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
