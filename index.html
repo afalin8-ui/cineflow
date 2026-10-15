@@ -703,6 +703,16 @@
            поверхностей в тёмной теме. Цвета холста задаёт сама доска
            (фон --bg, карточки нашими цветами), см. ExcBoard. */
         .cf-exc { background: var(--bg); }
+        /* ПРИЦЕЛ ДОСКИ — СВОЙ, МАЛЕНЬКИЙ. Excalidraw ставит карандашу и
+           фигурам системный «crosshair», а он на iPad (наведение пера,
+           трекпад) и на Windows огромный — во весь палец, и закрывает
+           тонкую линию ровно там, где её ведут. Наш — 13 точек, светлый
+           с тёмной обводкой (читается и на фото, и на холсте), с зазором
+           посередине: острие не закрыто. Excalidraw пишет курсор в style
+           холста, поэтому перебиваем по атрибуту с !important — сборку
+           Excalidraw ради этого не трогаем. Тот же прицел у своей доски. */
+        :root { --cf-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13'%3E%3Cpath d='M6.5 0v4.5M6.5 8.5v4.5M0 6.5h4.5M8.5 6.5h4.5' stroke='%231a1918' stroke-width='3'/%3E%3Cpath d='M6.5 .5v4M6.5 8.5v4M.5 6.5h4M8.5 6.5h4' stroke='%23f0eee6' stroke-width='1'/%3E%3C/svg%3E") 6 6, crosshair; }
+        .cf-exc canvas[style*="crosshair"] { cursor: var(--cf-cross) !important; }
         .cf-exc .excalidraw { --ui-font: var(--font-ui);
           --color-primary: #cc7a5f; --color-primary-darker: #b96147; --color-primary-darkest: #994e38;
           --color-primary-light: #f3e0d8; --color-primary-light-darker: #ebcec3; --color-primary-hover: #c06b52;
@@ -23014,7 +23024,7 @@
                           <canvas ref={inkCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 26 }} />
                           <canvas ref={liveCanvasRef}
                             className={`absolute inset-0 w-full h-full ${wbMode === 'select' ? 'pointer-events-none' : 'pointer-events-auto'}`}
-                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'shape' || wbMode === 'link' || wbMode === 'ocr' ? 'crosshair' : (wbMode === 'select' ? 'default' : 'none')) }}
+                            style={{ zIndex: 27, cursor: wbMode === 'pan' ? 'grab' : (wbMode === 'shape' || wbMode === 'link' || wbMode === 'ocr' ? 'var(--cf-cross)' : (wbMode === 'select' ? 'default' : 'none')) }}
                             onPointerEnter={(e) => { hoverPt.current = inkPt(e.clientX, e.clientY); requestLive(); }}
                             onPointerLeave={() => { hoverPt.current = null; requestLive(); }}
                             onPointerDown={(e) => {
