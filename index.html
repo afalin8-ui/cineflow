@@ -10912,6 +10912,16 @@
           const restoreRefs = () => {
             if (!undoBin) return;
             const items = undoBin.items;
+            if (undoBin.kind === 'scenes') {
+              const есть = new Set(scenesRef.current.map(x => x.id));
+              const up = [...scenesRef.current, ...items.filter(x => !есть.has(x.id))];
+              scenesRef.current = up; setScenes(up);
+              items.forEach(x => syncDoc('scenes', x.id, x));
+              clearTimeout(undoTimer.current);
+              setUndoBin(null);
+              showToast(items.length === 1 ? 'Сцена возвращена' : `Возвращено ${items.length} ${plur(items.length, 'сцена', 'сцены', 'сцен')}`);
+              return;
+            }
             setReferences(prev => {
               const есть = new Set(prev.map(r => r.id));
               return [...prev, ...items.filter(r => !есть.has(r.id))];
@@ -16243,12 +16253,35 @@
             return dup;
           }, [scenes]);
           
-          const deleteScene = (id) => {
-             freezeArrowsForCards([id]);
-             const up = scenes.filter(s => s.id !== id);
-             setScenes(up); deleteNetDoc('scenes', id);
-             if (activeSceneId === id) setActiveSceneId(up.length > 0 ? up[0].id : null);
-             showToast("Сцена удалена");
+          // Удаление сцен — ОДНА дверь на одну и на много (режим «Выбрать»
+          // в списке сцен). От scenesRef, а не от `scenes` из замыкания:
+          // иначе вторая правка в том же такте вернула бы удалённое.
+          // Удалённое ложится в ту же корзину «Вернуть», что у референсов:
+          // промах по десятку сцен с датами, техникой и светом слишком дорог.
+          const deleteScenes = (ids) => {
+             if (READ_ONLY) return;
+             const kill = new Set(ids || []);
+             const items = scenesRef.current.filter(s => kill.has(s.id));
+             if (!items.length) return;
+             freezeArrowsForCards(items.map(s => s.id));
+             const up = scenesRef.current.filter(s => !kill.has(s.id));
+             scenesRef.current = up; setScenes(up);
+             items.forEach(s => deleteNetDoc('scenes', s.id));
+             if (kill.has(activeSceneId)) setActiveSceneId(up.length > 0 ? up[0].id : null);
+             setSceneSel(null);
+             setUndoBin({ kind: 'scenes', items });
+             clearTimeout(undoTimer.current);
+             undoTimer.current = setTimeout(() => setUndoBin(null), 15000);
+          };
+          const deleteScene = (id) => deleteScenes([id]);
+          const askDeleteScenes = (ids, after) => {
+             if (!ids.length) return;
+             const n = ids.length;
+             setConfirmAction({
+               title: n === 1 ? 'Удалить сцену?' : `Удалить ${n} ${plur(n, 'сцену', 'сцены', 'сцен')}?`,
+               message: (n === 1 ? 'Сцена исчезнет' : 'Сцены исчезнут') + ', а их кадры и референсы отвяжутся — из проекта они не пропадут. Сразу после удаления можно вернуть кнопкой.',
+               onConfirm: () => { deleteScenes(ids); if (after) after(); }
+             });
           };
 
           const updateSceneNested = (id, parentField, childKey, inc) => {
@@ -19130,6 +19163,16 @@
           // Фильтр списка сцен пилюлями. По умолчанию — ближайшая смена:
           // на площадке спрашивают «что сегодня», а не «что вообще есть».
           const [phoneFilter, setPhoneFilter] = useState('shift');
+          // Режим «Выбрать» в списке сцен: null — выключен, массив — выбранные id.
+          // Как в галерее: нажатие по строке выделяет, а не открывает.
+          const [sceneSel, setSceneSel] = useState(null);
+          useEffect(() => { setSceneSel(null); }, [currentView]);
+          const toggleSceneSel = (id) => setSceneSel(v => (v || []).includes(id) ? v.filter(x => x !== id) : [...(v || []), id]);
+          // Кружок выделения у строки сцены — один на планшет и телефон.
+          const selMark = (on) => (
+            <span className="shrink-0 rounded-full flex items-center justify-center" data-cf="scene-sel-mark"
+                  style={{ width: 20, height: 20, marginTop: 1, border: on ? 'none' : '1.5px solid var(--muted-2)', background: on ? 'var(--accent)' : 'transparent', color: 'var(--bg)', fontSize: 12, fontWeight: 700 }}>{on ? '✓' : ''}</span>
+          );
           // Текст сцены на телефоне свёрнут до нескольких строк: иначе
           // он занимает весь экран и до раскадровки не долистать.
           const [phoneTextOpen, setPhoneTextOpen] = useState(false);
@@ -19328,6 +19371,22 @@
           // Две строки названия, а не одна с многоточием: иначе длинные
           // названия обрезаются на одном и том же месте.
           const clamp2 = { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.3, wordBreak: 'break-word' };
+          // Фильтр пилюлями списка сцен на телефоне. Вынесен сюда, потому что
+          // «Выделить все» в шапке обязано выделить ПОКАЗАННОЕ, а не весь
+          // проект: иначе под фильтром «Смена 3» удалились бы и чужие смены.
+          const phoneKeep = (sc) => {
+            if (phoneFilter === 'all') return true;
+            if (phoneFilter === 'shift') return nearestShift ? sc.date === nearestShift : true;
+            // «Не готова» — это сцена, к которой ещё нечего
+            // показать: ни разбора, ни единого кадра.
+            if (phoneFilter === 'todo') return !(sc.content || '').trim() && !storyboard.some(f => f.sceneId === sc.id);
+            if (phoneFilter === 'nat') return sceneBadge(sc).startsWith('НАТ');
+            if (phoneFilter === 'int') return sceneBadge(sc).startsWith('ИНТ');
+            return true;
+          };
+          // Что можно выделить разом: на телефоне — показанное фильтром.
+          const selectableScenes = isPhone ? sortedScenes.filter(phoneKeep) : sortedScenes;
+          const allScenesPicked = !!sceneSel && selectableScenes.length > 0 && selectableScenes.every(x => sceneSel.includes(x.id));
 
           // Содержимое шторок телефона. Собирается здесь, а не в экране
           // сцены: сама шторка висит поверх всего приложения, и тащить
@@ -19983,11 +20042,15 @@
                 <div className="fixed left-1/2 -translate-x-1/2 glass-panel rounded-full z-[401] flex items-center gap-3 pl-5 pr-2 py-2 border-t border-white/10"
                      style={{ bottom: toast ? 76 : 24, maxWidth: 'calc(100vw - 32px)' }}>
                   <span className="text-sm text-zinc-300 truncate">
-                    {undoBin.items.length === 1
+                    {undoBin.kind === 'scenes'
+                      ? (undoBin.items.length === 1
+                          ? `Удалена сцена #${undoBin.items[0].number}`
+                          : `Удалено ${undoBin.items.length} ${plur(undoBin.items.length, 'сцена', 'сцены', 'сцен')}`)
+                      : undoBin.items.length === 1
                       ? `Удалён «${undoBin.items[0].label || 'без названия'}»`
                       : `Удалено ${undoBin.items.length} шт.`}
                   </span>
-                  <button onClick={restoreRefs} className="shrink-0 px-4 py-1.5 rounded-full text-xs font-bold"
+                  <button onClick={restoreRefs} data-cf="undo-restore" className="shrink-0 px-4 py-1.5 rounded-full text-xs font-bold"
                           style={{ background: 'var(--accent)', color: 'var(--bg)' }}>Вернуть</button>
                   <button onClick={() => { clearTimeout(undoTimer.current); setUndoBin(null); }}
                           title="Скрыть" className="shrink-0 w-7 h-7 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 flex items-center justify-center text-xs">✕</button>
@@ -20062,7 +20125,14 @@
                             </button>
                           )}
                           {/* ГАЛЕРЕЯ НА ТЕЛЕФОНЕ — как в «Фото»: «Выбрать» и «+» в шапке, а не строкой над сеткой. В режиме выбора шапка отдана ему целиком: «Выделить все» и «Готово». */}
-                          {currentView === 'gallery' && !READ_ONLY && visibleRefs.length > 0 && (selectMode || selectedRefIds.length > 0) ? (
+                          {currentView === 'notion' && sceneSel ? (
+                            <React.Fragment>
+                              <button onClick={() => setSceneSel(allScenesPicked ? [] : selectableScenes.map(x => x.id))}
+                                      data-cf="scene-sel-all" className="cf-hbtn">{allScenesPicked ? 'Снять выделение' : 'Выделить все'}</button>
+                              <button onClick={() => setSceneSel(null)} data-cf="scene-sel-done"
+                                      className="cf-hbtn" style={{ fontWeight: 600 }}>Готово</button>
+                            </React.Fragment>
+                          ) : currentView === 'gallery' && !READ_ONLY && visibleRefs.length > 0 && (selectMode || selectedRefIds.length > 0) ? (
                             <React.Fragment>
                               <button onClick={() => setSelectedRefIds(allVisibleSelected ? [] : visibleRefs.map(r => r.id))}
                                       className="cf-hbtn">{allVisibleSelected ? 'Снять выделение' : 'Выделить все'}</button>
@@ -20073,6 +20143,9 @@
                             <React.Fragment>
                               {currentView === 'gallery' && !READ_ONLY && visibleRefs.length > 0 && (
                                 <button onClick={() => setSelectMode(true)} className="cf-hbtn">Выбрать</button>
+                              )}
+                              {currentView === 'notion' && !READ_ONLY && scenes.length > 0 && (
+                                <button onClick={() => setSceneSel([])} data-cf="scene-sel" className="cf-hbtn">Выбрать</button>
                               )}
                               {currentView === 'gallery' && !READ_ONLY && (
                                 <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, galleryDropLoc(), galleryDropFolder())}
@@ -20300,17 +20373,7 @@
                             { id: 'nat', label: 'НАТ' },
                             { id: 'int', label: 'ИНТ' }
                           ].filter(Boolean);
-                          const keep = (sc) => {
-                            if (phoneFilter === 'all') return true;
-                            if (phoneFilter === 'shift') return nearestShift ? sc.date === nearestShift : true;
-                            // «Не готова» — это сцена, к которой ещё нечего
-                            // показать: ни разбора, ни единого кадра.
-                            if (phoneFilter === 'todo') return !(sc.content || '').trim() && !storyboard.some(f => f.sceneId === sc.id);
-                            if (phoneFilter === 'nat') return sceneBadge(sc).startsWith('НАТ');
-                            if (phoneFilter === 'int') return sceneBadge(sc).startsWith('ИНТ');
-                            return true;
-                          };
-                          const shown = sortedScenes.filter(keep);
+                          const shown = sortedScenes.filter(phoneKeep);
                           // Секции по объектам: на площадке думают местами,
                           // а не номерами — «сегодня мы на аэродроме».
                           const groups = [];
@@ -20324,7 +20387,7 @@
                             <div className="flex flex-col w-full min-w-0">
                               <div className="flex gap-1.5 px-4 pb-2.5 overflow-x-auto hide-scrollbar shrink-0">
                                 {pills.map(p => (
-                                  <button key={p.id} onClick={() => setPhoneFilter(p.id)}
+                                  <button key={p.id} onClick={() => { setPhoneFilter(p.id); if (sceneSel) setSceneSel([]); }}
                                           className={`cf-pill ${phoneFilter === p.id ? 'on' : ''}`}>{p.label}</button>
                                 ))}
                               </div>
@@ -20338,20 +20401,21 @@
                                   <React.Fragment key={g.key}>
                                     <div className="px-4 pt-2.5 pb-1 cf-meta" style={{ letterSpacing: '.1em' }}>{g.key}</div>
                                     {g.items.map(sc => {
-                                      const on = sc.id === (s && s.id);
+                                      const on = sceneSel ? sceneSel.includes(sc.id) : sc.id === (s && s.id);
                                       const cover = references.find(r => r.sceneId === sc.id && r.url)
                                                  || storyboard.find(f => f.sceneId === sc.id && f.image);
                                       const cnt = storyboard.filter(f => f.sceneId === sc.id).length;
                                       const l = locations.find(x => (x.sceneIds || []).includes(sc.id));
                                       const badge = sceneBadge(sc);
                                       return (
-                                        <button key={sc.id}
-                                                onClick={() => { setActiveSceneId(sc.id); setPhoneSceneOpen(true); }}
+                                        <button key={sc.id} data-cf="scene-row" data-id={sc.id}
+                                                onClick={() => { if (sceneSel) { toggleSceneSel(sc.id); return; } setActiveSceneId(sc.id); setPhoneSceneOpen(true); }}
                                                 className="w-full flex items-center gap-2.5 text-left"
                                                 style={{ padding: '11px 16px', minHeight: 52,
                                                          borderBottom: '1px solid var(--line)',
                                                          background: on ? 'var(--card)' : 'transparent',
                                                          borderLeft: on ? '3px solid var(--accent)' : '3px solid transparent' }}>
+                                          {sceneSel && selMark(sceneSel.includes(sc.id))}
                                           <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', width: 36, fontWeight: on ? 600 : 400, color: on ? 'var(--accent)' : 'var(--muted)' }}>#{sc.number}</span>
                                           {cover && <img src={cover.url || cover.image} draggable="false" className="shrink-0" style={{ width: 52, height: 34, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} />}
                                           <span className="flex-1 min-w-0">
@@ -20368,12 +20432,21 @@
                                     })}
                                   </React.Fragment>
                                 ))}
-                                <div className="p-4">
+                                {!sceneSel && <div className="p-4">
                                   <button onClick={() => { const num = nextSceneNumber(); const newS = { id: `sc-${Date.now()}`, number: num, title: 'НОВАЯ СЦЕНА', content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); setActiveSceneId(newS.id); setPhoneSceneOpen(true); }}
                                           className="cf-edit-only w-full text-center rounded-lg"
                                           style={{ border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 'var(--fs-3)', minHeight: 46 }}>+ сцена</button>
-                                </div>
+                                </div>}
                               </div>
+                              {sceneSel && (
+                                <div className="px-4 py-2.5 shrink-0" style={{ borderTop: '1px solid var(--border)', background: 'var(--bg)' }}>
+                                  <button onClick={() => askDeleteScenes(sceneSel)} disabled={!sceneSel.length} data-cf="scene-sel-delete"
+                                          className="w-full rounded-lg font-semibold"
+                                          style={{ minHeight: 46, fontSize: 'var(--fs-3)', background: sceneSel.length ? 'var(--danger)' : 'transparent', color: sceneSel.length ? 'var(--text)' : 'var(--muted-2)', border: sceneSel.length ? 'none' : '1px dashed var(--border)' }}>
+                                    {sceneSel.length ? `Удалить ${sceneSel.length} ${plur(sceneSel.length, 'сцену', 'сцены', 'сцен')}` : 'Отметьте сцены'}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         }
@@ -20631,7 +20704,17 @@
                       const sceneList = sceneListOpen ? (
                         <aside className="flex flex-col shrink-0" style={{ width: 252, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
                           <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
-                            <span className="cf-meta flex-1 truncate">Сцены · {scenes.length}</span>
+                            <span className="cf-meta flex-1 truncate">{sceneSel ? `Выбрано · ${sceneSel.length}` : `Сцены · ${scenes.length}`}</span>
+                            {!READ_ONLY && scenes.length > 0 && (sceneSel ? (
+                              <React.Fragment>
+                                <button onClick={() => setSceneSel(allScenesPicked ? [] : selectableScenes.map(x => x.id))}
+                                        data-cf="scene-sel-all" className="cf-chip shrink-0">{allScenesPicked ? 'Снять' : 'Все'}</button>
+                                <button onClick={() => setSceneSel(null)} data-cf="scene-sel-done" className="cf-chip cf-chip-accent shrink-0">Готово</button>
+                              </React.Fragment>
+                            ) : (
+                              <button onClick={() => setSceneSel([])} data-cf="scene-sel" title="Выбрать несколько сцен — например, чтобы удалить разом"
+                                      className="cf-chip cf-edit-only shrink-0">Выбрать</button>
+                            ))}
                             <button onClick={() => setSceneListOpen(false)} title="Свернуть список сцен"
                                     className="flex items-center justify-center shrink-0"
                                     style={{ width: 22, height: 22, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>‹</button>
@@ -20642,11 +20725,14 @@
                                 а картинки сцены и так в одном нажатии. */}
                             {sortedScenes.map(sc => {
                               const badge = sceneBadge(sc);
-                              const on = activeSceneId === sc.id;
+                              const picked = !!sceneSel && sceneSel.includes(sc.id);
+                              const on = sceneSel ? picked : activeSceneId === sc.id;
                               return (
-                                <div key={sc.id} onClick={() => setActiveSceneId(sc.id)}
+                                <div key={sc.id} onClick={() => sceneSel ? toggleSceneSel(sc.id) : setActiveSceneId(sc.id)}
+                                     data-cf="scene-row" data-id={sc.id}
                                      className={`cf-row cf-scene-row flex items-start gap-2 px-3 ${on ? 'cf-row-on' : ''}`}
                                      style={{ minHeight: 'var(--tap)', paddingTop: 9, paddingBottom: 9, borderBottomColor: 'transparent' }}>
+                                  {sceneSel && selMark(picked)}
                                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', lineHeight: 1.3, width: 30, flexShrink: 0, color: on ? 'var(--accent)' : 'var(--muted-2)' }}>{sc.number}</span>
                                   <span className="flex-1 min-w-0" title={sc.title}
                                         style={{ ...clamp2, fontSize: 'var(--fs-2)', fontWeight: on ? 600 : 400, color: on ? 'var(--text)' : 'var(--text-2)' }}>{listTitle(sc)}</span>
@@ -20654,14 +20740,23 @@
                                 </div>
                               );
                             })}
-                            <div className="p-2.5">
+                            {sceneSel ? null : <div className="p-2.5">
                               {/* Номер в название НЕ вписываем: он живёт в поле number
                                   и виден чипом рядом. Две копии одного номера расходились. */}
                               <button onClick={() => { const num = nextSceneNumber(); const newS = { id: `sc-${Date.now()}`, number: num, title: 'НОВАЯ СЦЕНА', content: '', x: (150 - canvasOffset.x) / zoom, y: (150 - canvasOffset.y) / zoom, date: '', gear: {}, lightGear: {}, lightSchemeId: null }; setScenes([...scenes, newS]); syncDoc('scenes', newS.id, newS); setActiveSceneId(newS.id); }}
                                       className="cf-edit-only w-full text-center rounded-lg"
                                       style={{ border: '1px dashed var(--border)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', minHeight: 'var(--tap)' }}>+ сцена</button>
-                            </div>
+                            </div>}
                           </div>
+                          {sceneSel && (
+                            <div className="p-2.5 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+                              <button onClick={() => askDeleteScenes(sceneSel)} disabled={!sceneSel.length} data-cf="scene-sel-delete"
+                                      className="w-full rounded-lg font-semibold"
+                                      style={{ minHeight: 'var(--tap)', fontSize: 'var(--fs-2)', background: sceneSel.length ? 'var(--danger)' : 'transparent', color: sceneSel.length ? 'var(--text)' : 'var(--muted-2)', border: sceneSel.length ? 'none' : '1px dashed var(--border)' }}>
+                                {sceneSel.length ? `Удалить ${sceneSel.length} ${plur(sceneSel.length, 'сцену', 'сцены', 'сцен')}` : 'Отметьте сцены'}
+                              </button>
+                            </div>
+                          )}
                         </aside>
                       ) : (
                         <div className="cf-strip shrink-0" onClick={() => setSceneListOpen(true)} title="Развернуть список сцен">
@@ -21258,7 +21353,7 @@
                                           title="Ещё: удалить сцену">···</button>
                                   {sceneMenu && (
                                     <div className="cf-menu" style={{ top: 'auto', bottom: 'calc(100% + 4px)' }}>
-                                      <button onClick={() => { setSceneMenu(false); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => deleteScene(s.id) }); }}
+                                      <button onClick={() => { setSceneMenu(false); askDeleteScenes([s.id]); }}
                                               style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить сцену</button>
                                     </div>
                                   )}
@@ -24631,7 +24726,7 @@
                                               style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>
                                         <Icons.Print /> Экспорт сцены в PDF
                                       </button>
-                                      <button onClick={() => { setPhoneSheet(null); setConfirmAction({ title: 'Удалить сцену?', message: 'Сцена исчезнет, а её кадры и референсы отвяжутся — из проекта они не пропадут.', onConfirm: () => { deleteScene(sc.id); setPhoneSceneOpen(false); } }); }}
+                                      <button onClick={() => { setPhoneSheet(null); askDeleteScenes([sc.id], () => setPhoneSceneOpen(false)); }}
                                               className="w-full flex items-center gap-3 px-3 rounded-lg"
                                               style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: 'var(--danger)' }}>
                                         <Icons.Trash /> Удалить сцену
