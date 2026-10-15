@@ -1106,6 +1106,141 @@
         // (так бывает с файлами из «Файлов» на iPad) — по расширению.
         const isPdfFile = (f) => !!f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
 
+        // СЦЕНАРИЙ ИЗ PDF И WORD. Сценарий присылают именно так, а разбор
+        // сцен (`splitScript`) понимает только текст построчно. Здесь
+        // достаём этот текст; дальше путь общий с .txt.
+        // PDF: строки собираем ПО ВЫСОТЕ на странице, а не по порядку
+        // кусков — pdf.js отдаёт строку несколькими кусками, а заголовок
+        // сцены обязан оказаться одной строкой, иначе его не найти.
+        // Скан (страницы-картинки) текста не несёт вовсе — об этом говорим,
+        // а не отдаём пустоту.
+        const pdfToText = async (file) => {
+          const lib = await loadPdfJs();
+          const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+          try {
+            const pages = [];
+            for (let i = 1; i <= doc.numPages; i++) {
+              const page = await doc.getPage(i);
+              const tc = await page.getTextContent();
+              const lines = []; let cur = null;
+              tc.items.forEach(it => {
+                if (typeof it.str !== 'string') return;
+                const x = it.transform[4], y = it.transform[5];
+                const h = Math.abs(it.transform[3]) || it.height || 10;
+                if (!cur || Math.abs(y - cur.y) > h * 0.5) {
+                  cur = { y, parts: [] }; lines.push(cur);
+                }
+                cur.parts.push({ x, end: x + (it.width || 0), str: it.str, h });
+              });
+              const rows = lines
+                .sort((a, b) => b.y - a.y)
+                .map(l => {
+                  l.parts.sort((a, b) => a.x - b.x);
+                  let s = '', end = null;
+                  l.parts.forEach(p => {
+                    if (end !== null && p.x - end > p.h * 0.15 && !/\s$/.test(s) && !/^\s/.test(p.str)) s += ' ';
+                    s += p.str; end = p.end;
+                  });
+                  return s.replace(/\s+$/, '');
+                });
+              // Номер страницы сверху или снизу листа — не текст сцены:
+              // иначе в каждой сцене на стыке страниц стояло бы «12.».
+              const PAGE_NUM = /^\s*[-–—]?\s*\d{1,4}\s*[-–—.]?\s*$/;
+              if (rows.length && PAGE_NUM.test(rows[rows.length - 1])) rows.pop();
+              if (rows.length && PAGE_NUM.test(rows[0])) rows.shift();
+              pages.push(rows.join('\n'));
+              try { page.cleanup(); } catch (e) {}
+            }
+            const text = pages.join('\n\n');
+            if (text.replace(/\s/g, '').length < 20 * Math.max(1, doc.numPages) / 4) {
+              throw new Error('В этом PDF нет текста — похоже, это скан (страницы-картинки). Нужен PDF, выгруженный из программы, где писали сценарий, или файл .docx / .txt');
+            }
+            return text;
+          } finally { try { doc.destroy(); } catch (e) {} }
+        };
+
+        // .docx — это ZIP, текст лежит в word/document.xml. Библиотеки
+        // для ZIP нет намеренно (как и у архива фото объектов): читаем
+        // оглавление архива сами, а распаковку делает браузер
+        // (`DecompressionStream`, deflate-raw).
+        const unzipEntry = async (buf, want) => {
+          const u8 = new Uint8Array(buf), dv = new DataView(buf);
+          let eocd = -1;
+          for (let i = u8.length - 22; i >= Math.max(0, u8.length - 66000); i--) {
+            if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+          }
+          if (eocd < 0) return null;
+          const count = dv.getUint16(eocd + 10, true);
+          let p = dv.getUint32(eocd + 16, true);
+          const dec = new TextDecoder('utf-8');
+          for (let k = 0; k < count && dv.getUint32(p, true) === 0x02014b50; k++) {
+            const method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
+            const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+            const loc = dv.getUint32(p + 42, true);
+            const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+            if (name === want) {
+              const start = loc + 30 + dv.getUint16(loc + 26, true) + dv.getUint16(loc + 28, true);
+              const raw = u8.subarray(start, start + size);
+              if (method === 0) return dec.decode(raw);
+              if (method !== 8) throw new Error('Файл Word сжат непривычным способом. Сохраните его заново как .docx или .txt');
+              if (typeof DecompressionStream === 'undefined') throw new Error('Этот браузер не умеет открывать .docx. Обновите его или сохраните сценарий как .txt');
+              const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+              return await new Response(stream).text();
+            }
+            p += 46 + nl + el + cl;
+          }
+          return null;
+        };
+
+        const xmlUnescape = (s) => s
+          .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+          .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d))
+          .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+          .replace(/&amp;/g, '&');
+
+        // Берём ТОЛЬКО текст (`w:t`), табы, переносы и концы абзацев.
+        // Снять просто все теги нельзя: служебные поля Word (номер
+        // страницы, оглавление — `w:instrText`) и удалённый при правке
+        // текст (`w:delText`) вылезли бы в сценарий словами.
+        const docxToText = async (file) => {
+          const buf = await file.arrayBuffer();
+          const head = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
+          if (head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0) {
+            throw new Error('Это старый формат Word (.doc). Откройте файл в Word и сохраните как .docx или «Обычный текст (.txt)»');
+          }
+          if (!(head[0] === 0x50 && head[1] === 0x4b)) return decodeScriptText(buf);   // .doc, который на деле текст или html
+          const xml = await unzipEntry(buf, 'word/document.xml');
+          if (xml == null) throw new Error('Не нашёл текста в файле Word. Сохраните его как .txt');
+          let out = '';
+          xml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:(?:br|cr)(?:\s[^>]*)?\/>|<\/w:p>/g, (m, t) => {
+            if (t !== undefined) out += xmlUnescape(t);
+            else if (m === '<w:tab/>') out += '\t';
+            else out += '\n';
+            return '';
+          });
+          return out;
+        };
+
+        // Русские .txt часто сохранены в windows-1251 — как UTF-8 такой файл
+        // читается кракозябрами. Замечаем это по символам-заменителям.
+        const decodeScriptText = (buf) => {
+          let t = new TextDecoder('utf-8').decode(buf);
+          if ((t.match(/�/g) || []).length > Math.max(3, t.length / 200)) {
+            try { t = new TextDecoder('windows-1251').decode(buf); } catch (e) {}
+          }
+          // .fdx и выгрузки в html — снимаем разметку, остаётся текст построчно
+          if (/^\s*<(\?xml|!doctype|html|finaldraft)/i.test(t)) {
+            t = t.replace(/<[^>]+>/g, '\n').replace(/&[a-z]+;/gi, ' ').replace(/\n{3,}/g, '\n\n');
+          }
+          return t;
+        };
+
+        const readScriptFile = async (file) => {
+          if (isPdfFile(file)) return pdfToText(file);
+          if (/\.docx?$/i.test(file.name || '') || /wordprocessingml|msword/.test(file.type || '')) return docxToText(file);
+          return decodeScriptText(await file.arrayBuffer());
+        };
+
         // ПЕЧАТЬ В УСТАНОВЛЕННОМ ПРИЛОЖЕНИИ — ГОТОВЫЙ PDF, А НЕ СТРАНИЦА.
         // window.print() там не делает ничего, а отдельное окно с
         // разметкой (так было раньше) на iPhone открывается пустой
@@ -15282,19 +15417,6 @@
           const splitScript = (text) => collectScenes(
             String(text).replace(/\r\n?/g, '\n').split('\n'), parseSceneHead);
 
-          // Русские .txt часто сохранены в windows-1251 — как UTF-8 такой файл
-          // читается кракозябрами. Замечаем это по символам-заменителям.
-          const decodeText = (buf) => {
-            let t = new TextDecoder('utf-8').decode(buf);
-            if ((t.match(/�/g) || []).length > Math.max(3, t.length / 200)) {
-              try { t = new TextDecoder('windows-1251').decode(buf); } catch (e) {}
-            }
-            // .fdx и выгрузки в html — снимаем разметку, остаётся текст построчно
-            if (/^\s*<(\?xml|!doctype|html|finaldraft)/i.test(t)) {
-              t = t.replace(/<[^>]+>/g, '\n').replace(/&[a-z]+;/gi, ' ').replace(/\n{3,}/g, '\n\n');
-            }
-            return t;
-          };
 
           // Заголовок, найденный ИИ, разбираем ТЕМ ЖЕ разбором, что и свой.
           // Раньше номером бралось первое число в строке — в «ИНТ. КВАРТИРА 5А»
@@ -15411,7 +15533,6 @@
                 up = [...up, ...fresh];
                 setScenes(up);
                 fresh.forEach(ns => syncDoc('scenes', ns.id, ns));
-                setSceneTab('script');
                 showToast(`Текст сценария загружен · сцен: ${parsed.length}`);
               }
             });
@@ -15423,7 +15544,7 @@
             setIsAILoading(true);
             showToast('Читаю сценарий...');
             try {
-              const text = decodeText(await file.arrayBuffer());
+              const text = await readScriptFile(file);
               let parsed = splitScript(text);
               let source = 'Разобрано по заголовкам сцен.';
               if (parsed.length < 2) {
@@ -15453,7 +15574,7 @@
             } catch (err) {
               console.error(err);
               setIsAILoading(false);
-              showToast('Не удалось прочитать файл сценария');
+              showToast(err && /[а-я]/i.test(err.message || '') ? err.message : 'Не удалось прочитать файл сценария');
             }
           };
 
@@ -25226,16 +25347,17 @@
                     </div>
 
                     <div className="bg-black/40 p-4 rounded-lg border border-white/10">
-                      <h4 className="text-sm font-bold text-amber-300 mb-2">Сценарий (.txt / .fountain / .fdx)</h4>
+                      <h4 className="text-sm font-bold text-amber-300 mb-2">Сценарий (PDF / Word / .txt / .fdx)</h4>
                       <p className="text-xs text-zinc-400 mb-3 leading-relaxed">
                         Разбирается по заголовкам сцен — «СЦЕНА 5. ИНТ. КАБИНЕТ — ДЕНЬ» или «5. НАТ. ДВОР — ДЕНЬ».
                         Номер берётся из заголовка: если сцена с таким номером уже есть, текст ляжет в неё,
                         а не создаст вторую. Текст каждой сцены попадёт в её вкладку «Текст сцены».
-                        Перед записью покажу, что нашлось.
+                        Перед записью покажу, что нашлось. PDF подойдёт выгруженный из программы,
+                        где писали сценарий (скан — картинки, текста в нём нет); старый .doc пересохраните в .docx.
                       </p>
                       <label className="w-full bg-amber-600/30 hover:bg-amber-600/50 text-amber-100 px-4 py-3 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2">
                         {isAILoading ? '⏳ Читаю...' : '📄 Выбрать сценарий'}
-                        <input type="file" accept=".txt,.fountain,.fdx,.md,.csv,.xml" className="hidden" onChange={(e) => { handleScriptFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
+                        <input type="file" accept=".pdf,.docx,.doc,.txt,.fountain,.fdx,.md,.csv,.xml" className="hidden" onChange={(e) => { handleScriptFile(e); setShowAgentModal(false); }} disabled={isAILoading} />
                       </label>
                     </div>
 
