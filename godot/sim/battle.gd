@@ -71,6 +71,14 @@ static var rollback_outcome_old := false
 ## ТОЛЬКО для проверки отката (замер М6, находка стенда G5): подкрепление на подходе к месту
 ## считается «за тыловым рубежом», как до G5. В бою всегда false.
 static var rollback_rear_arrivals := false
+## ТОЛЬКО для проверок отката (замечание к G5 — правила хода боя без своих проверок):
+## «… копит гипер — добить» пишется при каждом начале накачки, а не раз на корабль (05, ловушка 14);
+static var rollback_flee_note_repeat := false
+## ИИ, которому нечем бить, уходит сразу, не позвав свой резерв (05, 2.12);
+static var rollback_teeth_no_reserve := false
+## «есть чем бить» — только оружие кораблей: свободный ангар, звено в воздухе, машина с ракетами
+## и резерв в пути не считаются (05, ловушка 27 — can_hurt щедрый намеренно).
+static var rollback_can_hurt_strict := false
 
 ## ИИ сторон (sim/ai.gd): объект на сторону, в порядке сторон.
 var ai: Array[Ai] = []
@@ -388,7 +396,7 @@ func _update_ship(s: Ship) -> void:
 	# флагман и «Синхо» ниже flee — в гипер сами (space.js:1220)
 	if s.def.flee > 0.0 and not s.station and s.hp_frac() < s.def.flee:
 		if _begin_jump(s):
-			if s.side == player_side and not watch:
+			if s.side == player_side and not clan_voice():
 				toast("%s: повреждения критические, уходим в гипер" % s.name)
 			else:
 				_flee_note(s)
@@ -438,7 +446,7 @@ func _ai_tick() -> void:
 		if not a.full:
 			a.apply(self, pl)
 			continue
-		if pl.reserve and call_reinforcements(a.side) and a.side != player_side:
+		if pl.reserve and call_reinforcements(a.side) and a.side != player_side and not clan_voice():
 			toast("Противник вызвал подкрепление")
 		a.set_dome(self, pl.dome)
 		for l: Array in pl.launch:
@@ -448,7 +456,7 @@ func _ai_tick() -> void:
 			# отход всем флотом (05, 2.6 пп. 5, 7) — строкой в ленте с подсказкой, чем ответить:
 			# копящий гипер беззащитен, а «Охрана» за ним не пойдёт (05, ловушка 13)
 			if order_retreat(a.side) > 0:
-				if watch:
+				if clan_voice():
 					feed("%s отходит всем флотом: копит гипер" % clan_tag(a.side), &"warn")
 				elif a.side != player_side:
 					feed("Противник отходит: копит гипер — добить: «Охота» (T) или ПКМ по кораблю", &"warn")
@@ -465,10 +473,10 @@ func _ai_tick() -> void:
 ## флотом (05, 2.16; ловушка 14): иначе игрок не узнает, что его можно добить.
 func _flee_note(s: Ship) -> void:
 	var sd := sides[s.side]
-	if sd.retreat or s.flee_told:
+	if sd.retreat or (s.flee_told and not rollback_flee_note_repeat):
 		return
 	s.flee_told = true
-	if watch:
+	if clan_voice():
 		feed("%s: %s копит гипер" % [clan_tag(s.side), Weapons.short_name(s)], &"warn")
 	elif s.side != player_side:
 		feed("Противник: %s копит гипер — добить, пока не ушёл" % Weapons.short_name(s), &"warn")
@@ -483,6 +491,8 @@ func can_hurt_side(side: int) -> bool:
 			continue
 		if s.can_hurt():
 			return true
+		if rollback_can_hurt_strict:
+			continue
 		if s.hangar != null and (s.hangar.free > 0 or not s.hangar.rebuild.is_empty()):
 			return true
 		if s.hangar != null:
@@ -490,6 +500,8 @@ func can_hurt_side(side: int) -> bool:
 				var sq := q as Squad
 				if sq != null and not sq.dead:
 					return true
+	if rollback_can_hurt_strict:
+		return false
 	for c in crafts:
 		if c.side == side and not c.dead and not c.leaving and (c.def.weapon_kind != &"missile" or c.ammo > 0 or c.reloads > 0 or c.reloading > 0.0):
 			return true
@@ -520,7 +532,7 @@ func _check_teeth() -> void:
 			spare += e.count
 		if sd.teeth < 0.0:
 			sd.teeth = time
-			if not human and spare > 0 and call_reinforcements(side):
+			if not human and spare > 0 and not rollback_teeth_no_reserve and call_reinforcements(side):
 				sd.teeth = -1.0
 				continue
 			if human:
@@ -532,7 +544,7 @@ func _check_teeth() -> void:
 			continue
 		if human:
 			feed("Нечем бить — уцелевшие уходят в гипер", &"bad")
-		elif watch:
+		elif clan_voice():
 			feed("%s: нечем бить — флот уходит в гипер" % clan_tag(side), &"warn")
 		elif side != player_side:
 			feed("Противнику нечем бить — его флот уходит в гипер", &"good")
@@ -841,7 +853,7 @@ func _complete_jump(s: Ship) -> void:
 	var sd := sides[s.side]
 	sd.jumped.append(s.def.id)
 	events.append([&"jump_out", s.uid])
-	if watch and not sd.retreat:
+	if clan_voice() and not sd.retreat:
 		feed("%s: %s ушёл в гипер" % [clan_tag(s.side), s.name], &"warn")
 	elif s.side != player_side and not sd.retreat:
 		feed("Противник: %s ушёл в гипер" % s.name, &"warn")
@@ -849,7 +861,10 @@ func _complete_jump(s: Ship) -> void:
 	if s.def.cls == &"carrier" and not sd.conceded:
 		sd.conceded = true
 		order_retreat(s.side)
-		toast("Носитель ушёл в гипер — флот отходит следом" if s.side == player_side else "Носитель противника ушёл — его флот отходит")
+		if clan_voice():
+			toast("%s: носитель ушёл в гипер — флот отходит следом" % clan_tag(s.side))
+		else:
+			toast("Носитель ушёл в гипер — флот отходит следом" if s.side == player_side else "Носитель противника ушёл — его флот отходит")
 
 
 # space.js:730 orderRetreat — гипер всего флота с накачкой, а не конец боя (C17)
@@ -883,7 +898,9 @@ func call_reinforcements(side: int) -> bool:
 	if sd.reserve.is_empty() or sd.reinforce_at > 0.0 or sd.retreat:
 		return false
 	sd.reinforce_at = time + defs.hyper.reinforce_delay
-	if side == player_side:
+	if clan_voice():
+		toast("%s: подкрепление выйдет из гипера через %d с" % [clan_tag(side), roundi(defs.hyper.reinforce_delay)])
+	elif side == player_side:
 		toast("Подкрепление выйдет из гипера через %d с" % roundi(defs.hyper.reinforce_delay))
 	return true
 
@@ -897,9 +914,13 @@ func _arrive_reinforcements() -> void:
 			sd.reserve = []
 			sd.reinforce_at = 0.0
 			var got := _drop_in(i, list)
-			if i == player_side:
+			var many := "корабль" if got.size() == 1 else ("корабля" if got.size() < 5 else "кораблей")
+			if clan_voice():
+				toast("%s: подкрепление вышло из гипера" % clan_tag(i))
+				feed("%s: подкрепление — %d %s вышли из гипера" % [clan_tag(i), got.size(), many], &"warn")
+			elif i == player_side:
 				toast("Подкрепление вышло из гипера")
-				feed("Подкрепление: %d %s вышли из гипера" % [got.size(), "корабль" if got.size() == 1 else ("корабля" if got.size() < 5 else "кораблей")], &"good")
+				feed("Подкрепление: %d %s вышли из гипера" % [got.size(), many], &"good")
 			else:
 				toast("Противник получил подкрепление")
 

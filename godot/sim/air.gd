@@ -270,6 +270,20 @@ static func fly(b: State, c: Craft, aim: Vector2, throttle: float) -> void:
 # ───────────────────────────── шаг машины (часть 04, 2.4) ─────────────────────────────
 
 # space.js:1502 updateCraft · часть 04, 2.4 — по порядку, первый return заканчивает шаг
+## Полоски о своих звеньях (перезарядка, ракеты кончились, садиться некуда) — игроку о его
+## звеньях; в «ИИ против ИИ» — о звеньях обеих сторон, от имени клана (G5: «ИИ против ИИ»
+## говорил с места атакующего, замечание к G5).
+static func _tells(b: State, q: Squad) -> bool:
+	return q.side == b.player_side or b.clan_voice()
+
+
+static func _tell(b: State, q: Squad, c: Craft, what: String) -> void:
+	if b.clan_voice():
+		b.toast("%s: %s — %s" % [b.clan_tag(q.side), c.def.name, what])
+	elif q.side == b.player_side:
+		b.toast("%s: %s" % [c.def.name, what])
+
+
 static func update_craft(b: State, c: Craft) -> void:
 	var q := c.squad as Squad
 	var tb := c.target as Body
@@ -314,14 +328,14 @@ static func update_craft(b: State, c: Craft) -> void:
 			if c.reloads > 0:
 				c.reloads -= 1
 				c.reloading = c.def.reload_time
-				if c.slot == 0 and q != null and q.side == b.player_side:
-					b.toast("%s: перезарядка, осталось %d %s" % [c.def.name, c.reloads, _plural(c.reloads, "комплект", "комплекта", "комплектов")])
+				if c.slot == 0 and q != null:
+					_tell(b, q, c, "перезарядка, осталось %d %s" % [c.reloads, _plural(c.reloads, "комплект", "комплекта", "комплектов")])
 				return
 			if q != null and not q.recall:
 				q.recall = true               # возвращается ВСЁ звено, а не машина (04, 2.9)
-				if q.side == b.player_side and not q.told_empty:
+				if _tells(b, q) and not q.told_empty:
 					q.told_empty = true
-					b.toast("%s: ракеты кончились, звено уходит на носитель" % c.def.name)
+					_tell(b, q, c, "ракеты кончились, звено уходит на носитель")
 	if q != null and q.recall:                # 5. возврат и посадка
 		var home := Hangar.home_of(q)
 		if home == null:
@@ -336,16 +350,16 @@ static func update_craft(b: State, c: Craft) -> void:
 		var empty := c.def.weapon_kind == &"missile" and c.ammo <= 0 and c.reloads <= 0
 		if empty and not rollback_no_leave:
 			c.leaving = true
-			if q.side == b.player_side and (not q.told_leave or rollback_tell_always):
+			if _tells(b, q) and (not q.told_leave or rollback_tell_always):
 				q.told_leave = true
-				b.toast("%s: ракет нет, садиться некуда — машины выходят из боя" % c.def.name)
+				_tell(b, q, c, "ракет нет, садиться некуда — машины выходят из боя")
 			return
-		if q.side == b.player_side and (not q.told_no_home or rollback_tell_always):
+		if _tells(b, q) and (not q.told_no_home or rollback_tell_always):
 			q.told_no_home = true
 			var any := false
 			for s in b.ships:
 				any = any or (not s.dead and not s.charging() and s.side == q.side and s.hangar != null)
-			b.toast("%s: садиться некуда — %s" % [c.def.name, "все ангары заняты" if any else "носителей не осталось"])
+			_tell(b, q, c, "садиться некуда — %s" % ("все ангары заняты" if any else "носителей не осталось"))
 	var go := going(c)
 	# ДОКТРИНА 09, 4.4: бомбардировщик сначала обходит строй с фланга
 	if routing(b, c):

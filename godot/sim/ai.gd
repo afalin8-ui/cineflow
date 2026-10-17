@@ -72,9 +72,14 @@ const OLD_FOCUS_FAR_K := 0.3
 static var rollback_focus_any := false
 ## помощи прижатому нет (09, 7.4);
 static var rollback_no_help := false
+## помощник 7.4 остаётся в помощи и побитым, и перехватывающим звено (до замечания к G5);
+static var rollback_help_hurt := false
 ## корвет перехватывает звено, подошедшее к ЛЮБОМУ своему кораблю ближе 750, доля 0,7 (как
 ## в JS; 09, 3.4);
 static var rollback_intercept_any := false
+## корвет берёт звено по расстоянию от СЕБЯ, а не от своего места в шеренге (09, 3.4: «к МЕСТУ»
+## — иначе корвет, уже ушедший за звеном, тянется за следующим всё дальше от линии);
+static var rollback_intercept_from_ship := false
 ## роли звеньев — как в JS: бомбардировщики, пока видна чужая не-мелочь (09, 4.5);
 static var rollback_air_js := false
 ## share — от общего uid боя, как в JS (09, 7.2 и 9.5 п. 12): у двух одинаковых флотов общую
@@ -800,7 +805,7 @@ func _intercept(b: State, s: Ship) -> bool:
 	for q in b.squads:
 		if q.dead or q.side == side or q.craft.is_empty():
 			continue
-		var at := s.slot if (s.has_slot and not rollback_intercept_any) else s.pos
+		var at := s.slot if (s.has_slot and not rollback_intercept_any and not rollback_intercept_from_ship) else s.pos
 		var dd := q.pos.distance_to(at)
 		if rollback_intercept_any:
 			# откат: звено ближе 750 к ЛЮБОМУ своему кораблю (JS «threats»)
@@ -836,18 +841,34 @@ func _intercept(b: State, s: Ship) -> bool:
 ## гибели, ухода дальше 0,5 R от тяжёлого или ai.help_max_s.
 func _help(b: State, mine: Array[Ship]) -> void:
 	var d := b.defs.doctrine
-	# держащиеся помощи — заново поставить фокус (роли выше его сняли)
+	# держащиеся помощи — заново поставить фокус (роли выше его сняли). Но не побитому и не
+	# перехватывающему звено: роли выше только что отправили первого за линию (7.2: «побитый
+	# лёгкий — −560, фокус снимается»), второго — на звено (3.4), и вернуть им фокус значило бы
+	# держать побитого корвета в упор у чужого до конца помощи (замечание к G5). Такие из помощи
+	# выходят; помощь без лёгких кончается, и тяжёлый позовёт других на следующем тике.
 	var busy: Dictionary[int, bool] = {}
+	var keep_h: Array[Array] = []
 	for h in helps:
 		var fu: int = h[1]
 		var foe := b.ship_by_uid(fu)
 		var lights: PackedInt32Array = h[3]
+		var left := PackedInt32Array()
 		for u in lights:
-			busy[u] = true
 			var l := b.ship_by_uid(u)
-			if l != null and not l.dead and foe != null and not foe.dead:
+			if l == null or l.dead:
+				continue
+			if not rollback_help_hurt and _help_out(b, l):
+				continue
+			left.append(u)
+			busy[u] = true
+			if foe != null and not foe.dead:
 				l.forced = foe
 				l.stance = &"guard"
+		if left.is_empty() and not rollback_help_hurt:
+			continue
+		h[3] = left
+		keep_h.append(h)
+	helps = keep_h
 	for s in mine:
 		if not s.heavy() or s.station or s.dead or s.charging():
 			continue
@@ -898,6 +919,11 @@ func _help(b: State, mine: Array[Ship]) -> void:
 		help_calls += 1
 
 
+## Лёгкий выходит из помощи (7.4): побит (7.2 — за линию, фокус снимается) или перехватывает звено (3.4).
+func _help_out(b: State, l: Ship) -> bool:
+	return l.hp_frac() < b.defs.doctrine.ai_hurt_hp or l.forced is Squad
+
+
 # ───────────────────────────── каждый шаг ─────────────────────────────
 
 ## Каждый шаг, ДО кораблей (battle.gd): часы «чужой вплотную» у тяжёлых (7.4), конец помощи,
@@ -931,6 +957,24 @@ func step(b: State) -> void:
 			var done := hv == null or hv.dead or hv.charging() or foe == null or foe.dead or b.time >= until
 			if not done and hv.pos.distance_to(foe.pos) > d.belt_back_off_k * hv.def.main.rng:
 				done = true
+			if not done and not rollback_help_hurt:
+				# побитый посреди помощи — сразу из неё: фокус снят, место — его в строю до тика,
+				# дальше роли отправят его за линию (7.2); перехватывающий звено — уже не помогает
+				var lights_h: PackedInt32Array = h[3]
+				var left := PackedInt32Array()
+				for u in lights_h:
+					var l := b.ship_by_uid(u)
+					if l == null or l.dead:
+						continue
+					if _help_out(b, l):
+						if l.forced == foe:
+							l.forced = null
+							if l.has_slot:
+								l.anchor = l.slot
+						continue
+					left.append(u)
+				h[3] = left
+				done = left.is_empty()
 			if done:
 				var lights: PackedInt32Array = h[3]
 				for u in lights:

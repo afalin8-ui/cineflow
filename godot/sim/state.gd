@@ -116,6 +116,9 @@ var result: StringName = &""
 var outcome: Dictionary = {}
 ## «ИИ против ИИ»: у обеих сторон ИИ, человек только смотрит (приказов нет).
 var watch := false
+## ТОЛЬКО для проверки отката (замечание к G5): «ИИ против ИИ» говорит с места атакующего —
+## «Потерян наш …», «Противник отходит… (T)», «Подкрепление выйдет из гипера…» без клана.
+static var rollback_watch_voice := false
 
 ## Поля помех ЭТОГО шага (sim/ecm.gd собирает их в начале шага).
 var fields: Array[Field] = []
@@ -250,6 +253,12 @@ func toast(text: String) -> void:
 func clan_tag(side: int) -> String:
 	var f: Defs.FactionDef = defs.factions.get(sides[side].clan)
 	return f.short if f != null else str(sides[side].clan)
+
+
+## Говорить ли кланами (тексты ленты и полосок; логика боя смотрит на сам watch): в «ИИ против
+## ИИ» у зрителя нет «своих» и «чужих», и всё, что модель пишет человеку, — от имени клана.
+func clan_voice() -> bool:
+	return watch and not rollback_watch_voice
 
 
 func feed(text: String, kind: StringName) -> void:

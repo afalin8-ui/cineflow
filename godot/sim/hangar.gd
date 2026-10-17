@@ -176,7 +176,9 @@ static func land(b: State, c: Craft, home: Ship) -> void:
 	if q != null and q.craft.is_empty():
 		home.hangar.free = mini(home.hangar.bays, home.hangar.free + 1)
 		kill_squad(b, q, true)
-		if q.side == b.player_side:
+		if b.clan_voice():
+			b.toast("%s: звено село, ангар свободен" % b.clan_tag(q.side))
+		elif q.side == b.player_side:
 			b.toast("Звено село, ангар свободен")
 
 
@@ -224,7 +226,7 @@ static func kill_squad(b: State, q: Squad, landed: bool) -> void:
 	if not landed:
 		b.sides[q.side].sq_lost += 1
 		var what := "звено %s %s" % [ROLE_GEN.get(q.role, ""), q.def.name]
-		if b.watch:
+		if b.clan_voice():
 			b.feed("%s: сбито %s" % [b.clan_tag(q.side), what], &"warn")
 		elif q.side == b.player_side:
 			b.feed("Потеряно наше " + what, &"bad")

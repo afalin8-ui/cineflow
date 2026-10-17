@@ -448,7 +448,7 @@ static func _jam_feed(b: State, s: Ship, lock: float) -> void:
 	if s.jam == null or (s.side != b.player_side and not b.watch) or s.station or b.time - b.jam_feed_at <= JAM_FEED_GAP:
 		return
 	var t := s.target as Ship
-	var who := ("%s: " % b.clan_tag(s.side)) if b.watch else "Наш "
+	var who := ("%s: " % b.clan_tag(s.side)) if b.clan_voice() else "Наш "
 	if s.heavy():
 		# ДОКТРИНА 09, 1.7: главный калибр под помехами бьёт, но вдвое реже
 		b.jam_feed_at = b.time
@@ -862,7 +862,7 @@ static func _under_fire(b: State, t: Ship) -> void:
 		t.alarm_at = maxf(t.alarm_at, b.time - ALARM_QUIET)
 		return
 	t.alarm_at = b.time
-	if b.watch:
+	if b.clan_voice():
 		b.feed("%s: %s под огнём" % [b.clan_tag(t.side), short_name(t)], &"warn")
 		return
 	b.feed("%s %s под огнём" % ["Наша" if t.station else "Наш", short_name(t)], &"warn")
@@ -885,7 +885,7 @@ static func destroy_ship(b: State, e: Ship, by: Body) -> void:
 	b.events.append([&"destroyed", e.uid, by.uid if by != null else 0])
 	# свой или чужой — словом (03, ловушка 31); имя с номером
 	var nm := e.name.substr(0, 1).to_lower() + e.name.substr(1)
-	if b.watch:
+	if b.clan_voice():
 		b.feed(("%s: потеряна %s" if e.station else "%s: потерян %s") % [b.clan_tag(e.side), nm], &"warn")
 	elif e.side == b.player_side:
 		b.feed(("Потеряна наша %s" if e.station else "Потерян наш %s") % nm, &"bad")

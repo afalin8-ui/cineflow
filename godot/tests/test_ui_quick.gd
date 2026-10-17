@@ -15,6 +15,7 @@ const QuickMenu := preload("res://ui/quick_menu.gd")
 const ResultCard := preload("res://ui/result_card.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
+const State := preload("res://sim/state.gd")
 
 
 ## Главная сцена с меню (по умолчанию с G5): отчёты — в свою папку, зерно — своё.
@@ -162,9 +163,14 @@ func test_go_and_watch() -> void:
 	await hooks.frames(2)
 	eq(w.battle.cmds.journal.size(), j0, "в «ИИ против ИИ» клавиши и ПКМ приказов не дают")
 	ok(w.hud._local.size() > 0 and str(w.hud._local[-1][0]).contains("ты только смотришь"), "и говорят почему — полоской «ты только смотришь»")
-	# скорость и пауза — не приказы: в «ИИ против ИИ» работают
+	# скорость и пауза — не приказы: в «ИИ против ИИ» работают (текст выпуска называет 1, 2 и 4)
+	await hooks.key(KEY_2)
+	eq(w.view.speed, 2, "клавиша 2 — скорость 2× и в «ИИ против ИИ»")
 	await hooks.key(KEY_4)
 	eq(w.view.speed, 4, "клавиша 4 — скорость 4× и в «ИИ против ИИ»")
+	await hooks.key(KEY_1)
+	eq(w.view.speed, 1, "клавиша 1 — снова обычная скорость")
+	await hooks.key(KEY_4)
 	var p0 := w.view.paused
 	await hooks.key(KEY_SPACE)
 	ok(w.view.paused != p0, "Пробел — пауза и снова ход")
@@ -185,6 +191,34 @@ func test_go_and_watch() -> void:
 	var doing := PolygonHud.doing(foe, w.battle)
 	ok(w.view.selection == [foe.uid] and w.hud.sel_label.text.contains(foe.name) and w.hud.sel_label.text.contains(doing), "щелчок по чужому крейсеру в «ИИ против ИИ» — он выбран, внизу его имя и занятие («%s»): «%s»" % [doing, w.hud.sel_label.text.get_slice("\n", 0)])
 	await _done(main)
+
+
+## «ИИ против ИИ» на экране (текст выпуска capella-v0.6.1): строка вверху о подкреплении называет
+## клан — «Тройден: подкрепление выйдет из гипера…», а не «Подкрепление выйдет…» с места атакующего,
+## как в 0.6 (замечание к G5). Открывается кнопкой меню, бой идёт видом 3,5 игровых секунды: ИИ
+## атакующего зовёт резерв на первом тике (3 с). Откат — State.rollback_watch_voice.
+func _watch_top(rollback: bool) -> String:
+	State.rollback_watch_voice = rollback
+	var main := await _main("quick_watch_top")
+	var txt := ""
+	if await _press(_menu_btn(main, "watch")):
+		await hooks.frames(3)
+		var w: Polygon = main.get("polygon")
+		for i in roundi(3.5 / Battle.STEP):
+			w.view.advance(Battle.STEP)
+		await hooks.frames(3)
+		txt = w.hud.toasts.text
+	State.rollback_watch_voice = false
+	await _done(main)
+	return txt
+
+
+func test_watch_top_line_names_clan() -> void:
+	var t := await _watch_top(false)
+	note("«ИИ против ИИ», 3,5 с: строка вверху «%s»" % t.replace("\n", " | "))
+	ok(t.contains("Тройден: подкрепление выйдет из гипера"), "строка вверху называет клан, который позвал подкрепление")
+	var o := await _watch_top(true)
+	ok(o.contains("Подкрепление выйдет из гипера") and not o.contains("Тройден:"), "откат «с места атакующего» (как в 0.6): «%s» — проверка краснеет" % o.replace("\n", " | "))
 
 
 ## «В бой»: приказы — те же клавиши, что на «Полигоне» (текст выпуска capella-v0.6 их называет):
