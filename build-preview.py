@@ -117,6 +117,16 @@ before = app
 app = app.replace('\n    </style>', mark, 1)
 must(app != before, 'метка тестовой версии')
 
+# Доска Excalidraw лежит в vendor/ У КОРНЯ, а копия берёт её относительно
+# своего адреса (document.baseURI) — из подпапки это /<dir>/vendor/…, которого
+# нет: доска не открылась бы вовсе («файл доски не загрузился»). Папку
+# vendor (4,7 МБ) не копируем, а шлём копию на уровень выше. Service
+# worker копии кэширует эти файлы по тому же адресу — ему можно: граница
+# у него только по тому, КАКИЕ СТРАНИЦЫ он обслуживает, а не что кэширует.
+before = app
+app = app.replace("new URL('vendor/excalidraw/',", "new URL('../vendor/excalidraw/',", 1)
+must(app != before, 'путь к доске Excalidraw из подпапки')
+
 write('index.html', app)
 
 # --- sw.js ---
@@ -142,6 +152,10 @@ sw = sw.replace(
     "  await Promise.all(keys.filter(k => k.startsWith(FAMILY) && !k.startsWith(VERSION))\n"
     "                        .map(k => caches.delete(k)));", 1)
 must(sw != before, 'чистка только своих кэшей')
+
+before = sw
+sw = sw.replace("'./vendor/excalidraw/", "'../vendor/excalidraw/")
+must(sw != before, 'путь к доске Excalidraw в кэше копии')
 
 write('sw.js', sw)
 

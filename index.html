@@ -732,6 +732,15 @@
           --color-on-surface: #f0eee6; --color-surface-primary-container: #483b35; --color-on-primary-container: #f3e0d8;
           --color-brand-hover: #dfa691; --color-brand-active: #eabdad; --color-border-outline-variant: #33312d; --color-logo-text: #f3e0d8; }
     </style>
+    <!-- СКЕВОМОРФНЫЙ СКИН (ветка skeuo). Отдельный блок стилей ПОСЛЕ темы:
+         токены переопределяются здесь же (позже в каскаде), материалы
+         добавляются классами и элементными селекторами поверх существующей
+         разметки. Содержимое между метками собирает scratchpad-скрипт
+         assemble.py из модулей css/*.css — руками внутрь не писать. -->
+    <!-- CF-SKEUO-START -->
+    <style id="cf-skeuo">
+    </style>
+    <!-- CF-SKEUO-END -->
 </head>
 <body class="no-select">
     <div id="root" class="relative z-10 w-full h-full"></div>
