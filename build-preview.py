@@ -84,9 +84,11 @@ app = app.replace('<title>CineFlow Prep — Doppler Studio</title>',
                   f'<title>{NAME} (тест) — Doppler Studio</title>', 1)
 must(app != before, 'заголовок страницы')
 
+# Название проекта стоит в заголовке перед именем приложения («Чайка ·
+# CineFlow»), поэтому меняем обе ветки: с названием и без него.
 before = app
-app = app.replace("+ 'CineFlow Prep'; }, [unreadCount]);",
-                  f"+ '{NAME} (тест)'; }}, [unreadCount]);", 1)
+app = app.replace("+ (t ? t + ' · CineFlow' : 'CineFlow Prep');",
+                  f"+ (t ? t + ' · {NAME} (тест)' : '{NAME} (тест)');", 1)
 must(app != before, 'заголовок со счётчиком чата')
 
 # Свой кэш собранного кода (см. вводный комментарий).
@@ -132,15 +134,17 @@ write('index.html', app)
 # --- sw.js ---
 sw = read('sw.js')
 
+# Номер версии берём из самого sw.js: его поднимают при каждой правке
+# библиотек, и зашитое число (было «v11») молча переставало совпадать.
+import re
 before = sw
-sw = sw.replace(
-    "const VERSION = 'cineflow-v11';",
-    "// Копия «на посмотреть» лежит на том же адресе сайта, что и рабочее\n"
-    "// приложение, и Cache Storage у них общий. Свой род имён нужен затем,\n"
-    "// чтобы чистка старых версий (ниже) не снесла кэш корневого приложения\n"
-    "// и не отобрала у него офлайн. Правится сборщиком build-video.py.\n"
-    f"const FAMILY = '{FAMILY}';\n"
-    "const VERSION = FAMILY + '-v11';", 1)
+sw = re.sub(r"const VERSION = 'cineflow-(v\d+)';",
+            lambda m: ("// Копия «на посмотреть» лежит на том же адресе сайта, что и рабочее\n"
+                       "// приложение, и Cache Storage у них общий. Свой род имён нужен затем,\n"
+                       "// чтобы чистка старых версий (ниже) не снесла кэш корневого приложения\n"
+                       "// и не отобрала у него офлайн. Правится сборщиком build-preview.py.\n"
+                       f"const FAMILY = '{FAMILY}';\n"
+                       f"const VERSION = FAMILY + '-{m.group(1)}';"), sw, count=1)
 must(sw != before, 'имя версии service worker')
 
 before = sw
