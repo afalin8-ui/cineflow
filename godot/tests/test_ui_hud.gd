@@ -13,6 +13,7 @@ const Ship := preload("res://sim/ship.gd")
 const Squad := preload("res://sim/squad.gd")
 const State := preload("res://sim/state.gd")
 const Weapons := preload("res://sim/weapons.gd")
+const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
@@ -262,13 +263,15 @@ func _scan_empty(vs: Vector2) -> PackedStringArray:
 	return bad
 
 
-func _scan_at(size: Vector2i, rich: bool) -> Dictionary:
+func _scan_at(size: Vector2i, rich: bool, busy: bool = false) -> Dictionary:
 	var p := await _open(size)
 	var vs := Vector2(size)
 	if rich:
 		p.view.selection = _rich_selection(p)
 	else:
 		await hooks.key(KEY_F2)
+	if busy:
+		_busy_fleet(p)
 	await hooks.frames(4)
 	var got := await _scan_buttons(p, vs)
 	got["empty"] = _scan_empty(vs)
@@ -280,6 +283,23 @@ func _scan_at(size: Vector2i, rich: bool) -> Dictionary:
 	got["text"] = sl.text.replace("\n", " | ")
 	await _close()
 	return got
+
+
+## Занятие тяжёлых — длинное и НЕ от того, сколько шагов боя успело пройти до паузы: оба
+## выходят на дистанцию к чужому тяжёлому («выходит на дистанцию · 1068 до «Исса» III»). Так
+## текст панели заведомо не влезает целиком в четыре строки. На медленной машине до паузы
+## успевает пройти больше шагов, и флагман сам начинал выходить на дистанцию, а в CI — нет:
+## проверка отката «режется по высоте» зеленела там на коротком «стоит».
+func _busy_fleet(p: Polygon) -> void:
+	var foe: Ship = null
+	for s in p.battle.side_ships(1 - p.view.my_side):
+		if not s.dead and s.heavy():
+			foe = s
+			break
+	for s in _own(p):
+		if s.heavy() and not s.legacy and foe != null:
+			s.belt = HeavyDoctrine.APPROACH
+			s.forced = foe
 
 
 func test_buttons_on_screen_and_reachable() -> void:
@@ -301,9 +321,13 @@ func test_buttons_on_screen_and_reachable() -> void:
 	PolygonHud.rollback_fixed_layout = false
 	var rb: PackedStringArray = r["bad"]
 	ok(not rb.is_empty(), "откат «раскладка не смотрит на ширину окна» краснеет: %s" % "; ".join(rb.slice(0, 3)))
-	# откат «текст панели целиком, лишнее срезается по высоте»
+	# длинные занятия: текст не режется, а короче — уходит строка мыши, лишние занятия (_fit_sel);
+	# откат «текст панели целиком, лишнее срезается по высоте» — режется
+	var bz := await _scan_at(Vector2i(1366, 768), false, true)
+	note("1366, весь флот, тяжёлые выходят на дистанцию: панель — строк %s: «%s»" % [bz["lines"], bz["text"]])
+	ok(not flag(bz["cut"]), "1366, весь флот, у тяжёлых длинное занятие: текст панели целиком (строк %s)" % bz["lines"])
 	PolygonHud.rollback_panel_cut = true
-	var rc := await _scan_at(Vector2i(1366, 768), false)
+	var rc := await _scan_at(Vector2i(1366, 768), false, true)
 	PolygonHud.rollback_panel_cut = false
 	ok(flag(rc["cut"]), "откат «текст режется по высоте панели» краснеет: строк %s" % rc["lines"])
 	# откат «строитель не ставит IGNORE»: промежутки столбика и полоски шапки ловят мышь
