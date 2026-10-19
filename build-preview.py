@@ -84,9 +84,11 @@ app = app.replace('<title>CineFlow Prep — Doppler Studio</title>',
                   f'<title>{NAME} (тест) — Doppler Studio</title>', 1)
 must(app != before, 'заголовок страницы')
 
+# Название проекта стоит в заголовке перед именем приложения («Чайка ·
+# CineFlow»), поэтому меняем обе ветки: с названием и без него.
 before = app
-app = app.replace("+ 'CineFlow Prep'; }, [unreadCount]);",
-                  f"+ '{NAME} (тест)'; }}, [unreadCount]);", 1)
+app = app.replace("+ (t ? t + ' · CineFlow' : 'CineFlow Prep');",
+                  f"+ (t ? t + ' · {NAME} (тест)' : '{NAME} (тест)');", 1)
 must(app != before, 'заголовок со счётчиком чата')
 
 # Свой кэш собранного кода (см. вводный комментарий).
@@ -117,20 +119,32 @@ before = app
 app = app.replace('\n    </style>', mark, 1)
 must(app != before, 'метка тестовой версии')
 
+# Доска Excalidraw лежит в vendor/ У КОРНЯ, а копия берёт её относительно
+# своего адреса (document.baseURI) — из подпапки это /<dir>/vendor/…, которого
+# нет: доска не открылась бы вовсе («файл доски не загрузился»). Папку
+# vendor (4,7 МБ) не копируем, а шлём копию на уровень выше. Service
+# worker копии кэширует эти файлы по тому же адресу — ему можно: граница
+# у него только по тому, КАКИЕ СТРАНИЦЫ он обслуживает, а не что кэширует.
+before = app
+app = app.replace("new URL('vendor/excalidraw/',", "new URL('../vendor/excalidraw/',", 1)
+must(app != before, 'путь к доске Excalidraw из подпапки')
+
 write('index.html', app)
 
 # --- sw.js ---
 sw = read('sw.js')
 
+# Номер версии берём из самого sw.js: его поднимают при каждой правке
+# библиотек, и зашитое число (было «v11») молча переставало совпадать.
+import re
 before = sw
-sw = sw.replace(
-    "const VERSION = 'cineflow-v11';",
-    "// Копия «на посмотреть» лежит на том же адресе сайта, что и рабочее\n"
-    "// приложение, и Cache Storage у них общий. Свой род имён нужен затем,\n"
-    "// чтобы чистка старых версий (ниже) не снесла кэш корневого приложения\n"
-    "// и не отобрала у него офлайн. Правится сборщиком build-video.py.\n"
-    f"const FAMILY = '{FAMILY}';\n"
-    "const VERSION = FAMILY + '-v11';", 1)
+sw = re.sub(r"const VERSION = 'cineflow-(v\d+)';",
+            lambda m: ("// Копия «на посмотреть» лежит на том же адресе сайта, что и рабочее\n"
+                       "// приложение, и Cache Storage у них общий. Свой род имён нужен затем,\n"
+                       "// чтобы чистка старых версий (ниже) не снесла кэш корневого приложения\n"
+                       "// и не отобрала у него офлайн. Правится сборщиком build-preview.py.\n"
+                       f"const FAMILY = '{FAMILY}';\n"
+                       f"const VERSION = FAMILY + '-{m.group(1)}';"), sw, count=1)
 must(sw != before, 'имя версии service worker')
 
 before = sw
@@ -142,6 +156,10 @@ sw = sw.replace(
     "  await Promise.all(keys.filter(k => k.startsWith(FAMILY) && !k.startsWith(VERSION))\n"
     "                        .map(k => caches.delete(k)));", 1)
 must(sw != before, 'чистка только своих кэшей')
+
+before = sw
+sw = sw.replace("'./vendor/excalidraw/", "'../vendor/excalidraw/")
+must(sw != before, 'путь к доске Excalidraw в кэше копии')
 
 write('sw.js', sw)
 
