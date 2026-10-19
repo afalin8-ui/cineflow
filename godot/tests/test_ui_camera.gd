@@ -86,6 +86,25 @@ func test_wheel_zooms_to_cursor() -> void:
 	await hooks.frames(1)
 
 
+## Как _hold, но отдаёт сумму шагов кадра (delta), прошедших с нажатия до отпускания включительно.
+func _hold_timed(rig: Node, code: Key, frames: int) -> float:
+	var ev := InputEventKey.new()
+	ev.physical_keycode = code
+	ev.keycode = code
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	var acc := 0.0
+	for i in frames:
+		await hooks.frames(1)
+		acc += rig.get_process_delta_time()
+	var up := ev.duplicate() as InputEventKey
+	up.pressed = false
+	Input.parse_input_event(up)
+	await hooks.frames(1)
+	acc += rig.get_process_delta_time()
+	return acc
+
+
 func _hold(code: Key, frames: int) -> void:
 	var ev := InputEventKey.new()
 	ev.physical_keycode = code
@@ -117,11 +136,12 @@ func test_keys_rotate_and_pan() -> void:
 	# стрелка вверх везёт вглубь (−z при повороте 0)
 	var d := _defs.doctrine
 	rig.set_view(Vector3(0, 0, d.camera_start_look_z), 0.0, d.camera_dist_start, true)
-	var t0 := Time.get_ticks_usec()
-	await _hold(KEY_UP, 8)
-	var sec := (Time.get_ticks_usec() - t0) / 1e6
+	# время — СУММОЙ шагов кадра, которыми камера и едет, а не часами стенда: первый кадр после
+	# нажатия несёт и время ДО замера, и на свободной машине (кадры по миллисекунде) часы давали
+	# меньше, чем камера честно проехала, — проверка краснела через раз в полном ярусе
+	var sec := await _hold_timed(rig, KEY_UP, 8)
 	ok(rig.look.z < d.camera_start_look_z, "стрелка вверх — вглубь стола: z %.1f" % rig.look.z)
-	ok(d.camera_start_look_z - rig.look.z <= d.camera_dist_start * d.camera_edge_speed_k * sec * 1.05 + 1.0, "скорость не больше dist × 0,44 в секунду")
+	ok(d.camera_start_look_z - rig.look.z <= d.camera_dist_start * d.camera_edge_speed_k * sec * 1.05 + 1.0, "скорость не больше dist × 0,44 в секунду (%.1f за %.3f с)" % [d.camera_start_look_z - rig.look.z, sec])
 	# русская раскладка: клавиша по месту (06, ловушка 49) — «й» на месте Q
 	var y3 := rig.yaw
 	var ev := InputEventKey.new()
