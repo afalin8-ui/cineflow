@@ -52,6 +52,9 @@ func _polygon() -> Polygon:
 	ok(p.setup(_get_defs(), "проверка"), "«Полигон» собрался: %s" % "; ".join(p.problems))
 	p.view.paused = true
 	p.view.rig.edge_enabled = false
+	# знаки над кораблями выключены: здесь проверяется выбор по корпусу и ближайшему (G1–G3);
+	# выбор по знакам (план GИ) — tests/test_ui_hud.gd
+	p.view.markers.on = false
 	await hooks.frames(2)
 	return p
 
@@ -138,7 +141,13 @@ func _launch_keys(rollback: bool) -> Dictionary:
 	var only: Array[Ship] = [carrier]
 	_select(p, only)
 	await hooks.frames(2)
-	var sel_line := p.hud.sel_label.text
+	# с GИ клавиши — на кнопках сетки команд: у носителя — «Перехватчик Z», «Истребитель X»,
+	# «Бомбардировщик C» с мелкой строкой «ангар N» (свободные места)
+	var sel_line := ""
+	for id: StringName in [&"launch_interceptor", &"launch_fighter", &"launch_bomber"]:
+		var gb: Button = p.hud.grid.buttons.get(id)
+		if gb != null:
+			sel_line += "%s %s %s|" % [(gb.get_node("word") as Label).text, (gb.get_node("key") as Label).text, (gb.get_node("top") as Label).text]
 	# русская раскладка: на месте Z — «я», X — «ч», C — «с»
 	var cases: Array = [[KEY_Z, 1103], [KEY_X, 1095], [KEY_C, 1089]]
 	for k: Array in cases:
@@ -174,7 +183,7 @@ func test_zxc_launch_from_carrier() -> void:
 	var roles: Array = r["roles"]
 	eq(str(roles), str([&"interceptor", &"fighter", &"bomber"]), "Z / X / C по месту клавиши — перехватчики, истребители, бомбардировщики")
 	eq(whole(r["up"]), 3, "три звена в воздухе")
-	ok(str(r["sel"]).contains("Z — перехватчики") and str(r["sel"]).contains("свободно мест в ангаре"), "выбран носитель — панель подсказывает Z / X / C и свободные места: «%s»" % str(r["sel"]))
+	ok(str(r["sel"]).contains("Перехватчик Z ангар") and str(r["sel"]).contains("Истребитель X ангар") and str(r["sel"]).contains("Бомбардировщик C ангар"), "выбран носитель — кнопки «Перехватчик Z», «Истребитель X», «Бомбардировщик C» с местами в ангаре: «%s»" % str(r["sel"]))
 	ok(not flag(r["no_carrier_cmd"]), "без носителя в выборе Z пуска не шлёт")
 	ok(str(r["hint"]).contains("Звенья поднимает носитель: выбери его"), "и говорит, что делать: «%s»" % str(r["hint"]))
 	var o := await _launch_keys(true)
@@ -208,6 +217,8 @@ func _pick_squad(rollback: bool) -> Dictionary:
 	out["clicked"] = sel.size() == 1 and sel[0] == q.uid
 	await hooks.frames(2)
 	out["line"] = p.hud.sel_label.text
+	var rb: Button = p.hud.grid.buttons.get(&"recall")
+	out["recall_btn"] = "%s %s" % [(rb.get_node("word") as Label).text, (rb.get_node("key") as Label).text] if rb != null else ""
 	out["name"] = PolygonHud.squad_name(q, p.battle)
 	var n0 := p.battle.cmds.journal.size()
 	await hooks.key(KEY_V, 1084 as Key)              # «м» на месте V
@@ -230,7 +241,7 @@ func test_click_on_craft_selects_squad() -> void:
 	if not ok(flag(r["found"]), "на рабочем виде нашлась машина своего звена, не над корпусом корабля"):
 		return
 	ok(flag(r["clicked"]), "щелчок по машине выбирает её звено целиком")
-	ok(str(r["line"]).contains(str(r["name"])) and str(r["line"]).contains("V — на посадку"), "панель называет звено и подсказывает V: «%s»" % str(r["line"]))
+	ok(str(r["line"]).contains(str(r["name"])) and str(r["recall_btn"]) == "На посадку V", "панель называет звено, сетка — кнопка «На посадку V»: «%s» · «%s»" % [str(r["line"]), str(r["recall_btn"])])
 	ok(flag(r["recall"]), "V — выбранное звено на посадку")
 	ok(flag(r["box"]), "рамка вокруг звена берёт его")
 	var o := await _pick_squad(true)

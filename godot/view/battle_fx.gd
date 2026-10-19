@@ -50,6 +50,8 @@ const BELT_OWN := Color(0.62, 0.85, 1.0)       # круг дальности 0x9
 const BELT_FOE := Color(1.0, 0.45, 0.38)
 ## Кругов дальности на экране — не больше (P5; пояс — за один, 09, 6.7).
 const MAX_CIRCLES := 3
+## На большом флоте — не больше двух (07, 4.2: «круги — не больше двух на большом флоте»).
+const MAX_CIRCLES_BIG := 2
 ## Кольцо в квадe шейдера пояса стоит на 0,985 половины стороны: квад шире на 1/0,985.
 const RING_AT := 0.985
 const PROJ_SLOTS := 256
@@ -67,6 +69,8 @@ static var rollback_dome_js := false
 static var rollback_no_belts := false
 ## Круги у всех выделенных, без правила «больше трёх — только главный» (P5).
 static var rollback_all_circles := false
+## ТОЛЬКО для проверки отката (план GИ, п. 7): на большом флоте кругов три, как раньше. В игре false.
+static var rollback_three_on_big := false
 ## Купол и пояса — мимо единого фильтра видимости (только «не погиб»), как было до
 ## доработки G2: со скрытностью купол скрытого РЭБ рисовался бы (04-33, C67).
 static var rollback_no_shown := false
@@ -580,6 +584,7 @@ func circle_list(sel: Array[int], hover: int) -> Array[Ship]:
 			out.append(fz)
 		if s.side == my_side and s.range0() > 0.0:
 			own.append(s)
+	var big := own.size() > 3
 	if rollback_all_circles:
 		pass
 	elif own.size() > 8:
@@ -593,7 +598,10 @@ func circle_list(sel: Array[int], hover: int) -> Array[Ship]:
 	for s in own:
 		if s not in out:
 			out.append(s)
-	while out.size() > MAX_CIRCLES and not rollback_all_circles:
+	# на большом флоте (больше трёх выделенных своих вооружённых) — не больше двух кругов
+	# (07, 4.2; план GИ, п. 7): под курсором и главный, или цель фокуса — паутины нет
+	var cap := MAX_CIRCLES_BIG if big and not rollback_three_on_big else MAX_CIRCLES
+	while out.size() > cap and not rollback_all_circles:
 		out.pop_back()
 	return out
 

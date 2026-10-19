@@ -26,12 +26,33 @@
 #   звенья на посадку. ПКМ по врагу или по чужому звену — бить (корабли — машины звена,
 #   C14; тяжёлые такой приказ не принимают, 09, 4.6); ПКМ по полю — звенья летят туда.
 # - Под курсором — корабль (hover): у чужого тяжёлого рисуется его пояс (09, 6.7).
+# - КНОПКА И КЛАВИША — ОДНА ДВЕРЬ (план GИ, п. 5): клавиша ищет id команды в KEY_CMD
+#   и зовёт command(id), кнопка экрана (ui/polygon_hud.gd) зовёт тот же command(id).
+#   Своей ветки у кнопки нет: проверка сверяет журнал команд кнопки и клавиши.
+#   J / K / L — режимы РЭБ (07, 2.10), N — выбрать прибывших, F2 — весь флот, I — знаки.
 extends Node
 
 const Ship := preload("res://sim/ship.gd")
 const Squad := preload("res://sim/squad.gd")
 const Picking := preload("res://input/picking.gd")
 const CameraRig := preload("res://view/camera_rig.gd")
+const Texts := preload("res://ui/texts.gd")
+
+## Клавиша по МЕСТУ → команда (одна дверь с кнопками экрана). Esc, камера и F-клавиши
+## главной сцены — не здесь.
+const KEY_CMD := {
+	KEY_A: &"amove", KEY_H: &"hold", KEY_S: &"hold", KEY_Y: &"guard", KEY_T: &"hunt",
+	KEY_D: &"drift", KEY_G: &"hyper", KEY_Z: &"launch_interceptor", KEY_X: &"launch_fighter",
+	KEY_C: &"launch_bomber", KEY_V: &"recall", KEY_J: &"ecm_jam", KEY_K: &"ecm_shield",
+	KEY_L: &"ecm_off", KEY_B: &"reinforce", KEY_N: &"arrived", KEY_SPACE: &"pause",
+	KEY_1: &"speed1", KEY_2: &"speed2", KEY_4: &"speed4", KEY_F2: &"all", KEY_I: &"markers",
+}
+## Роль звена по команде пуска (04, 2.3).
+const LAUNCH_ROLE := {&"launch_interceptor": &"interceptor", &"launch_fighter": &"fighter", &"launch_bomber": &"bomber"}
+## Режим РЭБ по команде (04, 2.16).
+const ECM_MODE := {&"ecm_jam": &"jam", &"ecm_shield": &"shield", &"ecm_off": &"off"}
+## Подкрепление в ленте «прибывшие» — не дольше минуты (07, 2.5: ARRIVED_HINT).
+const ARRIVED_HINT_S := 60.0
 
 ## Порог «щёлкнул / потянул» — тот же, что у камеры (06, 2.1): одно число на оба жеста.
 const SLOP := CameraRig.DRAG_SLOP
@@ -50,6 +71,11 @@ var orders_off_text := "Повтор записи боя: приказы не п
 var say: Callable
 ## Рамка на экране: box_changed.call(Rect2) — пустая рамка — спрятать.
 var box_changed: Callable
+## Вопрос перед отходом (ui/polygon_hud.gd → ask): ask.call(текст, «да», «нет», что сделать).
+## Нет его (лаборатории проверок без экрана) — отход без вопроса.
+var ask: Callable
+## Сколько раз позвана каждая команда (кнопкой или клавишей) — проверки.
+var commands_done: Dictionary[StringName, int] = {}
 
 ## ТОЛЬКО для проверки отката (06, ловушка 2): порог «потянул» по расстоянию, а не
 ## по каждой оси. В игре всегда false.
@@ -69,6 +95,11 @@ static var rollback_no_hover := false
 static var rollback_no_squad_pick := false
 ## Z / X / C без носителя в выборе всё равно шлют пуск — подсказки «выбери носитель» нет.
 static var rollback_launch_any := false
+## ТОЛЬКО для проверки отката (09, 6.8): «Лёгкие» без кораблей РЭБ, как прежний «Эскорт» без них.
+static var rollback_ecm_not_light := false
+## ТОЛЬКО для проверки отката (07, 2.8): щелчок по ячейке ростера — всегда весь класс, по одному
+## не перебрать. В игре false.
+static var rollback_roster_whole := false
 
 var _lmb := false
 var _lmb_from := Vector2.ZERO
@@ -382,67 +413,266 @@ func amove_at(at: Vector2) -> bool:
 func _key(k: InputEventKey) -> bool:
 	if k.ctrl_pressed or k.meta_pressed or k.alt_pressed:
 		return false                    # Ctrl / ⌘ / Alt с буквой — не нам (06, 1.5)
-	match k.physical_keycode:
-		KEY_H, KEY_S, KEY_Y, KEY_T:
+	if k.physical_keycode == KEY_ESCAPE:
+		if amove_armed and not rollback_esc_clears:
+			amove_armed = false         # сначала — отмена ожидания A, выбор цел
+		else:
+			amove_armed = false
+			_set_sel([])
+		return true
+	if not KEY_CMD.has(k.physical_keycode):
+		return false
+	var id: StringName = KEY_CMD[k.physical_keycode]
+	command(id)
+	return true
+
+
+## Команда — кнопкой экрана или клавишей (одна дверь, план GИ, п. 5). id — из ui/texts.gd.
+## → false, если такой команды нет.
+func command(id: StringName) -> bool:
+	var n: int = commands_done.get(id, 0)
+	commands_done[id] = n + 1
+	match id:
+		&"hold", &"guard", &"hunt":
 			var ids := own_selected()
 			if ids.is_empty():
-				_say("Сначала выбери свои корабли")
+				_say(Texts.PICK_FIRST)
 			else:
-				var st := &"hold"
-				if k.physical_keycode == KEY_Y:
-					st = &"guard"
-				elif k.physical_keycode == KEY_T:
-					st = &"hunt"
-				_queue({"op": &"stance", "ids": ids, "stance": st})
-		KEY_A:
+				_queue({"op": &"stance", "ids": ids, "stance": id})
+		&"amove":
 			if own_orders().is_empty():
 				_say("Атака с ходу: сначала выбери свои корабли")
 			else:
 				amove_armed = true            # подсказку держит экран, пока A ждёт щелчка
-		KEY_Z, KEY_X, KEY_C:
+		&"launch_interceptor", &"launch_fighter", &"launch_bomber":
 			var cs := own_carriers() if not rollback_launch_any else own_selected()
 			if cs.is_empty():
 				_say("Звенья поднимает носитель: выбери его и нажми Z, X или C")
 			else:
-				var role := &"interceptor"
-				if k.physical_keycode == KEY_X:
-					role = &"fighter"
-				elif k.physical_keycode == KEY_C:
-					role = &"bomber"
-				_queue({"op": &"launch", "ids": cs, "role": role})
-		KEY_V:
+				_queue({"op": &"launch", "ids": cs, "role": LAUNCH_ROLE[id]})
+		&"recall":
 			var qs := own_squads()
 			if qs.is_empty():
 				_say("На посадку: сначала выбери свои звенья (щелчок по машине)")
 			else:
 				_queue({"op": &"recall", "ids": qs})
-		KEY_G:
+		&"hyper", &"unhyper":
 			var ids2 := own_selected()
 			if not ids2.is_empty():     # без выбора G — молча (06, 1.5)
 				_queue({"op": &"hyper", "ids": ids2})
-		KEY_D:
+		&"drift":
 			var ids3 := own_selected()
 			if ids3.is_empty():
 				_say("Сначала выбери корабли")
 			else:
 				_queue({"op": &"drift", "ids": ids3})
-		KEY_B:
-			var my_side: int = view.get("my_side")
-			_queue({"op": &"reinforce", "side": my_side})
-		KEY_SPACE:
-			view.call("toggle_pause")
-		KEY_1:
-			view.call("set_speed", 1)
-		KEY_2:
-			view.call("set_speed", 2)
-		KEY_4:
-			view.call("set_speed", 4)
-		KEY_ESCAPE:
-			if amove_armed and not rollback_esc_clears:
-				amove_armed = false         # сначала — отмена ожидания A, выбор цел
+		&"ecm_jam", &"ecm_shield", &"ecm_off":
+			var es := own_ecms()
+			if es.is_empty():
+				_say("Купол ставит корабль РЭБ: выбери его и нажми J, K или L")
 			else:
-				amove_armed = false
-				_set_sel([])
+				_queue({"op": &"ecm", "ids": es, "mode": ECM_MODE[id]})
+		&"reinforce":
+			# у кнопки в режиме «Прибывшие» B тоже выбирает их, а не зовёт (07, 1.3): резерв
+			# уходит весь сразу, и после прихода звать уже некого
+			var my_side: int = view.get("my_side")
+			if arrived_left() > 0 and _reserve_left(my_side) == 0:
+				select_arrived()
+			else:
+				_queue({"op": &"reinforce", "side": my_side})
+		&"arrived":
+			select_arrived()
+		&"retreat":
+			retreat_pressed()
+		&"pause":
+			view.call("toggle_pause")
+		&"speed1":
+			view.call("set_speed", 1)
+		&"speed2":
+			view.call("set_speed", 2)
+		&"speed4":
+			view.call("set_speed", 4)
+		&"all", &"heavy", &"light":
+			select_kind(id)
+		&"markers":
+			var on: bool = view.call("toggle_markers")
+			_say(Texts.MARKERS_ON if on else Texts.MARKERS_OFF)
 		_:
 			return false
 	return true
+
+
+## Свои выбранные корабли РЭБ (04, 2.16).
+func own_ecms() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	for u in _sel():
+		var s: Ship = b.call("ship_by_uid", u)
+		if s != null and not s.dead and s.side == my_side and s.def.ecm:
+			out.append(u)
+	return out
+
+
+## Быстрый выбор (07, 1.4; 09, 6.8): весь флот (без станции), тяжёлые (класс capital — флагман,
+## крейсеры, «Синхо»), лёгкие (класс escort — корвет, фрегат и РЭБ: РЭБ стоит с лёгкими и
+## выбирается с ними). Есть кого — камера к их середине, расстояние то же.
+func select_kind(kind: StringName) -> Array[int]:
+	var got: Array[int] = []
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	var sum := Vector3.ZERO
+	var ships: Array = b.get("ships")
+	for o: Object in ships:
+		var s := o as Ship
+		if s.dead or s.side != my_side or s.station or not Picking.shown(s, my_side):
+			continue
+		if kind == &"heavy" and s.def.cls != &"capital":
+			continue
+		if kind == &"light" and (s.def.cls != &"escort" or (rollback_ecm_not_light and s.def.ecm)):
+			continue
+		got.append(s.uid)
+		sum += view.call("ship_point", s)
+	if got.is_empty():
+		_say(Texts.NONE_OF_KIND)
+		return got
+	_set_sel(got)
+	_look_at(sum / float(got.size()))
+	return got
+
+
+func _look_at(p: Vector3) -> void:
+	var rig: CameraRig = view.get("rig")
+	if rig != null:
+		rig.set_view(Vector3(p.x, 0.0, p.z), rig.yaw, rig.dist, false)
+
+
+## Сколько прибывших из подкрепления ещё напоминает кнопка (07, 2.5): живы, не выбирали,
+## прошло не больше минуты.
+func arrived_left() -> int:
+	var seen: bool = view.get("arrived_seen")
+	var at: float = view.get("arrived_at")
+	var b := _battle()
+	var t: float = b.get("time")
+	if seen or at < 0.0 or t - at > ARRIVED_HINT_S:
+		return 0
+	return _arrived_alive().size()
+
+
+func _arrived_alive() -> Array[int]:
+	var out: Array[int] = []
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	var list: Array[int] = view.get("arrived")
+	for u in list:
+		var s: Ship = b.call("ship_by_uid", u)
+		if s != null and not s.dead and s.side == my_side:
+			out.append(u)
+	return out
+
+
+## Выбрать прибывших (07, 2.5 selectArrived): N работает и после минуты — предел только у кнопки.
+func select_arrived() -> void:
+	var list: Array[int] = view.get("arrived")
+	if list.is_empty():
+		_say(Texts.ARRIVED_NONE)
+		return
+	var alive := _arrived_alive()
+	if alive.is_empty():
+		_say(Texts.ARRIVED_GONE)
+		return
+	view.set("arrived_seen", true)
+	_set_sel(alive)
+	var sum := Vector3.ZERO
+	var b := _battle()
+	for u in alive:
+		sum += view.call("ship_point", b.call("ship_by_uid", u))
+	_look_at(sum / float(alive.size()))
+
+
+## «Отход» (07, 2.4): нет отхода — спросить и уйти всем флотом; отходим — отменить без
+## вопроса; носитель ушёл — отменить уже нельзя.
+func retreat_pressed() -> void:
+	if not orders_enabled:
+		_say(orders_off_text)
+		return
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	var sides: Array = b.get("sides")
+	var sd: Object = sides[my_side]
+	if sd.get("conceded"):
+		_say(Texts.RETREAT_LOCKED)
+	elif sd.get("retreat"):
+		_queue({"op": &"cancel_retreat", "side": my_side})
+		_say(Texts.RETREAT_CANCELLED)
+	elif ask.is_valid():
+		ask.call(Texts.RETREAT_ASK, Texts.RETREAT_YES, Texts.RETREAT_NO, func() -> void: _queue({"op": &"retreat", "side": my_side}))
+	else:
+		_queue({"op": &"retreat", "side": my_side})
+
+
+## Сколько кораблей стороны ещё в резерве (не вызваны).
+func _reserve_left(side: int) -> int:
+	var sides: Array = _battle().get("sides")
+	var sd: Object = sides[side]
+	var reserve: Array = sd.get("reserve")
+	var n := 0
+	for e: Object in reserve:
+		var c: int = e.get("count")
+		n += c
+	return n
+
+
+## Щелчок по ячейке ростера (07, 2.8 rosterClick): весь класс; следующий — по одному, после
+## последнего — снова весь; Shift — добавить класс к выбранным. Камера — к выбранным.
+func roster_click(uids: Array, shift: bool) -> void:
+	var b := _battle()
+	var list: Array[int] = []
+	for v: Variant in uids:
+		var u: int = v
+		var s: Ship = b.call("ship_by_uid", u)
+		var q: Squad = b.call("squad_by_uid", u) if s == null else null
+		if (s != null and not s.dead) or (q != null and not q.dead):
+			list.append(u)
+	if list.is_empty():
+		return
+	var sel: Array[int] = []
+	sel.append_array(_sel())
+	var got: Array[int] = []
+	if shift:
+		got = sel.duplicate()
+		for u in list:
+			if u not in got:
+				got.append(u)
+	else:
+		var all := sel.size() == list.size()
+		for u in list:
+			all = all and u in sel
+		var one := sel.size() == 1 and sel[0] in list
+		if rollback_roster_whole:
+			got = list.duplicate()
+		elif list.size() > 1 and all:
+			got.append(list[0])           # не «got = [x]»: литерал — Array, а не Array[int]
+		elif one and list.size() > 1:
+			var i := list.find(sel[0])
+			if i + 1 < list.size():
+				got.append(list[i + 1])
+			else:
+				got = list.duplicate()
+		else:
+			got = list.duplicate()
+	_set_sel(got)
+	var sum := Vector3.ZERO
+	var n := 0
+	for u in got:
+		var s2: Ship = b.call("ship_by_uid", u)
+		if s2 != null:
+			sum += view.call("ship_point", s2)
+			n += 1
+		else:
+			var q2: Squad = b.call("squad_by_uid", u)
+			if q2 != null:
+				sum += view.call("squad_point", q2)
+				n += 1
+	if n > 0:
+		_look_at(sum / float(n))

@@ -728,16 +728,30 @@ func test_ai_teeth_calls_reserve_first() -> void:
 
 
 ## «Есть чем бить» щедро (05, ловушка 27): носитель со свободным ангаром, носитель без мест, но со
-## звеньями в воздухе, безоружный РЭБ с вызванным резервом — стороне ЕСТЬ чем бить, и она не уходит.
-## → can_hurt_side и ушла ли сторона игрока за 15 с.
-func _generous(which: int, strict: bool) -> Dictionary:
+## звеньями в воздухе, безоружный РЭБ с вызванным резервом, и (план GИ, хвост G5 п. 3) машины
+## с ракетами, чей носитель погиб, — стороне ЕСТЬ чем бить, и она не уходит. which 4 — те же машины
+## без единой ракеты (контроль: бить нечем). → can_hurt_side и ушла ли сторона игрока за 15 с.
+func _generous(which: int, strict: bool, no_craft: bool = false) -> Dictionary:
 	Battle.rollback_can_hurt_strict = strict
+	Battle.rollback_can_hurt_no_craft = no_craft
 	var b := _lab({"reserve": which == 2})
 	var foe := _put(b, Ship.DEFENDER, &"cruiser", Vector2(2400.0, -2400.0))
 	foe.switch_off(&"engines", BIG)
 	foe.stance = &"hold"
 	foe.light_cd = PackedFloat64Array()
-	if which == 2:
+	foe.pd_cd = PackedFloat64Array()            # машины не сбиваются: меряется правило, а не ПВО
+	if which >= 3:
+		# безоружный РЭБ — чтобы сторона была в бою: без единого корабля бой просто кончается
+		_put(b, Ship.ATTACKER, &"ecm", Vector2(300.0, 650.0))
+		var c3 := _put(b, Ship.ATTACKER, &"carrier", Vector2(0.0, 650.0))
+		Hangar.launch(b, c3, &"fighter")
+		Weapons.destroy_ship(b, c3, null)
+		for c in b.crafts:
+			if which == 4 and c.side == Ship.ATTACKER:
+				c.ammo = 0
+				c.reloads = 0
+				c.reloading = 0.0
+	elif which == 2:
 		_put(b, Ship.ATTACKER, &"ecm", Vector2(0.0, 650.0))
 		b.call_reinforcements(Ship.ATTACKER)
 	else:
@@ -750,6 +764,7 @@ func _generous(which: int, strict: bool) -> Dictionary:
 		b.step()
 	var out := {"can": can, "retreat": b.sides[Ship.ATTACKER].retreat, "warned": _feed_has(b, "нечем бить")}
 	Battle.rollback_can_hurt_strict = false
+	Battle.rollback_can_hurt_no_craft = false
 	b.dispose()
 	return out
 
@@ -761,6 +776,13 @@ func test_can_hurt_is_generous() -> void:
 		ok(flag(r["can"]) and not flag(r["retreat"]) and not flag(r["warned"]), "%s — есть чем бить: стоит, без «нечем бить» (05, ловушка 27)" % names[w])
 		var o := _generous(w, true)
 		ok(not flag(o["can"]) and flag(o["retreat"]), "откат «только оружие кораблей»: %s — ушёл в гипер — проверка краснеет" % names[w])
+	# четвёртый случай (хвост G5, п. 3): носитель погиб, его истребители с ракетами в воздухе
+	var m := _generous(3, false)
+	ok(flag(m["can"]) and not flag(m["retreat"]) and not flag(m["warned"]), "носитель погиб, машины с ракетами в воздухе — есть чем бить: стоит, без «нечем бить»")
+	var e := _generous(4, false)
+	ok(not flag(e["can"]) and flag(e["warned"]) and flag(e["retreat"]), "контроль: те же машины без ракет — бить нечем, «нечем бить» и отход")
+	var om := _generous(3, false, true)
+	ok(not flag(om["can"]) and flag(om["retreat"]), "откат «машины не в счёт»: с ракетами в воздухе — ушёл в гипер — проверка краснеет")
 
 
 ## ИИ без тяжёлых (тяжёлые были и кончились), у игрока тяжёлые и он сильнее — отход всем флотом
@@ -1003,13 +1025,13 @@ func _voice(watch: bool, until: float, rollback: bool) -> Dictionary:
 	var toasts := PackedStringArray()
 	for e in b.toast_log:
 		toasts.append(str(e["text"]))
-	# кто вправе начинать строку в «ИИ против ИИ»: кланы сторон; полоски орудия планеты — его именем
+	# кто вправе начинать строку в «ИИ против ИИ»: только кланы сторон — с GИ и полоски орудия
+	# планеты («Тройден: Планета наводит…», хвост G5): до того они начинались именем орудия, и
+	# зритель не знал, чьё оно
 	var clans := PackedStringArray([b.clan_tag(Ship.ATTACKER), b.clan_tag(Ship.DEFENDER)])
 	var heads := clans.duplicate()
-	heads.append("Планета наводит")
-	if b.gun != null:
-		heads.append(b.gun.def.name)
-	var out := {"feed": feed, "kinds": kinds, "toasts": toasts, "clans": clans, "heads": heads, "over": b.over, "t": b.time, "watch": b.watch}
+	var gun_name := b.gun.def.name if b.gun != null else "—"
+	var out := {"gun_name": gun_name, "feed": feed, "kinds": kinds, "toasts": toasts, "clans": clans, "heads": heads, "over": b.over, "t": b.time, "watch": b.watch}
 	State.rollback_watch_voice = false
 	b.dispose()
 	return out
@@ -1053,6 +1075,8 @@ func test_watch_feed_names_clans() -> void:
 	var bad := _bad_voice(r)
 	note("«ИИ против ИИ», зерно %d, %.0f с: строк ленты %d, полосок %d, не кланом — %d" % [VOICE_SEED, num(r["t"]), feed.size(), toasts.size(), bad.size()])
 	ok(bad.is_empty(), "«ИИ против ИИ»: все %d строк ленты и %d полосок — от имени клана, без «наш», «вражеский», «противник» и «(T)»%s" % [feed.size(), toasts.size(), (": " + "; ".join(bad.slice(0, 4))) if not bad.is_empty() else ""])
+	var guns := _count(toasts, "Планета наводит") + _count(toasts, str(r["gun_name"]))
+	ok(guns > 0, "проверке есть что ловить и у орудия планеты: его полосок %d (все — с кланом)" % guns)
 	var loud := 0
 	for k in kinds:
 		if k != "warn":
@@ -1068,6 +1092,39 @@ func test_watch_feed_names_clans() -> void:
 	var obad := _bad_voice(o)
 	note("откат «ИИ против ИИ» с места атакующего: %d строк не кланом, например: %s" % [obad.size(), "; ".join(obad.slice(0, 3))])
 	ok(obad.size() > 0, "откат rollback_watch_voice: %d строк «наш/противник» или без клана — проверка краснеет" % obad.size())
+
+
+## Лента «под помехами» в «ИИ против ИИ» — раз в 25 с на КАЖДЫЙ флот (хвост G5): часы были одни
+## на обе стороны, и второй флот о своих помехах молчал. Тяжёлый каждой стороны стоит под
+## куполом глушения чужого РЭБ, 20 с.
+func _jam_lines(shared: bool) -> PackedStringArray:
+	Weapons.rollback_jam_feed_shared = shared
+	var b := _lab()
+	b.watch = true
+	var ae := _put(b, Ship.ATTACKER, &"ecm", Vector2(0.0, 300.0))
+	var dc := _put(b, Ship.DEFENDER, &"cruiser", Vector2(0.0, 160.0))
+	var de := _put(b, Ship.DEFENDER, &"ecm", Vector2(2200.0, -300.0))
+	var ac := _put(b, Ship.ATTACKER, &"cruiser", Vector2(2200.0, -160.0))
+	var four: Array[Ship] = [ae, dc, de, ac]
+	for s in four:
+		s.switch_off(&"engines", BIG)
+		s.stance = &"hold"
+	_steps(b, 20.0)
+	var out := PackedStringArray()
+	for e in b.feed_log:
+		if str(e["text"]).contains("под помехами"):
+			out.append(str(e["text"]))
+	Weapons.rollback_jam_feed_shared = false
+	b.dispose()
+	return out
+
+
+func test_watch_jam_feed_per_fleet() -> void:
+	var l := _jam_lines(false)
+	note("«под помехами» за 20 с: %s" % " | ".join(l))
+	ok(l.size() == 2 and _count(l, "Тройден:") == 1 and _count(l, "Плэктор:") == 1, "за 20 с — по одной строке на каждый флот, кланом (%d)" % l.size())
+	var o := _jam_lines(true)
+	ok(o.size() == 1, "откат «часы на оба флота одни» краснеет: строк %d" % o.size())
 
 
 ## Полоски о звеньях в «ИИ против ИИ» (перезарядка, ракеты кончились, звено село) — у обеих

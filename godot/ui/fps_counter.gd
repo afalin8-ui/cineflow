@@ -15,6 +15,8 @@ var shown := false
 ## на 1366 ложилась прямо на неё (замечание к G0b), а мышь и клавиши тогда всё равно
 ## не нужны.
 var hint_blocked := false
+## Подсказка погашена экраном боя (через 16 игровых секунд, ui/polygon_hud.gd → hint_gone).
+var hint_off := false
 # Длительность кадра — по часам Time.get_ticks_usec(), как в ui/frame_bench.gd,
 # а НЕ по delta из _process: Godot урезает delta до 8 шагов физики (8/60 ≈ 133 мс),
 # и рывок в 400 мс (сборка шейдера, откат отрисовщика) счётчик показал бы как 133
@@ -54,19 +56,32 @@ func _ready() -> void:
 ## Подсказка клавиш — своя у каждого экрана («Полигон», «Стол»).
 func set_hint_text(text: String) -> void:
 	hint.text = text
+	hint.reset_size()                 # Label сам не ужимается: короткий текст жил бы в старой ширине
+
+
+## Высота подсказки: в бою — под шапкой экрана боя (ui/polygon_hud.gd → HINT_TOP), в меню
+## и на «Столе» — у верхнего края.
+func set_hint_top(y: float) -> void:
+	hint.position = Vector2(14.0, y)
 
 
 func toggle() -> void:
 	shown = not shown
 	panel.visible = shown
-	hint.visible = not shown and not hint_blocked
+	hint.visible = not shown and not hint_blocked and not hint_off
 	_refresh_us = 0
+
+
+func set_hint_off(on: bool) -> void:
+	if hint_off != on:
+		hint_off = on
+		hint.visible = not shown and not hint_blocked and not hint_off
 
 
 ## Спрятать подсказку на время замера кадров и вернуть после.
 func block_hint(on: bool) -> void:
 	hint_blocked = on
-	hint.visible = not shown and not hint_blocked
+	hint.visible = not shown and not hint_blocked and not hint_off
 
 
 func _input(event: InputEvent) -> void:

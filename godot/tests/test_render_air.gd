@@ -75,6 +75,9 @@ func _lab_view(setup: Callable) -> BattleView:
 	v.clock = 0.0
 	v.rig.edge_enabled = false
 	v.rig.input_enabled = false
+	# знаки над кораблями (план GИ) здесь выключены: проверки меряют свет лучей, трасс и точек
+	# машин, а рамка знака с тёмной заливкой ложится поверх; знаки — ярус hud
+	v.markers.on = false
 	await hooks.frames(2)
 	return v
 
@@ -724,6 +727,9 @@ func _air_battle(size: Vector2i, no_dots: bool) -> Dictionary:
 	var view: BattleView = poly.get("view")
 	var b := view.battle
 	view.paused = true
+	# знаки выключены: проверяется точка у каждой машины, а знак звена (план GИ) лежит над
+	# серединой звена и закрывает часть точек — с ним видно 32–33 из 45 (замер GИ)
+	view.markers.on = false
 	var carrier: Ship = null
 	for s in b.ships:
 		if s.side == Ship.ATTACKER and s.hangar != null and not s.station:

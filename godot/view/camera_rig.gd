@@ -43,6 +43,8 @@ var input_enabled := true
 ## Край экрана двигает карту, только когда мышь уже была в окне: в окне без мыши
 ## (тесты, xvfb) курсор стоит в (0, 0) — это угол, и карта ехала бы сама.
 var edge_enabled := true
+## ТОЛЬКО для проверки отката (план GИ): край экрана ведёт камеру и над кнопками. В игре false.
+static var rollback_edge_over_buttons := false
 
 var _keys: Dictionary[Key, bool] = {}
 var _mouse_seen := false
@@ -219,6 +221,10 @@ func _process(delta: float) -> void:
 ## Край экрана: в полосе EDGE_PX у края — туда и едем (06, 2.3.9).
 func _edge_dir() -> Vector2:
 	if not edge_enabled or not _mouse_seen or not get_window().has_focus():
+		return Vector2.ZERO
+	# над кнопкой экрана боя край молчит (06, 2.1; план GИ): кнопки шапки стоят у верхнего края,
+	# и прицеливание в них уводило бы камеру
+	if not rollback_edge_over_buttons and get_viewport().gui_get_hovered_control() is BaseButton:
 		return Vector2.ZERO
 	var size := get_viewport().get_visible_rect().size
 	var p := get_viewport().get_mouse_position()

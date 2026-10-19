@@ -39,7 +39,8 @@ env:
 jobs:
   test-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # с GИ ещё ярус hud в двух отрисовщиках (снимки экрана боя): прежних 40 минут впритык
+    timeout-minutes: 55
     outputs:
       release: ${{ steps.rel.outputs.tag }}
       publish: ${{ steps.rel.outputs.publish }}

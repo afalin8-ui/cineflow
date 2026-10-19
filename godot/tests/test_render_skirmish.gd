@@ -26,6 +26,7 @@ const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
+const HudHeader := preload("res://ui/hud_header.gd")
 
 const BIG := 1.0e9
 
@@ -71,6 +72,7 @@ func _lab_view(setup: Callable) -> BattleView:
 	v.set_process(false)
 	v.clock = 0.0
 	v.rig.edge_enabled = false
+	v.markers.on = false                # знаки (план GИ) здесь не меряются — ярус hud
 	v.rig.input_enabled = false
 	await hooks.frames(2)
 	return v
@@ -384,22 +386,42 @@ func test_skirmish_snapshots() -> void:
 		var f: Dictionary = view.bfx.fired
 		ok(whole(f.get(&"main", 0)) > 0 and whole(f.get(&"sec", 0)) > 0 and whole(f.get(&"light", 0)) > 0, "%s %s: к 32 с бьют главный калибр, батареи и лёгкие: %s" % [renderer(), tag, str(f)])
 		tree.root.get_texture().get_image().save_png(_shots_dir().path_join("skirmish_%s_%s.png" % [renderer(), tag]))
-		# заголовок справа сверху не наезжает на подсказку клавиш слева; откат — прежний
-		# длинный заголовок G2 («Полигон · «Перестрелка» («Сражение»): …») на 1366 наезжал
+		# название боя (с GИ — в шапке, между полосами силы и кнопками) не ложится ни на кнопки
+		# шапки, ни на подсказку клавиш; не влезает — остаются часы. Откат — длинное название
+		# целиком (HudHeader.rollback_title_free): на 1366 оно ложится на кнопки
 		var fps: Node = main.get("fps")
 		var hint: Label = fps.get("hint")
-		var hud: Node = poly.get("hud")
-		var status: Label = hud.get("status")
-		ok(not hint.get_global_rect().intersects(status.get_global_rect()), "%s %s: заголовок (%s) не наезжает на подсказку (%s)" % [renderer(), tag, str(status.get_global_rect()), str(hint.get_global_rect())])
+		var hud: PolygonHud = poly.get("hud")
+		var status: Label = hud.status
+		ok(not _title_clash(hud, hint), "%s %s: название (%s, «%s») не на кнопках шапки и не на подсказке" % [renderer(), tag, str(status.get_global_rect()), status.text])
 		if got.x < 1500:
-			var was: String = hud.get("title")
-			hud.set("title", "Полигон · «Перестрелка» («Сражение»): Тройден × Плэктор")
+			var was: String = hud.title
+			hud.title = "Полигон · «Перестрелка» («Сражение»): Тройден × Плэктор"
+			HudHeader.rollback_title_free = true
 			await hooks.frames(2)
-			ok(hint.get_global_rect().intersects(status.get_global_rect()), "%s %s: откат «длинный заголовок» наезжает — проверка краснеет" % [renderer(), tag])
-			hud.set("title", was)
+			ok(_title_clash(hud, hint), "%s %s: откат «длинное название целиком» ложится на кнопки — проверка краснеет" % [renderer(), tag])
+			HudHeader.rollback_title_free = false
+			hud.title = was
 		main.queue_free()
 		await hooks.frames(3)
 		b.dispose()
+
+
+## Название в шапке лежит на кнопке шапки или на подсказке клавиш.
+static func _title_clash(hud: PolygonHud, hint: Label) -> bool:
+	var st := hud.status
+	if not st.is_visible_in_tree():
+		return false
+	var r := st.get_global_rect()
+	if r.intersects(hint.get_global_rect()) and hint.is_visible_in_tree():
+		return true
+	for btn in hud.header.shown_buttons():
+		if btn.get_global_rect().intersects(r):
+			return true
+	for i in 2:
+		if hud.header.count[i].get_global_rect().intersects(r) or hud.header.bar_bg[i].get_global_rect().intersects(r):
+			return true
+	return false
 
 
 ## Полоска фокуса ВСЕГО флота не наезжает на строку статуса справа (замечание к G2: на
@@ -439,7 +461,8 @@ func test_toast_not_on_status() -> void:
 		var status: Label = hud.get("status")
 		var toasts: Label = hud.get("toasts")
 		ok(toasts.text.contains("Цель — ") and toasts.text.contains("лёгкие идут на цель"), "%s %s: полоска фокуса всего флота: «%s»" % [renderer(), tag, toasts.text.replace("\n", " / ")])
-		ok(not toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: полоска (%s) не наезжает на строку статуса (%s)" % [renderer(), tag, str(toasts.get_global_rect()), str(status.get_global_rect())])
+		var head := Rect2(0.0, 0.0, float(got.x), HudHeader.HEIGHT)
+		ok(not toasts.get_global_rect().intersects(head), "%s %s: полоска (%s) ниже шапки с её кнопками и часами" % [renderer(), tag, str(toasts.get_global_rect())])
 		ok(not toasts.get_global_rect().intersects(hint.get_global_rect()), "%s %s: и на подсказку клавиш (%s)" % [renderer(), tag, str(hint.get_global_rect())])
 		ok(toasts.get_global_rect().position.x >= 0.0 and toasts.get_global_rect().end.x <= float(got.x), "%s %s: полоска в пределах экрана" % [renderer(), tag])
 		tree.root.get_texture().get_image().save_png(_shots_dir().path_join("toast_%s_%s.png" % [renderer(), tag]))
@@ -449,11 +472,11 @@ func test_toast_not_on_status() -> void:
 			# правило «между левым краем и статусом» обязано держать и её
 			hud.call("say", "Цель — «Рэш»: тяжёлые бьют с места: главный калибр — от 312 до 900 · лёгкие идут на цель")
 			await hooks.frames(2)
-			ok(not toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: длинная полоска (%s) не наезжает на статус" % [renderer(), tag, str(toasts.get_global_rect())])
-			PolygonHud.rollback_toast_center = true
+			ok(not toasts.get_global_rect().intersects(head) and toasts.get_global_rect().end.x <= float(got.x), "%s %s: длинная полоска (%s) ниже шапки и в окне" % [renderer(), tag, str(toasts.get_global_rect())])
+			PolygonHud.rollback_toast_old_y = true
 			await hooks.frames(2)
-			ok(toasts.get_global_rect().intersects(status.get_global_rect()), "%s %s: откат «полоска по середине экрана» наезжает на статус (%s) — проверка краснеет" % [renderer(), tag, str(toasts.get_global_rect())])
-			PolygonHud.rollback_toast_center = false
+			ok(toasts.get_global_rect().intersects(head), "%s %s: откат «полоски у самого верха, как без шапки» ложится на шапку (%s) — проверка краснеет" % [renderer(), tag, str(toasts.get_global_rect())])
+			PolygonHud.rollback_toast_old_y = false
 		main.queue_free()
 		await hooks.frames(3)
 		b.dispose()

@@ -293,18 +293,20 @@ func test_polygon_snapshots() -> void:
 		var tag := "%d×%d" % [got.x, got.y]
 		var hint_r := hint.get_global_rect()
 		var panel_r := panel.get_global_rect()
-		var foe_top := INF
 		var own_bottom := -INF
+		var under := 0
 		var list: Array = b.get("ships")
 		for so: Object in list:
 			var s := so as Ship
 			var wp: Vector3 = view.call("ship_point", s)
 			var p := cam.unproject_position(wp)
-			if s.side == Ship.DEFENDER and s.def.main != null:
-				foe_top = minf(foe_top, p.y)      # чужая ЛИНИЯ — тяжёлые; носители позади неё
-			else:
+			if s.side == Ship.ATTACKER:
 				own_bottom = maxf(own_bottom, p.y)
-		ok(foe_top > hint_r.end.y, "%s: подсказка клавиш выше чужой линии (низ подсказки %.0f, чужие тяжёлые с %.0f)" % [tag, hint_r.end.y, foe_top])
+			if hint_r.grow(6.0).has_point(p):
+				under += 1
+		# с GИ подсказка клавиш — узким столбиком над ростером (на старте под шапкой стоит чужая
+		# линия); проверка «ни одного корабля под подсказкой» с откатом — tests/test_ui_hud.gd
+		ok(under == 0, "%s: под подсказкой клавиш (%s) ни одного корабля" % [tag, str(hint_r)])
 		ok(own_bottom < panel_r.position.y, "%s: нижняя панель ниже своих кораблей (свои до %.0f, панель с %.0f)" % [tag, own_bottom, panel_r.position.y])
 		var img := tree.root.get_texture().get_image()
 		var shots := OS.get_environment("CAPELLA_SHOTS")

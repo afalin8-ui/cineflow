@@ -40,7 +40,9 @@ mkdir -p "$CAPELLA_TMP"
 export XDG_DATA_HOME="$LOGS/xdg"
 mkdir -p "$XDG_DATA_HOME"
 TIERS=(sim ui)
-if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility); fi
+# ярус hud (план GИ) — снимки экрана боя: цвет и форма знаков по точкам экрана. Отдельно от
+# render, чтобы тот держался под пределом 900 с (Forward+ в CI доходил до 659 с)
+if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility hud:forward_plus hud:gl_compatibility); fi
 # `run_tests.sh bench` — тяжёлые проверки стенда (флажки 09, 8.4 под ИИ — десятки боёв целиком,
 # план G5, п. 4): отдельный ярус, чтобы ярус sim держался под пределом 900 с. Его гоняет
 # задание CI «стенд» (по метке [стенд] в сообщении коммита или кнопкой)
@@ -107,10 +109,10 @@ if [[ -n "$stray" ]]; then fail "тесты пишут в общий user:// м�
 run_tier() {
   local tier="$1" log="$LOGS/tier_${1/:/_}.log" code
   local cmd=("$GODOT" --headless --path "$PROJ" -s res://tests/run.gd -- "$tier")
-  if [[ "$tier" == render:* ]]; then
+  if [[ "$tier" == render:* || "$tier" == hud:* ]]; then
     # картинка — с окном под xvfb, в заданном отрисовщике; снимки — в $LOGS/shots
     mkdir -p "$LOGS/shots"
-    cmd=(env CAPELLA_SHOTS="$LOGS/shots" xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$PROJ" --rendering-method "${tier#render:}" -s res://tests/run.gd -- render)
+    cmd=(env CAPELLA_SHOTS="$LOGS/shots" xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$PROJ" --rendering-method "${tier#*:}" -s res://tests/run.gd -- "${tier%%:*}")
   fi
   say "── ярус $tier"
   timeout 900 "${cmd[@]}" >"$log" 2>&1
@@ -125,8 +127,8 @@ run_tier() {
   if [[ $code -ne 0 ]]; then fail "ярус $tier: код выхода $code"; fi
   # откат на другой отрисовщик молчалив (fallback_to_opengl3): проверяем, ЧТО поднялось
   case "$tier" in
-    render:forward_plus) grep -q -- '- Forward+ - Using Device' "$log" || fail "ярус $tier: поднялся не Forward+ (Vulkan не нашёлся?)" ;;
-    render:gl_compatibility) grep -q -- '- Compatibility - Using Device' "$log" || fail "ярус $tier: поднялся не Compatibility" ;;
+    *:forward_plus) grep -q -- '- Forward+ - Using Device' "$log" || fail "ярус $tier: поднялся не Forward+ (Vulkan не нашёлся?)" ;;
+    *:gl_compatibility) grep -q -- '- Compatibility - Using Device' "$log" || fail "ярус $tier: поднялся не Compatibility" ;;
   esac
 }
 for t in "${TIERS[@]}"; do run_tier "$t"; done

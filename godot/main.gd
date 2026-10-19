@@ -44,13 +44,16 @@ const ShipModels := preload("res://view/ship_models.gd")
 const BenchCore := preload("res://tools/bench_core.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
 const SpaceEnv := preload("res://view/space_env.gd")
+const PolygonHud := preload("res://ui/polygon_hud.gd")
 ## ТОЛЬКО для проверки отката: F4 (отладка пояса) не слушается.
 static var rollback_no_f4 := false
 
 const HINT_TABLE := "F3 — счётчик кадров · F5 — минута замера кадров · F6 — %s · F11 — окно / полный экран\nкамера: колесо — ближе и дальше, Q/E или правая кнопка — повернуть, стрелки и край экрана — сдвинуть"
 const HINT_MENU := "F3 — счётчик кадров · F5 — замер кадров на «Столе» · F6 — «Стол» · F11 — окно / полный экран"
-const HINT_BATTLE := "F3 — счётчик кадров · F8 — начать заново · F9 — запись боя · F11 — полный экран\nкамера: колесо — ближе и дальше · Q/E или правая кнопка с протяжкой — повернуть · стрелки и край экрана — сдвинуть"
-const HINT_POLYGON := "F3 — счётчик кадров · F5 — замер кадров на «Столе» · F6 — «Стол» · F8 — начать заново · F9 — запись боя · F11 — полный экран\nкамера: колесо — ближе и дальше · Q/E или правая кнопка с протяжкой — повернуть · стрелки и край экрана — сдвинуть"
+## Подсказка быстрого боя — узким столбиком слева над ростером (план GИ): широкая в две строки
+## на 1366 ложилась на свои корабли у нижнего края, а приказы теперь на кнопках.
+const HINT_BATTLE := "F3 — счётчик кадров · F8 — заново\nF9 — запись боя · F11 — полный экран\nколесо — ближе и дальше · Q/E — повернуть\nстрелки и край экрана — сдвинуть"
+const HINT_POLYGON := "F3 — счётчик кадров · F5 — замер на «Столе»\nF6 — «Стол» · F8 — заново · F9 — запись боя\nF11 — полный экран · колесо — ближе и дальше\nQ/E — повернуть · стрелки и край — сдвинуть"
 
 ## --selftest: столько шагов «ИИ против ИИ» (60 с) — успевают первые тики обоих ИИ, общая цель,
 ## пуски звеньев и первые попадания.
@@ -193,6 +196,7 @@ func open_menu() -> bool:
 	mode = &"menu"
 	_ensure_ui()
 	fps.set_hint_text(HINT_MENU)
+	fps.set_hint_top(14.0)
 	return true
 
 
@@ -240,6 +244,7 @@ func open_battle(c: Dictionary) -> bool:
 	polygon.again_pressed.connect(func() -> void: open_battle.call_deferred(last_cfg))
 	polygon.menu_pressed.connect(func() -> void: open_menu.call_deferred())
 	fps.set_hint_text(HINT_BATTLE)
+	fps.set_hint_top(PolygonHud.HINT_TOP)
 	return true
 
 
@@ -268,6 +273,7 @@ func open_table() -> bool:
 	_ensure_ui()
 	# F6 ведёт туда, откуда пришли, — подсказка называет куда (лаборатория или меню)
 	fps.set_hint_text(HINT_TABLE % ("«Полигон»" if table_from == &"polygon" else "меню «Быстрый бой»"))
+	fps.set_hint_top(14.0)
 	bench.driver = view.drive
 	bench.extra_line = "На столе: %d %s, %d %s; синхронизация с экраном на время замера выключена" % [
 		view.ship_count(), FrameBench.plural(view.ship_count(), "корабль", "корабля", "кораблей"),
@@ -293,6 +299,7 @@ func open_polygon(rec: Dictionary = {}) -> bool:
 	mode = &"polygon"
 	_ensure_ui()
 	fps.set_hint_text(HINT_POLYGON)
+	fps.set_hint_top(PolygonHud.HINT_TOP)
 	if not rec.is_empty():
 		polygon.replay_checked.connect(_replay_checked)
 	return true
@@ -412,6 +419,13 @@ func _bench_from_polygon() -> void:
 
 
 func _process(_delta: float) -> void:
+	# подсказка клавиш боя — над ростером, гаснет через 16 игровых секунд (ui/polygon_hud.gd)
+	if fps != null and polygon != null and polygon.hud != null and (mode == &"battle" or mode == &"polygon"):
+		fps.set_hint_top(polygon.hud.hint_top(fps.hint.size.y))
+		fps.set_hint_off(polygon.hud.hint_gone())
+		polygon.hud.hint_rect = fps.hint.get_global_rect() if fps.hint.is_visible_in_tree() else Rect2()
+	elif fps != null:
+		fps.set_hint_off(false)
 	if bench != null and bench.running and report != null:
 		var avoid: Array[Rect2] = []
 		if fps.panel.visible:

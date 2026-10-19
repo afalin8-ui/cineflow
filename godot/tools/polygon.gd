@@ -174,6 +174,7 @@ func setup(p_defs: Defs, p_build: String, rec: Dictionary = {}, p_cfg: Dictionar
 	input.view = view
 	input.say = hud.say
 	input.box_changed = hud.show_box
+	input.ask = hud.ask
 	input.orders_enabled = replay.is_empty() and not battle.watch
 	if battle.watch and replay.is_empty():
 		input.orders_off_text = "ИИ против ИИ: ты только смотришь — приказов нет"
@@ -319,19 +320,14 @@ static func _write(path: String, text: String) -> String:
 	return path
 
 
-## Кнопка «В меню» в углу экрана быстрого боя и окно «Выйти в меню?» (бой на это время стоит).
+## Кнопка «В меню» (в шапке, план GИ) и окно «Выйти в меню?» (бой на это время стоит).
 func _leave_ui() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "Leave"
 	layer.layer = 30
 	add_child(layer)
-	leave_btn = Button.new()
-	leave_btn.name = "LeaveBtn"
-	leave_btn.text = "В меню"
-	leave_btn.focus_mode = Control.FOCUS_NONE
-	leave_btn.custom_minimum_size = Vector2(110.0, 32.0)
-	leave_btn.pressed.connect(_ask_leave)
-	layer.add_child(leave_btn)
+	leave_btn = hud.header.buttons[&"menu"]
+	hud.on_menu = _ask_leave
 	leave_panel = PanelContainer.new()
 	leave_panel.name = "LeavePanel"
 	leave_panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -393,14 +389,14 @@ func _hide_leave() -> void:
 	if leave_panel != null:
 		leave_panel.visible = false
 	if leave_btn != null:
+		hud.header.menu_on = false       # на карточке итога своя «В меню»
 		leave_btn.visible = false
 
 
 func _place_leave() -> void:
-	if leave_btn == null:
+	if leave_panel == null:
 		return
 	var vs := get_viewport().get_visible_rect().size
-	leave_btn.position = Vector2(vs.x - leave_btn.size.x - 16.0, vs.y - leave_btn.size.y - 14.0)
 	if leave_panel.visible:
 		leave_panel.reset_size()
 		leave_panel.position = ((vs - leave_panel.size) * 0.5).floor()

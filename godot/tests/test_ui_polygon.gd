@@ -49,6 +49,9 @@ func _polygon() -> Polygon:
 	ok(p.setup(_get_defs(), "проверка"), "«Полигон» собрался: %s" % "; ".join(p.problems))
 	p.view.paused = true
 	p.view.rig.edge_enabled = false
+	# знаки над кораблями выключены: здесь проверяется выбор по корпусу и ближайшему (G1–G3);
+	# выбор по знакам (план GИ) — tests/test_ui_hud.gd
+	p.view.markers.on = false
 	await hooks.frames(2)
 	return p
 
@@ -285,8 +288,8 @@ func test_keys_by_physical_code() -> void:
 	var last: Dictionary = p.battle.cmds.journal[-1]
 	ok(flag(last["op"] == &"stance") and flag(last.get("stance") == &"hold"), "это «Держать»: %s" % [last])
 	# буква H на чужом месте (физически J) — не «Держать»
-	await _key_ev(KEY_J, KEY_H)
-	eq(_journal(p), n0 + 1, "буква H на месте J — ничего: клавиши по месту, а не по букве")
+	await _key_ev(KEY_U, KEY_H)                    # J, K, L с GИ — купол РЭБ
+	eq(_journal(p), n0 + 1, "буква H на месте U — ничего: клавиши по месту, а не по букве")
 	# повтор (echo) — не нажатие
 	await _key_ev(KEY_S, KEY_S, true)
 	eq(_journal(p), n0 + 1, "повтор S (echo) — не нажатие")
@@ -354,8 +357,9 @@ func test_click_and_box_selection() -> void:
 	var n0 := _journal(p)
 	await hooks.click(Vector2(683, 300), MOUSE_BUTTON_RIGHT)
 	eq(_journal(p), n0, "чужой в выборе — ПКМ приказа не даёт")
-	# щелчок по пустому — снять
-	await hooks.click(Vector2(60, 700))
+	# щелчок по пустому — снять (низ слева с GИ занят панелью и ростером — пустое поле левее середины)
+	ok(await hooks.hovered_at(Vector2(30, 400)) == null, "в (30, 400) нет ни кнопки, ни панели")
+	await hooks.click(Vector2(30, 400))
 	eq(p.view.selection.size(), 0, "щелчок по пустому полю снял выбор")
 	await _drop(p)
 

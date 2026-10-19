@@ -56,7 +56,7 @@ static func update(b: State) -> void:
 		g.warned = true
 		g.has_aim = true
 		g.aim = list[b.rng.randi_range(0, list.size() - 1)].pos
-		b.toast("Планета наводит: %s" % g.def.name)
+		b.toast(_voice(b, g, "Планета наводит: %s" % g.def.name))
 		var ring := g.def.radius if g.def.kind == &"nuke" else AIM_RING
 		b.events.append([&"gun_warn", g.def.kind, g.aim, ring, g.def.warn])
 	if b.time < g.next:
@@ -88,7 +88,7 @@ static func _fire(b: State, g: State.GunState, list: Array[Ship]) -> void:
 			Weapons.damage(b, t, d.dmg, &"heavy", null, Vector2.ZERO, &"planet")
 			t.switch_off(&"engines", b.time + d.disable)
 			hit.append(t.uid)
-			b.toast("%s: %s обездвижен" % [d.name, t.name])
+			b.toast(_voice(b, g, "%s: %s обездвижен" % [d.name, t.name]))
 		&"nuke":
 			# площадь по месту наводки: кто ушёл, тот цел; на краю урон 0, но «накрыт»
 			var n := 0
@@ -99,13 +99,13 @@ static func _fire(b: State, g: State.GunState, list: Array[Ship]) -> void:
 				Weapons.damage(b, s, d.dmg * (1.0 - dist / d.radius), &"heavy", null, Vector2.ZERO, &"planet")
 				hit.append(s.uid)
 				n += 1
-			b.toast(("%s: накрыто кораблей — %d" % [d.name, n]) if n > 0 else ("%s: мимо" % d.name))
+			b.toast(_voice(b, g, ("%s: накрыто кораблей — %d" % [d.name, n]) if n > 0 else ("%s: мимо" % d.name)))
 		&"blind":
 			# весь флот ослеплён: наведение сбито (главный калибр — медленнее, 09, 1.7)
 			for s in list:
 				s.switch_off(&"aim", b.time + d.blind)
 				hit.append(s.uid)
-			b.toast("%s: флот ослеплён на %d с" % [d.name, roundi(d.blind)])
+			b.toast(_voice(b, g, "%s: флот ослеплён на %d с" % [d.name, roundi(d.blind)]))
 		&"emp":
 			# ЭМИ-капсулы: липнут к крупным, глушат ангары
 			var big: Array[Ship] = []
@@ -116,5 +116,14 @@ static func _fire(b: State, g: State.GunState, list: Array[Ship]) -> void:
 			for i in mini(EMP_TARGETS, pool.size()):
 				pool[i].switch_off(&"hangar", b.time + d.sabotage)
 				hit.append(pool[i].uid)
-			b.toast("%s: ангары заглушены на %d с" % [d.name, roundi(d.sabotage)])
+			b.toast(_voice(b, g, "%s: ангары заглушены на %d с" % [d.name, roundi(d.sabotage)]))
 	b.events.append([&"gun_fire", d.kind, at, hit])
+
+
+## Полоска орудия планеты в «ИИ против ИИ» — от имени клана планеты («Плэктор: Ядерная ракета:
+## мимо»), как вся лента и полоски зрителя (State.clan_voice; хвост проверки G5, п. 4: текст
+## выпуска и godot/CLAUDE.md обещали клан, а полоски его не несли). В бою с приказами — как было.
+static func _voice(b: State, g: State.GunState, text: String) -> String:
+	if not b.clan_voice():
+		return text
+	return "%s: %s" % [b.clan_tag(1 - g.side), text]

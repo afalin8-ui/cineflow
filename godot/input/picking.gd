@@ -4,7 +4,10 @@
 #      НАРИСОВАННОМУ (интерполированному) положению и курсу; ближайшее попадание
 #      вдоль луча. Кораблём считается корпус, а не свечение и не факел (C29; 08,
 #      ловушка 10): эффектов в списке кандидатов нет по устройству;
-#   2. подпись — G7 (подписей ещё нет);
+#   2. ТАКТИЧЕСКИЙ ЗНАК (view/markers.gd; план GИ, п. 6) — щелчок по рамке, полоске или имени
+#      выбирает корабль знака. Знак считается «не дальше своего корабля по лучу»: его
+#      глубина — расстояние от камеры до корабля, и корпус, который ближе к камере, чем
+#      корабль знака, важнее знака (и наоборот: знак ближнего корабля важнее дальнего корпуса);
 #   3. ближайший центр в 30 точках экрана.
 # Скрытые и мёртвые отсекаются ОДНИМ фильтром видимости (shown) — тем же, что
 # у кораблей на экране, колец и (с G6–G7) подписей и миникарты (C18; 04, ловушка 21).
@@ -20,6 +23,14 @@ const NEAR_PX := 30.0
 ## ТОЛЬКО для проверки отката «малый за факелом» (08, ловушка 10): выбирать по рамке
 ## всего нарисованного (с факелами), а не по капсуле корпуса. В игре всегда false.
 static var rollback_drawn_box := false
+
+
+## ТОЛЬКО для проверки отката (план GИ): выбор не знает знаков — щелчок по знаку, отошедшему
+## от корабля на дальнем плане, уходит в пустоту.
+static var rollback_no_markers := false
+## ТОЛЬКО для проверки отката: знак главнее корпуса ВСЕГДА — щелчок по ближнему крейсеру,
+## на который лёг знак дальнего корабля, выбирает дальний. В игре false.
+static var rollback_marker_first := false
 
 
 ## ТОЛЬКО для проверок (замечание к G2): uid кораблей, которых фильтр считает
@@ -92,10 +103,33 @@ static func pick(view: Node3D, screen: Vector2) -> Ship:
 		if t >= 0.0 and t < best_t:
 			best_t = t
 			best = s
+	var mk := marker_at(view, screen)
+	if not mk.is_empty() and not bool_of(mk[2]):
+		var md: float = mk[1]
+		if md < best_t or rollback_marker_first:
+			var mu: int = mk[0]
+			for s in ships:
+				if s.uid == mu:
+					best = s
+					best_t = md
 	if best != null:
 		return best
-	# подпись — G7
 	return nearest(view, screen, NEAR_PX)
+
+
+## Знак под точкой экрана: [uid, глубина его корабля, звено ли]; пусто — нет (или откат).
+static func marker_at(view: Node3D, screen: Vector2) -> Array:
+	if rollback_no_markers:
+		return []
+	var m: Object = view.get("markers")
+	if m == null:
+		return []
+	var got: Array = m.call("hit_at", screen)
+	return got
+
+
+static func bool_of(v: Variant) -> bool:
+	return v == true
 
 
 ## Чей корпус ТОЧНО под точкой: только капсула, без «ближайшего в 30 точках» (охрана
@@ -160,9 +194,29 @@ static func in_box(view: Node3D, rect: Rect2) -> Array[int]:
 		if cam.is_position_behind(c):
 			continue
 		var p := cam.unproject_position(c)
-		if p.x >= rect.position.x and p.x <= rect.end.x and p.y >= rect.position.y and p.y <= rect.end.y:
+		var inside := p.x >= rect.position.x and p.x <= rect.end.x and p.y >= rect.position.y and p.y <= rect.end.y
+		# рамка берёт корабль и по его знаку (план GИ, п. 6): знак мог отойти от корабля
+		var fc: Variant = _marker_center(view, s.uid)
+		if not inside and fc != null:
+			var fp: Vector2 = fc
+			inside = rect.has_point(fp) or (fp.x >= rect.position.x and fp.x <= rect.end.x and fp.y >= rect.position.y and fp.y <= rect.end.y)
+		if inside:
 			out.append(s.uid)
 	return out
+
+
+## Середина рамки знака (uid) на этом кадре; нет знака (или откат) — null.
+static func _marker_center(view: Node3D, uid: int) -> Variant:
+	if rollback_no_markers:
+		return null
+	var m: Object = view.get("markers")
+	if m == null:
+		return null
+	var mk: Object = m.call("mark_of", uid)
+	if mk == null:
+		return null
+	var fr: Rect2 = mk.get("frame")
+	return fr.get_center()
 
 
 static func _cam(view: Node3D) -> Camera3D:
@@ -223,6 +277,27 @@ static func pick_any(view: Node3D, screen: Vector2) -> RefCounted:
 	if cam == null:
 		return null
 	var hull := pick_hull(view, screen)
+	var mk := marker_at(view, screen)
+	if not mk.is_empty():
+		var md: float = mk[1]
+		var hull_t := INF
+		if hull != null:
+			var cap: Array = view.call("capsule", hull)
+			var ca: Vector3 = cap[0]
+			var cb: Vector3 = cap[1]
+			var cr: float = cap[2]
+			hull_t = ray_capsule(cam.project_ray_origin(screen), cam.project_ray_normal(screen), ca, cb, cr)
+		if md < hull_t or rollback_marker_first:
+			var mu: int = mk[0]
+			if bool_of(mk[2]):
+				var bo: Object = view.get("battle")
+				var mq: Squad = bo.call("squad_by_uid", mu)
+				if mq != null:
+					return mq
+			else:
+				for s in _ships(view.get("battle")):
+					if s.uid == mu:
+						return s
 	if hull != null:
 		return hull
 	var sq := pick_squad(view, screen)

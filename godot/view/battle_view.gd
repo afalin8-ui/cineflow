@@ -30,6 +30,8 @@ const BattleFx := preload("res://view/battle_fx.gd")
 const AirView := preload("res://view/air_view.gd")
 const Craft := preload("res://sim/craft.gd")
 const Squad := preload("res://sim/squad.gd")
+const Markers := preload("res://view/markers.gd")
+const Settings := preload("res://view/settings.gd")
 
 ## 4× при 30 кадрах — 4 шага; больше — бой замедляется, а не дробит шаг (архитектура, 3).
 const MAX_STEPS := 8
@@ -43,6 +45,10 @@ const PLUME := Color(0.55, 0.8, 1.0)
 const PLUME_FOE := Color(1.0, 0.68, 0.38)
 ## Линия скорости выбранного — «скорость × 3 с» (06, 1.2).
 const VEL_LINE_S := 3.0
+## Кольцо выделения — тонкая линия (07, 1.6; план GИ, п. 7): отрезков на круг и доля радиуса
+## от размера модели (вокруг корпуса, а не по нему).
+const RING_SEGS := 64
+const RING_K := 0.58
 ## Линия к цели фокуса — красная, к точке атаки с ходу — оранжевая (03, 2.14–2.15).
 const FOCUS_LINE := Color(1.0, 0.48, 0.35)
 const AMOVE_LINE := Color(1.0, 0.66, 0.38)
@@ -85,6 +91,24 @@ var step_ms := PackedFloat64Array()
 
 ## Выбранные (uid). Состояние вида, а не модели: модель о выборе не знает.
 var selection: Array[int] = []
+## Тактические знаки над кораблями (view/markers.gd; план GИ, п. 6).
+var markers: Markers
+## Прибывшее подкрепление своей стороны (07, 1.3 и 2.5): кто вышел из гипера, когда, выбирали
+## ли их уже (кнопка «Прибывшие (N)» напоминает до выбора, не дольше минуты).
+var arrived: Array[int] = []
+var arrived_at := -1.0
+var arrived_seen := false
+var _arrived_step := -1
+## ТОЛЬКО для проверки отката (план GИ, п. 7): кольцо выделения прежнее — плоский тор толщиной
+## max(2, 5% радиуса), а не тонкая линия.
+static var rollback_torus_ring := false
+## ТОЛЬКО для проверок отката (план GИ), в игре false: выбор не чистится от погибших — панель
+## пишет о мёртвом корабле, пока его не снимут руками (06, 2.5);
+static var rollback_keep_dead := false
+## «Знаки» (I) не запоминаются — после перезапуска снова включены.
+static var rollback_markers_forget := false
+## Кольца выделения и под курсором на этом кадре: uid → выделен ли (проверки).
+var drawn_rings: Dictionary[int, bool] = {}
 
 var _vis: Dictionary[int, ShipVisual] = {}
 var _prev: Dictionary[int, Vector3] = {}     # (x, z, курс) на прошлом шаге
@@ -153,6 +177,11 @@ func setup(p_defs: Defs, p_battle: Battle, with_env: bool = true) -> void:
 	bfx.craft_at = air.point_by_uid
 	for s in battle.ships:
 		_add_visual(s)
+	markers = Markers.new()
+	markers.name = "Markers"
+	markers.view = self
+	markers.on = Settings.get_bool("view", "markers", true)
+	add_child(markers)
 	draw_state()
 
 
@@ -232,9 +261,10 @@ func _add_visual(s: Ship) -> void:
 	_add_plumes(s, v)
 
 
-## Кольцо выбора — плоское, по размеру модели; поверх всего (видно сквозь корпус).
+## Кольцо выбора прежнее (тор) — только откат проверки тонкой линии; в игре кольцо рисует
+## _draw_lines линией в точку.
 func _add_ring(s: Ship, v: ShipVisual) -> void:
-	var r := maxf(v.length(), v.width()) * 0.58
+	var r := maxf(v.length(), v.width()) * RING_K
 	var tm := TorusMesh.new()
 	tm.inner_radius = r
 	tm.outer_radius = r + maxf(2.0, r * 0.05)
@@ -370,6 +400,14 @@ func _consume(events: Array[Array]) -> void:
 				var s2 := battle.ship_by_uid(u2)
 				if s2 != null and _vis.has(u2):
 					fx.flash(_point(s2, 1.0), Color(0.7, 0.85, 1.0), maxf(_vis[u2].length(), 30.0) * 1.6, 0.6, 2.5)
+				if kind == &"jump_in" and s2 != null and s2.side == my_side:
+					# вышедшее подкрепление — одной партией за шаг (01, 4.2 п. 8)
+					if _arrived_step != battle.steps:
+						_arrived_step = battle.steps
+						arrived = []
+						arrived_at = battle.time
+						arrived_seen = false
+					arrived.append(u2)
 
 
 ## Доля шага, которую рисуем: прошлое → нынешнее.
@@ -419,7 +457,7 @@ func draw_state() -> void:
 		v.rotation = Vector3(0.0, b.z, 0.0)
 		var ring: MeshInstance3D = _ring.get(s.uid)
 		if ring != null:
-			ring.visible = s.uid in selection
+			ring.visible = rollback_torus_ring and s.uid in selection
 		_draw_plumes(s)
 	_draw_lines(a)
 	fx.set_time(clock)
@@ -427,6 +465,25 @@ func draw_state() -> void:
 	var game_t := battle.time - Battle.STEP + a * Battle.STEP
 	air.draw(a, game_t, selection)
 	bfx.draw(a, game_t, selection, hover_uid)
+	if markers != null:
+		markers.layout()
+
+
+## Знаки над кораблями: включить или выключить (кнопка «Знаки» и I). Помнится между запусками.
+func toggle_markers() -> bool:
+	markers.on = not markers.on
+	if not rollback_markers_forget:
+		Settings.set_bool("view", "markers", markers.on)
+	markers.layout()
+	return markers.on
+
+
+## Радиус кольца выделения корабля (вокруг корпуса).
+func ring_radius(s: Ship) -> float:
+	var v: ShipVisual = _vis.get(s.uid)
+	if v == null:
+		return s.hull * 1.2
+	return maxf(v.length(), v.width()) * RING_K
 
 
 func _draw_plumes(s: Ship) -> void:
@@ -452,13 +509,26 @@ func _draw_plumes(s: Ship) -> void:
 			mi.position = Vector3(0.0, nz.y, nz.x - l * 0.5)
 
 
-## Линии выбранных: к точке приказа (мятная) и скорость × 3 с (белая).
+## Линии выбранных: кольцо выделения линией в точку (07, 1.6: мятное у своих, красное у
+## выделенного врага; под курсором — тусклее, только у невыделенного), к точке приказа
+## (мятная) и скорость × 3 с (белая).
 func _draw_lines(a: float) -> void:
 	_lines_mesh.clear_surfaces()
 	var pts := PackedVector3Array()
 	var cols := PackedColorArray()
 	var go := Color(OWN_RING.r, OWN_RING.g, OWN_RING.b, 0.45)
 	var vel := Color(1, 1, 1, 0.5)
+	drawn_rings.clear()
+	if not rollback_torus_ring:
+		for s in battle.ships:
+			var on_sel := s.uid in selection
+			if not on_sel and s.uid != hover_uid:
+				continue
+			if not Picking.shown(s, my_side):
+				continue
+			var rc := OWN_RING if s.side == my_side else FOE_RING
+			_ring_line(pts, cols, _point(s, a), ring_radius(s) * (1.0 if on_sel else 1.08), Color(rc.r, rc.g, rc.b, 0.9 if on_sel else 0.45))
+			drawn_rings[s.uid] = on_sel
 	for u in selection:
 		var s := battle.ship_by_uid(u)
 		if s == null or not Picking.shown(s, my_side):
@@ -500,6 +570,17 @@ func _draw_lines(a: float) -> void:
 		_lines_mesh.surface_set_color(cols[i])
 		_lines_mesh.surface_add_vertex(pts[i])
 	_lines_mesh.surface_end()
+
+
+## Кольцо выделения линией: RING_SEGS отрезков по плоскости корабля.
+func _ring_line(pts: PackedVector3Array, cols: PackedColorArray, c: Vector3, r: float, col: Color) -> void:
+	var prev := c + Vector3(r, 0.0, 0.0)
+	for i in range(1, RING_SEGS + 1):
+		var ang := TAU * float(i) / float(RING_SEGS)
+		var nx := c + Vector3(cos(ang) * r, 0.0, sin(ang) * r)
+		pts.append_array([prev, nx])
+		cols.append_array([col, col])
+		prev = nx
 
 
 # ───────────────────────── что знает о кораблях выбор мышью ─────────────────────────
@@ -588,6 +669,8 @@ func target_flash(s: Ship) -> void:
 
 ## Выбор без мёртвых и ушедших (06, 2.5: «выбор чистится сам»); звено — пока живо.
 func clean_selection() -> void:
+	if rollback_keep_dead:
+		return
 	var keep: Array[int] = []
 	for u in selection:
 		var s := battle.ship_by_uid(u)

@@ -53,6 +53,9 @@ const TORP_TURN := 1.1
 const ALARM_GAP := 25.0            # space.js:929: тревога «под огнём» — не чаще раза в 25 с
 const ALARM_QUIET := 15.0          # …и только после 10 с тишины (alarmAt = max(…, t − 15))
 const JAM_FEED_GAP := 25.0         # space.js:1254: лента «под помехами» — раз в 25 с на флот
+## ТОЛЬКО для проверки отката (хвост проверки G5, п. 4): часы «под помехами» одни на оба флота,
+## как было, — в «ИИ против ИИ» строка второго флота глохнет. В игре false.
+static var rollback_jam_feed_shared := false
 const CHARGE_FX_STEPS := 3         # space.js:1384: вспышка накачки раз в 0,09 с (≈ 3 шага)
 
 ## ТОЛЬКО для проверок отката (план G2): в игре всегда false.
@@ -445,17 +448,18 @@ static func missile_pick(b: State, s: Ship) -> Ship:
 
 # space.js:1254 — свои под помехами одной строкой ленты, не чаще раза в 25 с на флот
 static func _jam_feed(b: State, s: Ship, lock: float) -> void:
-	if s.jam == null or (s.side != b.player_side and not b.watch) or s.station or b.time - b.jam_feed_at <= JAM_FEED_GAP:
+	var fl := 0 if rollback_jam_feed_shared else s.side
+	if s.jam == null or (s.side != b.player_side and not b.watch) or s.station or b.time - b.jam_feed_at[fl] <= JAM_FEED_GAP:
 		return
 	var t := s.target as Ship
 	var who := ("%s: " % b.clan_tag(s.side)) if b.clan_voice() else "Наш "
 	if s.heavy():
 		# ДОКТРИНА 09, 1.7: главный калибр под помехами бьёт, но вдвое реже
-		b.jam_feed_at = b.time
+		b.jam_feed_at[fl] = b.time
 		var jp: Defs.EcmDef = s.jam
 		b.feed("%s%s под помехами РЭБ — главный калибр %s" % [who, short_name(s), slower(jp.main_slow)], &"warn")
 	elif t != null and s.pos.distance_to(t.pos) > lock:
-		b.jam_feed_at = b.time
+		b.jam_feed_at[fl] = b.time
 		b.feed("%s%s под помехами РЭБ — бьёт только вблизи" % [who, short_name(s)], &"warn")
 
 

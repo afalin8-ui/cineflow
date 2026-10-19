@@ -123,7 +123,7 @@ func test_go_and_watch() -> void:
 	ok(p.input.orders_enabled, "приказы принимаются")
 	var fps: Node = main.get("fps")
 	var hl: Label = fps.get("hint")
-	ok(hl != null and hl.text.contains("F8 — начать заново") and not hl.text.contains("F6"), "подсказка боя: F8 — заново, «Стола» из боя нет: «%s»" % (hl.text.get_slice("\n", 0) if hl != null else ""))
+	ok(hl != null and hl.text.contains("F8 — заново") and not hl.text.contains("F6"), "подсказка боя: F8 — заново, «Стола» из боя нет: «%s»" % (hl.text.get_slice("\n", 0) if hl != null else ""))
 	# F8 — тот же бой заново (новое зерно)
 	var seed0 := b.battle_seed
 	MainScript.seed_override = 4343

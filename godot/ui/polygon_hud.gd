@@ -1,14 +1,23 @@
-# ui/polygon_hud.gd — экран «Полигона» (план G1): что выбрано и чем занято,
-# время и скорость боя, полоски о приказах, рамка выбора, конец боя.
-# Полный экран боя (панель команд, ростер, лента, подписи) — G6–G7; здесь — минимум,
-# чтобы видеть, что сделали клавиши и мышь.
+# ui/polygon_hud.gd — экран боя (план GИ: интерфейс на экране, а не только горячие клавиши;
+# 07, 1.1). Раскладка:
+#   шапка (ui/hud_header.gd)      — силы сторон, название и часы, орудие планеты, пауза и скорость,
+#                                   подкрепление в трёх режимах, «Отход» с вопросом, «В меню»;
+#   полоски по центру под шапкой  — ответы на приказы (журнал модели, игровые часы) и свои;
+#   лента слева над ростером      — что случилось само (только быстрый бой);
+#   ростер (ui/roster.gd)          — свои корабли и звенья по классу тремя группами;
+#   нижняя панель                 — что выбрано и чем занято + СЕТКА КОМАНД (ui/command_grid.gd):
+#                                   каждая команда клавиши — кнопкой с подписью и буквой;
+#   столбик справа внизу          — быстрый выбор «Весь флот», «Тяжёлые», «Лёгкие» и «Знаки».
+# Кнопка и клавиша — ОДНА дверь: кнопка зовёт input/battle_input.gd → command(id), как клавиша.
 # - Полоски о приказах берутся из ЖУРНАЛА модели (toast_log, с игровым временем:
 #   02, ловушка 30; 05, ловушка 38): интерфейс их только показывает и гасит по
 #   игровым часам — на паузе полоска стоит. Свои полоски интерфейса («Сначала
 #   выбери свои корабли») — по настоящему времени: боя они не касаются.
-# - Раскладочные узлы — IGNORE (у Control по умолчанию STOP — C135); нижняя панель —
-#   STOP целиком, как настоящая панель: щелчок по ней до поля не доходит, а жест,
-#   начатый на поле и кончившийся над ней, дослушивается в _input (архитектура, 6.5).
+# - Мышь (ui/builder.gd): ловят только кнопки и нижняя панель (STOP целиком, как настоящая
+#   панель); шапка — градиент, щелчок мимо её кнопок уходит в поле (C135). Жест, начатый на
+#   поле и кончившийся над панелью, дослушивается в _input (архитектура, 6.5).
+# - «ИИ против ИИ»: сетки команд нет (смотреть, а не командовать), ростера и быстрого выбора
+#   нет, панель и шапка называют стороны кланами (State.clan_voice — одна дверь с лентой).
 # - Числа в текст — форматом, а не str() (07, 5.2).
 extends CanvasLayer
 
@@ -23,6 +32,13 @@ const Body := preload("res://sim/body.gd")
 const Air := preload("res://sim/air.gd")
 const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Picking := preload("res://input/picking.gd")
+const Builder := preload("res://ui/builder.gd")
+const Texts := preload("res://ui/texts.gd")
+const HudHeader := preload("res://ui/hud_header.gd")
+const HudTooltip := preload("res://ui/hud_tooltip.gd")
+const ConfirmBox := preload("res://ui/confirm_box.gd")
+const CommandGrid := preload("res://ui/command_grid.gd")
+const Roster := preload("res://ui/roster.gd")
 
 ## Сколько игровых секунд живёт полоска модели и сколько настоящих — своя.
 const TOAST_GAME_S := 4.5
@@ -30,18 +46,24 @@ const TOAST_REAL_MS := 4000
 const TOASTS_MAX := 3
 ## Подсказок ввода — не больше двух: третья строка остаётся полоске модели.
 const HINTS_MAX := 2
-## Полоски — ниже подсказки клавиш (две строки слева сверху, ui/fps_counter.gd).
-const TOAST_Y := 70.0
-## Зазор полосок до края экрана и до строки статуса справа.
+## Шапка и подсказка клавиш под ней (две строки, ui/fps_counter.gd → set_hint_top).
+const HEADER_H := HudHeader.HEIGHT
+const HINT_TOP := HEADER_H + 4.0           # прежнее место (до первого кадра раскладки)
+## Полоски — ниже подсказки клавиш, по середине экрана.
+const TOAST_Y := HEADER_H + 48.0
+## Полоски «как будто шапки нет» — у самого верха экрана; только откат проверки.
+const TOAST_Y_OLD := 10.0
 const TOAST_GAP := 16.0
-## Нижняя панель не шире окна без этих полей с каждой стороны: длинная строка (занятия
-## всего флота) переносится по словам, а не уводит панель за края.
+## Поля экрана и зазоры (07, 2.2): нижняя панель — слева 10, снизу 10.
+const EDGE := 10.0
 const PANEL_GAP := 16.0
+## Столбик быстрого выбора: ширина и высота кнопки.
+const COL_W := 132.0
+const COL_BTN_H := 34.0
 
-## ТОЛЬКО для проверок отката (замечания к G2), в игре всегда false:
-## полоски — по середине экрана, как было: на 1366 длинная полоса фокуса всего флота
-## наезжала на строку статуса справа («…идут на цельПланета (Ядерная ракета): 23 с»);
-static var rollback_toast_center := false
+## ТОЛЬКО для проверок отката (замечания к G2–G4 и план GИ), в игре всегда false:
+## полоски у самого верха экрана, как будто шапки нет, — ложатся на её кнопки и часы;
+static var rollback_toast_old_y := false
 ## строка «чем занят» молчит о цели фокуса вне пояса (приказ выглядел невыполненным);
 static var rollback_focus_unnamed := false
 ## «враг вплотную — … · бьёт батарея» без проверки, может ли батарея стрелять.
@@ -66,6 +88,23 @@ static var rollback_belt_dead_text := false
 ## приказу, — «идёт на участок», как будто охрану забыли (строку «идёт за «…»» не охраняла
 ## ни одна проверка).
 static var rollback_escort_text := false
+## ТОЛЬКО для проверки отката (план GИ): у чужого корабля в «ИИ против ИИ» панель пишет
+## «Противник», а не клан (хвост G5, п. 1) — как в 0.6.1. Откат той же двери, что у ленты,
+## — State.rollback_watch_voice; этот флажок — ТОЛЬКО для панели.
+static var rollback_panel_foe_word := false
+## ТОЛЬКО для проверок отката (план GИ), в игре всегда false / пусто:
+## подсказка клавиш — на прежнем месте под шапкой, поверх чужой линии на старте;
+static var rollback_hint_top := false
+## раскладка не смотрит на ширину окна — столбик быстрого выбора стоит там, где он на 1920,
+## и на 1366 уходит за край;
+static var rollback_fixed_layout := false
+## этой команды нет на кнопках — её клавиша «потеряна»;
+static var rollback_drop_cmd := &""
+## кнопка сетки ходит своей дверью, а не командой клавиши: тактика уходит ВСЕМ своим кораблям,
+## а не выбранным;
+static var rollback_button_own_door := false
+## «Отход» без вопроса — одним щелчком.
+static var rollback_retreat_no_ask := false
 
 ## Строки ленты (feed_log модели: «Противник отходит…», «… копит гипер», «нечем бить») —
 ## сколько и сколько игровых секунд живут. Лента — у быстрого боя (show_feed): в лаборатории
@@ -76,7 +115,7 @@ const FEED_COLORS := {&"good": Color(0.6, 1.0, 0.7), &"warn": Color(1.0, 0.86, 0
 
 ## Вид боя (view/battle_view.gd): модель, выбор, скорость.
 var view: Node3D
-## «ИИ против ИИ»: человек только смотрит — в панели нет приказов, у резерва нет «B».
+## «ИИ против ИИ»: человек только смотрит — сетки команд, ростера и быстрого выбора нет.
 var watch := false
 ## Быстрый бой: лента видна, итог — карточкой (ui/result_card.gd), а не баннером «F8».
 var show_feed := false
@@ -84,22 +123,37 @@ var quick := false
 var feed_box: VBoxContainer
 var _feed: Array[Label] = []
 var _last_feed := ""
-## Ввод (input/battle_input.gd): ждёт ли A щелчка — подсказка держится, пока ждёт.
+## Ввод (input/battle_input.gd): дверь команд, ожидание A.
 var input: Node
 var title := ""
+## «В меню» (кнопка шапки): что делать — решает экран боя (tools/polygon.gd).
+var on_menu: Callable
 
+var header: HudHeader
+## Название и часы в шапке (меряют проверки снимков).
 var status: Label
 var toasts: Label
 var panel: PanelContainer
+var info: VBoxContainer
 var sel_label: Label
+var hp_bg: ColorRect
+var hp_bar: ColorRect
+var grid: CommandGrid
+var roster: Roster
+var column: VBoxContainer
+var quick_buttons: Dictionary[StringName, Button] = {}
+var tooltip: HudTooltip
+var confirm: ConfirmBox
 var box: Panel
 var banner: Label
 ## Свои полоски интерфейса: [текст, мс настоящего времени, когда гаснет].
 var _local: Array[Array] = []
-var _last_status := ""
 var _last_sel := ""
 var _last_toasts := ""
-var _last_panel_vw := 0.0
+var _roster_at := 0
+var _roster_sel := ""
+var _last_vw := -1.0
+var _fit_pending := false
 ## F4 — строка-отладка пояса над тяжёлыми (09, 6.7; только разработчику): состояние
 ## доктрины, расстояния, часы «не оторваться». dbg_lines — что нарисовано (uid → текст).
 var belt_debug := false
@@ -110,27 +164,67 @@ var _dbg: Array[Label] = []
 func _ready() -> void:
 	layer = 10
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	status = _label(18, Color(0.85, 0.92, 1.0))
-	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	add_child(status)
+	tooltip = HudTooltip.new()
+	tooltip.name = "Tooltip"
+	add_child(tooltip)
+	confirm = ConfirmBox.new()
+	confirm.name = "Confirm"
+	confirm.view = view
+	add_child(confirm)
+	header = HudHeader.new()
+	header.tooltip = tooltip
+	header.watch = watch
+	header.quick = quick
+	header.on_press = _header_pressed
+	add_child(header)
+	status = header.status
 	toasts = _label(17, Color(1.0, 0.93, 0.7))
 	toasts.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(toasts)
-	panel = PanelContainer.new()
-	panel.name = "SelPanel"
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.03, 0.04, 0.07, 0.86)
-	sb.border_color = Color(0.35, 0.55, 0.8, 0.6)
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(6)
-	sb.set_content_margin_all(10)
-	panel.add_theme_stylebox_override("panel", sb)
-	sel_label = _label(15, Color(0.85, 0.92, 1.0))
-	panel.add_child(sel_label)
+	# нижняя панель: что выбрано (слева) и сетка команд (справа)
+	panel = Builder.panel("SelPanel", 8.0)
 	add_child(panel)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	panel.add_child(row)
+	info = VBoxContainer.new()
+	info.add_theme_constant_override("separation", 4)
+	row.add_child(info)
+	sel_label = _label(13, Color(0.85, 0.92, 1.0))
+	sel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sel_label.max_lines_visible = 4
+	info.add_child(sel_label)
+	var hp_row := Control.new()
+	hp_row.custom_minimum_size = Vector2(0.0, 5.0)
+	info.add_child(hp_row)
+	hp_bg = ColorRect.new()
+	hp_bg.color = Color(0.0, 0.0, 0.0, 0.6)
+	hp_row.add_child(hp_bg)
+	hp_bar = ColorRect.new()
+	hp_row.add_child(hp_bar)
+	grid = CommandGrid.new()
+	grid.name = "Grid"
+	grid.tooltip = tooltip
+	grid.on_press = _grid_pressed
+	row.add_child(grid)
+	roster = Roster.new()
+	roster.name = "Roster"
+	roster.tooltip = tooltip
+	roster.on_click = _roster_clicked
+	add_child(roster)
+	column = VBoxContainer.new()
+	column.name = "QuickSelect"
+	column.add_theme_constant_override("separation", 5)
+	add_child(column)
+	for id: StringName in [&"all", &"heavy", &"light", &"markers"]:
+		var k := Texts.cmd(id, "key")
+		var b := Builder.button(str(id), Texts.cmd(id, "word") + (" · " + k if k != "" else ""), Vector2(COL_W, COL_BTN_H), 15)
+		b.pressed.connect(_command.bind(id))
+		b.set_meta(&"cf_tip", Texts.tip(id, Texts.cmd(id, "word"), false))
+		tooltip.attach(b)
+		column.add_child(b)
+		quick_buttons[id] = b
 	box = Panel.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bs := StyleBoxFlat.new()
 	bs.bg_color = Color(0.56, 1.0, 0.78, 0.08)
 	bs.border_color = Color(0.56, 1.0, 0.78, 0.85)
@@ -140,7 +234,6 @@ func _ready() -> void:
 	add_child(box)
 	feed_box = VBoxContainer.new()
 	feed_box.name = "Feed"
-	feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	feed_box.add_theme_constant_override("separation", 2)
 	add_child(feed_box)
 	for i in FEED_MAX:
@@ -152,16 +245,12 @@ func _ready() -> void:
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.visible = false
 	add_child(banner)
+	Builder.finish(self)
+	Builder.stop(panel)
 
 
 static func _label(size: int, color: Color) -> Label:
-	var l := Label.new()
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
-	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-	l.add_theme_constant_override("outline_size", 4)
-	return l
+	return Builder.label(size, color)
 
 
 ## Своя полоска интерфейса (не о приказе): «Сначала выбери свои корабли».
@@ -177,6 +266,82 @@ func show_box(r: Rect2) -> void:
 		box.size = r.size
 
 
+## Вопрос перед отходом (ввод зовёт его через input.ask).
+func ask(msg: String, yes: String, no: String, on_yes: Callable) -> void:
+	if rollback_retreat_no_ask:
+		on_yes.call()
+		return
+	confirm.view = view
+	confirm.ask(msg, yes, no, on_yes)
+
+
+func _command(id: StringName) -> void:
+	if input != null:
+		input.call("command", id)
+
+
+func _grid_pressed(id: StringName) -> void:
+	if rollback_button_own_door and id in [&"hold", &"guard", &"hunt"]:
+		var all := PackedInt32Array()
+		var b: Object = view.get("battle")
+		var my_side: int = view.get("my_side")
+		var ships: Array = b.get("ships")
+		for o: Object in ships:
+			var s := o as Ship
+			if not s.dead and s.side == my_side and not s.station:
+				all.append(s.uid)
+		b.call("queue", {"op": &"stance", "ids": all, "stance": id})
+		return
+	_command(id)
+
+
+func _header_pressed(id: StringName) -> void:
+	if id == &"menu":
+		if on_menu.is_valid():
+			on_menu.call()
+		return
+	if id == &"reinforce":
+		var mode: StringName = header.buttons[&"reinforce"].get_meta(&"mode", &"reinforce")
+		_command(mode)
+		return
+	_command(id)
+
+
+func _roster_clicked(uids: Array, shift: bool) -> void:
+	if input != null:
+		input.call("roster_click", uids, shift)
+
+
+## Все кнопки экрана боя, видимые сейчас (сканер кнопок и проверки «кнопка = клавиша»).
+func shown_buttons() -> Array[Button]:
+	var out: Array[Button] = header.shown_buttons()
+	for id: StringName in grid.buttons:
+		if grid.buttons[id].is_visible_in_tree():
+			out.append(grid.buttons[id])
+	for k: String in roster.cells:
+		if roster.cells[k].is_visible_in_tree():
+			out.append(roster.cells[k])
+	for id: StringName in quick_buttons:
+		if quick_buttons[id].is_visible_in_tree():
+			out.append(quick_buttons[id])
+	return out
+
+
+## Подсказка клавиш (её ставит main.gd): пока видна — знакам туда нельзя, текст поверх рамки
+## не читается ни то, ни другое. Пусто — спрятана.
+var hint_rect := Rect2()
+
+
+## Панели, на которых знаков над кораблями нет (view/markers.gd → avoid): нижняя панель,
+## ростер, столбик быстрого выбора. Шапка — отдельно (её низ — top).
+func panel_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for c: Control in [panel, roster, column]:
+		if c.is_visible_in_tree() and c.size.x > 0.0:
+			out.append(c.get_global_rect())
+	return out
+
+
 func _process(_delta: float) -> void:
 	if view == null:
 		return
@@ -184,12 +349,10 @@ func _process(_delta: float) -> void:
 	if b == null:
 		return
 	var vs := get_viewport().get_visible_rect().size
-	var st := _status_text(b)
-	if st != _last_status:
-		_last_status = st
-		status.text = st
-	status.reset_size()
-	status.position = Vector2(vs.x - status.size.x - 16.0, 12.0)
+	header.watch = watch
+	header.quick = quick
+	header.refresh(b, view, input if is_instance_valid(input) else null, title)
+	header.place(vs)
 	var over: bool = b.get("over")
 	# бой кончился — часы стоят, и полоски модели висели бы вечно; итог говорит баннер
 	var tt := "" if over else _toast_text(b)
@@ -197,15 +360,18 @@ func _process(_delta: float) -> void:
 		_last_toasts = tt
 		toasts.text = tt
 	_place_toasts(vs)
-	var sl := _sel_text(b)
-	if sl != _last_sel or vs.x != _last_panel_vw:
-		_last_sel = sl
-		_last_panel_vw = vs.x
-		sel_label.text = sl
-		_fit_panel(vs)
-	panel.position = Vector2(((vs.x - panel.size.x) * 0.5), vs.y - panel.size.y - 14.0)
+	_refresh_panel(b, vs)
+	_place_bottom(vs)
 	_draw_belt_debug(b)
 	_show_feed(b, vs)
+	var mk: Object = view.get("markers")
+	if mk != null:
+		mk.set("top", HEADER_H)
+		var av := panel_rects()
+		if hint_rect.has_area():
+			av.append(hint_rect)
+		mk.set("avoid", av)
+	tooltip.refresh()
 	banner.visible = over and not quick
 	if over:
 		var w: int = b.get("winner")
@@ -215,8 +381,233 @@ func _process(_delta: float) -> void:
 		banner.position = ((vs - banner.size) * 0.5).floor() - Vector2(0.0, vs.y * 0.18)
 
 
-## Лента: последние строки feed_log моложе FEED_GAME_S игровых секунд — слева над нижней
-## панелью, цветом по виду (хорошо · внимание · плохо). Часы игровые: на паузе строка стоит.
+## Узкое окно (меньше 1600) — кнопки сетки и колонка «что выбрано» уже. Ширина кнопки — под
+## самое длинное слово сетки: «Бомбардировщик» кеглем 11 (101 точка) на 1366 и 12 (110) на 1920;
+## на прежних 92 точках оно не влезало и кеглем 10 (92 > 84) — край слова срезался.
+static func compact(vs: Vector2) -> bool:
+	return vs.x < 1600.0 and not rollback_fixed_layout
+
+
+static func grid_btn(vs: Vector2) -> Vector2:
+	return Vector2(112.0, 42.0) if compact(vs) else Vector2(124.0, 46.0)
+
+
+static func info_w(vs: Vector2) -> float:
+	return 330.0 if compact(vs) else 420.0
+
+
+## Высота нижней панели постоянная (ростер над ней не прыгает при смене выделения, 07, 1.7):
+## два ряда кнопок сетки и поля.
+static func panel_h(vs: Vector2) -> float:
+	return grid_btn(vs).y * 2.0 + 4.0 + 16.0
+
+
+## Что выбрано, сетка команд, полоска прочности — по выбору и бою.
+func _refresh_panel(b: Object, vs: Vector2) -> void:
+	var sl := _sel_text(b)
+	var vw := info_w(vs)
+	if sl != _last_sel or vw != _last_vw:
+		_last_sel = sl
+		_last_vw = vw
+		_fit_pending = true
+	var ids := commands_now(b)
+	grid.visible = not ids.is_empty()
+	grid.set_commands(ids, grid_btn(vs))
+	_update_grid(b)
+	# прочность — одной функцией корабля (hp_frac, задел на «что выбито», 07, 7.2 п. 11)
+	var one := _single(b)
+	hp_bg.visible = one >= 0.0
+	hp_bar.visible = one >= 0.0
+	var w := info_w(vs)
+	if one >= 0.0:
+		hp_bg.size = Vector2(w, 4.0)
+		hp_bar.size = Vector2(maxf(w * clampf(one, 0.0, 1.0), 1.0), 4.0)
+		hp_bar.color = Builder.OWN if _single_own(b) else Builder.FOE
+	if rollback_panel_nowrap:
+		sel_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		sel_label.custom_minimum_size = Vector2.ZERO
+	else:
+		sel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sel_label.custom_minimum_size = Vector2(w, 0.0)
+	# нижняя панель — постоянной высоты; строки «что выбрано» сверх неё не показываются
+	var lines := floori((panel_h(vs) - 16.0 - 9.0) / maxf(sel_label.get_line_height(), 1.0))
+	sel_label.max_lines_visible = maxi(lines, 2)
+	if _fit_pending:
+		_fit_pending = false
+		_fit_sel()
+	panel.custom_minimum_size = Vector2(0.0, panel_h(vs))
+	panel.reset_size()
+
+
+## Прочность единственного выбранного (корабль — hp_frac, звено — среднее по машинам); −1 — нет.
+func _single(b: Object) -> float:
+	var sel: Array[int] = view.get("selection")
+	if sel.size() != 1:
+		return -1.0
+	var s: Ship = b.call("ship_by_uid", sel[0])
+	if s != null and not s.dead:
+		return s.hp_frac()
+	var q: Squad = b.call("squad_by_uid", sel[0])
+	if q != null and not q.dead and not q.craft.is_empty():
+		var sum := 0.0
+		for c in q.craft:
+			sum += c.hp_frac()
+		return sum / float(q.craft.size())
+	return -1.0
+
+
+func _single_own(b: Object) -> bool:
+	var sel: Array[int] = view.get("selection")
+	var my_side: int = view.get("my_side")
+	var s: Ship = b.call("ship_by_uid", sel[0])
+	if s != null:
+		return s.side == my_side
+	var q: Squad = b.call("squad_by_uid", sel[0])
+	return q != null and q.side == my_side
+
+
+## Какие команды есть у выбранного (07, 2.10): атака с ходу — у кораблей и звеньев; тактики,
+## дрифт, гипер — у кораблей; пуск — у носителей (и станции); посадка — у звеньев; купол — у РЭБ.
+## «ИИ против ИИ» и повтор записи — сетки нет.
+func commands_now(_b: Object) -> Array[StringName]:
+	var out: Array[StringName] = []
+	if input == null or watch:
+		return out
+	var enabled: bool = input.get("orders_enabled")
+	if not enabled:
+		return out
+	var ships: PackedInt32Array = input.call("own_selected")
+	var squads: PackedInt32Array = input.call("own_squads")
+	var carriers: PackedInt32Array = input.call("own_carriers")
+	var ecms: PackedInt32Array = input.call("own_ecms")
+	for id in Texts.GRID_ORDER:
+		var has := false
+		match id:
+			&"amove":
+				has = not ships.is_empty() or not squads.is_empty()
+			&"hold", &"guard", &"hunt", &"drift", &"hyper":
+				has = not ships.is_empty()
+			&"launch_interceptor", &"launch_fighter", &"launch_bomber":
+				has = not carriers.is_empty()
+			&"recall":
+				has = not squads.is_empty()
+			&"ecm_jam", &"ecm_shield", &"ecm_off":
+				has = not ecms.is_empty()
+		if has and id != rollback_drop_cmd:
+			out.append(id)
+	return out
+
+
+## Слова и вид кнопок сетки на месте: «горит» — у всех выбранных, «часть» — у некоторых
+## (C26, C136; 07, 1.8), пуск — «ангар N» и недоступен без свободных мест.
+func _update_grid(b: Object) -> void:
+	if grid.buttons.is_empty():
+		return
+	var own: Array[Ship] = []
+	var own_ids: PackedInt32Array = input.call("own_selected")
+	var car_ids: PackedInt32Array = input.call("own_carriers")
+	var ecm_ids: PackedInt32Array = input.call("own_ecms")
+	for u in own_ids:
+		var s: Ship = b.call("ship_by_uid", u)
+		if s != null:
+			own.append(s)
+	var n := own.size()
+	var armed: bool = input.get("amove_armed")
+	for id: StringName in grid.buttons:
+		var word := Texts.cmd(id, "word")
+		var top := Texts.cmd(id, "top")
+		var how := Builder.Look.NORMAL
+		match id:
+			&"amove":
+				how = Builder.Look.ON if armed else Builder.Look.NORMAL
+			&"hold", &"guard", &"hunt":
+				var k := 0
+				for s in own:
+					if s.stance == id:
+						k += 1
+				how = _part_look(k, n)
+				if k > 0 and k < n:
+					top = "%d из %d" % [k, n]
+			&"drift":
+				var kd := 0
+				for s in own:
+					if s.drift:
+						kd += 1
+				how = _part_look(kd, n)
+				if kd > 0 and kd < n:
+					top = "%d из %d" % [kd, n]
+			&"hyper":
+				var kh := 0
+				for s in own:
+					if s.charging():
+						kh += 1
+				if kh > 0:
+					word = Texts.cmd(&"unhyper", "word")
+					top = Texts.cmd(&"unhyper", "top")
+					how = Builder.Look.ON
+			&"launch_interceptor", &"launch_fighter", &"launch_bomber":
+				var free := 0
+				for u in car_ids:
+					var c: Ship = b.call("ship_by_uid", u)
+					if c != null and c.hangar != null:
+						free += c.hangar.free
+				top = "ангар %d" % free
+				how = Builder.Look.OFF if free <= 0 else Builder.Look.NORMAL
+			&"ecm_jam", &"ecm_shield", &"ecm_off":
+				var first: Ship = null
+				for u in ecm_ids:
+					first = b.call("ship_by_uid", u)
+					break
+				var mode: StringName = {&"ecm_jam": &"jam", &"ecm_shield": &"shield", &"ecm_off": &"off"}[id]
+				how = Builder.Look.ON if first != null and first.ecm_mode == mode else Builder.Look.NORMAL
+		grid.update_cmd(id, word, top, how)
+	if not grid.buttons.has(&"hyper"):
+		return
+	var hb := grid.buttons[&"hyper"]
+	var tip_id := &"unhyper" if hb.get_meta(&"cf_look", -1) == Builder.Look.ON else &"hyper"
+	hb.set_meta(&"cf_tip", Texts.tip(tip_id, Texts.cmd(tip_id, "word"), false))
+
+
+static func _part_look(k: int, n: int) -> Builder.Look:
+	if k <= 0 or n <= 0:
+		return Builder.Look.NORMAL
+	return Builder.Look.ON if k == n else Builder.Look.PART
+
+
+## Низ экрана: нижняя панель (слева), ростер над ней на постоянной высоте, столбик быстрого
+## выбора справа; лента — над ростером.
+func _place_bottom(vs: Vector2) -> void:
+	var ph := panel_h(vs)
+	panel.position = Vector2(EDGE, vs.y - EDGE - ph)
+	var my_side: int = view.get("my_side")
+	var now := Time.get_ticks_msec()
+	var sel: Array[int] = view.get("selection")
+	var sk := str(sel)
+	roster.visible = not watch
+	if roster.visible and (now >= _roster_at or sk != _roster_sel):
+		_roster_at = now + 250
+		_roster_sel = sk
+		var bt: Object = view.get("battle")
+		roster.refresh(bt, my_side, sel)
+	roster.reset_size()
+	roster.position = Vector2(EDGE, panel.position.y - 6.0 - Roster.CELL.y)
+	for id: StringName in quick_buttons:
+		quick_buttons[id].visible = id == &"markers" or not watch
+	var mk: Object = view.get("markers")
+	if mk != null:
+		var on: bool = mk.get("on")
+		var mb := quick_buttons[&"markers"]
+		var how := Builder.Look.ON if on else Builder.Look.NORMAL
+		var was: int = mb.get_meta(&"cf_look", -1)
+		if was != how:
+			Builder.look(mb, how)
+	column.reset_size()
+	var w := 1920.0 if rollback_fixed_layout else vs.x
+	column.position = Vector2(w - EDGE - COL_W, vs.y - EDGE - column.size.y)
+
+
+## Лента: последние строки feed_log моложе FEED_GAME_S игровых секунд — слева над ростером,
+## цветом по виду (хорошо · внимание · плохо). Часы игровые: на паузе строка стоит.
 func _show_feed(b: Object, vs: Vector2) -> void:
 	var lines: Array[Dictionary] = []
 	if show_feed:
@@ -243,75 +634,25 @@ func _show_feed(b: Object, vs: Vector2) -> void:
 				var col: Color = FEED_COLORS.get(lines[j]["kind"], Color(0.85, 0.92, 1.0))
 				fl.add_theme_color_override("font_color", col)
 		feed_box.reset_size()
-	feed_box.position = Vector2(PANEL_GAP, vs.y - panel.size.y - 14.0 - feed_box.size.y - 10.0)
+	var above := roster.position.y if roster.visible else panel.position.y
+	if not hint_gone() and hint_h > 0.0:
+		above -= hint_h + 8.0              # подсказка клавиш стоит над ростером, лента — над ней
+	feed_box.position = Vector2(PANEL_GAP, above - feed_box.size.y - 8.0)
 
 
-## Нижняя панель по тексту, но не шире окна без PANEL_GAP с каждой стороны: длинные строки
-## переносятся по словам (на 1366 строка занятий всего флота — «главным по … · батареей
-## по … · под помехами …» — была шире окна, и панель уходила за оба края).
-func _fit_panel(vs: Vector2) -> void:
-	sel_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	sel_label.custom_minimum_size = Vector2.ZERO
-	panel.reset_size()
-	var room := vs.x - 2.0 * PANEL_GAP
-	if not rollback_panel_nowrap and panel.size.x > room:
-		var pad := panel.size.x - sel_label.size.x
-		sel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		sel_label.custom_minimum_size = Vector2(maxf(room - pad, 120.0), 0.0)
-		sel_label.size = Vector2(sel_label.custom_minimum_size.x, 0.0)
-		panel.reset_size()
-
-
-## Полоски — по середине экрана, если там им хватает места; иначе — в промежутке
-## между левым краем и строкой статуса справа (она стоит на той же высоте: заголовок,
-## часы, резерв, планета), а не шире его: длинная полоска переносится по словам.
+## Полоски — по середине экрана под шапкой и подсказкой клавиш; длинная — переносится по
+## словам в пределах окна (с полями TOAST_GAP).
 func _place_toasts(vs: Vector2) -> void:
 	toasts.autowrap_mode = TextServer.AUTOWRAP_OFF
 	toasts.custom_minimum_size = Vector2.ZERO
 	toasts.reset_size()
-	var w := toasts.size.x
-	var right := status.position.x - TOAST_GAP
-	var left := TOAST_GAP
-	var x := (vs.x - w) * 0.5
-	if not rollback_toast_center and x + w > right:
-		var band := maxf(right - left, 120.0)
-		if w > band:
-			toasts.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			toasts.custom_minimum_size = Vector2(band, 0.0)
-			toasts.size = Vector2(band, 0.0)
-			toasts.reset_size()
-			w = toasts.size.x
-		x = left + (band - w) * 0.5
-	toasts.position = Vector2(x, TOAST_Y)
-
-
-func _status_text(b: Object) -> String:
-	var t: float = b.get("time")
-	var paused: bool = view.get("paused")
-	var speed: int = view.get("speed")
-	var clock := "%d:%02d" % [floori(t / 60.0), floori(t) % 60]
-	var lines := PackedStringArray([title, "%s · %s" % [clock, "пауза" if paused else "%d×" % speed]])
-	var my_side: int = view.get("my_side")
-	var sides: Array = b.get("sides")
-	var sd: Object = sides[my_side]
-	var res_at: float = sd.get("reinforce_at")
-	var reserve: Array = sd.get("reserve")
-	if res_at > 0.0:
-		lines.append("Подкрепление выйдет через %d с" % ceili(res_at - t))
-	elif not reserve.is_empty():
-		var n := 0
-		for e: Object in reserve:
-			var c: int = e.get("count")
-			n += c
-		lines.append("В резерве %d %s%s" % [n, FrameBench.plural(n, "корабль", "корабля", "кораблей"), "" if watch else " · B — вызвать"])
-	# часы «Давления Земли» (03, 2.17): «залп», если осталось меньше секунды
-	var gun: Object = b.get("gun")
-	if gun != null:
-		var gd: Defs.GroundGunDef = gun.get("def")
-		var nxt: float = gun.get("next")
-		var left := nxt - t
-		lines.append("Планета (%s): %s" % [gd.name, "залп" if left < 1.0 else "%d с" % ceili(left)])
-	return "\n".join(lines)
+	var band := vs.x - 2.0 * TOAST_GAP
+	if toasts.size.x > band:
+		toasts.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		toasts.custom_minimum_size = Vector2(band, 0.0)
+		toasts.size = Vector2(band, 0.0)
+		toasts.reset_size()
+	toasts.position = Vector2(((vs.x - toasts.size.x) * 0.5), TOAST_Y_OLD if rollback_toast_old_y else TOAST_Y).floor()
 
 
 ## Подсказка ввода, которая держится, пока ввод в этом состоянии (A ждёт щелчка).
@@ -362,20 +703,83 @@ func _toast_text(b: Object) -> String:
 	return "\n".join(hints)
 
 
-## Что выбрано и чем занято: «Выбрано: 3 · идут», имена — до четырёх.
+## Состав выбора словами: «Флагман · Фрегат ×2 · Корвет ×4 · Перехватчик».
+func _composition(b: Object, sel: Array[int]) -> String:
+	var order: Array[String] = []
+	var cnt: Dictionary[String, int] = {}
+	for u in sel:
+		var s: Ship = b.call("ship_by_uid", u)
+		var w := ""
+		if s != null and not s.dead:
+			w = Roster.word_of(s)
+		else:
+			var q: Squad = b.call("squad_by_uid", u)
+			if q == null or q.dead:
+				continue
+			var st := b as State
+			var rd: Defs.StrikeRoleDef = st.defs.strike_roles.get(q.role)
+			w = rd.label if rd != null else str(q.role)
+		if not cnt.has(w):
+			order.append(w)
+			cnt[w] = 0
+		cnt[w] += 1
+	var parts := PackedStringArray()
+	for w in order:
+		parts.append(w if cnt[w] == 1 else "%s ×%d" % [w, cnt[w]])
+	return " · ".join(parts)
+
+
+## Подсказка клавиш боя (ui/fps_counter.gd, её ведёт main.gd): слева над ростером, как в JS
+## (07, 1.11), а не под шапкой — там на старте стоит чужая линия, и строки ложились на её
+## знаки. Гаснет через 16 игровых секунд (07, 2.13): клавиши приказов теперь на кнопках.
+const HINT_GONE_S := 16.0
+var hint_h := 0.0
+
+
+func hint_top(h: float) -> float:
+	hint_h = h
+	if rollback_hint_top:
+		return HINT_TOP
+	var above := roster.position.y if roster.visible else panel.position.y
+	return above - 8.0 - h
+
+
+func hint_gone() -> bool:
+	if view == null:
+		return false
+	var b: Object = view.get("battle")
+	var t: float = b.get("time") if b != null else 0.0
+	return t > HINT_GONE_S
+
+
+## Чья это сторона словами: в «ИИ против ИИ» — клан (State.clan_voice — одна дверь с лентой),
+## в бою с приказами — «Противник» (свои — «Выбрано: N»).
+func _side_word(b: Object, side: int) -> String:
+	var voice: bool = b.call("clan_voice")
+	if voice and not rollback_panel_foe_word:
+		var st := b as State
+		return st.clan_tag(side)
+	return Texts.FOE
+
+
+## Что выбрано и чем занято (07, 1.8). Один корабль — имя, класс, скорость и прочность, чем
+## занят; несколько — «Выбрано: N», имена (до четырёх) и занятия (до трёх видов). Клавиши
+## теперь — на кнопках сетки, в панели их нет; мышь — одной строкой.
 func _sel_text(b: Object) -> String:
 	var sel: Array[int] = view.get("selection")
 	var my_side: int = view.get("my_side")
 	if sel.is_empty() and watch:
-		return "ИИ против ИИ — ты только смотришь, приказов нет · ЛКМ — выбрать корабль и прочитать, чем он занят\nПробел — пауза · 1, 2, 4 — скорость · колесо — ближе и дальше · Q/E — повернуть"
+		_sel_alts = PackedStringArray([Texts.WATCH_HINT])
+		return Texts.WATCH_HINT
 	if sel.is_empty():
-		return "Ничего не выбрано · ЛКМ — выбрать, протяжка — рамка, щелчок по машине — её звено\nНоситель: Z / X / C — поднять звено · B — подкрепление · Пробел — пауза · 1, 2, 4 — скорость"
+		var nt := "%s\n%s" % [Texts.NOTHING, Texts.NOTHING_HINT]
+		_sel_alts = PackedStringArray([nt, Texts.NOTHING])
+		return nt
 	var names := PackedStringArray()
 	var own := 0
-	var own_carriers := 0
-	var free_bays := 0
-	var own_squads := 0
 	var acts: Dictionary[String, int] = {}
+	var foe_side := -1
+	var single: Ship = null
 	for u in sel:
 		var s: Ship = b.call("ship_by_uid", u)
 		var q: Squad = b.call("squad_by_uid", u) if s == null else null
@@ -383,48 +787,95 @@ func _sel_text(b: Object) -> String:
 			# звено: «Перехватчик «Зонг» ×4/5» (04, 1.1)
 			if names.size() < 4:
 				names.append(squad_name(q, b as State))
-			if q.side == my_side:
+			if q.side == my_side and not watch:
 				own += 1
-				own_squads += 1
 				var qa := squad_doing(q, b as State)
 				var qc: int = acts.get(qa, 0)
 				acts[qa] = qc + 1
+			else:
+				foe_side = q.side
+				if watch:
+					var wa := squad_doing(q, b as State)
+					var wc: int = acts.get(wa, 0)
+					acts[wa] = wc + 1
 			continue
 		if s == null or s.dead:
 			continue
+		if sel.size() == 1:
+			single = s
 		if names.size() < 4:
 			names.append(s.name)
-		if s.side == my_side:
+		if s.side == my_side and not watch:
 			own += 1
-			if s.hangar != null:
-				own_carriers += 1
-				free_bays += s.hangar.free
 			var a := doing(s, b as State)
 			var c: int = acts.get(a, 0)
 			acts[a] = c + 1
-		elif watch:
-			# «ИИ против ИИ»: смотрят обе стороны — чем занят и корабль противника (подсказка
-			# панели это обещает; в бою с приказами чужое занятие не показываем, как в G4)
-			var fa := doing(s, b as State)
-			var fc: int = acts.get(fa, 0)
-			acts[fa] = fc + 1
-	var head := "Выбрано: %d" % sel.size() if own > 0 else "Противник"
-	var act_list := PackedStringArray()
-	for a: String in acts:
-		act_list.append(a if acts.size() == 1 else "%s %d" % [a, acts[a]])
+		else:
+			foe_side = s.side
+			if watch:
+				# «ИИ против ИИ»: смотрят обе стороны — чем занят и корабль противника (подсказка
+				# панели это обещает; в бою с приказами чужое занятие не показываем, как в G4)
+				var fa := doing(s, b as State)
+				var fc: int = acts.get(fa, 0)
+				acts[fa] = fc + 1
+	var head := ""
+	if own > 0:
+		head = "Выбрано: %d" % sel.size()
+	elif foe_side >= 0:
+		head = _side_word(b, foe_side)
+	elif watch:
+		head = _side_word(b, my_side)
 	var more := "" if sel.size() <= names.size() else ", …"
 	var line := "%s — %s%s" % [head, ", ".join(names), more]
-	if not act_list.is_empty():
-		line += "\n" + ", ".join(act_list)
-	if watch:
-		return line
-	if own_carriers > 0:
-		line += "\nZ — перехватчики · X — истребители · C — бомбардировщики · свободно мест в ангаре: %d" % free_bays
-	if own_squads > 0 and own_squads == own:
-		line += "\nПКМ — лететь, по врагу или чужому звену — бить · V — на посадку"
-	elif own > 0:
-		line += "\nПКМ — лететь, по врагу — бить его · A — атака с ходу · H/S — стоять · Y — охрана · T — охота · G — гипер · D — дрифт"
-	return line
+	if sel.size() > 3:
+		# много выбранных — состав по классу («Корвет ×8 · Фрегат ×4»), а не четыре имени (07, 1.8)
+		line = "%s — %s" % [head, _composition(b, sel)]
+	if single != null:
+		line += "\n%s · скорость %d · прочность %d%%" % [single.def.role_text, roundi(single.vel.length()), roundi(single.hp_frac() * 100.0)]
+	# панель постоянной высоты: текст, который в неё не лёг, НЕ обрезается на полуслове, а
+	# короче — сначала уходит строка мыши, потом лишние занятия (3 → 2 → 1 вида), потом занятия
+	# совсем (_fit_sel выбирает первый вариант, который влез)
+	var mouse := "\nПКМ — лететь, по врагу — бить его" if own > 0 and not watch else ""
+	_sel_alts = PackedStringArray()
+	for k: int in [3, 3, 2, 1, 0]:
+		var t := line + _acts_text(acts, k)
+		if _sel_alts.is_empty():
+			t += mouse
+		_sel_alts.append(t)
+	return _sel_alts[0]
+
+
+## Занятия выбранных одной строкой: не больше k видов, остальное — «…» (k = 0 — пусто).
+static func _acts_text(acts: Dictionary[String, int], k: int) -> String:
+	if k <= 0 or acts.is_empty():
+		return ""
+	var act_list := PackedStringArray()
+	for a: String in acts:
+		if act_list.size() >= k:
+			act_list.append("…")
+			break
+		# «×N», а не просто число: в строках занятий свои числа («(1068)», «… III»), и «III 1»
+		# читалось бы как часть имени
+		act_list.append(a if acts.size() == 1 else "%s ×%d" % [a, acts[a]])
+	return "\n" + ", ".join(act_list)
+
+
+## Варианты текста «что выбрано» от полного к короткому (их собирает _sel_text).
+var _sel_alts := PackedStringArray()
+## ТОЛЬКО для проверки отката (план GИ): текст выбранного ставится целиком, лишнее режется
+## по высоте панели — последняя строка обрывается на полуслове. В игре false.
+static var rollback_panel_cut := false
+
+
+## Первый вариант «что выбрано», который целиком влезает в панель (строк не больше видимых).
+func _fit_sel() -> void:
+	# ширина — та, с которой текст встанет в панель: Label сам свою ширину до кадра раскладки не
+	# знает, и на первом кадре мерил бы строки по прежней (на старте — по нулевой)
+	sel_label.size = Vector2(sel_label.custom_minimum_size.x, sel_label.size.y)
+	for t in _sel_alts:
+		sel_label.text = t
+		if rollback_panel_cut or sel_label.get_line_count() <= sel_label.max_lines_visible:
+			return
 
 
 ## «Перехватчик «Зонг» ×4/5» — роль, имя машины, живых из поднятых (04, 1.1).

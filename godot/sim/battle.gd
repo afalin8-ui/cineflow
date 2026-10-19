@@ -79,6 +79,9 @@ static var rollback_teeth_no_reserve := false
 ## «есть чем бить» — только оружие кораблей: свободный ангар, звено в воздухе, машина с ракетами
 ## и резерв в пути не считаются (05, ловушка 27 — can_hurt щедрый намеренно).
 static var rollback_can_hurt_strict := false
+## ТОЛЬКО для проверки отката (хвост проверки G5, п. 3): «есть чем бить» не смотрит на машины
+## в воздухе — звено с ракетами, у которого сбит носитель, не в счёт. В игре false.
+static var rollback_can_hurt_no_craft := false
 
 ## ИИ сторон (sim/ai.gd): объект на сторону, в порядке сторон.
 var ai: Array[Ai] = []
@@ -503,6 +506,8 @@ func can_hurt_side(side: int) -> bool:
 	if rollback_can_hurt_strict:
 		return false
 	for c in crafts:
+		if rollback_can_hurt_no_craft:
+			break
 		if c.side == side and not c.dead and not c.leaving and (c.def.weapon_kind != &"missile" or c.ammo > 0 or c.reloads > 0 or c.reloading > 0.0):
 			return true
 	return sides[side].reinforce_at > 0.0

@@ -92,7 +92,7 @@ func test_menu_and_card_layout() -> void:
 		var pr := m.panel.get_global_rect()
 		ok(Rect2(Vector2.ZERO, vs).encloses(pr), "%d: меню целиком в окне (%s)" % [size.x, str(pr)])
 		var fps: FpsCounter = main.get("fps")
-		ok(fps == null or not fps.hint.get_global_rect().intersects(pr), "%d: подсказка клавиш слева сверху не на меню" % size.x)
+		ok(fps == null or not fps.hint.get_global_rect().intersects(pr), "%d: подсказка клавиш слева сверху не на меню (%s и %s)" % [size.x, fps.hint.get_global_rect(), pr])
 		var btns: Array[Button] = []
 		for k: String in m.buttons:
 			btns.append(m.buttons[k])
