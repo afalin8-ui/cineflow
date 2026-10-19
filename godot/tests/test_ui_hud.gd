@@ -472,6 +472,113 @@ func test_header_and_column_are_their_keys() -> void:
 	await _close()
 
 
+## Вид кнопки сетки: «горит» / «часть» / обычная / недоступна (ui/builder.gd → Look) и мелкая
+## строка над словом.
+static func _grid_look(p: Polygon, id: StringName) -> String:
+	var b: Button = p.hud.grid.buttons.get(id)
+	if b == null or not b.is_visible_in_tree():
+		return "нет кнопки"
+	var how: int = b.get_meta(&"cf_look", -1)
+	var names := {Builder.Look.NORMAL: "обычная", Builder.Look.ON: "горит", Builder.Look.PART: "часть", Builder.Look.OFF: "недоступна"}
+	var top := (b.get_node("top") as Label).text
+	var word := (b.get_node("word") as Label).text
+	return "%s «%s» [%s]%s" % [names.get(how, "?"), word, top, " выкл" if b.disabled else ""]
+
+
+## Подсветка сетки из выбора (план GИ, п. 5; 07, 1.8 — C26, C136): тактика и дрифт «горят», когда
+## они у ВСЕХ выбранных, и стоят «частью» с мелкой строкой «1 из 2», когда у некоторых; гипер
+## копится — кнопка «Отменить гипер» горит; пуск — «ангар N» и недоступен без свободных мест;
+## купол — горит нынешний режим РЭБ. Состояние ставится прямо в модели (бой на паузе): проверяется,
+## что экран его ЧИТАЕТ. До доработки GИ у этого правила не было ни одной проверки — порча
+## `_part_look` («горит» при любом k > 0) оставляла все ярусы зелёными; откат — порчей кода
+## (godot/CLAUDE.md, 22).
+func test_grid_lights_from_selection() -> void:
+	var p := await _open(Vector2i(1366, 768))
+	var cs: Array[Ship] = []
+	for s in _own(p):
+		if s.def.id == &"corvette" and cs.size() < 2:
+			cs.append(s)
+	var car := _first(p, func(s: Ship) -> bool: return s.hangar != null)
+	var ecm := _first(p, func(s: Ship) -> bool: return s.def.ecm)
+	if not ok(cs.size() == 2 and car != null and ecm != null, "в составе есть два корвета, носитель и РЭБ"):
+		await _close()
+		return
+	for s in cs:
+		s.stance = &"guard"
+		s.drift = false
+	p.view.selection = [cs[0].uid, cs[1].uid]
+	await hooks.frames(3)
+	ok(_grid_look(p, &"guard") == "горит «Охрана» [тактика]" and _grid_look(p, &"hunt") == "обычная «Охота» [тактика]",
+		"оба на «Охране» — «Охрана» горит, «Охота» обычная: %s · %s" % [_grid_look(p, &"guard"), _grid_look(p, &"hunt")])
+	cs[0].stance = &"hunt"
+	await hooks.frames(2)
+	ok(_grid_look(p, &"hunt") == "часть «Охота» [1 из 2]" and _grid_look(p, &"guard") == "часть «Охрана» [1 из 2]" and _grid_look(p, &"hold") == "обычная «Держать» [тактика]",
+		"тактики разные — «часть» и «1 из 2» у обеих, «Держать» обычная: %s · %s · %s" % [_grid_look(p, &"hunt"), _grid_look(p, &"guard"), _grid_look(p, &"hold")])
+	cs[0].drift = true
+	await hooks.frames(2)
+	var d1 := _grid_look(p, &"drift")
+	cs[1].drift = true
+	await hooks.frames(2)
+	var d2 := _grid_look(p, &"drift")
+	ok(d1 == "часть «Дрифт» [1 из 2]" and d2 == "горит «Дрифт» [ход]", "дрифт у одного — «часть», у обоих — горит: %s → %s" % [d1, d2])
+	p.battle.queue({"op": &"hyper", "ids": PackedInt32Array([cs[0].uid])})
+	_steps(p, 2)
+	await hooks.frames(2)
+	ok(cs[0].charging() and _grid_look(p, &"hyper") == "горит «Отменить гипер» [гипер]", "копит гипер — кнопка «Отменить гипер» горит: %s" % _grid_look(p, &"hyper"))
+	p.view.selection = [car.uid]
+	await hooks.frames(3)
+	var l1 := _grid_look(p, &"launch_interceptor")
+	var free0 := car.hangar.free
+	car.hangar.free = 0
+	await hooks.frames(2)
+	var l2 := _grid_look(p, &"launch_interceptor")
+	car.hangar.free = free0
+	ok(free0 > 0 and l1 == "обычная «Перехватчик» [ангар %d]" % free0 and l2 == "недоступна «Перехватчик» [ангар 0] выкл",
+		"пуск — «ангар %d», без мест недоступен: %s → %s" % [free0, l1, l2])
+	p.view.selection = [ecm.uid]
+	ecm.ecm_mode = &"jam"
+	await hooks.frames(3)
+	var e1 := "%s · %s" % [_grid_look(p, &"ecm_jam"), _grid_look(p, &"ecm_shield")]
+	ecm.ecm_mode = &"shield"
+	await hooks.frames(2)
+	var e2 := "%s · %s" % [_grid_look(p, &"ecm_jam"), _grid_look(p, &"ecm_shield")]
+	ok(e1 == "горит «Глушение» [купол] · обычная «Прикрытие» [купол]" and e2 == "обычная «Глушение» [купол] · горит «Прикрытие» [купол]",
+		"купол — горит нынешний режим: %s → %s" % [e1, e2])
+	await _close()
+
+
+## Часы орудия планеты в шапке (план GИ, п. 2; 07, 2.4): «<орудие> N с» по игровым часам, за секунду
+## до залпа — «залп», в окне предупреждения кнопка горит, подсказка называет орудие; орудия нет —
+## нет и плашки (07, ловушка 52). Откат — порчей кода (godot/CLAUDE.md, 22).
+func test_header_gun_clock() -> void:
+	var p := await _open(Vector2i(1366, 768))
+	var h := p.hud.header
+	var gun := p.battle.gun
+	if not ok(gun != null, "в быстром бою у защитника есть орудие планеты"):
+		await _close()
+		return
+	await hooks.frames(2)
+	var left := gun.next - p.battle.time
+	var t1 := h.gun_btn.text
+	var lk1: int = h.gun_btn.get_meta(&"cf_look", -1)
+	var tip: String = h.gun_btn.get_meta(&"cf_tip", "")
+	ok(h.gun_btn.is_visible_in_tree() and t1 == "%s %d с" % [gun.def.short, ceili(left)] and lk1 == Builder.Look.NORMAL and tip.contains(gun.def.name),
+		"часы орудия: «%s» (до залпа %.1f с), подсказка называет «%s»" % [t1, left, gun.def.name])
+	# к залпу: остаётся меньше секунды — «залп», кнопка горит (окно предупреждения)
+	_steps(p, maxi(0, ceili((left - 0.5) / Battle.STEP)))
+	await hooks.frames(2)
+	var left2 := gun.next - p.battle.time
+	var t2 := h.gun_btn.text
+	var lk2: int = h.gun_btn.get_meta(&"cf_look", -1)
+	ok(left2 > 0.0 and left2 < 1.0 and t2 == "%s залп" % gun.def.short and lk2 == Builder.Look.ON,
+		"за %.2f с до залпа — «%s», кнопка горит" % [left2, t2])
+	# орудия нет — плашки нет, шапка без пустого места
+	p.battle.gun = null
+	await hooks.frames(2)
+	ok(not h.gun_btn.is_visible_in_tree() and not h.shown_buttons().has(h.gun_btn), "орудия нет — плашки часов нет")
+	await _close()
+
+
 ## Ни одна клавиша не потеряна: у каждой команды клавиш (KEY_CMD) есть кнопка — в сетке при
 ## полном выборе, в шапке или в столбике.
 func _lost_keys(drop: StringName) -> PackedStringArray:
@@ -1229,6 +1336,41 @@ static func _lab(lin: Color) -> Vector3:
 	var fy: float = f.call(y)
 	var fz: float = f.call(z)
 	return Vector3(116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+
+
+## Значок класса (план GИ, п. 6): у каждого корабля на экране — значок ЕГО класса (флагман,
+## крейсер, носитель, РЭБ, фрегат, корвет, «Синхо», станция — по id корабля), а не «тяжёлый или
+## лёгкий». До доработки GИ это не охраняла ни одна проверка — порча `kind_of` («класс по cls»:
+## флагман и крейсер одним ромбом, всё лёгкое — шевроном) оставляла ярусы зелёными; откат —
+## порчей кода (godot/CLAUDE.md, 22). Рисунок самих значков — на снимках яруса hud (глазами).
+func test_marker_kind_by_class() -> void:
+	var p := await _open(Vector2i(1920, 1080))
+	await hooks.key(KEY_F2)
+	await hooks.frames(3)
+	var bad := PackedStringArray()
+	var kinds: Dictionary[StringName, int] = {}
+	var n := 0
+	for m in p.view.markers.drawn:
+		if m.squad:
+			continue
+		var s := p.battle.ship_by_uid(m.uid)
+		var want: StringName = &"station" if s.station else s.def.id
+		n += 1
+		kinds[m.kind] = kinds.get(m.kind, 0) + 1
+		if m.kind != want or not Markers.RANK.has(m.kind):
+			bad.append("%s: значок %s, класс %s" % [s.name, m.kind, want])
+	var ks := PackedStringArray()
+	for k: StringName in kinds:
+		ks.append("%s ×%d" % [k, kinds[k]])
+	note("значки на старте: %s" % ", ".join(ks))
+	ok(n > 10 and bad.is_empty() and kinds.size() >= 6, "у %d знаков значок своего класса, классов %d (%s): %s" % [n, kinds.size(), ", ".join(ks), "; ".join(bad)])
+	# станция есть только в «Генеральном» (quick.station_on), в «Сражении» её нет — значок
+	# спрашивается напрямую у корабля с её данными
+	var st := Ship.new()
+	st.def = p.battle.defs.station
+	st.station = true
+	ok(Markers.kind_of(st) == &"station", "у станции — значок станции (%s)" % Markers.kind_of(st))
+	await _close()
 
 
 ## Матрицы Machado, Oliveira, Fernandes 2009 (полная выраженность), по строкам.
