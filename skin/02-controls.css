@@ -1,0 +1,1355 @@
+/* ===================================================================
+   02 · ОРГАНЫ УПРАВЛЕНИЯ — кнопки, переключатели, поля, чипы
+   -------------------------------------------------------------------
+   Зона модуля: 4.4 (главное действие — глазурь терракоты), 4.5 (вторичные —
+   клавиша из кости), 4.6 (кнопки-иконки: .cf-circ, .cf-tool*, .cf-modal-x,
+   кнопки 22/40, ластик Excalidraw), 4.7 (.cf-seg, .cf-sel, .cf-pill, плитки
+   облака), 4.8 (поля: .glass-input, .cf-inline-field, «+ тег», селекты,
+   scout-eq-input, hb-dist-num, hb-search, fixture-search, просмотр),
+   4.9 (.cf-chip — малярный скотч, теги, бирки КПП, voice-start),
+   .cf-search, .cf-kbd, .cf-hbtn, .cf-tile. После ревью раунда 1 сюда же:
+   кнопки с инлайновым background: var(--raised) («Расширить с ИИ»,
+   «Открыть» схему), «✓ Отметить снятым» и вкладки рельса инспектора сцены
+   — органы управления без класса, которые спецификация не перечислила.
+
+   РАУНД 2 — УСИЛЕНИЕ (поправка 1 к спецификации). Пользователь увидел
+   первую сборку: «псевдо-, не до скевоморфизма». Диагноз по снимкам против
+   витрины лаборатории (matlab/light-sec-components@2x.png): клавиши едва
+   выпуклые (отрыв 1 px/.28 + 4 px/.18 на бумаге читался плашкой с рамкой),
+   поля едва вдавлены (2 px/.14), дорожка сегментов — тинт .16 без глубины,
+   выбранный сегмент — ВДАВЛЕННЫЙ и тем самым темнее соседей, чипы — ровная
+   лента без волокна. Теперь каждый компонент берёт числа лаборатории
+   (recipes.md §С5–С6) как есть: глянцевая клавиша из кости со ШВОМ на 50 %
+   (.lbtn: блик .6 → .18 и обрыв, низ #dad6cc, кромка #a89d88, тень
+   .18 + 3 px/.22), колодец полей 4 px/.18 с кольцом .06 и кромкой #b8ad98,
+   дорожка сегментов 4 px/.22 на #d9d4c8 и ВЫПУКЛАЯ стальная плашка
+   с переломом градиента на 50 %, плоский скотч с волокном и тенью .2.
+
+   Зоны. Органы управления стоят и на бумаге, и на тёмном столе (доска,
+   Excalidraw, просмотр, скетч кадра, прежний редактор схемы, видоискатель),
+   поэтому правила двух сортов:
+   · ТОЛЬКО СВЕТЛЫЕ (.cf-seg, .cf-pill, .cf-tile, .cf-chip, .cf-circ,
+     .cf-search, .cf-kbd, button.glass-panel, тинты, бирки, рельс инспектора,
+     «Отметить снятым») — литералы лаборатории без оглядки;
+   · СМЕШАННЫЕ (.cf-sel — лотки кисти на доске и инструменты скетча;
+     #root .bg-zinc-800 — «Очистить скетч» в тёмном окне; контурные кнопки
+     с инлайн-рамкой — свёрнутая карта и «развернуть панель» на доске;
+     .glass-input — поля прежнего редактора схемы в .z-[300]; кнопки окон
+     визира; .cf-hbtn — «‹ План» в видоискателе) — ТЕ ЖЕ ЧИСЛА токенами
+     модуля 01: --key-face после усиления САМ несёт лабораторный глянец
+     (белый .6 → .18 и обрыв на 50 % поверх #f3efe6 → #e4ddcd; в DARK_ZONES —
+     тёмная клавиша со своим швом). Прежний второй блик через color-mix
+     от --bevel-hi снят: с тех пор как 01 вписал шов в сам токен (и поднял
+     --bevel-hi до #fff), он удваивал глянец (.84 на кромке вместо .6).
+     Поверх токена остался один слой — затемнение низа .04: даёт
+     лабораторный низ #dad6cc из #e4ddcd (прежние .02 → .08 считались от
+     старого низа #ebe6da и теперь уводили бы в #d2cbbd). Тени у смешанных
+     — тёмные литералы (на тёмном столе они и так к месту, поправка §2.5:
+     «те же тени») и верхняя кромка токеном --bevel-hi (#fff на бумаге,
+     .08 на графите — белый 1 px на тёмной клавише был бы чужим).
+
+   Правила, которых держимся:
+   · свет один, сверху: блик на верхней кромке, тень под нижней; нажатое
+     ТЕМНЕЕ и уходит вглубь — никаких transform;
+   · размеры целей, padding, display, position, overflow, pointer-events
+     не трогаем ни одним свойством — только фон, цвет, рамка-цвет, тени,
+     радиус, вес шрифта;
+   · !important только там, где бьём ИНЛАЙНОВЫЙ стиль (background-image
+     поверх инлайнового background, цвет текста на акцентной кнопке) или
+     повторяем правило темы, у которого !important уже стоит (.cf-sel);
+   · текстур с SVG-фильтром здесь почти нет: органы управления повторяются
+     десятками на экране. Единственное исключение, разрешённое правилами
+     производительности, — зерно в ОДНУ октаву на .cf-chip (волокно
+     скотча; номинальный потолок α ровно .08, см. 4.9); тени на
+     повторяющемся — размытие ≤ 4 px;
+   · тиснение (белая тень под тёмным текстом) — только с 15 px (.text-sm
+     в этом проекте — это fs-3) и α .35 токеном --emboss; с 17 px — .5
+     токеном --emboss-lg (решение записано в самом токене модуля 01, один
+     источник на все модули); на 12–14 px белый ореол двоит строку
+     (лаборатория, §С4) — там тени нет, и на шкале касания тоже.
+   =================================================================== */
+
+
+/* ---------- 4.4 · ГЛАВНОЕ ДЕЙСТВИЕ: ГЛАЗУРЬ ТЕРРАКОТЫ ----------
+   Цвет заливки остаётся прежним — инлайновым var(--accent)/var(--ok)/
+   var(--danger) или из шкалы (.bg-indigo-500/600, .bg-red-600, .bg-amber-700):
+   поверх кладётся ТОЛЬКО полупрозрачная картинка глазури и тени — поэтому
+   одно правило верно и на бумаге (акцент #964631 под кремовый текст), и на
+   тёмном столе (акцент #cc7a5f под тёмный). background-image с !important
+   обязателен: инлайновый shorthand «background: var(--accent)» выставил
+   image: none, и без !important блика не будет.
+   Числа — поправка §2.5 и рецепт .lbtn-deep: блик .22 → .08 к 46 %, тенью
+   .05 → .16 от 54 % (резкий перелом посередине — так лак ловит свет),
+   верхняя кромка белым .35, нижняя тёмным .28, РАМКА кольцом внутри
+   (#6e3522 на .5 — у большинства этих кнопок рамки в разметке нет, и ширину
+   не завести; где утилита border всё же есть, её цвет — та же кромка
+   токеном --glaze-edge: #6e3522 на бумаге, .5 чёрного в DARK_ZONES),
+   контакт 1 px/.28 и тень 2 px/4 px рыжим .35. Было: кромка .35 + контакт
+   .28 + 5 px/.30, без рамки. Кремовый на высоте букв (40–60 % кнопки,
+   где блик уже .08 → тень .05) — 4,9…5,6; выше нормы только самая
+   верхняя кромка, текста там нет. Кремовый текст --on-accent с letterpress
+   0 −1px тёмным .35 (было .28): буква вдавлена в лак, тень лежит СВЕРХУ.
+   Инлайновый селектор ограничен КНОПКАМИ: с тем же «background: var(--accent)»
+   в разметке лежат линия «сейчас» в раскладке дня (2 px), точка легенды
+   (8 px) и полоса прогресса — им глянец и наружная тень ни к чему.
+   Бейджи с fontSize var(--fs-1) (метки непрочитанных, чипы карточек доски)
+   исключены: на 12 px глазурь — это пятно, а не кнопка.
+   .bg-indigo-500 на .node-handle (ручка связи на доске) — владение 05,
+   на .rounded-tr-sm (своё сообщение чата) — карточка, не кнопка: ниже
+   ей отдаётся ТОЛЬКО цвет текста.
+   Цвет текста — var(--on-accent) !important: закрывает инлайновые
+   color: var(--bg) и color: #fff, а также text-white и text-[#1a1918]
+   (тёмный #1a1918 на новом акценте #964631 — 2,69, нельзя). Кремовый
+   #fbf4ec на --accent 5,98 · на --accent-hover 7,2 · на red-600 #a0392d 6,2
+   · на --ok #3a6331 5,6 · на amber-700 #7a5906 5,2; низ глазури на .16
+   темнее — контраст только растёт. Внутри тёмных зон --on-accent = #1a1918
+   на #cc7a5f — 5,45, рельс доски как сейчас. */
+#root button[style*="background: var(--accent)"]:not([style*="var(--fs-1)"]),
+#root button[style*="background: var(--ok)"],
+#root button[style*="background: var(--danger)"],
+#root .bg-indigo-500:not(.rounded-tr-sm):not(.node-handle),
+#root .bg-indigo-600,
+#root .bg-indigo-400,
+#root .bg-red-600,
+#root .bg-red-500,
+#root .bg-amber-700,
+#root [data-cf="confirm-ok"],
+#root [data-cf="scout-shoot"],
+#root [data-cf="undo-restore"],
+#root [data-cf="scout-place-ok"],
+#root [data-cf="scout-note-ok"],
+#root [data-cf="voice-stop"],
+#root [data-cf="room-join"],
+#root [data-cf="script-apply"],
+#root .cf-tool.on {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,.08) 46%, rgba(0,0,0,.05) 54%, rgba(0,0,0,.16) 100%) !important;
+  border-color: var(--glaze-edge);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.28), inset 0 0 0 1px rgba(110,53,34,.5), 0 1px 0 rgba(0,0,0,.28), 0 2px 4px rgba(60,30,20,.35);
+  color: var(--on-accent) !important;
+  text-shadow: 0 -1px 0 rgba(0,0,0,.35);
+}
+/* Наведение — ярче блик (.32), сама заливка не меняется (инлайн не перебить,
+   да и незачем: ховер у .bg-indigo-600 → indigo-500 уже даёт шкала). */
+#root button[style*="background: var(--accent)"]:not([style*="var(--fs-1)"]):hover,
+#root button[style*="background: var(--ok)"]:hover,
+#root button[style*="background: var(--danger)"]:hover,
+#root .bg-indigo-500:not(.rounded-tr-sm):not(.node-handle):hover,
+#root .bg-indigo-600:hover,
+#root .bg-indigo-400:hover,
+#root .bg-red-600:hover,
+#root .bg-red-500:hover,
+#root .bg-amber-700:hover,
+#root [data-cf="confirm-ok"]:hover,
+#root [data-cf="scout-shoot"]:hover,
+#root [data-cf="undo-restore"]:hover,
+#root [data-cf="scout-place-ok"]:hover,
+#root [data-cf="scout-note-ok"]:hover,
+#root [data-cf="voice-stop"]:hover,
+#root [data-cf="room-join"]:hover,
+#root [data-cf="script-apply"]:hover,
+#root .cf-tool.on:hover {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.32) 0%, rgba(255,255,255,.12) 46%, rgba(0,0,0,.04) 54%, rgba(0,0,0,.14) 100%) !important;
+}
+/* Нажатие — лак уходит вглубь (рецепт .lbtn-deep:active): тёмная плёнка
+   сверху, внутренняя тень 4 px/.45 плюс резкая 1 px/.35, под нижним краем
+   светлая губа токеном (на бумаге белая, на столе почти нет), гравировка
+   снята — вдавленной букве тень не нужна. Светлеть и «подпрыгивать»
+   нажатое не может. Было: одна тень 4 px/.40. */
+#root button[style*="background: var(--accent)"]:not([style*="var(--fs-1)"]):active,
+#root button[style*="background: var(--ok)"]:active,
+#root button[style*="background: var(--danger)"]:active,
+#root .bg-indigo-500:not(.rounded-tr-sm):not(.node-handle):active,
+#root .bg-indigo-600:active,
+#root .bg-indigo-400:active,
+#root .bg-red-600:active,
+#root .bg-red-500:active,
+#root .bg-amber-700:active,
+#root [data-cf="confirm-ok"]:active,
+#root [data-cf="scout-shoot"]:active,
+#root [data-cf="undo-restore"]:active,
+#root [data-cf="scout-place-ok"]:active,
+#root [data-cf="scout-note-ok"]:active,
+#root [data-cf="voice-stop"]:active,
+#root [data-cf="room-join"]:active,
+#root [data-cf="script-apply"]:active,
+#root .cf-tool.on:active {
+  background-image: linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.06)) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.45), inset 0 1px 1px rgba(0,0,0,.35), inset 0 0 0 1px rgba(110,53,34,.5), 0 1px 0 var(--bevel-hi);
+  text-shadow: none;
+}
+/* Гравировка только при кегле ≥ fs-2 и весе ≥ 600. text-xs в этом проекте —
+   это fs-2, но на нём стоят мелкие кнопки окон («Войти», «Скопировать»,
+   «Сохранить») с весом bold — спецификация велит тень на .text-xs не ставить.
+   У .cf-tool.on внутри значок, а не буква; «···» — вес 400.
+   Селектор indigo-500 повторяет оба :not() основного правила: без них
+   у него меньше вес (1,2,0 против 1,3,0), и тень оставалась бы. */
+#root .bg-indigo-500.text-xs:not(.rounded-tr-sm):not(.node-handle),
+#root .bg-indigo-600.text-xs, #root .bg-indigo-400.text-xs,
+#root .bg-red-600.text-xs, #root .cf-tool.on,
+#root button[style*="background: var(--accent)"][style*="font-family: var(--font-mono)"] {
+  text-shadow: none;
+}
+/* Своё сообщение чата — та же шкала indigo-500, но это карточка, а не
+   кнопка: без глазури и теней, только читаемый текст. */
+#root .bg-indigo-500.rounded-tr-sm { color: var(--on-accent) !important; }
+
+/* «Импортировать сцены» (.bg-emerald-600/-500 с text-[#1a1918]) стояла
+   единственной ПЛОСКОЙ заливкой среди глазурованных и костяных клавиш
+   окна агента. Цвет текста здесь не трогаем намеренно (спецификация 4.4:
+   тёмные чернила на светлой зелени 8,3 — единственная пара, где они
+   остались), объём даём тот же, что остальным: глазурь, рамка кольцом
+   (тёмная зелень .45 вместо терракоты) и тень лака. Низ глазури темнит
+   зелень (169,198,155) на .16 — до (142,166,130), тёмный #1a1918 держит
+   там 6,6. Окно агента — светлое, литералы безопасны. Без color и без
+   text-shadow. */
+#root .bg-emerald-600.text-\[\#1a1918\],
+#root .bg-emerald-500.text-\[\#1a1918\] {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,.08) 46%, rgba(0,0,0,.05) 54%, rgba(0,0,0,.16) 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.28), inset 0 0 0 1px rgba(40,70,30,.45), 0 1px 0 rgba(0,0,0,.28), 0 2px 4px rgba(30,50,20,.3);
+}
+#root .bg-emerald-600.text-\[\#1a1918\]:hover,
+#root .bg-emerald-500.text-\[\#1a1918\]:hover {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.32) 0%, rgba(255,255,255,.12) 46%, rgba(0,0,0,.04) 54%, rgba(0,0,0,.14) 100%);
+}
+#root .bg-emerald-600.text-\[\#1a1918\]:active,
+#root .bg-emerald-500.text-\[\#1a1918\]:active {
+  background-image: linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.06));
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.45), inset 0 1px 1px rgba(0,0,0,.35), inset 0 0 0 1px rgba(40,70,30,.45), 0 1px 0 rgba(255,255,255,.7);
+}
+
+
+/* ---------- 4.5 · ВТОРИЧНЫЕ КНОПКИ: ГЛЯНЦЕВАЯ КЛАВИША ИЗ КОСТИ (рецепт .lbtn) ----------
+   Лаборатория как есть: два слоя — глянец белым .6 → .18 к 50 % и ОБРЫВ
+   (шов — это и есть «пластик», который ловит свет), под ним кость
+   #f3f0e9 → #dad6cc; кромка #a89d88 (поправка §2.4), тени — белая 1 px
+   сверху, тёмная .08 на нижней стенке внутри, контакт 1 px/.18 и мягкая
+   2 px/3 px рыжим .22. Было: лицо #fffdf8 → #ebe6da без шва, кромка
+   rgba(60,48,30,.3) ≈ #c0b6a6 на бумаге, тень 1 px/.28 + 4 px/.18 — на
+   снимках клавиша отличалась от плашки только рамкой.
+   Цвет текста здесь НЕ задаётся намеренно: у этих кнопок он приходит
+   утилитами (text-zinc-300 → графит 75,69,61 светлой шкалы: на низу кости
+   #dad6cc это 6,4; text-amber-300 у «+ Новая схема» — это смысл) или
+   инлайном токенами. Тиснение — только у .text-sm (15 px), ниже.
+   button.glass-panel / label.glass-panel: .glass-panel стоит и на панелях,
+   и на этих кнопках («Отмена», «+ Создать гайд», крестик чата, импорт
+   JSON); панели — владение 03 с :not(button):not(label), кнопки — здесь.
+   Плитки облака — только кнопки сетки [aria-label] .grid-cols-2 > button,
+   а не все button окна (там же лежат крестик и главные кнопки).
+   Все перечисленные живут в светлых окнах и колонках — литералы. */
+button.glass-panel,
+label.glass-panel,
+[data-cf="hb-cmp-add"],
+[data-cf="hb-cmp-open"],
+[data-cf="print-pdf-save"],
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button {
+  background-color: var(--card);
+  background-image: linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.18) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #f3f0e9, #dad6cc);
+  border-color: #a89d88;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+button.glass-panel:hover,
+label.glass-panel:hover,
+[data-cf="hb-cmp-add"]:hover,
+[data-cf="hb-cmp-open"]:hover,
+[data-cf="print-pdf-save"]:hover,
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button:hover {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.7) 0%, rgba(255,255,255,.22) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #faf8f4, #e2ded5);
+}
+/* Нажатие (рецепт .lbtn:active): лицо темнее и ПЕРЕВЁРНУТОЕ (низ светлее —
+   клавиша ушла в гнездо, свет попадает на дальнюю стенку), кромка #8f897e,
+   внутренняя тень 4 px/.28 плюс резкая 1 px/.2, под краем белая губа .7. */
+button.glass-panel:active,
+label.glass-panel:active,
+[data-cf="hb-cmp-add"]:active,
+[data-cf="hb-cmp-open"]:active,
+[data-cf="print-pdf-save"]:active,
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button:active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce);
+  border-color: #8f897e;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), 0 1px 0 rgba(255,255,255,.7);
+}
+/* Тиснение подписи — только на 15 px (.text-sm = fs-3 в этом проекте:
+   «Отмена», импорт JSON) и токеном --emboss (α .35 на бумаге): на 13,5 px
+   («+ Создать гайд», печать) белый ореол двоит строку. Нажатое тиснение
+   теряет — вдавленной букве тень не нужна. */
+#root button.glass-panel.text-sm,
+#root label.glass-panel.text-sm { text-shadow: var(--emboss); }
+#root button.glass-panel.text-sm:active,
+#root label.glass-panel.text-sm:active { text-shadow: none; }
+
+/* СМЕШАННАЯ ЗОНА — та же клавиша числами лаборатории: лицо ТОКЕНОМ
+   --key-face (глянец и шов уже в нём, см. шапку модуля) и низ темнее
+   на .04 отдельным слоем — на бумаге кость #e4ddcd становится ≈ #dbd4c5,
+   лабораторный низ #dad6cc; на столе — чуть темнее тёмной клавиши.
+   Сюда входят:
+   · #root .bg-zinc-800 — кнопки печати и неактивный «Спросить» (бумага),
+     но и «Очистить скетч» в тёмном окне скетча кадра (.z-[300]), где
+     zinc-800 — это графит 36,35,34 под светлым текстом: опаковая кость
+     сделала бы там белую кнопку с белой надписью;
+   · контурные кнопки с ИНЛАЙНОВОЙ рамкой «border: 1px solid var(--border)»
+     («+ в сравнение», «Записать точку», «Собрать сцену», «по адресу», −/+
+     у техники) — и они же на доске: свёрнутая мини-карта, «развернуть
+     панель» 34×34, [data-cf="exc-mini-open"];
+   · ±0,5 мм обзора и ± объектива визира: первые в окне настроек, вторые
+     в полосе [data-cf="scout-bar"] — тёмной зоне;
+   · [data-cf="scout-setcoords"] — окно «Объект и день», открывается
+     и из видоискателя.
+   Рамка у инлайновых остаётся инлайновой по ширине; цвет перебит кромкой
+   rgba(60,48,30,.42) с !important — на бумаге это ≈ #aba59a (лабораторная
+   #a89d88), на графите — невидимая тёмная линия. background-image
+   с !important: у части из них инлайновый «background: transparent»
+   (pill(false) скаута) выставил image: none.
+   Исключены: .cf-sel (ниже, со своим !important), состояние «выбрано»
+   инлайном var(--raised) (окно настроек визира, владение 05), чипы
+   и текстовые кнопки — у них свой материал. */
+#root .bg-zinc-800,
+[data-cf="scout-setcoords"] {
+  background-image: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.04) 100%), var(--key-face);
+  border-color: rgba(60,48,30,.42);
+  box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+#root button[style*="border: 1px solid var(--border)"]:not(.cf-sel):not([style*="var(--raised)"]):not(.cf-chip):not(.cf-hbtn),
+#root [data-cf="scout-eq-minus"],
+#root [data-cf="scout-eq-plus"],
+#root [data-cf="scout-lens-minus"],
+#root [data-cf="scout-lens-plus"] {
+  background-image: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.04) 100%), var(--key-face) !important;
+  border-color: rgba(60,48,30,.42) !important;
+  box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+#root .bg-zinc-800:hover,
+[data-cf="scout-setcoords"]:hover {
+  background-image: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.03) 100%), var(--key-face-hover);
+}
+#root button[style*="border: 1px solid var(--border)"]:not(.cf-sel):not([style*="var(--raised)"]):not(.cf-chip):not(.cf-hbtn):hover,
+#root [data-cf="scout-eq-minus"]:hover,
+#root [data-cf="scout-eq-plus"]:hover,
+#root [data-cf="scout-lens-minus"]:hover,
+#root [data-cf="scout-lens-plus"]:hover {
+  background-image: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.03) 100%), var(--key-face-hover) !important;
+}
+/* Нажатие смешанных: --key-dn (на бумаге #cbc7bd → #dbd7ce, на столе —
+   тёмная плёнка), внутренняя тень 4 px/.28 + 1 px/.2, кольцо гнезда .24,
+   светлая губа токеном. */
+#root .bg-zinc-800:active,
+[data-cf="scout-setcoords"]:active {
+  background-image: var(--key-dn);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), inset 0 0 0 1px rgba(60,48,30,.24), 0 1px 0 var(--bevel-hi);
+}
+#root button[style*="border: 1px solid var(--border)"]:not(.cf-sel):not([style*="var(--raised)"]):not(.cf-chip):not(.cf-hbtn):active,
+#root [data-cf="scout-eq-minus"]:active,
+#root [data-cf="scout-eq-plus"]:active,
+#root [data-cf="scout-lens-minus"]:active,
+#root [data-cf="scout-lens-plus"]:active {
+  background-image: var(--key-dn) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), inset 0 0 0 1px rgba(60,48,30,.24), 0 1px 0 var(--bevel-hi);
+}
+
+/* «✓ Отметить снятым» в очереди кадров («Съёмка»): инлайн «background:
+   transparent» и «border: 2px solid var(--border)» — под хук контурных
+   кнопок (border: 1px) она не попадала и стояла плоским незакрашенным
+   квадратом рядом с бумажными карточками, хотя это единственный орган
+   управления экрана и жмут его в перчатке. Глянцевая клавиша из кости
+   литералом (экран «Съёмка» светлый): лицо с !important (shorthand
+   выставил image: none), цвет рамки — кромка #a89d88 (ширина 2 px
+   и размер 44 остаются инлайновыми), тени клавиши. Цвет галочки
+   (var(--muted-2) инлайном) не трогаем. Снятое состояние (inline var(--ok),
+   другой title) — глазурь в 4.4. */
+#root button[style*="border: 2px solid var(--border)"],
+#root button[title="Отметить снятым"] {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.18) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #f3f0e9, #dad6cc) !important;
+  border-color: #a89d88 !important;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+#root button[style*="border: 2px solid var(--border)"]:hover,
+#root button[title="Отметить снятым"]:hover {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.7) 0%, rgba(255,255,255,.22) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #faf8f4, #e2ded5) !important;
+}
+#root button[style*="border: 2px solid var(--border)"]:active,
+#root button[title="Отметить снятым"]:active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce) !important;
+  border-color: #8f897e !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), 0 1px 0 rgba(255,255,255,.7);
+}
+
+/* Кнопки с ИНЛАЙНОВЫМ «background: var(--raised)» («Расширить с ИИ»
+   в правой панели и в шторке «Экспликация», «Открыть» схему в панели
+   «Свет» и у объекта, «Найти рисунок этой доски» в «Проекте»). В тёмной
+   теме калька --raised на панели была плашкой; на крафте правой панели
+   (#e4ddcc) --raised (#e0d9c8) отличается на четыре уровня — кнопка
+   исчезла и читалась строкой текста с иконкой. Глянцевая клавиша из кости
+   литералом (панель сцены, шторка и окно «Проект» — светлые): лицо
+   с !important (shorthand выставил image: none), кромка #a89d88 кольцом
+   в тени (рамки у кнопки нет, габарит цел). Цвет текста — инлайновый
+   var(--text-2), уже токен, не трогаем; тиснения нет: кегль fs-2 (13,5 px),
+   на нём белый ореол двоит строку (лаборатория, §С4). Границы селектора:
+   · строки шторок с тем же инлайном — владение 03 (4.14), поэтому
+     в шторке берём ТОЛЬКО кнопку (.font-semibold и не .w-full);
+   · строки меню исключены целиком;
+   · .w-7 — значок «лежит на доске» у гайда (28 px, состояние, не кнопка
+     действия) остаётся калькой темы. */
+#root button.rounded-lg[style*="background: var(--raised)"]:not(.cf-sheet *):not(.cf-menu *):not(.w-7),
+#root .cf-sheet button.rounded-lg.font-semibold[style*="background: var(--raised)"]:not(.w-full) {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.18) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #f3f0e9, #dad6cc) !important;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 0 0 1px #a89d88, 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+#root button.rounded-lg[style*="background: var(--raised)"]:not(.cf-sheet *):not(.cf-menu *):not(.w-7):hover,
+#root .cf-sheet button.rounded-lg.font-semibold[style*="background: var(--raised)"]:not(.w-full):hover {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.7) 0%, rgba(255,255,255,.22) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #faf8f4, #e2ded5) !important;
+}
+#root button.rounded-lg[style*="background: var(--raised)"]:not(.cf-sheet *):not(.cf-menu *):not(.w-7):active,
+#root .cf-sheet button.rounded-lg.font-semibold[style*="background: var(--raised)"]:not(.w-full):active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), 0 0 0 1px #8f897e, 0 1px 0 rgba(255,255,255,.7);
+}
+/* «Думаю…» — кнопка disabled, пока ИИ отвечает: прежняя opacity остаётся,
+   объём снят, как у всех выключенных клавиш ниже. */
+#root button.rounded-lg[style*="background: var(--raised)"]:not(.cf-sheet *):not(.cf-menu *):not(.w-7):disabled,
+#root .cf-sheet button.rounded-lg.font-semibold[style*="background: var(--raised)"]:not(.w-full):disabled {
+  box-shadow: none;
+  text-shadow: none;
+}
+
+/* Контурные АКЦЕНТНЫЕ («+ кадр», «Я здесь» контуром, «Свести щипком»,
+   «+ в каталог», «Просмотр ?»): поправка §2.4 — ТА ЖЕ клавиша, что
+   у вторичных, с терракотовым текстом. Контур --accent-line и текст
+   терракотой приходят инлайном и остаются (терракота #964631 на кости
+   #e7e3db ≈ 5,4). Раньше тут была плоская бумага «приглашения» — на снимке
+   «+ кадр» читался пустым контуром рядом с клавишами.
+   Смешанная запись (лицо токеном --key-face + низ .04): «Я здесь»
+   и «Свести щипком» лежат в окнах визира, которые открываются и из
+   тёмного видоискателя, а по инлайновому селектору сюда попадают и они.
+   hb-add и «+ кадр» на бумаге получают ровно лабораторные .6/.18 из
+   токена. Чип «Сбросить» с borderColor: var(--accent-line) — скотч,
+   исключён. */
+[data-cf="hb-add"],
+[data-cf="scout-fovtune"],
+[data-cf="scout-here"],
+#root button[style*="var(--accent-line)"]:not(.cf-chip) {
+  background-image: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.04) 100%), var(--key-face);
+  box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+[data-cf="hb-add"]:hover,
+[data-cf="scout-fovtune"]:hover,
+[data-cf="scout-here"]:hover,
+#root button[style*="var(--accent-line)"]:not(.cf-chip):hover {
+  background-image: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.03) 100%), var(--key-face-hover);
+}
+[data-cf="hb-add"]:active,
+[data-cf="scout-fovtune"]:active,
+[data-cf="scout-here"]:active,
+#root button[style*="var(--accent-line)"]:not(.cf-chip):active {
+  background-image: var(--key-dn);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), inset 0 0 0 1px rgba(60,48,30,.24), 0 1px 0 var(--bevel-hi);
+}
+
+/* Тинтованные клавиши. Их два рода, и после ревью раунда 2 они разошлись
+   по материалам набора (бумага · кость · алюминий · латунь · кожа ·
+   терракотовая глазурь · скотч):
+
+   1) ТЕРРАКОТОВЫЕ (bg-indigo-600/30|40: «Поделиться», «Экспортировать
+      бэкап», импорт JSON, «Выбрать КПП», «+ Добавить участника», «Открыть»
+      схему) — КЛАВИША ИЗ КОСТИ С ТЕРРАКОТОВЫМИ ЧЕРНИЛАМИ, как контурные
+      «+ кадр» (поправка §2.4). Тинт пробовали дважды, и оба раза он был
+      чужим материалом: от i600 — пыльно-розовый (раунд 1), от i800 на .34 —
+      пыльно-лиловая пластмасса (196,179,170 → 175,158,150 к низу), «ни кость,
+      ни глазурь», единственный чужой цвет на экране гайдов (ревью раунда 2).
+      Терракотовый тинт сам по себе не материал: терракота у нас — это
+      глазурь главного действия, а у вторичного действия терракотой бывают
+      только ЧЕРНИЛА. Лицо — литерал лаборатории .lbtn, тот же, что у
+      «Отмены» и button.glass-panel в тех же окнах («Проект», «Агент КПП»,
+      «Доступ», гайды — всё светлое): глянец .6 → .18 и шов на 50 %, кость
+      #f3f0e9 → #dad6cc. Рамки в разметке у них нет — кромку #a89d88 даёт
+      кольцо в тени, как у .cf-tile; габарит цел.
+      Цвет фона прибит и к :hover: утилиты hover:bg-indigo-600/50|60 вернули
+      бы под рукой тинт. Все девять кнопок с hover:bg-indigo-600/50 несут
+      и bg-indigo-600/30, поэтому правило ниже (вес 1,2,0, позже в каскаде)
+      бьёт их всегда — ремап этой утилиты в модуле 01 не применяется
+      никогда (ревью раунда 3: мёртвое правило, удаляет 01). Клавиша из
+      кости с терракотовыми чернилами — решение, а не недосмотр: §4.5
+      и §9 спецификации правятся под него (альфу тинта §9 проверяет
+      на утилите, которая тинтом осталась). Наведение — ярче блик, как
+      у всех клавиш из кости.
+      Чернила — var(--accent) (#964631) у всех трёх утилит (text-indigo-200,
+      -300, -100): одна терракота на одном материале. Счёт по лицу кости
+      на высоте строки (30 → 70 % клавиши, глянец и шов учтены): 5,7 → 4,8 —
+      норма для 15 px жирного. text-indigo-300:not(:hover) — чтобы hover:text-white
+      «+ Добавить участника» (графит через --cf-w, вес 0,2,0) по-прежнему
+      побеждал на наведении: #root иначе перебил бы его весом.
+      Тиснение — только у .text-sm (15 px) токеном --emboss: «+ Добавить
+      участника» — text-xs (13,5 px), там белый ореол двоит строку;
+
+   2) ОХРА (bg-amber-600/30, bg-amber-900/40: «Выбрать сценарий», печать
+      схемы) — тинт ОСТАЁТСЯ: охра в наборе есть (латунь, скотч), и цвет
+      отличает загрузку сценария от загрузки КПП. Поверх тинта — глянец
+      того же профиля со швом, но тише (.30 → .10, низ тенью .02 → .06):
+      белый .6 выбелил бы тинт до бумаги. Кромка кольцом .35, тени кости.
+      Чернила «Выбрать сценарий» — text-amber-100 (107,78,5) на нижней
+      половине глянца (206,190,157) давали 4,2–4,45, ниже нормы ровно
+      на строке текста (ревью раунда 2): #5a4104 — та же охра темнее,
+      5,2 у нижней кромки. */
+#root .bg-indigo-600\/30,
+#root .bg-indigo-600\/30:hover,
+#root .bg-indigo-600\/40,
+#root .bg-indigo-600\/40:hover {
+  background-color: var(--card);
+  background-image: linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.18) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #f3f0e9, #dad6cc);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 0 0 1px #a89d88, 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+#root .bg-indigo-600\/30:hover,
+#root .bg-indigo-600\/40:hover {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.7) 0%, rgba(255,255,255,.22) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #faf8f4, #e2ded5);
+}
+#root .bg-indigo-600\/30.text-indigo-200,
+#root .bg-indigo-600\/30.text-indigo-300:not(:hover),
+#root .bg-indigo-600\/40.text-indigo-100 { color: var(--accent); }
+#root .bg-indigo-600\/30.text-sm,
+#root .bg-indigo-600\/40.text-sm { text-shadow: var(--emboss); }
+#root .bg-indigo-600\/30:active,
+#root .bg-indigo-600\/40:active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), 0 0 0 1px #8f897e, 0 1px 0 rgba(255,255,255,.7);
+  text-shadow: none;
+}
+
+#root .bg-amber-600\/30,
+#root .bg-amber-900\/40 {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.30) 0%, rgba(255,255,255,.10) 50%, rgba(0,0,0,.02) 50%, rgba(0,0,0,.06) 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), inset 0 -1px 0 rgba(0,0,0,.06), inset 0 0 0 1px rgba(60,48,30,.35), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+#root .bg-amber-600\/30.text-amber-100 { color: #5a4104; }
+#root .bg-amber-600\/30:active,
+#root .bg-amber-900\/40:active {
+  background-image: linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.04));
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), inset 0 0 0 1px rgba(60,48,30,.35), 0 1px 0 rgba(255,255,255,.7);
+}
+
+/* Выключенная клавиша — плоская: прежняя opacity остаётся (утилиты и
+   инлайн её держат), снимаем только объём и тиснение (рецепт
+   .lbtn:disabled — без тени). */
+button.glass-panel:disabled,
+label.glass-panel:disabled,
+#root .bg-zinc-800:disabled,
+[data-cf="hb-cmp-add"]:disabled,
+[data-cf="hb-cmp-open"]:disabled,
+[data-cf="scout-setcoords"]:disabled,
+[data-cf="print-pdf-save"]:disabled,
+[data-cf="hb-add"]:disabled,
+[data-cf="scout-fovtune"]:disabled,
+[data-cf="scout-here"]:disabled,
+#root button[style*="border: 1px solid var(--border)"]:not(.cf-sel):not([style*="var(--raised)"]):not(.cf-chip):not(.cf-hbtn):disabled,
+#root button[style*="var(--accent-line)"]:not(.cf-chip):disabled,
+#root .bg-indigo-600\/30:disabled,
+#root .bg-amber-600\/30:disabled {
+  box-shadow: none;
+  text-shadow: none;
+}
+/* «Отметьте сцены» — кнопка «Удалить N сцен» режима выбора, пока ничего
+   не отмечено (disabled, инлайн: пунктир var(--border), фон transparent,
+   цвет var(--muted-2)). В тёмной теме --muted-2 давал около 3,3, и кнопка
+   честно читалась недоступной; на бумажной полке 03 (var(--card), на
+   планшете и на телефоне) тот же токен — 6,3 (#635c4f), и пунктирный
+   контур с тёмной подписью стал выглядеть рабочей контурной кнопкой
+   (ревью раунда 3, tablet-05): серые ступени светлой палитры близки,
+   и «пока нельзя» пропало. Подпись — #8a8273: на бумаге #fbf9f3 3,6 —
+   почти как было в тёмной теме; у выключенного элемента порог 4,5
+   не действует, а «есть, но недоступно» снова видно. Только цвет, и он
+   с !important — бьёт инлайн. Пунктир, размер 46 и фон остаются инлайном;
+   включённая кнопка (var(--danger)) — глазурь в 4.4. Полка всегда
+   светлая — литерал. */
+#root button[data-cf="scene-sel-delete"]:disabled { color: #8a8273 !important; }
+
+/* .cf-tile — четыре плитки телефона (Техника · Свет · Объект · Экспликация):
+   широкая глянцевая клавиша из кости литералом. Рамки у плитки нет, кромку
+   #a89d88 даёт кольцо в box-shadow — габарит не меняется, min-height 44
+   не трогаем. Подпись — --text (поправка §2.4), fs-2: на телефоне это
+   шкала касания, 14 px — НИЖЕ порога тиснения (15 px, RULES п. 6), и тени
+   у подписи нет вовсе. Прежняя «ослабленная» .3 на касании была обходом
+   правила без замера (ревью раунда 1); --text на низу кости #dad6cc — 10,
+   тиснение ей и не нужно. Плитки живут только на светлом экране сцены. */
+.cf-tile {
+  background-color: var(--card);
+  background-image: linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.18) 50%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #f3f0e9, #dad6cc);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 0 0 1px #a89d88, 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+  color: var(--text);
+}
+.cf-tile:active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), 0 0 0 1px #8f897e, 0 1px 0 rgba(255,255,255,.7);
+}
+
+
+/* ---------- 4.6 · КНОПКИ-ИКОНКИ ----------
+   .cf-circ (поиск, «···», «+» телефона, «···» объекта) — стальная заклёпка
+   по рецепту .lhead .circ: купол (радиальный блик от верхней трети), белая
+   кромка сверху, тёмная .08 снизу, кольцо .2, контакт 1 px/.25 и тень
+   2 px/3 px — заклёпка СТОИТ над алюминием, а не нарисована на нём.
+   Значок — --text-2 (лаборатория: #4e463c; прежний --muted на снимке
+   шапки терялся). Нажатая/открытая (.on) — блик уходит вниз, внутренняя
+   тень 3 px/.3 + 1 px/.2, под краем белая губа: заклёпка утоплена.
+   Все .cf-circ стоят на светлых шапках — литералы. Латунный «+» телефона
+   поверх этого — модуль 03 (#root header .cf-circ[style*="var(--accent)"]). */
+.cf-circ {
+  background: radial-gradient(circle at 50% 30%, #faf8f3, #dcd8ce 85%);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.2), 0 1px 1px rgba(0,0,0,.25), 0 2px 3px rgba(0,0,0,.12);
+  color: var(--text-2);
+}
+.cf-circ:hover, .cf-circ.on {
+  background: radial-gradient(circle at 50% 70%, #d3cec3, #e6e2d9 85%);
+  box-shadow: inset 0 2px 3px rgba(0,0,0,.3), inset 0 1px 1px rgba(0,0,0,.2), 0 0 0 1px rgba(0,0,0,.2), 0 1px 0 rgba(255,255,255,.7);
+  color: var(--text);
+}
+
+/* .cf-tool — кнопки-иконки рельсов (доска, инспектор сцены, действия
+   досок). В покое — ничего, кроме цвета: рельс их и так в ряд, и сорок
+   выпуклых клавиш подряд — это снова «кокпит». Наведение — лёгкий тинт
+   вместо плашки --raised. Включённая (.on) — глазурь, правило 4.4 выше:
+   на тёмном столе доски она такая же, как сейчас (акцент #cc7a5f, тёмный
+   значок). Выключенная (.off — «отменить», «вернуть», «копировать» на
+   рельсе своей доски; других .off в разметке нет, и все три стоят на
+   ТЁМНОМ столе) — не цвет кромки, как в теме: --border тёмной зоны
+   #33312d на анодировке рельса #242322 — это 1,25, и на снимке на месте
+   трёх кнопок была пустая полоса (ревью раунда 1, вырезка 10-rail).
+   Выключенное обязано читаться как «кнопка есть, сейчас недоступна»:
+   --muted тёмного стола (166,163,154) с α .42 — на #242322 ≈ (91,89,84),
+   2,2:1 — подсказка, а не рабочая кнопка. Литерал, потому что зона
+   у .off одна; opacity не трогаем. Разделитель — прорезь:
+   тёмная линия с бликом под ней. Линия — --bevel-lo (.28 на бумаге:
+   на крафте рельса инспектора ≈ #b5ac9c; .65 чёрного на тёмном рельсе
+   доски), а НЕ кромка клавиши --key-edge, как было: та после усиления
+   стала #a89d88 и между значками читалась чертой, а в тёмной зоне
+   --key-edge — это БЕЛЫЙ .1, то есть светлая линия над светлым бликом,
+   две светлые полосы вместо прорези. --bevel-lo флипает зону верно:
+   тёмная борозда, под ней светлое ребро. */
+.cf-tool { color: var(--muted); }
+.cf-tool:hover { background: var(--tint-2); color: var(--accent); }
+.cf-tool.off, .cf-tool.off:hover { color: rgba(166,163,154,.42); box-shadow: none; }
+.cf-tool-sep { background: var(--bevel-lo); box-shadow: 0 1px 0 var(--bevel-hi); }
+
+/* Вкладки инспектора сцены (рельс --rail-w справа: Экспликация · Камера ·
+   Свет · Объект и солнце) — кнопки БЕЗ класса, всё инлайном: активная —
+   background: var(--raised), значок var(--accent). Это НЕ .cf-tool.on
+   (тот на доске — глазурь, 4.4, и его не трогаем). На крафте правой панели
+   (#e4ddcc) калька --raised (#e0d9c8) не видна вовсе, и «где я» в рельсе
+   из семи значков приходилось искать. Активная — ВДАВЛЕННОЕ ГНЕЗДО: тинт
+   темнее сверху (свет сверху — тень на верхней стенке углубления, .18 → .06
+   литералом: рельс только на светлом экране сцены), внутренняя тень
+   4 px/.26 + резкая 1 px/.14 (было 3 px/.2), кольцо кромки .38, белая
+   нижняя губа .8. Значок — тёмная терракота --accent-hover: в середине
+   гнезда (затемнение ≈ .12, ≈ 203,197,182) обычный акцент даёт 3,8,
+   --accent-hover — 4,6. !important бьёт только инлайновые background
+   и color; размер var(--tool) и радиус остаются инлайновыми.
+   СЕЛЕКТОР — БЕЗ [style*] В ЗВЕНЕ-ПРЕДКЕ (ревью раунда 2, блокер). Прежний
+   «div[style*="width: var(--rail-w)"] > button[style*=…]» заставлял браузер
+   на смену style у ЛЮБОГО узла пересчитывать всех его потомков с атрибутом
+   style: на панораме доски это 3860 узлов и 223 мс за 20 кадров (≈ 11 мс
+   на кадр) от одного правила. Рельс узнаём по классам контейнера
+   (div.flex.flex-col.items-center.shrink-0.gap-1.5 — в разметке такой
+   ровно один) и классу кнопки, а [style*] остаётся только у самой кнопки:
+   смена её style пересчитывает её одну. Совпадение узлов проверено —
+   это те же четыре вкладки PANEL_TABS. */
+#root div.flex-col.items-center.gap-1\.5 > button.transition-colors[style*="width: var(--tool)"][style*="background: var(--raised)"] {
+  background-image: linear-gradient(180deg, rgba(43,39,35,.18), rgba(43,39,35,.06)) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.26), inset 0 1px 1px rgba(0,0,0,.14), 0 0 0 1px rgba(60,48,30,.38), 0 1px 0 rgba(255,255,255,.8);
+  color: var(--accent-hover) !important;
+}
+
+/* ЗНАЧКИ РЕЛЬСА В ПОКОЕ — НЕГЛУБОКИЕ ГНЁЗДА (пробел покрытия р2: «плоские
+   линейные значки на крафте, без гравировки»). Гравировать сам глиф нечем:
+   тень по контуру svg — это filter, а §6 разрешает его только двенадцати
+   статичным значкам шапки и таб-бара; второй оттиск значка CSS не нарисует.
+   Поэтому гравирована КНОПКА — место каждого значка отмечено в крафте
+   едва заметной ВЫТИСНЕННОЙ МЕТКОЙ: дно темнее только у верхней стенки
+   (тинт .04 → 0, свет сверху), тень от верхней стенки 1px 1px/.12 и
+   светлая губа под нижней кромкой .6. Кольца стенок НЕТ (ревью раунда 3):
+   с кольцом .07 восемь одинаковых выемок столбиком читались колонкой
+   плиток-клавиш — самым тяжёлым интерфейсом экрана сцены, а по правилу
+   «интерфейс отступает» рельс обязан быть тихим. Вдобавок «где я» тонуло
+   среди соседних выемок. Без обводки остаётся гравировка — тень и губа
+   без границы плитки.
+   Активная вкладка — ГЛУБОКОЕ гнездо правилом выше (2px 4px/.26 + кольцо
+   .38), покой — едва тиснёный: на тихом фоне разница глубины и есть
+   «где я», цвет значка её только подтверждает. Охват: вкладки PANEL_TABS (кнопки без класса,
+   инлайн background: transparent — отсюда !important на картинке, только
+   визуальное) и действия сцены .cf-tool в том же рельсе, включая «···»
+   в обёртке div.relative. Исключены активная вкладка (инлайн var(--raised))
+   и раскрытое «···» (.cf-tool.on — глазурь 4.4). Рельс — тот же контейнер,
+   что у гнезда выше, по классам, без [style*] в звене-предке. Размер
+   var(--tool) и радиус r-md — инлайн, не трогаем. Наведение .cf-tool
+   кладёт тинт --tint-2 цветом фона ПОД выемку — она темнеет, а не
+   пропадает. --muted значка на дне метки ≈ 5,6 (значок, порог 3,0). */
+#root div.flex-col.items-center.gap-1\.5 > button.transition-colors[style*="width: var(--tool)"]:not([style*="background: var(--raised)"]),
+#root div.flex-col.items-center.gap-1\.5 > button.cf-tool:not(.on),
+#root div.flex-col.items-center.gap-1\.5 > div.relative > button.cf-tool:not(.on) {
+  background-image: linear-gradient(180deg, rgba(43,39,35,.04), rgba(43,39,35,0)) !important;
+  box-shadow: inset 0 1px 1px rgba(60,48,30,.12), 0 1px 0 rgba(255,255,255,.6);
+}
+
+/* .cf-modal-x — крестик окна: стальная заклёпка по рецепту .lmodal .x
+   (градиент #f6f4ee → #dcd8ce, белая кромка, контакт .25, кольцо .15),
+   а не бумажный диск. Фон ОБЯЗАН остаться непрозрачным: крестик прилипает
+   к верху и проходит поверх текста при прокрутке — градиент опаковый,
+   background-color под ним тоже задан. Утилита hover:bg-red-500/20 дала бы
+   на наведении ПОЛУПРОЗРАЧНЫЙ диск, сквозь который читались бы буквы, —
+   поэтому ховер перебит #root-ом, диск остаётся стальным, а красный тинт
+   лежит внутренней тенью поверх него. Литералы, а не токены: лист окна
+   светлый всегда (03), а окно может открыться из тёмной зоны, где
+   var(--card) — графит, и диск стал бы тёмной точкой на бумаге.
+   Селектор — button.cf-modal-x, и это не каприз: у крестика в разметке
+   утилита text-zinc-400 того же веса (0,1,0), таблица Tailwind идёт позже
+   и побеждала — цвет #4e463c был МЁРТВЫМ объявлением (замер ревью:
+   вычисленный rgb(90,83,72), --muted). Элемент в селекторе даёт (0,1,1)
+   против (0,1,0) — побеждает независимо от порядка таблиц. Не #root:
+   окно RefPicker (data-cf-modal 240) рисуется порталом в body, его
+   крестик лежит ВНЕ #root, а крестик везде — <button>. Ховер тем же
+   способом: (0,2,1) против hover:bg-red-500/20 и hover:text-red-400
+   (0,2,0). */
+button.cf-modal-x {
+  background-color: #e8e4da;
+  background-image: linear-gradient(180deg, #f6f4ee, #dcd8ce);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 1px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.15);
+  color: #4e463c;
+}
+button.cf-modal-x:hover {
+  background-color: #e8e4da;
+  background-image: linear-gradient(180deg, #f6f4ee, #dcd8ce);
+  box-shadow: inset 0 0 0 99px rgb(var(--cf-r500) / .14), inset 0 1px 0 #fff, 0 1px 1px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.15);
+  color: rgb(var(--cf-r400));
+}
+
+/* Кнопки 22/40 с размером инлайном ВНЕ кожаных капов: крестик панели
+   инструмента на доске («Свернуть панель — освободить холст», panelFold)
+   и «?» пояснений визира — только тени клавиши: размер, радиус, фон
+   и цвет у них инлайном, и их не трогаем. Тени — те же, что у клавиши
+   из кости (кромка токеном --bevel-hi: крестик стоит на тёмной
+   анодировке доски). «?» во включённом состоянии красится инлайном
+   var(--raised) — туда тень вдавленной.
+   «Свернуть список сцен» и «Свернуть панель» инспектора отсюда УБРАНЫ
+   (ревью раунда 3): обе стоят только в капах колонок (планшетная
+   раскладка, ≥ 768 — ровно там, где 03 кладёт кожу), и правило клавиши
+   на коже модуля 03 (вес выше) отдаёт им лицо, кромку и тень целиком —
+   здесь они были мёртвым объявлением. Хозяин у кнопки в капе один — 03.
+   Совпадение названия точное, а не по началу: «Свернуть панель»
+   инспектора — тоже «Свернуть панель…».
+   Свёрнутой карты доски ([data-cf="exc-mini-open"], как и .cf-mini > button
+   своей доски и кнопки «развернуть панель» 34×34) в списке НЕТ намеренно:
+   у всех трёх инлайн border: 1px solid var(--border), и полную клавишу
+   они берут общим правилом контурных кнопок выше; второй раз о них
+   не пишет ни этот модуль, ни 05. */
+[data-cf="scout-hints"],
+button[title="Свернуть панель — освободить холст"] {
+  box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.18), 0 2px 3px rgba(60,48,30,.22);
+}
+[data-cf="scout-hints"][style*="var(--raised)"] {
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), inset 0 0 0 1px rgba(60,48,30,.24), 0 1px 0 var(--bevel-hi);
+}
+
+/* Ластик Apple Pencil в нижней панели Excalidraw: красится ТОЛЬКО видимая
+   плашка span — у внешней кнопки height/margin держат ряд Footer.
+   Фон плашки инлайновый (var(--card)/var(--raised)), отсюда !important
+   на background-image. aria-pressed — честный хук состояния: нажатый
+   ластик вдавлен. Токены внутри .cf-exc тёмные — клавиша тёмная сама;
+   контакт 1 px/.3 поверх тёмной тени токена — чтобы плашка стояла над
+   панелью, а не лежала в ней. */
+[data-cf="exc-eraser"] > span {
+  background-image: var(--key-face) !important;
+  box-shadow: var(--key-sh), 0 1px 0 rgba(0,0,0,.3);
+}
+[data-cf="exc-eraser"][aria-pressed="true"] > span {
+  background-image: var(--key-dn) !important;
+  box-shadow: var(--key-sh-dn);
+}
+
+
+/* ---------- 4.7 · СЕГМЕНТЫ, ВЫБРАННОЕ, ПИЛЮЛИ ----------
+   .cf-seg — стальная пилюля в УТОПЛЕННОЙ ДОРОЖКЕ по рецепту .lseg: дорожка
+   #cdc8bc → #d9d4c8 (поправка §2.7: #d9d4c8), кромка #a39e92, внутренняя
+   тень 4 px/.22 + резкая 1 px/.12, кольцо .06 по дну, под нижней кромкой
+   белая губа .75 — свет ловит нижний край паза. Дно, кромка и тень —
+   ТОКЕНАМИ 01 (--tray-bg / --tray-edge / --tray-sh): ровно ими 03 красит
+   лоток видов КПП (#root .glass-panel.p-1\.5), и две дорожки обязаны
+   совпадать — теперь источник один. Было: тинт .16 → .08, кольцо .35,
+   тень 3 px/.24.
+   ВЫБРАННЫЙ — поправка §2.7 прямо: ВЫПУКЛАЯ плашка, а не вдавленная (в первой
+   сборке она лежала темнее соседей и читалась дыркой). Сталь лаборатории:
+   перелом градиента на 50 % (#f7f6f2 → #e3e1da | #d6d4cd → #e2e0d9), кольцо
+   #9c968b, белая кромка .95 сверху, тёмная .08 снизу, тень 2 px/.25 на дно
+   паза — дно лежит НИЖЕ лица плашки, тень физически верна. Щётки стали
+   (SVG-фильтр) тут нет: плашка — кнопка, и на кнопки фильтры не кладём.
+   Цвет --raised остаётся в shorthand последним слоем: design-e2e смотрит
+   вычисленный backgroundColor выбранного — rgb(224,217,200), не акцент.
+   Нажатие на выбранной (:active) — вглубь: лицо #cbc7bd → #dbd7ce, тень
+   4 px/.28, как у всех клавиш.
+   Подписи невыбранных — var(--text-2): на дорожке (≈ 208,203,191) это 5,8,
+   --muted дал бы 4,9 на пазу в шапке. Кегль fs-1 — без тиснения.
+   Литералы у ПЛАШЕК: все одиннадцать .cf-seg стоят в светлых зонах (шапка,
+   сцена, галерея, справочник, план скаута, КПП, печать).
+   padding и display у .cf-seg / .cf-seg > * не трогаем (цели, .cf-wide-only). */
+.cf-seg {
+  background-color: var(--tray-bg);
+  background-image: linear-gradient(180deg, #cdc8bc, var(--tray-bg));
+  border-color: var(--tray-edge);
+  box-shadow: var(--tray-sh);
+}
+.cf-seg > * { color: var(--text-2); }
+.cf-seg > *:hover { color: var(--text); }
+.cf-seg > .on, .cf-seg > .on:hover {
+  background: linear-gradient(180deg, #f7f6f2, #e3e1da 50%, #d6d4cd 51%, #e2e0d9) var(--raised);
+  color: var(--text);
+  box-shadow: 0 0 0 1px #9c968b, inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.25);
+}
+.cf-seg > .on:active {
+  background: linear-gradient(180deg, #cbc7bd, #dbd7ce) var(--raised);
+  box-shadow: 0 0 0 1px #9c968b, inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2);
+}
+
+/* .cf-sel — то же «выбрано» вне .cf-seg: виды КПП (в лотке 03), инструменты
+   скетча и прежнего редактора, бренды справочника, строка таблицы
+   фотометрии (tr), гайд в списке, плитка облака, вид кисти на доске.
+   Тот же селектор и тот же !important, что в теме, позже в каскаде —
+   иначе не перебить. Поправка §2.7: ВЫПУКЛАЯ клавиша (была вдавленная
+   --key-dn). Смешанная зона (лотки кисти на тёмной доске, инструменты
+   скетча в .z-[300]) — поэтому не опаковая сталь, а лицо токеном
+   --key-face: на бумаге кость с лабораторным глянцем .6/.18 и швом,
+   на столе — тёмная клавиша со своим швом; поверх — только низ темнее
+   на .04 (см. смешанную зону выше). Цвет --raised — последним слоем
+   shorthand (design-e2e, backgroundColor rgb(224,217,200)). Кольцо
+   rgba(60,48,30,.42) — на бумаге ≈ #aba59a, на графите невидимо;
+   тень 2 px/.25 на лист. */
+.cf-sel {
+  background: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.04) 100%), var(--key-face) var(--raised) !important;
+  color: var(--text) !important;
+  box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 rgba(0,0,0,.08), 0 0 0 1px rgba(60,48,30,.42), 0 1px 2px rgba(0,0,0,.25);
+}
+
+/* Выбранный ГАЙД или СХЕМА в списке «Экспликаций» — тоже .cf-sel, но это
+   строка списка, а не клавиша. Выпуклая кость делала её пиксель в пиксель
+   такой же, как «+ Создать гайд» и «+ Новая схема» под ней (ревью раунда 2,
+   планшет и телефон): две одинаковые широкие клавиши подряд, и текущий
+   документ читался ещё одной кнопкой-действием. Во всех остальных списках
+   (сцены, папки, объекты, справочник) «я здесь» — БЕЛЫЙ ЛИСТ с терракотовой
+   линейкой слева (.cf-row-on модуля 04), и здесь язык тот же: глянец листа
+   #fdfcf9 → #f3efe6, белый блик верхней кромки, карандашная кромка .25,
+   контактная тень 1 px/.2 и мягкая 2 px/5 px — лист лежит на колонке.
+   Линейка — inset 3 px акцентом в тени (рамка у кнопки 1 px прозрачная
+   и по ширине не трогается); на радиусе rounded-lg она повторяет скругление,
+   как левая рамка скруглённой карточки. Фон — shorthand с !important
+   (у .cf-sel он тоже !important; вес выше — побеждаем) и var(--raised)
+   последним слоем: design-e2e смотрит вычисленный backgroundColor
+   выбранного — rgb(224,217,200), не акцент. Цвет текста (--text) приходит
+   из .cf-sel. Селектор по разметке: ровно две обёртки .group.relative.mb-2
+   во всём файле — строки гайдов и строки схем; одна и та же разметка
+   и на планшете, и на телефоне. Список светлый — литералы. */
+#root .group.relative.mb-2 > button.cf-sel.w-full {
+  background: linear-gradient(180deg, #fdfcf9 0%, #f8f5ee 55%, #f3efe6 100%) var(--raised) !important;
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 1px 0 #fff, 0 0 0 1px rgba(60,48,30,.25), 0 1px 1px rgba(0,0,0,.2), 0 2px 5px rgba(60,48,30,.18);
+}
+
+/* .cf-pill — фильтры списка сцен на телефоне: лента БЕЗ паза на голом
+   льне, и соседи выбранной — тоже кнопки. Поправка §7: выбранное — ВЫПУКЛАЯ
+   клавиша, САМАЯ СВЕТЛАЯ. В прошлой сборке невыбранные были светлой
+   костью (#faf8f2 → #efeae0), а выбранная — стальной плашкой сегмента
+   (#f7f6f2 → #d6d4cd): в пазу .cf-seg сталь верна — там дно темнее её, —
+   а на льне без паза выбранная оказывалась ТЕМНЕЕ соседей и читалась
+   вдавленной/нажатой (ревью раунда 1, phone-01). Теперь иерархия та же,
+   что у лотка с клавишей: невыбранная — тихий УТОПЛЕННЫЙ лоток
+   (#ebe6da → #e2dccf, кромка .28, внутренняя тень 2 px/.10, под нижней
+   кромкой белая губа .6; --muted на нём 5,6), выбранная — глянцевая
+   клавиша из кости со швом на 50 % (#fffefb → #f3efe6 | #e9e4d8 →
+   #f0ece2), кольцо #9c968b, белая кромка сверху, тёмная .08 снизу,
+   контакт 1 px/.25 и тень 2 px/4 px .22 — она одна СТОИТ над лентой и
+   светлее всего вокруг. Фон выбранной — var(--raised) последним слоем
+   shorthand (design-e2e меряет backgroundColor: rgb(224,217,200), не
+   акцент). Лента прокручивается вбок, и наружная тень 4 px снизу может
+   срезаться — допустимо, кольцо и блик сверху остаются. padding и размеры
+   не трогаем. Пилюли стоят только на светлом списке телефона — литералы. */
+.cf-pill {
+  background-color: var(--card);
+  background-image: linear-gradient(180deg, #ebe6da, #e2dccf);
+  border-color: rgba(60,48,30,.28);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.10), 0 1px 0 rgba(255,255,255,.6);
+  color: var(--muted);
+}
+.cf-pill.on {
+  background: linear-gradient(180deg, #fffefb, #f3efe6 50%, #e9e4d8 51%, #f0ece2) var(--raised);
+  border-color: #9c968b;
+  color: var(--text);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.25), 0 2px 4px rgba(0,0,0,.22);
+}
+.cf-pill:active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2);
+}
+
+
+/* ---------- 4.8 · ПОЛЯ ВВОДА: ГЛУБОКИЙ КОЛОДЕЦ (рецепт .lwell + поправка §2.6) ----------
+   .glass-input — дно --well (чуть светлее листа: свет попадает в
+   углубление), внутренняя тень 4 px/.18 (было 3 px/.14) плюс резкая
+   1 px/.10 у верхней кромки, кольцо .06 по всему периметру — стенки
+   колодца, под нижней кромкой светлая губа. Кромка — токен --well-edge
+   (#b8ad98 поправки §6; в DARK_ZONES #0f0e0d: поля прежнего редактора
+   схемы света лежат в .z-[300], и светлая тан-кромка вокруг графитового
+   поля была бы там чужой рамкой). Колодец и кольцо фокуса — тоже токены
+   01: --inset-well (2px 4px/.18 + 1px/.10 + кольцо .06 + губа .75) и
+   --focus-ring (3 px терракоты .18) — так все колодцы модуля (поля,
+   селекты, поиск справочника и меню «Прибор», число фокусного) одной
+   глубины из одного места, и зону флипают сами.
+   Обёртка поля чата — тот же класс на div: правило общее. select.glass-input
+   (роль в окне «как вас зовут») несёт ещё и утилиту .bg-zinc-900 — она
+   бьёт .glass-input равного веса (0,1,0), потому что таблица Tailwind
+   позже. Против утилиты — ВЕС, а не !important (правило 0.4: !important
+   только против инлайна и чужого !important): #root select.glass-input —
+   (1,1,1). Прежний !important был лишним и запирал каскад для следующего,
+   кто захочет перекрасить селект в тёмной зоне (ревью раунда 1).
+   Фокус — кромка акцентом и кольцо 3 px терракоты .18 (поправка §2.6;
+   было 2 px --accent-soft .12); outline остаётся none из темы, своё
+   кольцо есть.
+   padding, height, box-sizing полей не трогаем: TagInput и PhotoSourcePicker
+   меряют rect, textarea растут по scrollHeight. */
+.glass-input {
+  background: var(--well);
+  border-color: var(--well-edge);
+  box-shadow: var(--inset-well);
+  color: var(--text);
+}
+#root select.glass-input { background-color: var(--well); }
+/* Подсказка поля-колодца — токен --placeholder модуля 01 (ревью раунда 3):
+   на дне колодца --muted-2 (#635c4f, 6,0) стоял почти вровень с вписанным
+   текстом text-zinc-300 (#4b453d, 8,6), и пример JSON в «Агенте КПП»,
+   «AIza… или sk-…» в «Проекте», «пыль, воздух, тревога» в галерее читались
+   уже вписанными значениями — ровно то, от чего CLAUDE.md предостерегает
+   («подсказка в поле не должна выглядеть заполненным полем»). На бумаге
+   токен — #756e61: на --well #f7f4ec 4,59, на --card 4,8 — норма, и заметно
+   светлее текста; в DARK_ZONES — --muted-2 тёмного стола (#8f8a80, как было).
+   Литерал здесь НЕЛЬЗЯ: поля в тёмных зонах (подпись в просмотре, прежний
+   редактор схемы) получили бы тёмную подсказку на тёмном дне. Запасное
+   значение var(--muted-2) — на случай, если токен однажды не доедет:
+   тогда подсказка остаётся прежней, а не наследует цвет текста поля. */
+.glass-input::placeholder { color: var(--placeholder, var(--muted-2)); }
+.glass-input:focus, .glass-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--inset-well), var(--focus-ring);
+}
+
+/* «Найти прибор» в справочнике (hb-search: фон var(--card) и рамка
+   var(--border) ИНЛАЙНОМ, класса .glass-input нет) и поиск в меню «Прибор»
+   схемы света (fixture-search: .glass-input, повторяем ради одного правила
+   на оба поля) — тот же глубокий колодец, что у .glass-input: без него
+   поле справочника стояло плоским листом с карандашной рамкой рядом
+   с вдавленными колодцами. Оба на бумаге (меню «Прибор» — светлый
+   портал): дно --well, кромка --well-edge, колодец --inset-well — те же
+   токены, что у .glass-input. !important только на инлайновые background
+   и border-color. padding и размер
+   не трогаем: handbook-e2e бьёт в первые 10 px поля, меню «Прибор»
+   меряет rect. */
+[data-cf="hb-search"],
+[data-cf="fixture-search"] {
+  background: var(--well) !important;
+  border-color: var(--well-edge) !important;
+  box-shadow: var(--inset-well);
+  color: var(--text);
+}
+[data-cf="hb-search"]:focus,
+[data-cf="fixture-search"]:focus {
+  border-color: var(--accent) !important;
+  box-shadow: var(--inset-well), var(--focus-ring);
+}
+
+/* ПОДСКАЗКИ (placeholder) ПОЛЕЙ БЕЗ .glass-input. У них цвет приходил
+   из preflight Tailwind — #9ca3af, холодный сине-серый, которого в палитре
+   нет; на колодце #f7f4ec это 2,3 вместо 4,5 (ревью раунда 2). Пострадала
+   ровно та подсказка, что объясняет окно ⌘K («Сцена, кадр, объект… или
+   слово-настроение»), и «Найти прибор» справочника; на тёмном столе темы
+   у них было около 6, то есть скин читаемость отнял. Туда же — девять
+   утилит placeholder-zinc-600 (номер сцены в КПП, заголовок гайда, состав
+   группы, название схемы): светлая шкала даёт им (168,157,136), 2,4.
+   Цвет вычисляется У САМОГО поля, поэтому зону токен флипает сам.
+   Только color, ничего больше: размеры, отступы и вид полей не трогаем.
+
+   ДВА ЭТАЖА (ревью раунда 3). Нижний — ВСЕ поля без .glass-input:
+   var(--muted-2), #635c4f на бумаге. Эти поля почти все ПРОЗРАЧНЫЕ и лежат
+   прямо на льне или на паспарту — название и текст сцены, заметки, тело
+   гайда, «что в кадре». Светлый токен --placeholder (#756e61) дал бы там
+   3,6 на льне — ниже 4,5 (RULES п. 6), а отличие от вписанного здесь
+   и так есть: --text 10,7 и --text-2 6,8 против 4,75 у подсказки.
+   Верхний этаж — поля, которые лежат на ДНЕ КОЛОДЦА без класса
+   .glass-input: строка ⌘K (прорезь 03 — дно --well), поле чата (внутри
+   обёртки .glass-input), «Найти прибор» справочника (дно --well правилом
+   ниже), числа настроек визира (дно --well). Там светлый токен держит
+   4,59 и отличает подсказку от текста, как у .glass-input.
+   Нижний этаж собран через :where() — вес (1,0,2): ID бьёт и preflight
+   (0,0,2), и утилиты placeholder-* (0,1,1), а верхний этаж — (1,1,2)
+   и выше — побеждает нижний, не повторяя всю цепочку исключений.
+   Прежний вес (1,3,2) / (2,3,3) перекрывал бы любое уточнение.
+   Исключены из нижнего этажа НАМЕРЕННО:
+   · поля карточек доски ([data-card-id] *) — у них свои подсказки под
+     свою карточку: стикер несёт placeholder-black/50 на жёлтой бумаге,
+     и серый тёмной зоны на нём был бы слабее чёрного .5; доска — зона 05;
+   · текст фигуры (#whiteboard-canvas > textarea) — спецификация 4.8
+     велит исключить его из всех правил полей;
+   · Excalidraw (.cf-exc *) — его поля красит он сам (vendor не трогаем).
+   Поиск меню «Прибор» (fixture-search) несёт .glass-input — его подсказку
+   красит правило .glass-input выше; назван и здесь, по имени, на случай,
+   если меню окажется внутри .cf-exc: оно светлый портал, и подсказка там
+   нужна та же. */
+#root input:where(:not(.glass-input):not([data-card-id] *):not(.cf-exc *))::placeholder,
+#root textarea:where(:not(.glass-input):not([data-card-id] *):not(.cf-exc *):not(#whiteboard-canvas > textarea))::placeholder { color: var(--muted-2); }
+#root .z-\[450\] > .cf-modal-box > div:first-child input::placeholder,
+#root .glass-input input::placeholder,
+#root input[data-cf="hb-search"]::placeholder,
+input[data-cf="hb-search"]::placeholder,
+input[data-cf="fixture-search"]::placeholder,
+#root input.cf-inline-field[type="number"]::placeholder,
+input.cf-inline-field[type="number"]::placeholder { color: var(--placeholder, var(--muted-2)); }
+
+/* .cf-inline-field — номер и дата в строке смены КПП, справка объекта,
+   дата скаута: язык «карандашной подчёркивающей линии» остаётся, но
+   пунктир цветом --border на бумаге почти невидим — берём --muted-2.
+   Наведение — тинт поверх льна, а НЕ калька --raised: номер сцены набран
+   text-indigo-400 (#9c4a33), на льне это 4,9, на --raised — 4,34
+   (спецификация 5.4 прямо запрещает класть indigo-400 на кальку); на
+   тинте .06 поверх льна ≈ (223,218,206) — 4,7. Фокус остаётся с --raised
+   (там тема переводит цвет текста в --text) и получает мелкий колодец
+   2 px/.12: поле, в котором стоит курсор, — углубление, а не плашка. */
+.cf-inline-field { border-bottom-color: var(--muted-2); }
+.cf-inline-field:hover { background: var(--tint-1); border-bottom-color: var(--muted-2); }
+.cf-inline-field:focus {
+  background: var(--raised);
+  border-bottom-color: var(--accent);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.12);
+}
+/* Номер сцены в строке смены — единственное .cf-inline-field с цветом из
+   шкалы: text-indigo-400 (#964631) в покое. Замер ревью по материалу:
+   на среднем льне (222,218,210) — 4,68, на тёмной четверти переплетения
+   (214,209,199) — 4,29; единственная пара из сорока с запасом меньше 0,2,
+   и нити льна местами роняют её ниже нормы. В покое — тёмная терракота
+   --accent-hover, как у .cf-hbtn на алюминии: на льне 5,7, на тёмной
+   четверти 5,2. Селектор узкий НАМЕРЕННО, по утилите цвета: повтор
+   номера подсвечен text-amber-300 (--warn), и общий .cf-inline-field
+   стёр бы предупреждение. Фокус не трогаем — тема переводит цвет
+   в --text. #root — против утилиты (0,1,0). */
+#root .cf-inline-field.text-indigo-400:not(:focus) { color: var(--accent-hover); }
+
+/* Числовые поля настроек визира (ширина сенсора, своё фокусное) — те же
+   .cf-inline-field, но числа набирают, а не правят подряд: им дно колодца
+   той же глубины, что у .glass-input. Окно настроек открывается и из
+   тёмного видоискателя — дно и губа токенами. Специфичность выше, чем
+   у :hover/:focus темы — дно не сменяется калькой. */
+input.cf-inline-field[type="number"] {
+  background: var(--well);
+  box-shadow: var(--inset-well);
+}
+input.cf-inline-field[type="number"]:focus {
+  background: var(--well);
+  box-shadow: var(--inset-well), var(--focus-ring);
+}
+
+/* Поле «+ тег» (TagInput) — только нижняя линия, фон прозрачный, размер
+   не трогаем (положение подсказок считается от его rect). Утилита
+   border-white/10 равного веса идёт позже — отсюда #root. Линия — --muted-2,
+   как у .cf-inline-field: --border на бумаге карточки не читался. */
+#root input[placeholder="+ тег"] { border-bottom-color: var(--muted-2); }
+#root input[placeholder="+ тег"]:focus { border-bottom-color: var(--accent); }
+
+/* Селекты с фоном инлайном (схема света у сцены и объекта, объект в
+   шапке плана и шторке скаута, папка на карточке галереи и в панели
+   выделения) — только тень колодца той же глубины; appearance не трогаем:
+   нативный пикер iOS важнее стрелки. Глубина — токен --inset-well
+   (все на бумаге, шторка — светлый портал). */
+select.glass-input.rounded-lg[style*="var(--bg)"],
+[data-cf="scout"] select,
+[data-cf="scout-place-pick"],
+select.w-full.rounded-md,
+select.shrink-0.rounded-lg {
+  box-shadow: var(--inset-well);
+}
+
+/* Поле эквивалентного фокусного телефона: всё инлайном (фон var(--bg),
+   рамка var(--border)) — дно колодца с !important на background, рамка
+   остаётся инлайновой; окно настроек — смешанная зона, дно и губа
+   токенами. Расстояние в справочнике (hb-dist-num) намеренно остаётся
+   пунктиром — язык КПП; в фокусе под пунктиром ложится сплошная акцентная
+   линия внутренней тенью, пунктир инлайновый не трогаем. */
+[data-cf="scout-eq-input"] {
+  background: var(--well) !important;
+  box-shadow: var(--inset-well);
+}
+[data-cf="scout-eq-input"]:focus {
+  box-shadow: var(--inset-well), var(--focus-ring);
+}
+[data-cf="hb-dist-num"]:focus { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* Режим просмотра: запертые поля читаются ТЕКСТОМ, а не мёртвыми
+   колодцами. Поля с data-ro-ok (поиск, чат, галочки скаута) работают и
+   остаются колодцами. pointer-events здесь не упоминается ни словом —
+   им управляет тема (362–372). */
+body.cf-readonly .glass-input:not([data-ro-ok]) {
+  background: transparent !important;
+  box-shadow: none;
+  border-color: transparent;
+}
+/* Запертое поле без колодца лежит прямо на льне или бумаге — подсказка
+   пустого поля возвращается на нижний этаж (--muted-2, 4,75 на льне):
+   светлый --placeholder рассчитан на дно колодца и на льне дал бы 3,6. */
+body.cf-readonly .glass-input:not([data-ro-ok])::placeholder { color: var(--muted-2); }
+
+
+/* ---------- 4.9 · ЧИПЫ, ТЕГИ, БИРКИ: МАЛЯРНЫЙ СКОТЧ (рецепт .l-tape) ----------
+   .cf-chip — полоска скотча с ВИДИМЫМ ВОЛОКНОМ, и лежит она на листе
+   ПЛОСКО. Ревью раунда 1 (phone-20): чипы папок и тегов читались бледными
+   клавишами из кости, а не лентой, как «СКАУТ»/«#12A» на витрине: лента
+   #ece1c4 бледнее лабораторной, сатин белым .25 ещё осветлял её, волокно
+   .16·A − .08 не было видно, а вторая тень 2 px/4 px делала чип «парящей»
+   кнопкой — и он путался с «+ Создать гайд». Три слоя:
+   1) волокно — ОДНА октава анизотропного шума (частота по X в двадцать раз
+      ниже, чем по Y — нити вдоль ленты), альфа .147·A − .067: порог
+      появления нити тот же, что был (A ≈ .45), а НОМИНАЛЬНЫЙ потолок —
+      ровно .08, сколько правила производительности отводят повторяющимся
+      элементам (чипов на экране десятки; лабораторный лён из ДВУХ шумов
+      сюда нельзя). Было .22·A − .10 — потолок .12, и «на пикселе ≤ .09»
+      держалось только на том, что A у одной октавы редко доходит до 1;
+      ревью раунда 2 справедливо сочло это нарушением. Цвет нитей —
+      тёмная охра (.32 .24 .12): на светлой ленте тёмные нити видны
+      сильнее светлых (§С1.5);
+   2) сатин — едва: белый .12 сверху к тёмному .04 снизу; лента — плёнка
+      на бумаге, а не подушка;
+   3) сама лента — лабораторный низ #e6dab9 (чуть желтее листа: этим она
+      и отличается от кости клавиш), плотная в середине и полупрозрачная
+      у концов (.5) — оторванный край; clip-path лаборатории запрещён
+      правилами, рваный край остаётся прозрачностью.
+   Рамки нет — border 1 px остаётся и просто прозрачен: он входит в размер
+   цели --tap-sm. Радиус 3 px — у скотча углов почти нет. Тень ОДНА —
+   контакт 1 px/2 px .2 (поправка §2.10): плоское не парит; внутри белое
+   кольцо .3 — глянец ленты. Текст — тёмный --text (на #e6dab9 — 10,6;
+   инлайновый var(--accent) 4,7 — норма; var(--warn) светлее не стал).
+   Текст моно fs-1 — без тиснения.
+   span.cf-chip — подпись («4 фото»), наведения у неё нет.
+   Сами ленты .overflow-x-auto срежут часть тени снизу — допустимо.
+   В тёмных зонах чипов нет (в просмотре теги — tailwind-бирки тёмной
+   шкалы, на доске — бейджи без класса) — литералы. */
+.cf-chip {
+  background-color: transparent;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='t' x='0' y='0' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.06 1.3' numOctaves='1' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.32 0 0 0 0 0.24 0 0 0 0 0.12 0 0 0 0.147 -0.067'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23t)'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, rgba(255,255,255,.12), rgba(0,0,0,.04)),
+    linear-gradient(90deg, rgba(230,218,185,.5) 0, #e6dab9 7%, #e6dab9 93%, rgba(230,218,185,.5) 100%);
+  background-size: 160px 160px, auto, auto;
+  border-color: transparent;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.2), inset 0 0 0 1px rgba(255,255,255,.3);
+  color: var(--text);
+}
+/* Наведение — лента чуть приподнята (тень 2 px/3 px .22, по-прежнему одна),
+   нажатие — прижата к листу, выключенная — лежит плоско. */
+button.cf-chip:hover { box-shadow: 0 2px 3px rgba(0,0,0,.22), inset 0 0 0 1px rgba(255,255,255,.3); }
+button.cf-chip:active { box-shadow: inset 0 1px 2px rgba(0,0,0,.22), inset 0 0 0 1px rgba(0,0,0,.06); }
+button.cf-chip:disabled { box-shadow: inset 0 0 0 1px rgba(255,255,255,.3); }
+/* Активный чип (папка RefPicker, «Выбрать» в галерее) — та же лента,
+   рамка акцентом ВНУТРЬ (inset-кольцо, габарит тот же), текст терракотой;
+   на наведении не приподнимается — выбранное лежит, как лежало. */
+.cf-chip-accent,
+button.cf-chip.cf-chip-accent:hover {
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(0,0,0,.2), inset 0 0 0 1px var(--accent-line);
+}
+/* «−» и «+» расстояния в экспозиции справочника — .cf-chip по разметке,
+   но это СТЕППЕР, то есть клавиша, а не подпись (ревью раунда 2): лентой
+   скотча без фаски и тени нажатия он не читался нажимаемым, а рядом в том
+   же блоке ISO и выдержка — клавиши в стальной пилюле, «+ в сравнение» —
+   клавиша из кости. Здесь та же кость токенами 01 (справочник светлый,
+   токены дают ровно лабораторную клавишу): лицо --key-face, кромка
+   --key-edge, тени --key-sh / --key-sh-dn. background-size: auto
+   ОБЯЗАТЕЛЕН: у .cf-chip первый слой (волокно) размечен 160×160, и без
+   сброса глянец клавиши лёг бы плиткой 160 px со швом на 80-й точке —
+   ниже самой кнопки. Радиус возвращается к --r-sm темы (у скотча 3 px).
+   padding и ширину рамки не трогаем (цель --tap-sm). Цвет — --text-2.
+   Вес (1,3,1) бьёт button.cf-chip:hover/:active (0,2,1). */
+#root button.cf-chip[title="Ближе"],
+#root button.cf-chip[title="Дальше"],
+#root button.cf-chip[title="Ближе"]:hover,
+#root button.cf-chip[title="Дальше"]:hover {
+  background-color: var(--card);
+  background-image: var(--key-face);
+  background-size: auto;
+  border-color: var(--key-edge);
+  border-radius: var(--r-sm);
+  box-shadow: var(--key-sh);
+  color: var(--text-2);
+}
+#root button.cf-chip[title="Ближе"]:hover,
+#root button.cf-chip[title="Дальше"]:hover { background-image: var(--key-face-hover); }
+#root button.cf-chip[title="Ближе"]:active,
+#root button.cf-chip[title="Дальше"]:active {
+  background-image: var(--key-dn);
+  border-color: #8f897e;
+  box-shadow: var(--key-sh-dn);
+}
+#root button.cf-chip[title="Ближе"]:disabled,
+#root button.cf-chip[title="Дальше"]:disabled { box-shadow: none; }
+/* .cf-chip.cf-sel (бренды справочника): лицо и цвет — общая выпуклая
+   .cf-sel выше (фон --raised остаётся в вычисленном backgroundColor —
+   design-e2e смотрит его). Меняется ТОЛЬКО кольцо (ревью раунда 3):
+   светлая клавиша из кости с карандашным кольцом .42 стояла среди жёлтых
+   лент скотча БЛЕДНЕЕ их и читалась скорее выключенной, чем выбранной.
+   Кольцо графитом .7 (≈ #4b453f на бумаге) и контакт 2 px/.3 — клавиша
+   очерчена резче соседей и стоит над лентой; белый блик сверху (#fff
+   токеном --bevel-hi) и тёмная нижняя кромка .08 — те же, что у .cf-sel.
+   Нажатие — вглубь, кольцо то же. Вес (1,2,1) бьёт .cf-sel (0,1,0)
+   и button.cf-chip:hover/:active (0,2,1): выбранное лежит и на наведении.
+   Бренды живут только в светлом справочнике — литералы. */
+#root button.cf-chip.cf-sel {
+  box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 rgba(0,0,0,.08), 0 0 0 1px rgba(43,39,35,.7), 0 1px 2px rgba(0,0,0,.3);
+}
+#root button.cf-chip.cf-sel:active {
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2), 0 0 0 1px rgba(43,39,35,.7);
+}
+
+/* Теги карточки (span.bg-indigo-900/40.text-indigo-200 — окно тегов в
+   просмотре и фото объекта): цвет из шкалы, здесь — бумажка с тёмным
+   кольцом .25 и контактом .22 (лаборатория .lchip-tag: кольцо .35,
+   контакт .25; в лайтбоксе они внутри .z-[350] на тёмной шкале, и там
+   тёмное кольцо просто не видно — безопасно).
+   Бирки итогов КПП (bg-indigo-950/60, bg-amber-950/60) — скотч: тинт
+   из шкалы должен просвечивать (он отличает технику от света), поэтому
+   поверх него сатин .35 → .05, тёмное кольцо .3, контакт .25 и тень
+   2 px/4 px .12; кружок числа в них — глазурь (.bg-indigo-600,
+   .bg-amber-700 в 4.4). */
+#root .bg-indigo-900\/40.text-indigo-200 { box-shadow: inset 0 0 0 1px rgba(90,70,50,.25), 0 1px 1px rgba(0,0,0,.22); }
+#root .bg-indigo-950\/60,
+#root .bg-amber-950\/60 {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,.05));
+  box-shadow: inset 0 0 0 1px rgba(90,70,50,.3), inset 0 1px 0 rgba(255,255,255,.5), 0 1px 1px rgba(0,0,0,.25), 0 2px 4px rgba(0,0,0,.12);
+}
+/* [data-cf="voice-start"] — обычный button.cf-chip, скотч приходит
+   классом; состояние записи [data-cf="voice-stop"] — глазурь в 4.4. */
+
+
+/* ---------- ШАПКА: ПОИСК, КЛАВИША ⌘K, ТЕКСТОВАЯ КНОПКА ----------
+   .cf-search — это КНОПКА-поле: ПРОРЕЗЬ В АЛЮМИНИИ шапки (модуль 03;
+   поправка §2.3): дно #f2efe6, кромка #a89d88 — тёмный край металла,
+   внутренняя тень 4 px/.22 + резкая 1 px/.12 + кольцо .05, под нижней
+   кромкой белая губа .8. Было: дно #f5f2ea, кромка .28, тень 3 px/.14.
+   Литерал #4a4741 темы на ховере перебит тёмной кромкой #8f8470. Шапка
+   всегда светлая — литералы. Подсказка --muted-2 на дне — 5,9.
+   .cf-kbd — мини-клавиша из кости: лицо #fffefb → #e6e0d2, кромка
+   #a89d88, белый блик сверху, контакт 1 px/.28 и тень 2 px/.14
+   (было: лицо токеном, одна тень .2). Буквы --text-2.
+   .cf-hbtn («‹ Сцены», «Выбрать», «Готово», «‹ План» в видоискателе) —
+   остаётся надписью без коробки (padding 0 2px рамку не вмещает):
+   ТЁМНАЯ терракота --accent-hover fs-4 (17 px) с тиснением --emboss-lg
+   (α .5 — поправка §13/§14: от 17 px тень .5; .35 на 17 px терялось,
+   .6 давало видимую линию под буквой — замер модуля 01, отсюда середина
+   и токен крупного кегля). Какой документ главный, решено ОДИН раз —
+   в самом токене 01 («--emboss-lg (α .5) — от 17 px: h1–h3, .cf-hbtn
+   17 px»); RULES п. 6 с его «α ≤ .35» описывает --emboss на 15 px.
+   Здесь берётся токен, а не литерал: передумает 01 — сменится и тут. Не --accent: шапка — шлифованный алюминий,
+   и щётка темнит --alu до rgb(214,211,202) — обычный акцент на нём 4,36,
+   ниже нормы; --accent-hover даёт 5,28 (на льне 6,3, на листе 7,5,
+   а в тёмных зонах — «‹ План» видоискателя — токен там светлее акцента,
+   5,8 на анодировке, и тень токеном тёмная). Нажатие: темнее лак уже
+   не бывает — вдавленная буква теряет тиснение, как у клавиш из кости. */
+.cf-search {
+  background: #f2efe6;
+  border-color: #a89d88;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.22), inset 0 1px 1px rgba(0,0,0,.12), inset 0 0 0 1px rgba(0,0,0,.05), 0 1px 0 rgba(255,255,255,.8);
+  color: var(--muted-2);
+}
+.cf-search:hover { border-color: #8f8470; color: var(--muted); }
+.cf-kbd {
+  background-color: #f6f3ec;
+  background-image: linear-gradient(180deg, #fffefb, #e6e0d2);
+  border-color: #a89d88;
+  box-shadow: inset 0 1px 0 #fff, 0 1px 0 rgba(0,0,0,.28), 0 2px 2px rgba(0,0,0,.14);
+  color: var(--text-2);
+}
+.cf-hbtn { color: var(--accent-hover); text-shadow: var(--emboss-lg); }
+.cf-hbtn:active { text-shadow: none; }
+/* В ШАПКЕ лак ещё на ступень темнее (ревью раунда 2): --accent-hover
+   #843c29 на 18 px обычного веса держит 5,27 по медиане щётки, но тёмные
+   штрихи алюминия (p5 середины кнопки) опускают его до 4,30–4,43 — ниже
+   4,5, а крупным такой кегль без жирного не считается. #7a3624 — та же
+   терракота, лак темнее: худший штрих 4,95, медиана 5,9, на льне 6,3.
+   Только header: «‹ План» видоискателя (тёмная зона, вне header) остаётся
+   на токене — там он светлее акцента. Литерал — шапка всегда светлая.
+   #root header — против утилит цвета на самой кнопке, если появятся. */
+#root header .cf-hbtn { color: #7a3624; }
+
+
+/* ---------- РАУНД 3 · ПРОБЕЛЫ ПОКРЫТИЯ (снято отдельным стендом) ---------- */
+
+/* ГАЛОЧКИ-ВЫКЛЮЧАТЕЛИ ОКНА «ПРОЕКТ» («Ключи общие для комнаты»,
+   «Показывать плавность», «Проверка карандаша»). Нативная галочка
+   с accent-color рядом с лотками строк и клавишами из кости оставалась
+   единственным ПЛОСКИМ органом окна — белый квадрат с серой рамкой
+   (снимок d-project-checks). Теперь это то же, что и всё нажимаемое:
+   пустая — КОЛОДЕЦ (дно --well, тень от верхней губы 2px 3px/.18
+   и резкая 1px/.10, светлая губа под нижней кромкой — свет сверху),
+   включённая — ГЛАЗУРЬ главного действия (терракота шкалы, блик
+   верхней грани .35, тёмная грань снизу, контактная тень) с кремовой
+   галочкой --on-accent (5,98 на терракоте). Кромка колодца #857a66 —
+   3,06 к крафту строки (норма контура 3,0).
+   appearance: none — ТОЛЬКО у галочек с явным размером (w-5 h-5 или
+   инлайн 20 px): без размера такая галочка схлопывается в точку 2×2
+   (замер стендом gapfix/exp), а у остальных галочек приложения (скаут,
+   «Доступ», сверка сценария) размера нет — они остаются нативными.
+   Габарит, margin и попадание не меняются: проверено elementFromPoint
+   по центру, клик и метка label работают как прежде (excboard-e2e бьёт
+   ровно в центр pen-probe-toggle). Кольцо фокуса — общее :focus-visible
+   модуля 01. Фильтров нет, галочек три — data-URI галочки дешёвый. */
+input[type="checkbox"].w-5.h-5,
+input[type="checkbox"][style*="width: 20px"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--well);
+  border: 1px solid #857a66;
+  border-radius: 5px;
+  box-shadow: inset 0 2px 3px rgba(0,0,0,.18), inset 0 1px 1px rgba(0,0,0,.10), 0 1px 0 rgba(255,255,255,.75);
+}
+input[type="checkbox"].w-5.h-5:hover,
+input[type="checkbox"][style*="width: 20px"]:hover { background-color: #fffdf8; }
+input[type="checkbox"].w-5.h-5:checked,
+input[type="checkbox"][style*="width: 20px"]:checked {
+  background-color: rgb(var(--cf-i500));
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fbf4ec' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E"), var(--glaze);
+  background-size: 78% 78%, 100% 100%;
+  background-position: center, 0 0;
+  background-repeat: no-repeat;
+  border-color: var(--glaze-edge, #6e3522);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.28), 0 1px 1px rgba(0,0,0,.3);
+}
+input[type="checkbox"].w-5.h-5:active,
+input[type="checkbox"][style*="width: 20px"]:active {
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.35);
+}
+
+/* ПЛИТКИ ОКНА «ХРАНИЛИЩЕ ФОТО» («В проекте / Dropbox / Яндекс.Диск /
+   Nextcloud»). После поправки §2.7 выбранное — ВЫПУКЛАЯ клавиша, а
+   невыбранные плитки здесь тоже стояли выпуклой костью (правило выше):
+   четыре одинаковые клавиши, и какая из них выбрана, читалось только
+   по жирности подписи (снимок d-cloud-modal — пробел покрытия р3).
+   Та же беда уже решена у .cf-pill: невыбранная — тихий УТОПЛЕННЫЙ лоток
+   (#ebe6da → #e2dccf, кромка .28, тень внутрь 2 px/.10, белая губа
+   снизу), выбранная — глянцевая клавиша со швом на 50 %, кольцо #9c968b,
+   тень 1px/.25 + 2px 4px/.22: она одна СТОИТ над сеткой. Подпись
+   невыбранных — text-zinc-400 светлой шкалы, на лотке ≈ 6,0. Фон
+   выбранной — var(--raised) последним слоем (design-e2e смотрит
+   backgroundColor .cf-sel); !important — против !important у .cf-sel.
+   Нажатие невыбранной — вглубь, как у всех клавиш. Размеры, padding,
+   рамка 1 px — ни пикселя. */
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button:not(.cf-sel) {
+  background-image: linear-gradient(180deg, #ebe6da, #e2dccf);
+  border-color: rgba(60,48,30,.28);
+  box-shadow: inset 0 2px 3px rgba(0,0,0,.10), 0 1px 0 rgba(255,255,255,.6);
+}
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button:not(.cf-sel):hover {
+  background-image: linear-gradient(180deg, #f0ebe0, #e7e1d4);
+}
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button:not(.cf-sel):active {
+  background-image: linear-gradient(180deg, #cbc7bd, #dbd7ce);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.28), inset 0 1px 1px rgba(0,0,0,.2);
+}
+[aria-label="Где хранить фотографии"] .grid-cols-2 > button.cf-sel {
+  background: linear-gradient(180deg, #fffefb, #f3efe6 50%, #e9e4d8 51%, #f0ece2) var(--raised) !important;
+  border-color: #9c968b;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.25), 0 2px 4px rgba(0,0,0,.22);
+}
