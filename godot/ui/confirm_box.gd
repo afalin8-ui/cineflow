@@ -16,6 +16,11 @@ var no_btn: Button
 var view: Node3D
 var _cb: Callable
 var _paused_before := false
+## ТОЛЬКО для проверки отката (замечание к GИ): после ответа бой остаётся на паузе. В игре false.
+static var rollback_keep_pause := false
+## ТОЛЬКО для проверки отката (замечание к GИ): окно не глотает клавиши, Esc — не «нет». В игре
+## false.
+static var rollback_keys_through := false
 
 
 func _ready() -> void:
@@ -75,7 +80,7 @@ func _answer(yes: bool) -> void:
 	if not is_open():
 		return
 	_set_open(false)
-	if view != null:
+	if view != null and not rollback_keep_pause:
 		view.set("paused", _paused_before)
 	if yes and _cb.is_valid():
 		_cb.call()
@@ -94,7 +99,7 @@ func _notification(what: int) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not is_open():
+	if not is_open() or rollback_keys_through:
 		return
 	var k := event as InputEventKey
 	if k == null:

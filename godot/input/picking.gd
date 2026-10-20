@@ -6,8 +6,11 @@
 #      ловушка 10): эффектов в списке кандидатов нет по устройству;
 #   2. ТАКТИЧЕСКИЙ ЗНАК (view/markers.gd; план GИ, п. 6) — щелчок по рамке, полоске или имени
 #      выбирает корабль знака. Знак считается «не дальше своего корабля по лучу»: его
-#      глубина — расстояние от камеры до корабля, и корпус, который ближе к камере, чем
-#      корабль знака, важнее знака (и наоборот: знак ближнего корабля важнее дальнего корпуса);
+#      глубина — расстояние от камеры до корабля, и корпус соседа под той же точкой важнее
+#      знака, только если он ЗАМЕТНО ближе (marker_beats: луч проходит ось корпуса ближе
+#      глубины корабля знака на MARKER_HULL_AHEAD и больше). Сосед на той же глубине — знак
+#      важнее: знак рисуют поверх корпуса, в него и целятся (замечание к GИ: знак фрегата на
+#      корпусе флагмана рядом выбирал флагман — по ВХОДУ луча в капсулу);
 #   3. ближайший центр в 30 точках экрана.
 # Скрытые и мёртвые отсекаются ОДНИМ фильтром видимости (shown) — тем же, что
 # у кораблей на экране, колец и (с G6–G7) подписей и миникарты (C18; 04, ловушка 21).
@@ -19,6 +22,12 @@ const Squad := preload("res://sim/squad.gd")
 
 ## «Ближайший» — центр корабля на экране не дальше 30 точек (06, 2.4.3).
 const NEAR_PX := 30.0
+## Корпус под знаком важнее знака, только если он ближе корабля знака по лучу на эту долю
+## расстояния до камеры: тогда он и на экране заметно крупнее, чем стоял бы рядом. Замер (зерно
+## 4242, «Сражение», предел 5000): соседи по строю, на которых ложатся знаки, ближе на 1–2% (РЭБ
+## за РЭБ — 68 из 5563), и брать их корпус вместо знака — промах; у близкой камеры (700)
+## корпус флагмана перед корветом — на 10–35%. Число ввода, а не доктрины боя: рядом с NEAR_PX.
+const MARKER_HULL_AHEAD := 0.1
 
 ## ТОЛЬКО для проверки отката «малый за факелом» (08, ловушка 10): выбирать по рамке
 ## всего нарисованного (с факелами), а не по капсуле корпуса. В игре всегда false.
@@ -31,6 +40,10 @@ static var rollback_no_markers := false
 ## ТОЛЬКО для проверки отката: знак главнее корпуса ВСЕГДА — щелчок по ближнему крейсеру,
 ## на который лёг знак дальнего корабля, выбирает дальний. В игре false.
 static var rollback_marker_first := false
+## ТОЛЬКО для проверки отката (замечание к GИ) — как в capella-v0.7: корпус соседа важнее знака,
+## если ВХОД луча в его капсулу ближе глубины корабля знака, — и сосед на той же глубине (большой
+## флагман рядом с фрегатом) крадёт щелчок по знаку. В игре false.
+static var rollback_hull_entry := false
 
 
 ## ТОЛЬКО для проверок (замечание к G2): uid кораблей, которых фильтр считает
@@ -49,6 +62,21 @@ static func shown(s: Ship, _my_side: int) -> bool:
 ## Луч (o + n·t, |n| = 1) против капсулы (отрезок a–b, радиус r) → расстояние вдоль
 ## луча до входа в капсулу; −1 — мимо.
 static func ray_capsule(o: Vector3, n: Vector3, a: Vector3, b: Vector3, r: float) -> float:
+	var ax := _ray_axis(o, n, a, b)
+	if ax.y > r:
+		return -1.0
+	return maxf(0.0, ax.x - sqrt(r * r - ax.y * ax.y))
+
+
+## Луч против капсулы → расстояние вдоль луча до места, где луч ближе всего к оси капсулы
+## (середина корпуса на этом луче); −1 — мимо капсулы.
+static func ray_capsule_mid(o: Vector3, n: Vector3, a: Vector3, b: Vector3, r: float) -> float:
+	var ax := _ray_axis(o, n, a, b)
+	return ax.x if ax.y <= r else -1.0
+
+
+## Ближайшее сближение луча с отрезком оси a–b → (t вдоль луча, расстояние до оси там).
+static func _ray_axis(o: Vector3, n: Vector3, a: Vector3, b: Vector3) -> Vector2:
 	var d := b - a
 	var w0 := o - a
 	var bb := n.dot(d)
@@ -65,10 +93,26 @@ static func ray_capsule(o: Vector3, n: Vector3, a: Vector3, b: Vector3, r: float
 		u = clampf((o + n * t - a).dot(d) / cc, 0.0, 1.0)
 		t = maxf(0.0, (a + d * u - o).dot(n))
 	var q := a + d * u
-	var dist := (o + n * t).distance_to(q)
-	if dist > r:
-		return -1.0
-	return maxf(0.0, t - sqrt(r * r - dist * dist))
+	return Vector2(t, (o + n * t).distance_to(q))
+
+
+## Знак (его корабль на глубине md) против корпуса hull под той же точкой: знак важнее, если
+## корпус не заметно ближе (MARKER_HULL_AHEAD).
+static func marker_beats(view: Node3D, screen: Vector2, hull: Ship, md: float) -> bool:
+	if rollback_marker_first or hull == null:
+		return true
+	var cam := _cam(view)
+	var o := cam.project_ray_origin(screen)
+	var n := cam.project_ray_normal(screen)
+	var cap: Array = view.call("capsule", hull)
+	var ca: Vector3 = cap[0]
+	var cb: Vector3 = cap[1]
+	var cr: float = cap[2]
+	if rollback_hull_entry:
+		var te := ray_capsule(o, n, ca, cb, cr)
+		return te < 0.0 or md < te
+	var tm := ray_capsule_mid(o, n, ca, cb, cr)
+	return tm < 0.0 or tm >= md * (1.0 - MARKER_HULL_AHEAD)
 
 
 ## Кто под точкой экрана: капсула корпуса → ближайший в 30 точках. view —
@@ -106,8 +150,8 @@ static func pick(view: Node3D, screen: Vector2) -> Ship:
 	var mk := marker_at(view, screen)
 	if not mk.is_empty() and not bool_of(mk[2]):
 		var md: float = mk[1]
-		if md < best_t or rollback_marker_first:
-			var mu: int = mk[0]
+		var mu: int = mk[0]
+		if (best != null and best.uid == mu) or marker_beats(view, screen, best, md):
 			for s in ships:
 				if s.uid == mu:
 					best = s
@@ -280,16 +324,10 @@ static func pick_any(view: Node3D, screen: Vector2) -> RefCounted:
 	var mk := marker_at(view, screen)
 	if not mk.is_empty():
 		var md: float = mk[1]
-		var hull_t := INF
-		if hull != null:
-			var cap: Array = view.call("capsule", hull)
-			var ca: Vector3 = cap[0]
-			var cb: Vector3 = cap[1]
-			var cr: float = cap[2]
-			hull_t = ray_capsule(cam.project_ray_origin(screen), cam.project_ray_normal(screen), ca, cb, cr)
-		if md < hull_t or rollback_marker_first:
-			var mu: int = mk[0]
-			if bool_of(mk[2]):
+		var mu: int = mk[0]
+		var is_sq := bool_of(mk[2])
+		if (hull != null and not is_sq and hull.uid == mu) or marker_beats(view, screen, hull, md):
+			if is_sq:
 				var bo: Object = view.get("battle")
 				var mq: Squad = bo.call("squad_by_uid", mu)
 				if mq != null:

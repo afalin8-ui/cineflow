@@ -53,6 +53,9 @@ static var rollback_title_free := false
 ## оранжевый у Плэктора) не совпадал ни с одним знаком на экране, а в зеркале был одинаков
 ## у обеих сторон. В игре false.
 static var rollback_dot_clan := false
+## ТОЛЬКО для проверки отката (замечание к GИ): «Мы» и «Противник» переставлены — над своей
+## полосой «Противник». В игре false.
+static var rollback_word_swap := false
 var _back: TextureRect
 
 
@@ -152,7 +155,8 @@ func refresh(b: Object, view: Node3D, input: Node, title: String) -> void:
 		dot[i].color = Builder.OWN if i == my_side else Builder.FOE
 		if rollback_dot_clan:
 			dot[i].color = Color.hex((fd.color << 8) | 0xff) if fd != null else Color.WHITE
-		var wt := (fd.short if fd != null else str(clan)) if voice else (Texts.WE if i == my_side else Texts.FOE)
+		var mine := (i == my_side) != rollback_word_swap
+		var wt := (fd.short if fd != null else str(clan)) if voice else (Texts.WE if mine else Texts.FOE)
 		_put(word[i], wt)
 		word[i].add_theme_color_override("font_color", Builder.OWN if i == my_side else Builder.FOE)
 		_put(tag[i], "" if voice else (fd.tag if fd != null else ""))

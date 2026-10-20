@@ -30,6 +30,8 @@ const Roster := preload("res://ui/roster.gd")
 const Markers := preload("res://view/markers.gd")
 const Picking := preload("res://input/picking.gd")
 const Settings := preload("res://view/settings.gd")
+const ConfirmBox := preload("res://ui/confirm_box.gd")
+const Body := preload("res://sim/body.gd")
 
 ## Клавиша (по месту) каждой команды, у которой она есть: проверка «кнопка = клавиша».
 const KEY_OF := {&"amove": KEY_A, &"hold": KEY_H, &"guard": KEY_Y, &"hunt": KEY_T, &"drift": KEY_D,
@@ -42,8 +44,10 @@ var _main: Node
 # ───────────────────────── общее ─────────────────────────
 
 ## Быстрый бой по выбору меню (Тройден × Плэктор, «Сражение»), зерно 4242, на паузе, без края
-## экрана. Знаки — по умолчанию (включены): настройки — в своём файле прогона.
-func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: String = "hud") -> Polygon:
+## экрана. Знаки — по умолчанию (включены): настройки — в своём файле прогона. still — пауза
+## ДО первого кадра: бой стоит на расстановке старта при любой скорости машины (иначе до паузы
+## успевает пройти разное число шагов — раздел 22 godot/CLAUDE.md).
+func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: String = "hud", still: bool = false) -> Polygon:
 	await hooks.set_window_size(size)
 	Settings.path = tmp(dir + "_settings.cfg")
 	if FileAccess.file_exists(Settings.path):
@@ -58,6 +62,9 @@ func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: Strin
 	if mirror:
 		cfg["defender"] = cfg["attacker"]
 	_main.call("open_battle", cfg)
+	if still:
+		var p0: Polygon = _main.get("polygon")
+		p0.view.paused = true
 	await hooks.frames(4)
 	var p: Polygon = _main.get("polygon")
 	p.view.paused = true
@@ -300,6 +307,53 @@ func _busy_fleet(p: Polygon) -> void:
 		if s.heavy() and not s.legacy and foe != null:
 			s.belt = HeavyDoctrine.APPROACH
 			s.forced = foe
+
+
+## Один выбранный корабль: строка «чем занят» в панели есть всегда (план GИ, п. 5; замечание
+## к GИ, must: на 1366 у одного тяжёлого она пропадала — строка класса переносилась на две, и
+## вариант «без занятий» выбирался первым). Бой — 12 с «Охоты» всего флота (T настоящей клавишей,
+## шаги без кадров — от скорости машины не зависит), потом по очереди выбран каждый свой корабль
+## (к 12-й секунде живы 6 из 8, у тяжёлых — «враг вплотную — отходит · главным по … · батареей
+## по …»).
+func _single_doing(size: Vector2i, rollback: bool) -> Dictionary:
+	PolygonHud.rollback_drop_doing = rollback
+	var p := await _open(size, false, false, "hud", true)
+	await hooks.key(KEY_F2)
+	await hooks.key(KEY_T)
+	_steps(p, roundi(12.0 / Battle.STEP))
+	var lost := PackedStringArray()
+	var cut := 0
+	var n := 0
+	var longest := ""
+	var long_panel := ""
+	for s in _own(p):
+		p.view.selection = [s.uid]
+		await hooks.frames(2)
+		var want := PolygonHud.doing(s, p.battle)
+		var shown := p.hud.sel_label.text
+		n += 1
+		if want.length() > longest.length():
+			longest = want
+			long_panel = shown.replace("\n", " / ")
+		if not shown.contains(want):
+			lost.append("%s — «%s»" % [s.name, want])
+		if p.hud.sel_label.get_line_count() > p.hud.sel_label.max_lines_visible:
+			cut += 1
+	PolygonHud.rollback_drop_doing = false
+	await _close()
+	return {"n": n, "lost": lost, "cut": cut, "longest": longest, "panel": long_panel}
+
+
+func test_single_keeps_doing() -> void:
+	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+		var r := await _single_doing(size, false)
+		var lost: PackedStringArray = r["lost"]
+		note("%d: по одному выбрано %d, без строки занятия %d %s; самое длинное — панель «%s»" % [size.x, whole(r["n"]), lost.size(), "; ".join(lost), r["panel"]])
+		ok(whole(r["n"]) >= 5 and lost.is_empty() and whole(r["cut"]) == 0, "%d: у каждого из %d своих кораблей, выбранного по одному, строка «чем занят» в панели целиком" % [size.x, whole(r["n"])])
+	var o := await _single_doing(Vector2i(1366, 768), true)
+	var ol: PackedStringArray = o["lost"]
+	note("откат, 1366: без строки занятия %d из %d (%s); самое длинное — панель «%s»" % [ol.size(), whole(o["n"]), "; ".join(ol), o["panel"]])
+	ok(not ol.is_empty(), "откат «у одного корабля первым уходит занятие» краснеет на 1366: без строки %d из %d (%s)" % [ol.size(), whole(o["n"]), "; ".join(ol.slice(0, 2))])
 
 
 func test_buttons_on_screen_and_reachable() -> void:
@@ -802,6 +856,150 @@ func test_retreat_asks_first() -> void:
 	ok(not flag(o["asked"]) and whole(o["after_ask"]) > 0, "откат «отход без вопроса» краснеет: команда ушла сразу (%d)" % whole(o["after_ask"]))
 
 
+## Правила окна-вопроса «Отход» (ui/confirm_box.gd; замечание к GИ: прежняя проверка открывала
+## бой уже на паузе и жала только «да» и «нет»): бой ИДЁТ → вопрос ставит паузу; Пробел и G при
+## открытом окне до боя не доходят (пауза та же, в журнале команд ничего); Esc — «нет»: окно
+## закрыто, отхода нет, бой снова идёт; «Остаться» — то же. Откаты: окно не глотает клавиши
+## (ConfirmBox.rollback_keys_through) и после ответа бой остаётся на паузе (rollback_keep_pause).
+func _retreat_rules(keys_rb: bool, pause_rb: bool) -> Dictionary:
+	ConfirmBox.rollback_keys_through = keys_rb
+	ConfirmBox.rollback_keep_pause = pause_rb
+	var p := await _open(Vector2i(1366, 768))
+	var heavy := _first(p, func(x: Ship) -> bool: return x.heavy())
+	p.view.selection = [heavy.uid]
+	p.view.paused = false
+	await hooks.frames(2)
+	var tb := p.hud.header.buttons[&"retreat"]
+	var out := {}
+	await _press(tb)
+	out["asked"] = p.hud.confirm.is_open()
+	out["paused_on_ask"] = p.view.paused
+	var n0 := p.battle.cmds.journal.size()
+	await hooks.key(KEY_SPACE)
+	out["space_eaten"] = p.view.paused
+	await hooks.key(KEY_G)
+	await hooks.frames(1)
+	out["g_eaten"] = p.battle.cmds.journal.size() == n0
+	await hooks.key(KEY_ESCAPE)
+	out["esc_closes"] = not p.hud.confirm.is_open()
+	out["esc_no_cmd"] = _tail(p, n0).filter(func(d: Dictionary) -> bool: return d.get("op") == &"retreat").is_empty()
+	out["esc_runs"] = not p.view.paused
+	if p.hud.confirm.is_open():
+		await _press(p.hud.confirm.find_child("no", true, false) as Button)
+	p.view.paused = false
+	await _press(tb)
+	if p.hud.confirm.is_open():
+		await _press(p.hud.confirm.find_child("no", true, false) as Button)
+	out["no_runs"] = not p.view.paused and not p.hud.confirm.is_open()
+	ConfirmBox.rollback_keys_through = false
+	ConfirmBox.rollback_keep_pause = false
+	await _close()
+	return out
+
+
+func test_retreat_box_rules() -> void:
+	var r := await _retreat_rules(false, false)
+	note("«Отход» на ходу: %s" % str(r))
+	ok(flag(r["asked"]) and flag(r["paused_on_ask"]), "вопрос «Отход» ставит идущий бой на паузу")
+	ok(flag(r["space_eaten"]) and flag(r["g_eaten"]), "пока вопрос открыт, Пробел и G до боя не доходят: пауза та же, команд нет")
+	ok(flag(r["esc_closes"]) and flag(r["esc_no_cmd"]) and flag(r["esc_runs"]), "Esc — «нет»: окно закрыто, отхода нет, бой снова идёт")
+	ok(flag(r["no_runs"]), "«Остаться» — бой снова идёт с прежней скоростью")
+	var o := await _retreat_rules(true, false)
+	ok(not flag(o["space_eaten"]) and not flag(o["g_eaten"]) and not flag(o["esc_closes"]), "откат «окно не глотает клавиши» краснеет: %s" % str(o))
+	var o2 := await _retreat_rules(false, true)
+	ok(not flag(o2["esc_runs"]) and not flag(o2["no_runs"]), "откат «после ответа бой на паузе» краснеет: %s" % str(o2))
+
+
+## «Мы» и «Противник» над полосами силы в бою с приказами (07, 1.2 и ловушка 51; замечание к GИ:
+## их не охраняла ни одна проверка — перестановка слов оставляла ярус ui зелёным). Над своей
+## полосой — «Мы» мятным, над чужой — «Противник» красным; в зеркале Тройден × Тройден — так же
+## (там слово — единственное, что различает стороны в шапке). Откат — HudHeader.rollback_word_swap.
+func _we_foe(mirror: bool, rollback: bool) -> Dictionary:
+	HudHeader.rollback_word_swap = rollback
+	var p := await _open(Vector2i(1366, 768), false, mirror)
+	await hooks.frames(2)
+	var h := p.hud.header
+	var my := p.view.my_side
+	var out := {"w_my": h.word[my].text, "w_foe": h.word[1 - my].text,
+		"c_my": h.word[my].get_theme_color("font_color"), "c_foe": h.word[1 - my].get_theme_color("font_color")}
+	HudHeader.rollback_word_swap = false
+	await _close()
+	return out
+
+
+func test_header_we_and_foe() -> void:
+	for mirror: bool in [false, true]:
+		var r := await _we_foe(mirror, false)
+		var what := "зеркало Тройден × Тройден" if mirror else "быстрый бой"
+		note("%s: над своей полосой «%s», над чужой «%s»" % [what, r["w_my"], r["w_foe"]])
+		var cm: Color = r["c_my"]
+		var cf: Color = r["c_foe"]
+		ok(str(r["w_my"]) == Texts.WE and str(r["w_foe"]) == Texts.FOE, "%s: над своей полосой «%s», над чужой «%s»" % [what, Texts.WE, Texts.FOE])
+		ok(cm == Builder.OWN and cf == Builder.FOE, "%s: «Мы» — цветом своей стороны, «Противник» — чужой" % what)
+	var o := await _we_foe(true, true)
+	ok(str(o["w_my"]) != Texts.WE, "откат «слова переставлены» краснеет: над своей полосой «%s»" % o["w_my"])
+
+
+## Прочность — ОДНОЙ функцией корабля (hp_frac) везде, где её видно: полоска под знаком, полоска и
+## «прочность N%» в панели; у звена — среднее по машинам (план GИ, пп. 5–6; замечание к GИ: порча
+## «прочность всегда 1» во всех трёх местах оставляла ярус ui зелёным). Откаты — по месту: знак
+## (Markers.rollback_hp_full) и панель (PolygonHud.rollback_hp_full).
+func _hp_shown(mk_rb: bool, hud_rb: bool) -> Dictionary:
+	Markers.rollback_hp_full = mk_rb
+	PolygonHud.rollback_hp_full = hud_rb
+	var p := await _open(Vector2i(1366, 768), false, false, "hud", true)
+	var out := {}
+	var s := _first(p, func(x: Ship) -> bool: return x.def.id == &"cruiser")
+	Weapons.damage(p.battle, s, s.hp * 0.6, &"main", null, Vector2.ZERO)
+	p.view.selection = [s.uid]
+	await hooks.frames(3)
+	var f := s.hp_frac()
+	var m := p.view.markers.mark_of(s.uid)
+	out["f"] = f
+	out["mark"] = m.hp if m != null else -1.0
+	out["bar"] = p.hud.hp_bar.size.x / maxf(p.hud.hp_bg.size.x, 1.0)
+	out["text"] = p.hud.sel_label.text.contains("прочность %d%%" % roundi(f * 100.0))
+	# звено: одна машина ранена вполовину — знак и панель показывают среднее по машинам
+	var car := _first(p, func(x: Ship) -> bool: return x.hangar != null)
+	p.battle.queue({"op": &"launch", "ids": PackedInt32Array([car.uid]), "role": &"interceptor"})
+	_steps(p, 40)
+	var q: Squad = null
+	for o in p.battle.squads:
+		if not o.dead and o.side == p.view.my_side and o.craft.size() > 1:
+			q = o
+	if q != null:
+		var c0: Body = q.craft[0]
+		c0.hp = c0.max_hp * 0.5
+		var avg := 0.0
+		for c in q.craft:
+			avg += c.hp_frac()
+		avg /= float(q.craft.size())
+		p.view.selection = [q.uid]
+		await hooks.frames(3)
+		var mq := p.view.markers.mark_of(q.uid)
+		out["q_avg"] = avg
+		out["q_mark"] = mq.hp if mq != null else -1.0
+		out["q_bar"] = p.hud.hp_bar.size.x / maxf(p.hud.hp_bg.size.x, 1.0)
+	Markers.rollback_hp_full = false
+	PolygonHud.rollback_hp_full = false
+	await _close()
+	return out
+
+
+func test_hp_one_function_everywhere() -> void:
+	var r := await _hp_shown(false, false)
+	var f := num(r["f"])
+	note("крейсер ранен: hp_frac %.3f · знак %.3f · полоска панели %.3f · текст «прочность %d%%» %s; звено: среднее %.3f · знак %.3f · полоска %.3f" % [f, num(r["mark"]), num(r["bar"]), roundi(f * 100.0), "есть" if flag(r["text"]) else "НЕТ", num(r.get("q_avg", -1.0)), num(r.get("q_mark", -1.0)), num(r.get("q_bar", -1.0))])
+	ok(f < 0.8 and absf(num(r["mark"]) - f) < 0.005, "полоска под знаком раненого крейсера — на долю hp_frac (%.2f)" % f)
+	ok(absf(num(r["bar"]) - f) < 0.01 and flag(r["text"]), "в панели — полоска на ту же долю и «прочность %d%%»" % roundi(f * 100.0))
+	var qa := num(r.get("q_avg", -1.0))
+	ok(qa > 0.0 and qa < 0.99 and absf(num(r["q_mark"]) - qa) < 0.005 and absf(num(r["q_bar"]) - qa) < 0.01, "звено: знак и панель — среднее по машинам (%.2f)" % qa)
+	var o := await _hp_shown(true, false)
+	ok(absf(num(o["mark"]) - num(o["f"])) > 0.1 and num(o["q_mark"]) > 0.99, "откат «полоска знака всегда полная» краснеет: знак %.2f при %.2f" % [num(o["mark"]), num(o["f"])])
+	var o2 := await _hp_shown(false, true)
+	ok(num(o2["bar"]) > 0.99 and not flag(o2["text"]) and num(o2["q_bar"]) > 0.99, "откат «в панели прочность всегда 100%%» краснеет: полоска %.2f, текст без «прочность %d%%»" % [num(o2["bar"]), roundi(num(o2["f"]) * 100.0)])
+
+
 ## «Лёгкие» — корветы, фрегаты И корабли РЭБ (09, 6.8: РЭБ стоит с лёгкими).
 func _light(rollback: bool) -> Dictionary:
 	BattleInput.rollback_ecm_not_light = rollback
@@ -833,6 +1031,62 @@ func test_light_includes_ecm() -> void:
 	ok(whole(r["hn"]) > 0 and whole(r["hv"]) == whole(r["hn"]), "«Тяжёлые»: %d, все тяжёлые" % whole(r["hn"]))
 	var o := await _light(true)
 	ok(whole(o["ecm"]) == 0, "откат «Лёгкие без РЭБ» краснеет")
+
+
+## «Авианосцы» и «Авиация» в столбике быстрого выбора (09, 6.8: «как есть», как в JS; замечание
+## к GИ: в 0.7 их не было, и все звенья разом выбрать было нечем — ростер даёт по одной роли).
+## «Авианосцы» — свои носители; «Авиация» — все свои звенья в воздухе, и V уводит их на посадку
+## разом. Откат — PolygonHud.rollback_no_air_quick (столбик как в 0.7).
+func _air_quick(rollback: bool) -> Dictionary:
+	PolygonHud.rollback_no_air_quick = rollback
+	var p := await _open(Vector2i(1366, 768), false, false, "hud", true)
+	var out := {}
+	var cars: Array[int] = []
+	for s in _own(p):
+		if s.def.cls == &"carrier":
+			cars.append(s.uid)
+	var car_btn: Button = p.hud.quick_buttons.get(&"carriers")
+	out["car_pressed"] = await _press(car_btn)
+	out["car_ok"] = not cars.is_empty() and p.view.selection == cars
+	if not flag(out["car_pressed"]):
+		p.view.selection = cars
+	await hooks.key(KEY_Z)
+	await hooks.key(KEY_X)
+	_steps(p, 40)
+	await hooks.frames(2)
+	var sqs: Array[int] = []
+	for q in p.battle.squads:
+		if not q.dead and q.side == p.view.my_side and not q.craft.is_empty():
+			sqs.append(q.uid)
+	p.view.selection = []
+	var sq_btn: Button = p.hud.quick_buttons.get(&"squads")
+	out["sq_pressed"] = await _press(sq_btn)
+	out["sq_n"] = sqs.size()
+	out["sq_ok"] = sqs.size() >= 2 and p.view.selection == sqs
+	var n0 := p.battle.cmds.journal.size()
+	await hooks.key(KEY_V)
+	var recalled := PackedInt32Array()
+	for d in _tail(p, n0):
+		if d.get("op") == &"recall":
+			var ids: PackedInt32Array = d.get("ids", PackedInt32Array())
+			recalled.append_array(ids)
+	var all_back := sqs.size() >= 2
+	for u in sqs:
+		all_back = all_back and u in recalled
+	out["recall_all"] = all_back
+	PolygonHud.rollback_no_air_quick = false
+	await _close()
+	return out
+
+
+func test_quick_carriers_and_squads() -> void:
+	var r := await _air_quick(false)
+	note("«Авианосцы» и «Авиация»: %s" % str(r))
+	ok(flag(r["car_pressed"]) and flag(r["car_ok"]), "«Авианосцы» нажимается и выбирает свои носители")
+	ok(flag(r["sq_pressed"]) and flag(r["sq_ok"]), "«Авиация» нажимается и выбирает все %d своих звена в воздухе" % whole(r["sq_n"]))
+	ok(flag(r["recall_all"]), "после «Авиации» V уводит на посадку все звенья разом")
+	var o := await _air_quick(true)
+	ok(not flag(o["car_pressed"]) and not flag(o["sq_pressed"]), "откат «столбик как в 0.7» краснеет: кнопок нет")
 
 
 ## Ростер: щелчок — весь класс, следующий — по одному, после последнего — снова весь; Shift —
@@ -1057,6 +1311,66 @@ func test_markers_not_above_header() -> void:
 	ok(whole(o["top"]) > 0, "откат «знаки и под шапкой» краснеет: %s" % _say(o))
 
 
+## Старт «Быстрого боя» как у игрока (меню → «В бой», зерно 4242, бой стоит на расстановке): у
+## каждого корабля на экране есть знак или он сложен в соседний («+N»), кроме тех, что под нижними
+## панелями. Замечание к GИ: оба носителя и фрегат противника стояли под шапкой без знаков — знак
+## уходил выше шапки, а отход вниз до её низа не доставал.
+func _start_missing(size: Vector2i, rollback: bool) -> Dictionary:
+	Markers.rollback_no_under_top = rollback
+	var p := await _open(size, false, false, "hud", true)
+	await hooks.move(Vector2(size.x * 0.9, size.y * 0.5))
+	await hooks.frames(3)
+	var mk := p.view.markers
+	var cam := p.view.rig.camera
+	var have: Dictionary[int, bool] = {}
+	for d in mk.drawn:
+		have[d.uid] = true
+	for u in mk.folded:
+		have[u] = true
+	var miss := PackedStringArray()
+	var on := 0
+	var under_top := 0
+	var lines := 0
+	for s in p.battle.ships:
+		if s.dead or not Picking.shown(s, p.view.my_side):
+			continue
+		var sp := cam.unproject_position(p.view.ship_point(s))
+		if sp.x < 0.0 or sp.y < 0.0 or sp.x > size.x or sp.y > size.y:
+			continue
+		var below := false
+		for a in mk.avoid:
+			if a.has_point(sp):
+				below = true
+		if below:
+			continue
+		on += 1
+		if sp.y < mk.top:
+			under_top += 1
+			var m := mk.mark_of(s.uid)
+			if m != null and m.moved and m.frame.position.y >= mk.top:
+				lines += 1
+		if not have.has(s.uid):
+			miss.append("%s в (%.0f, %.0f)" % [s.name, sp.x, sp.y])
+	var a := _audit(p)
+	Markers.rollback_no_under_top = false
+	await _close()
+	return {"on": on, "miss": miss, "under_top": under_top, "lines": lines, "audit": a}
+
+
+func test_markers_for_ships_under_header() -> void:
+	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
+		var r := await _start_missing(size, false)
+		var miss: PackedStringArray = r["miss"]
+		var a: Dictionary = r["audit"]
+		note("%d, старт: кораблей на экране %d, под шапкой %d (знак под шапкой с линией — %d), без знака %d %s; %s" % [size.x, whole(r["on"]), whole(r["under_top"]), whole(r["lines"]), miss.size(), "; ".join(miss), _say(a)])
+		ok(whole(r["on"]) > 20 and miss.is_empty() and whole(r["under_top"]) > 0 and whole(r["lines"]) >= 1, "%d, старт: у каждого из %d кораблей на экране знак или «+N»; из %d под шапкой у %d — свой знак ниже шапки с линией" % [size.x, whole(r["on"]), whole(r["under_top"]), whole(r["lines"])])
+		ok(whole(a["over"]) == 0 and whole(a["top"]) == 0 and whole(a["under"]) == 0, "%d, старт: знаки под шапкой не наезжают на соседей и не выше шапки" % size.x)
+	var o := await _start_missing(Vector2i(1920, 1080), true)
+	var om: PackedStringArray = o["miss"]
+	note("откат «мест под шапкой нет», 1920: без знака %d — %s" % [om.size(), "; ".join(om)])
+	ok(not om.is_empty(), "откат «мест под шапкой нет» краснеет: без знака %d — %s" % [om.size(), "; ".join(om)])
+
+
 ## На пределе камеры 5000 знак есть у КАЖДОГО видимого корабля (свой или сложенный в соседа),
 ## кроме тех, что под панелями.
 func _far_missing(rollback: bool) -> Dictionary:
@@ -1191,6 +1505,89 @@ func test_marker_click_and_box() -> void:
 	ok(not flag(j.get("click", true)), "откат «знак под курсором встаёт заново» краснеет: щелчок пришёлся в пустоту")
 
 
+## Щелчок по КАЖДОМУ нарисованному знаку корабля выбирает корабль этого знака (замечание к GИ,
+## must: проба проверяющего мазала 1–2 раза из 30). Как у человека: мышь уведена в сторону, потом
+## наведена на середину рамки и щелчок. Предел камеры 5000, «Сражение» (зерно 4242), 1366 и 1920,
+## без выбора и при «Весь флот» (у выбранных — имена, знаки шире). → промахи словами.
+func _click_every_mark(size: Vector2i, with_all: bool, turn: float) -> Dictionary:
+	var p := await _open(size, false, false, "hud", true)
+	p.view.rig.set_view(p.view.rig.look, p.view.rig.yaw + turn, 5000.0, true)
+	await hooks.frames(3)
+	var away := Vector2(size.x * 0.85, size.y * 0.3)
+	var uids: Array[int] = []
+	for mm in p.view.markers.drawn:
+		if not mm.squad:
+			uids.append(mm.uid)
+	var bad := PackedStringArray()
+	var n := 0
+	for u in uids:
+		if with_all:
+			await hooks.key(KEY_F2)
+		else:
+			p.view.selection = []
+		await hooks.move(away)
+		await hooks.frames(2)
+		var mk := p.view.markers.mark_of(u)
+		if mk == null:
+			continue
+		n += 1
+		var fc := mk.frame.get_center()
+		var di0 := mk.di
+		await hooks.move(fc)
+		await hooks.frames(1)
+		var mk2 := p.view.markers.mark_of(u)
+		var stays := mk2 != null and mk2.frame.grow(2.0).has_point(fc)
+		await hooks.click(fc)
+		await hooks.frames(1)
+		var one: Array[int] = [u]
+		if p.view.selection != one:
+			var s := p.battle.ship_by_uid(u)
+			var g := p.battle.ship_by_uid(p.view.selection[0]) if p.view.selection.size() == 1 else null
+			bad.append("%s (отход %d%s) → %s" % [s.name, di0, "" if stays else ", знак уехал из-под курсора: отход %d" % (mk2.di if mk2 != null else -1), g.name if g != null else str(p.view.selection)])
+	await _close()
+	return {"n": n, "bad": bad}
+
+
+## Откаты — каждая причина промаха своим флажком, как было в capella-v0.7: (1) знак под курсором
+## ищет место с именем и уезжает (Markers.rollback_name_moves); (2) корпус соседа на той же
+## глубине важнее знака по входу луча в капсулу (Picking.rollback_hull_entry). Каждый обязан
+## дать промах хотя бы в одном из восьми случаев (2 ширины × с выбором и без × камера прямо и
+## повёрнута на 0,6 рад: на повёрнутой нашёлся промах, которого прямая не видела, — два РЭБ
+## в 68 по глубине, знак одного на корпусе другого). Бой стоит на расстановке старта (still) —
+## раскладка знаков от скорости машины не зависит.
+func _click_every_mark_all(rb_name: bool, rb_hull: bool) -> Dictionary:
+	Markers.rollback_name_moves = rb_name
+	Picking.rollback_hull_entry = rb_hull
+	var out := {"n": 0, "miss": 0, "say": PackedStringArray()}
+	for turn: float in [0.0, 0.6]:
+		for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+			for wa: bool in [false, true]:
+				var r := await _click_every_mark(size, wa, turn)
+				var bad: PackedStringArray = r["bad"]
+				out["n"] = whole(out["n"]) + whole(r["n"])
+				out["miss"] = whole(out["miss"]) + bad.size()
+				var say: PackedStringArray = out["say"]
+				say.append("%d%s, %s: %d из %d%s" % [size.x, " (камера повёрнута)" if turn != 0.0 else "", "весь флот" if wa else "без выбора", whole(r["n"]) - bad.size(), whole(r["n"]), (" — мимо: " + "; ".join(bad)) if not bad.is_empty() else ""])
+	Markers.rollback_name_moves = false
+	Picking.rollback_hull_entry = false
+	return out
+
+
+func test_marker_click_every_mark() -> void:
+	var r := await _click_every_mark_all(false, false)
+	var say: PackedStringArray = r["say"]
+	note("щелчок по каждому знаку на 5000: %s" % " | ".join(say))
+	ok(whole(r["n"]) >= 200 and whole(r["miss"]) == 0, "1366 и 1920, без выбора и «Весь флот», камера прямо и повёрнута: щелчок по каждому из %d знаков выбирает его корабль (мимо %d)" % [whole(r["n"]), whole(r["miss"])])
+	var o1 := await _click_every_mark_all(true, false)
+	var s1: PackedStringArray = o1["say"]
+	note("откат «ищет место с именем»: мимо %d — %s" % [whole(o1["miss"]), " | ".join(s1)])
+	ok(whole(o1["miss"]) > 0, "откат «знак под курсором ищет место с именем» краснеет: мимо %d — %s" % [whole(o1["miss"]), " | ".join(s1)])
+	var o2 := await _click_every_mark_all(false, true)
+	var s2: PackedStringArray = o2["say"]
+	note("откат «корпус по входу луча»: мимо %d — %s" % [whole(o2["miss"]), " | ".join(s2)])
+	ok(whole(o2["miss"]) > 0, "откат «корпус соседа важнее по входу луча» краснеет: мимо %d — %s" % [whole(o2["miss"]), " | ".join(s2)])
+
+
 ## Имя корабля — под курсором (и у выбранных), а не у всех: наводим мышь на знак своего корабля
 ## без имени — имя появляется, уводим — пропадает.
 func _hover_name(rollback: bool) -> Array[String]:
@@ -1225,8 +1622,8 @@ func test_marker_name_on_hover() -> void:
 	ok(o[1] == "", "откат «имя только у выбранных» краснеет: под курсором «%s»" % o[1])
 
 
-## Знак не главнее корпуса, который БЛИЖЕ по лучу: по ближнему тяжёлому, на корпус которого
-## лёг знак дальнего корабля, щелчок берёт ближний.
+## Знак не главнее корпуса, который ЗАМЕТНО ближе по лучу (Picking.MARKER_HULL_AHEAD): по ближнему
+## тяжёлому, на корпус которого лёг знак корабля далеко за ним, щелчок берёт ближний.
 func _behind(rollback: bool) -> Dictionary:
 	Picking.rollback_marker_first = rollback
 	var p := await _open(Vector2i(1366, 768))
@@ -1261,8 +1658,8 @@ func _behind(rollback: bool) -> Dictionary:
 				continue
 			for k in 9:
 				var pt := m.frame.position + m.frame.size * Vector2(0.25 + 0.25 * float(k % 3), 0.25 + 0.25 * float(k / 3))
-				var t := Picking.ray_capsule(cam.project_ray_origin(pt), cam.project_ray_normal(pt), ca, cb, cr)
-				if t >= 0.0 and t < m.depth - 20.0:
+				var t := Picking.ray_capsule_mid(cam.project_ray_origin(pt), cam.project_ray_normal(pt), ca, cb, cr)
+				if t >= 0.0 and t < m.depth * (1.0 - Picking.MARKER_HULL_AHEAD) - 20.0:
 					found = {"pt": pt, "far": m.uid}
 					break
 			if not found.is_empty():
@@ -1586,59 +1983,19 @@ func test_hint_above_roster() -> void:
 	ok(whole(o["under"]) > 0, "откат «подсказка как в 0.6 — две длинные строки под шапкой» краснеет: под ней %d кораблей чужой линии" % whole(o["under"]))
 
 
-## Текст выпуска capella-v0.7, «Что попробовать», шаги 1–4 — теми же действиями, что сделает
-## человек: щелчки по кнопкам, ячейке ростера и знаку, колесо мыши. Каждое правило под шагами
-## проверено своим откатом выше; здесь — что шаги вместе дают обещанное.
+## Текст выпуска capella-v0.7.1 (godot/RELEASE, «Что попробовать») — шаг за шагом событиями ввода,
+## как у игрока: из меню, кнопками и щелчками (замечание к GИ: каждый совет проверен на деле).
+## 1) «В бой», колесо до упора, щелчок по ЛЮБОМУ знаку — выбран его корабль и у знака имя
+## (перебираются все знаки кораблей, мышь каждый раз уводится в сторону; бой на паузе — расстановка
+## от скорости машины не зависит); 2) знак своего флагмана или крейсера — в панели имя, класс с
+## прочностью и строка «чем занят»; 3) «Авианосцы» → «Перехватчик» и «Истребитель» — два звена,
+## «Авиация» — оба выбраны, V — оба на посадку.
 func test_release_walkthrough() -> void:
-	# как в тексте выпуска: из меню, кнопкой «В бой»
 	var p := await _open_by_menu(Vector2i(1366, 768), "go")
 	if not ok(p != null, "шаг 1: в меню «В бой» нажимается и открывает бой"):
 		await _close()
 		return
 	var my := p.view.my_side
-	p.view.paused = false
-	# 1. «Весь флот», потом «Охота» — все корабли на «Охоте»
-	ok(await _press(p.hud.quick_buttons[&"all"]), "шаг 1: «Весь флот» нажимается")
-	await hooks.frames(2)
-	var hb: Button = p.hud.grid.buttons.get(&"hunt")
-	ok(await _press(hb), "шаг 1: «Охота» нажимается")
-	await hooks.frames(4)
-	var all_hunt := true
-	for s in _own(p):
-		all_hunt = all_hunt and s.stance == &"hunt"
-	ok(all_hunt and _own(p).size() > 3, "шаг 1: все %d кораблей на «Охоте»" % _own(p).size())
-	# 2. ячейка ростера «Носитель», потом «Перехватчик» — звено взлетело
-	var cell: Button = p.hud.roster.cells.get("s:carrier")
-	ok(await _press(cell), "шаг 2: ячейка «Носитель» нажимается")
-	await hooks.frames(2)
-	var sel_ok := p.view.selection.size() == 1 and p.battle.ship_by_uid(p.view.selection[0]).hangar != null
-	var ib: Button = p.hud.grid.buttons.get(&"launch_interceptor")
-	ok(sel_ok and await _press(ib), "шаг 2: выбран носитель, «Перехватчик» нажимается")
-	_steps(p, 40)
-	p.view.paused = false
-	var nq := 0
-	for q in p.battle.squads:
-		if not q.dead and q.side == my:
-			nq += 1
-	ok(nq == 1, "шаг 2: звено взлетело (%d)" % nq)
-	await hooks.frames(2)
-	var sq_mark := false
-	for m in p.view.markers.drawn:
-		sq_mark = sq_mark or (m.squad and m.kind == &"interceptor" and m.side == my)
-	ok(sq_mark, "шаг 2: над звеном — знак роли (перехватчик)")
-	# 3. «Подкрепление», через полминуты — «Прибывшие»: вышедшие выбраны
-	var rb := p.hud.header.buttons[&"reinforce"]
-	ok(await _press(rb), "шаг 3: «Подкрепление» нажимается")
-	_steps(p, roundi(36.0 / Battle.STEP))
-	p.view.paused = false
-	await hooks.frames(3)
-	ok(rb.text.begins_with("Прибывшие") and await _press(rb), "шаг 3: «%s» нажимается" % rb.text)
-	var arrived := not p.view.selection.is_empty()
-	for u in p.view.selection:
-		arrived = arrived and u in p.view.arrived
-	ok(arrived, "шаг 3: выбраны вышедшие (%d)" % p.view.selection.size())
-	# 4. колесо до упора — знаки на месте; щелчок по знаку выбирает корабль
-	p.view.paused = true
 	var rig := p.view.rig
 	var mid := Vector2(683.0, 380.0)
 	await hooks.move(mid)
@@ -1654,55 +2011,89 @@ func test_release_walkthrough() -> void:
 	while absf(rig.s_dist - rig.dist) > 5.0 and n < 900:
 		await hooks.frames(1)
 		n += 1
-	await hooks.key(KEY_ESCAPE)
-	await hooks.frames(3)
-	ok(rig.dist >= rig.dist_max - 1.0, "шаг 4: колесом камера отъехала до упора (%.0f из %.0f)" % [rig.dist, rig.dist_max])
-	var cam := rig.camera
-	var shown := 0
-	for s in p.battle.ships:
-		if not s.dead and Picking.shown(s, my):
-			shown += 1
-	var mk := p.view.markers
-	ok(mk.drawn.size() + mk.folded.size() >= shown - 4, "шаг 4: знаки на месте — %d своих и %d сложенных при %d кораблях" % [mk.drawn.size(), mk.folded.size(), shown])
-	var target: Markers.Mark = null
-	for m in mk.drawn:
-		if m.squad:
+	ok(rig.dist >= rig.dist_max - 1.0, "шаг 1: колесом камера отъехала до упора (%.0f из %.0f)" % [rig.dist, rig.dist_max])
+	var uids: Array[int] = []
+	for m in p.view.markers.drawn:
+		if not m.squad:
+			uids.append(m.uid)
+	var away := Vector2(1366.0 * 0.85, 768.0 * 0.3)
+	var miss := PackedStringArray()
+	var named := 0
+	var tried := 0
+	for u in uids:
+		p.view.selection = []
+		await hooks.move(away)
+		await hooks.frames(2)
+		var mk := p.view.markers.mark_of(u)
+		if mk == null:
 			continue
-		var c := m.frame.get_center()
-		var clash := false
-		for s in p.battle.ships:
-			if not s.dead and s.uid != m.uid and cam.unproject_position(p.view.ship_point(s)).distance_to(c) < 35.0:
-				clash = true
-		if not clash:
-			target = m
+		tried += 1
+		var c := mk.frame.get_center()
+		await hooks.move(c)
+		await hooks.frames(1)
+		await hooks.click(c)
+		await hooks.frames(1)
+		var one: Array[int] = [u]
+		if p.view.selection != one:
+			miss.append(p.battle.ship_by_uid(u).name)
+			continue
+		var m2 := p.view.markers.mark_of(u)
+		if m2 != null and m2.name != "":
+			named += 1
+		else:
+			note("без имени: %s, рамка %s, корабль %s, отход %d" % [p.battle.ship_by_uid(u).name, m2.frame if m2 != null else Rect2(), m2.p if m2 != null else Vector2(), m2.di if m2 != null else -1])
+	ok(tried >= 20 and miss.is_empty(), "шаг 1: щелчок по каждому из %d знаков выбрал его корабль (мимо: %s)" % [tried, ", ".join(miss)])
+	ok(named == tried - miss.size(), "шаг 1: у знака выбранного — имя (%d из %d)" % [named, tried])
+	# 2. знак своего флагмана или крейсера — три строки: имя, класс с прочностью, чем занят
+	var heavy: Markers.Mark = null
+	for m in p.view.markers.drawn:
+		if not m.squad and m.side == my and (m.kind == &"capital" or m.kind == &"cruiser"):
+			heavy = m
 			break
-	if ok(target != null, "шаг 4: есть знак, по которому щёлкнуть"):
-		var uid := target.uid
-		await hooks.click(target.frame.get_center())
-		var one: Array[int] = [uid]
-		ok(p.view.selection == one, "шаг 4: щелчок по знаку выбрал его корабль")
-	await _close()
-	# 5. «Смотреть: ИИ против ИИ» — знаки обеих сторон, шапка называет кланы
-	var w := await _open_by_menu(Vector2i(1366, 768), "watch")
-	if not ok(w != null and w.battle.watch, "шаг 5: в меню «Смотреть: ИИ против ИИ» нажимается и открывает бой ИИ"):
-		await _close()
-		return
+	if ok(heavy != null, "шаг 2: на экране знак своего флагмана или крейсера"):
+		var hu := heavy.uid
+		p.view.selection = []
+		await hooks.move(away)
+		await hooks.frames(2)
+		var hm := p.view.markers.mark_of(hu)
+		await hooks.click(hm.frame.get_center())
+		await hooks.frames(3)
+		var hs := p.battle.ship_by_uid(hu)
+		var txt := p.hud.sel_label.text
+		var lines := txt.split("\n")
+		note("шаг 2: «%s»" % txt.replace("\n", " / "))
+		ok(p.view.selection.size() == 1 and p.view.selection[0] == hu and lines.size() >= 3 and lines[0].contains(hs.name) and lines[1].contains("прочность") and txt.contains(PolygonHud.doing(hs, p.battle)),
+			"шаг 2: внизу имя, класс с прочностью и чем корабль занят")
+	# 3. «Авианосцы» → «Перехватчик», «Истребитель»; «Авиация» — оба звена; V — оба на посадку
+	var cars: Array[int] = []
+	for s in _own(p):
+		if s.def.cls == &"carrier":
+			cars.append(s.uid)
+	var car_btn: Button = p.hud.quick_buttons.get(&"carriers")
+	ok(await _press(car_btn) and not cars.is_empty() and p.view.selection == cars, "шаг 3: «Авианосцы» нажимается и выбирает носители (%d)" % cars.size())
 	await hooks.frames(2)
-	var per := PackedInt32Array([0, 0])
-	var shapes := PackedStringArray(["", ""])
-	for m in w.view.markers.drawn:
-		if m.squad:
-			continue
-		per[m.side] += 1
-		shapes[m.side] = str(w.view.markers.side_shape(m.side))
-	ok(per[0] > 0 and per[1] > 0 and shapes[0] != shapes[1], "шаг 5: знаки у обеих сторон — %d и %d, рамки «%s» и «%s»" % [per[0], per[1], shapes[0], shapes[1]])
-	var hw: Array[String] = []
-	for i in 2:
-		hw.append(w.hud.header.word[i].text)
-	ok(hw[0] == "Тройден" and hw[1] == "Плэктор", "шаг 5: шапка называет кланы: «%s» и «%s»" % [hw[0], hw[1]])
-	var same := true
-	for i in 2:
-		var mc := w.view.markers.side_color(i, w.battle.sides[i].clan)
-		same = same and w.hud.header.word[i].get_theme_color("font_color") == mc and w.hud.header.dot[i].color == mc
-	ok(same, "шаг 5: имя клана в шапке и квадратик у него — того же цвета, что знаки его стороны")
+	var ib: Button = p.hud.grid.buttons.get(&"launch_interceptor")
+	var fb: Button = p.hud.grid.buttons.get(&"launch_fighter")
+	ok(await _press(ib) and await _press(fb), "шаг 3: «Перехватчик» и «Истребитель» нажимаются")
+	_steps(p, 40)
+	await hooks.frames(2)
+	var sqs: Array[int] = []
+	for q in p.battle.squads:
+		if not q.dead and q.side == my and not q.craft.is_empty():
+			sqs.append(q.uid)
+	ok(sqs.size() == 2, "шаг 3: взлетели два звена (%d)" % sqs.size())
+	var sq_btn: Button = p.hud.quick_buttons.get(&"squads")
+	ok(await _press(sq_btn) and p.view.selection == sqs, "шаг 3: «Авиация» выбрала оба звена")
+	var n0 := p.battle.cmds.journal.size()
+	await hooks.key(KEY_V)
+	var back: Array[int] = []
+	for d in _tail(p, n0):
+		if d.get("op") == &"recall":
+			var ids: PackedInt32Array = d.get("ids", PackedInt32Array())
+			for u in ids:
+				back.append(u)
+	var both := sqs.size() == 2
+	for u in sqs:
+		both = both and u in back
+	ok(both, "шаг 3: V — оба звена на посадку")
 	await _close()

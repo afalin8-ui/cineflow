@@ -216,7 +216,10 @@ func _ready() -> void:
 	column.name = "QuickSelect"
 	column.add_theme_constant_override("separation", 5)
 	add_child(column)
-	for id: StringName in [&"all", &"heavy", &"light", &"markers"]:
+	var col_ids: Array[StringName] = [&"all", &"heavy", &"light", &"carriers", &"squads", &"markers"]
+	if rollback_no_air_quick:
+		col_ids = [&"all", &"heavy", &"light", &"markers"]
+	for id: StringName in col_ids:
 		var k := Texts.cmd(id, "key")
 		var b := Builder.button(str(id), Texts.cmd(id, "word") + (" · " + k if k != "" else ""), Vector2(COL_W, COL_BTN_H), 15)
 		b.pressed.connect(_command.bind(id))
@@ -396,6 +399,16 @@ static func info_w(vs: Vector2) -> float:
 	return 330.0 if compact(vs) else 420.0
 
 
+## Ширина «что выбрано» при n командах сетки: место, которое не занял короткий ряд сетки, отдаётся
+## тексту (у одного крейсера 6 кнопок из 7 — справа было 116 точек пусто, а занятие корабля в 330
+## точек на 1366 не влезало, замечание к GИ). Правый край панели — не дальше, чем при полной сетке.
+static func sel_w(vs: Vector2, n: int) -> float:
+	if n <= 0 or rollback_drop_doing:
+		return info_w(vs)
+	var free := CommandGrid.COLUMNS - mini(n, CommandGrid.COLUMNS)
+	return info_w(vs) + float(free) * (grid_btn(vs).x + CommandGrid.GAP)
+
+
 ## Высота нижней панели постоянная (ростер над ней не прыгает при смене выделения, 07, 1.7):
 ## два ряда кнопок сетки и поля.
 static func panel_h(vs: Vector2) -> float:
@@ -405,12 +418,12 @@ static func panel_h(vs: Vector2) -> float:
 ## Что выбрано, сетка команд, полоска прочности — по выбору и бою.
 func _refresh_panel(b: Object, vs: Vector2) -> void:
 	var sl := _sel_text(b)
-	var vw := info_w(vs)
+	var ids := commands_now(b)
+	var vw := sel_w(vs, ids.size())
 	if sl != _last_sel or vw != _last_vw:
 		_last_sel = sl
 		_last_vw = vw
 		_fit_pending = true
-	var ids := commands_now(b)
 	grid.visible = not ids.is_empty()
 	grid.set_commands(ids, grid_btn(vs))
 	_update_grid(b)
@@ -418,7 +431,7 @@ func _refresh_panel(b: Object, vs: Vector2) -> void:
 	var one := _single(b)
 	hp_bg.visible = one >= 0.0
 	hp_bar.visible = one >= 0.0
-	var w := info_w(vs)
+	var w := vw
 	if one >= 0.0:
 		hp_bg.size = Vector2(w, 4.0)
 		hp_bar.size = Vector2(maxf(w * clampf(one, 0.0, 1.0), 1.0), 4.0)
@@ -446,13 +459,13 @@ func _single(b: Object) -> float:
 		return -1.0
 	var s: Ship = b.call("ship_by_uid", sel[0])
 	if s != null and not s.dead:
-		return s.hp_frac()
+		return 1.0 if rollback_hp_full else s.hp_frac()
 	var q: Squad = b.call("squad_by_uid", sel[0])
 	if q != null and not q.dead and not q.craft.is_empty():
 		var sum := 0.0
 		for c in q.craft:
 			sum += c.hp_frac()
-		return sum / float(q.craft.size())
+		return 1.0 if rollback_hp_full else sum / float(q.craft.size())
 	return -1.0
 
 
@@ -830,13 +843,24 @@ func _sel_text(b: Object) -> String:
 	if sel.size() > 3:
 		# много выбранных — состав по классу («Корвет ×8 · Фрегат ×4»), а не четыре имени (07, 1.8)
 		line = "%s — %s" % [head, _composition(b, sel)]
+	var mouse := "\nПКМ — лететь, по врагу — бить его" if own > 0 and not watch else ""
+	_sel_alts = PackedStringArray()
 	if single != null:
-		line += "\n%s · скорость %d · прочность %d%%" % [single.def.role_text, roundi(single.vel.length()), roundi(single.hp_frac() * 100.0)]
+		var hp := 100 if rollback_hp_full else roundi(single.hp_frac() * 100.0)
+		var role := "\n%s · скорость %d · прочность %d%%" % [single.def.role_text, roundi(single.vel.length()), hp]
+		if not rollback_drop_doing:
+			# один корабль: строка «чем занят» важнее строки класса (план GИ, п. 5 — «строка
+			# остаётся»). Короче — сначала мышь, потом оружие и скорость, потом класс целиком;
+			# занятие уходит только в самом последнем варианте (на 1366 и 1920 не бывает)
+			var act := _acts_text(acts, 1)
+			var short := "\n%s · прочность %d%%" % [single.def.role_text.get_slice(" · ", 0), hp]
+			for t: String in [line + role + act + mouse, line + role + act, line + short + act, line + act, line + short]:
+				_sel_alts.append(t)
+			return _sel_alts[0]
+		line += role
 	# панель постоянной высоты: текст, который в неё не лёг, НЕ обрезается на полуслове, а
 	# короче — сначала уходит строка мыши, потом лишние занятия (3 → 2 → 1 вида), потом занятия
 	# совсем (_fit_sel выбирает первый вариант, который влез)
-	var mouse := "\nПКМ — лететь, по врагу — бить его" if own > 0 and not watch else ""
-	_sel_alts = PackedStringArray()
 	for k: int in [3, 3, 2, 1, 0]:
 		var t := line + _acts_text(acts, k)
 		if _sel_alts.is_empty():
@@ -865,6 +889,17 @@ var _sel_alts := PackedStringArray()
 ## ТОЛЬКО для проверки отката (план GИ): текст выбранного ставится целиком, лишнее режется
 ## по высоте панели — последняя строка обрывается на полуслове. В игре false.
 static var rollback_panel_cut := false
+## ТОЛЬКО для проверки отката (замечание к GИ) — как в capella-v0.7: у одного корабля первой
+## уходит строка «чем занят» (строка класса остаётся), и колонка текста не шире 330 / 420 точек
+## при любой сетке. На 1366 занятие тяжёлого пропадало из панели. В игре false.
+static var rollback_drop_doing := false
+## ТОЛЬКО для проверки отката (замечание к GИ): прочность в панели всегда полная — и полоска,
+## и «прочность 100%». В игре false.
+static var rollback_hp_full := false
+## ТОЛЬКО для проверки отката (замечание к GИ) — как в capella-v0.7: в столбике быстрого выбора
+## нет «Авианосцев» и «Авиации» (09, 6.8 велит их оставить), и все звенья разом выбрать нечем.
+## В игре false.
+static var rollback_no_air_quick := false
 
 
 ## Первый вариант «что выбрано», который целиком влезает в панель (строк не больше видимых).

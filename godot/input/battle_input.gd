@@ -492,8 +492,10 @@ func command(id: StringName) -> bool:
 			view.call("set_speed", 2)
 		&"speed4":
 			view.call("set_speed", 4)
-		&"all", &"heavy", &"light":
+		&"all", &"heavy", &"light", &"carriers":
 			select_kind(id)
+		&"squads":
+			select_squads()
 		&"markers":
 			var on: bool = view.call("toggle_markers")
 			_say(Texts.MARKERS_ON if on else Texts.MARKERS_OFF)
@@ -531,10 +533,34 @@ func select_kind(kind: StringName) -> Array[int]:
 			continue
 		if kind == &"light" and (s.def.cls != &"escort" or (rollback_ecm_not_light and s.def.ecm)):
 			continue
+		if kind == &"carriers" and s.def.cls != &"carrier":
+			continue
 		got.append(s.uid)
 		sum += view.call("ship_point", s)
 	if got.is_empty():
 		_say(Texts.NONE_OF_KIND)
+		return got
+	_set_sel(got)
+	_look_at(sum / float(got.size()))
+	return got
+
+
+## «Авиация» (09, 6.8 — «как есть», 07, 2.9): все свои живые звенья в воздухе разом — так их
+## уводят на посадку одной V. Камера — к их середине, как у быстрого выбора кораблей.
+func select_squads() -> Array[int]:
+	var got: Array[int] = []
+	var b := _battle()
+	var my_side: int = view.get("my_side")
+	var sum := Vector3.ZERO
+	var squads: Array = b.get("squads")
+	for o: Object in squads:
+		var q := o as Squad
+		if q.dead or q.side != my_side or q.craft.is_empty():
+			continue
+		got.append(q.uid)
+		sum += view.call("squad_point", q)
+	if got.is_empty():
+		_say(Texts.NO_SQUADS)
 		return got
 	_set_sel(got)
 	_look_at(sum / float(got.size()))

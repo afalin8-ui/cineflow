@@ -19,6 +19,10 @@ static var rollback_rebuild := false
 ## кнопке не помещается. В игре false.
 static var rollback_word_14 := false
 
+## Кнопок в ряду и зазор между ними (точки); ширину «что выбрано» считает от них экран боя.
+const COLUMNS := 7
+const GAP := 4.0
+
 ## Нажатие кнопки: on_press.call(id).
 var on_press: Callable
 ## Подсказка (ui/hud_tooltip.gd): attach каждой новой кнопке.
@@ -31,9 +35,9 @@ var rebuilds := 0
 
 
 func _ready() -> void:
-	columns = 7
-	add_theme_constant_override("h_separation", 4)
-	add_theme_constant_override("v_separation", 4)
+	columns = COLUMNS
+	add_theme_constant_override("h_separation", roundi(GAP))
+	add_theme_constant_override("v_separation", roundi(GAP))
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 

@@ -13,6 +13,7 @@ const Polygon := preload("res://tools/polygon.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
 const Markers := preload("res://view/markers.gd")
 const Settings := preload("res://view/settings.gd")
+const Weapons := preload("res://sim/weapons.gd")
 
 var _main: Node
 
@@ -199,3 +200,76 @@ func test_mirror_by_side() -> void:
 	ok(whole(o["col"]) > 0, "откат «цвет по клану» краснеет на снимке: %s" % _say(o))
 	var o2 := await _mirror(false, true)
 	ok(whole(o2["shape"]) > 0 and whole(o2["col"]) == 0, "откат «одна форма» краснеет на снимке формой, цвет при этом верный: %s" % _say(o2))
+
+
+## Доля залитой полоски прочности знака на снимке: средняя строка полоски, точки ярче 0,3 — залиты
+## (фон полоски тёмный, заливка — цвет стороны).
+static func _bar_fill(img: Image, bar: Rect2) -> float:
+	var y := roundi(bar.position.y + bar.size.y * 0.5 - 0.5)
+	var x0 := roundi(bar.position.x)
+	var x1 := roundi(bar.end.x) - 1
+	var lit := 0
+	for x in range(x0, x1 + 1):
+		var c := img.get_pixel(clampi(x, 0, img.get_width() - 1), clampi(y, 0, img.get_height() - 1))
+		if maxf(c.r, c.g) > 0.3:
+			lit += 1
+	return float(lit) / float(x1 - x0 + 1)
+
+
+## Толщина светлой полосы левой кромки рамки (прямоугольник своей стороны) по середине высоты:
+## у выбранного кромка толще и вокруг неё ореол.
+static func _edge_band(img: Image, fr: Rect2) -> int:
+	var y := roundi(fr.position.y + fr.size.y * 0.5)
+	var n := 0
+	for x in range(roundi(fr.position.x) - 8, roundi(fr.position.x) + 4):
+		var c := img.get_pixel(clampi(x, 0, img.get_width() - 1), y)
+		if maxf(c.r, maxf(c.g, c.b)) > 0.15:
+			n += 1
+	return n
+
+
+## Полоска прочности под знаком — на долю hp_frac, а у выбранного рамка толще и с ореолом (план
+## GИ, п. 6; замечание к GИ: ни то, ни другое не охраняла ни одна проверка — порча «полоска всегда
+## полная» оставляла ярусы ui и hud зелёными). Кадр без трёхмерного мира: свой фрегат ранен, другой
+## свой корабль сначала не выбран, потом выбран. Откаты: Markers.rollback_hp_full,
+## Markers.rollback_sel_plain.
+func _bar_and_sel(hp_rb: bool, sel_rb: bool) -> Dictionary:
+	Markers.rollback_hp_full = hp_rb
+	Markers.rollback_sel_plain = sel_rb
+	var p := await _open(Vector2i(1366, 768))
+	await hooks.move(Vector2(4.0, 400.0))
+	var own: Array[int] = []
+	for m in p.view.markers.drawn:
+		if not m.squad and m.side == p.view.my_side and not m.moved:
+			own.append(m.uid)
+	var out := {"n": own.size()}
+	if own.size() >= 2:
+		var hurt := p.battle.ship_by_uid(own[0])
+		Weapons.damage(p.battle, hurt, hurt.hp * 0.55, &"main", null, Vector2.ZERO)
+		await hooks.frames(2)
+		var img := await _flat_shot("hud_bar_sel_1366" + ("_hp" if hp_rb else "") + ("_sel" if sel_rb else ""))
+		var mh := p.view.markers.mark_of(hurt.uid)
+		out["hp"] = hurt.hp_frac()
+		out["fill"] = _bar_fill(img, mh.bar) if mh != null else -1.0
+		var mb := p.view.markers.mark_of(own[1])
+		out["plain"] = _edge_band(img, mb.frame) if mb != null else -1
+		p.view.selection = [own[1]]
+		await hooks.frames(2)
+		var img2 := await _flat_shot("hud_bar_sel_1366_picked" + ("_hp" if hp_rb else "") + ("_sel" if sel_rb else ""))
+		var mb2 := p.view.markers.mark_of(own[1])
+		out["picked"] = _edge_band(img2, mb2.frame) if mb2 != null else -1
+	Markers.rollback_hp_full = false
+	Markers.rollback_sel_plain = false
+	await _close()
+	return out
+
+
+func test_marker_bar_and_selected_on_screen() -> void:
+	var r := await _bar_and_sel(false, false)
+	note("полоска раненого: прочность %.2f, залито %.2f; кромка невыбранного %d точек, выбранного %d" % [num(r.get("hp", -1.0)), num(r.get("fill", -1.0)), whole(r.get("plain", -1)), whole(r.get("picked", -1))])
+	ok(whole(r["n"]) >= 2 and num(r["hp"]) < 0.8 and absf(num(r["fill"]) - num(r["hp"])) < 0.12, "полоска под знаком раненого залита на долю прочности (%.2f из %.2f)" % [num(r["fill"]), num(r["hp"])])
+	ok(whole(r["picked"]) >= whole(r["plain"]) + 2, "у выбранного кромка рамки толще и с ореолом: %d точек против %d" % [whole(r["picked"]), whole(r["plain"])])
+	var o := await _bar_and_sel(true, false)
+	ok(num(o["fill"]) > 0.95, "откат «полоска всегда полная» краснеет на снимке: залито %.2f при прочности %.2f" % [num(o["fill"]), num(o["hp"])])
+	var o2 := await _bar_and_sel(false, true)
+	ok(whole(o2["picked"]) < whole(o2["plain"]) + 2, "откат «выбранный как невыбранный» краснеет: %d точек против %d" % [whole(o2["picked"]), whole(o2["plain"])])

@@ -109,14 +109,25 @@ var folded: Array[int] = []
 var _canvas: Control
 var _font: Font
 ## Отход каждого знака на прошлом кадре (uid → номер в TRY): знак под курсором и выбранный
-## сначала пробуют прежнее место. Иначе наведение поднимает знак в важности, он встаёт на своё
-## место — и уезжает из-под курсора, а щелчок, который шёл по нему, приходится в пустоту.
+## ОСТАЮТСЯ на прежнем месте — с именем, если имя там влезает, иначе без имени. Иначе наведение
+## поднимает знак в важности и даёт ему имя, он ищет место — и уезжает из-под курсора, а щелчок,
+## который шёл по нему, приходится в соседа или в пустоту (замечание к GИ: 1–2 промаха из 30).
 var _last_di: Dictionary[int, int] = {}
 ## ТОЛЬКО для проверки отката (план GИ): знак под курсором встаёт заново, без памяти о прошлом
 ## месте. В игре false.
 static var rollback_hover_jumps := false
+## ТОЛЬКО для проверки отката (замечание к GИ) — как в capella-v0.7: знак под курсором сначала
+## ищет место С ИМЕНЕМ (где угодно) и только потом остаётся на прежнем без имени, а шаг отхода
+## зависит от имени — рамка того же отхода с именем стоит в другом месте. В игре false.
+static var rollback_name_moves := false
 ## ТОЛЬКО для проверки отката: имя только у выбранных — под курсором его нет. В игре false.
 static var rollback_hover_no_name := false
+## ТОЛЬКО для проверки отката (замечание к GИ): полоска прочности под знаком всегда полная. В игре
+## false.
+static var rollback_hp_full := false
+## ТОЛЬКО для проверки отката (замечание к GИ): выбранный знак рисуется как невыбранный — без
+## толстой кромки и ореола. В игре false.
+static var rollback_sel_plain := false
 var _name_w: Dictionary[String, float] = {}
 
 
@@ -213,7 +224,7 @@ func layout() -> void:
 		m.p = p
 		m.sel = s.uid in sel
 		m.hover = s.uid == hover
-		m.hp = s.hp_frac()
+		m.hp = 1.0 if rollback_hp_full else s.hp_frac()
 		m.depth = cam.global_position.distance_to(pt)
 		m.label = Weapons.short_name(s)
 		m.jump = s.charging()
@@ -247,7 +258,7 @@ func layout() -> void:
 		mq.rpx = 6.0
 		mq.sel = q.uid in sel
 		mq.hover = q.uid == hover
-		mq.hp = hpq / float(q.craft.size())
+		mq.hp = 1.0 if rollback_hp_full else hpq / float(q.craft.size())
 		mq.depth = cam.global_position.distance_to(qp)
 		mq.label = "%s ×%d" % [_role_short(b, q.role), q.craft.size()]
 		mq.pri = (4.0e6 if mq.hover else 0.0) + (2.0e6 if mq.sel else 0.0) + 500.0
@@ -257,9 +268,17 @@ func layout() -> void:
 	var placed: Array[Rect2] = []
 	for m in items:
 		var want_name := (m.hover and not rollback_hover_no_name) or m.sel
-		var got := _place(m, want_name, vs, grid, placed)
+		var got := CROWDED
+		var keep := (m.hover or m.sel) and _last_di.has(m.uid) and not rollback_hover_jumps
+		if keep and not rollback_name_moves:
+			# прежнее место — с именем, если влезает, иначе без имени, но НА МЕСТЕ
+			got = _place(m, want_name, vs, grid, placed, _last_di[m.uid])
+			if got != PLACED and want_name:
+				got = _place(m, false, vs, grid, placed, _last_di[m.uid])
+		if got != PLACED:
+			got = _place(m, want_name, vs, grid, placed, -1, keep and rollback_name_moves)
 		if got != PLACED and want_name:
-			got = _place(m, false, vs, grid, placed)
+			got = _place(m, false, vs, grid, placed, -1, keep and rollback_name_moves)
 		if got == PLACED:
 			drawn.append(m)
 		elif got == CROWDED:
@@ -291,6 +310,15 @@ static func _role_short(b: Object, role: StringName) -> String:
 const TRY: Array[Vector2] = [Vector2(0, 0), Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(-1, -1), Vector2(1, -1),
 	Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1), Vector2(0, -2), Vector2(-2, 0), Vector2(2, 0),
 	Vector2(-2, -1), Vector2(2, -1), Vector2(-1, -2), Vector2(1, -2), Vector2(0, 2), Vector2(-2, 1), Vector2(2, 1)]
+## Корабль у верхнего края (его место выше низа шапки): знак встаёт СРАЗУ ПОД шапкой — ряд
+## над кораблём и в стороны, потом второй ряд — с линией к кораблю, как у отошедшего (замечание
+## к GИ: на старте носители и фрегат противника стояли под шапкой без знаков — отход TRY вниз
+## на два шага до низа шапки не доставал). Номера этих мест в раскладке — после TRY.
+const UNDER_TOP: Array[Vector2] = [Vector2(0, 0), Vector2(-1, 0), Vector2(1, 0), Vector2(-2, 0), Vector2(2, 0),
+	Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1), Vector2(-2, 1), Vector2(2, 1)]
+## ТОЛЬКО для проверки отката (замечание к GИ) — как в capella-v0.7: мест под шапкой нет, и у
+## корабля под шапкой знака нет вовсе (не сложен — спрятан). В игре false.
+static var rollback_no_under_top := false
 ## Исход раскладки знака: поставлен · тесно (сложить в соседа) · спрятан правилом (шапка,
 ## панель, край окна) — такой не складываем: корабль просто под панелью.
 const PLACED := 0
@@ -299,49 +327,75 @@ const HIDDEN := 2
 
 
 ## Место знака: рамка, полоска и (если надо) имя; свободное от уже поставленных, в окне,
-## не выше шапки и не под панелями. Нашлось — поля раскладки у m заполнены.
-func _place(m: Mark, with_name: bool, vs: Vector2, grid: Dictionary[Vector2i, Array], placed: Array[Rect2]) -> int:
+## не выше шапки и не под панелями. Нашлось — поля раскладки у m заполнены. only ≥ 0 — только
+## этот отход (прежнее место знака под курсором); old_first — откат rollback_name_moves.
+func _place(m: Mark, with_name: bool, vs: Vector2, grid: Dictionary[Vector2i, Array], placed: Array[Rect2], only: int = -1, old_first: bool = false) -> int:
 	var fr := SQ_FRAME if m.squad else FRAME
 	var up := maxf(MIN_UP, m.rpx * UP_K)
 	var base := Vector2(m.p.x, m.p.y - up)          # низ полоски
 	var nw := _name_width(m.label) + 6.0 if with_name else 0.0
 	var nh := float(NAME_SIZE) + 3.0
-	var step := Vector2(fr.x + 4.0, fr.y + BAR_H + BAR_GAP + (nh * 0.5 if with_name else 0.0))
-	var tries: Array[Vector2] = TRY
+	# шаг отхода — от рамки, а НЕ от имени: рамка одного и того же отхода с именем и без стоит
+	# на одном месте (имя — над рамкой), и знак, получив имя под курсором, не сдвигается
+	var step := Vector2(fr.x + 4.0, fr.y + BAR_H + BAR_GAP)
+	if rollback_name_moves and with_name:
+		step.y += nh * 0.5
+	# места: TRY от своего места, а у корабля под шапкой — ещё ряды сразу под шапкой (UNDER_TOP)
+	var spots: Array[Vector2] = []
+	for d in TRY:
+		spots.append(base + Vector2(d.x * step.x, d.y * step.y))
+	var own_top := base.y - BAR_H - BAR_GAP - fr.y
+	if not rollback_no_under_top and m.p.y >= 0.0 and own_top < top:
+		var y0 := top + PAD + fr.y + BAR_GAP + BAR_H        # низ полоски: верх рамки — у низа шапки
+		for d in UNDER_TOP:
+			spots.append(Vector2(m.p.x + d.x * step.x, y0 + d.y * step.y))
 	var idx: Array[int] = []
-	for i in TRY.size():
-		idx.append(i)
-	if (m.hover or m.sel) and _last_di.has(m.uid) and not rollback_hover_jumps:
+	if only >= 0:
+		if only < spots.size():
+			idx.append(only)
+	else:
+		for i in spots.size():
+			idx.append(i)
+	if old_first and _last_di[m.uid] < spots.size():
 		idx.push_front(_last_di[m.uid])
 	if rollback_no_layout:
 		idx = [0]
 	var rules_any := false
 	for i in idx:
-		var d := tries[i]
-		var a := base + Vector2(d.x * step.x, d.y * step.y)
+		var a := spots[i]
 		var bar := Rect2(a.x - fr.x * 0.5, a.y - BAR_H, fr.x, BAR_H)
 		var frame := Rect2(a.x - fr.x * 0.5, bar.position.y - BAR_GAP - fr.y, fr.x, fr.y)
-		var unit := frame.merge(bar)
-		var name_r := Rect2()
+		# имя — над рамкой; не влезает — справа или слева от рамки в её ряд (знак при этом на месте:
+		# под шапкой, у края, рядом с соседом); у знака, чей корабль ВЫШЕ него (под шапкой), — ещё и
+		# под полоской: линия к кораблю уходит вверх, и под знаком имени ничто не мешает
+		var names: Array[Rect2] = [Rect2()]
 		if with_name:
-			name_r = Rect2(a.x - nw * 0.5, frame.position.y - NAME_GAP - nh, nw, nh)
-			if not rollback_names_free:
+			names = [Rect2(a.x - nw * 0.5, frame.position.y - NAME_GAP - nh, nw, nh)]
+			if not rollback_name_moves:
+				var ny := frame.position.y + (fr.y - nh) * 0.5
+				names.append(Rect2(frame.end.x + NAME_GAP + 1.0, ny, nw, nh))
+				names.append(Rect2(frame.position.x - NAME_GAP - 1.0 - nw, ny, nw, nh))
+			if m.p.y < frame.position.y and not rollback_no_under_top:
+				names.append(Rect2(a.x - nw * 0.5, bar.end.y + NAME_GAP, nw, nh))
+		for name_r in names:
+			var unit := frame.merge(bar)
+			if name_r.has_area() and not rollback_names_free:
 				unit = unit.merge(name_r)
-		if not _rules_ok(unit, vs):
-			continue
-		rules_any = true
-		if not rollback_no_layout and _hits_placed(unit, grid, placed):
-			continue
-		_add(unit, grid, placed)
-		m.unit = unit
-		m.frame = frame
-		m.bar = bar
-		m.name_r = name_r
-		m.name = m.label if with_name else ""
-		m.moved = d != Vector2.ZERO
-		m.anchor = a
-		m.di = i
-		return PLACED
+			if not _rules_ok(unit, vs):
+				continue
+			rules_any = true
+			if not rollback_no_layout and _hits_placed(unit, grid, placed):
+				continue
+			_add(unit, grid, placed)
+			m.unit = unit
+			m.frame = frame
+			m.bar = bar
+			m.name_r = name_r
+			m.name = m.label if with_name else ""
+			m.moved = i != 0
+			m.anchor = a
+			m.di = i
+			return PLACED
 	return CROWDED if rules_any else HIDDEN
 
 
@@ -452,15 +506,18 @@ func _draw_all() -> void:
 		var col := side_color(d.side, d.clan)
 		var fr := d.frame
 		if d.moved:
-			c.draw_line(Vector2(d.anchor.x, fr.end.y + BAR_GAP + BAR_H), d.p, Color(col.r, col.g, col.b, 0.45), 1.0, true)
+			# линия к кораблю — от низа знака, а если корабль выше знака (под шапкой) — от верха рамки
+			var from := Vector2(d.anchor.x, fr.end.y + BAR_GAP + BAR_H) if d.p.y > fr.position.y else Vector2(d.anchor.x, fr.position.y)
+			c.draw_line(from, d.p, Color(col.r, col.g, col.b, 0.45), 1.0, true)
 		var edge := col.lerp(Color.WHITE, 0.55) if d.hover else col
-		var w := 2.5 if d.sel else 1.5
+		var sel := d.sel and not rollback_sel_plain
+		var w := 2.5 if sel else 1.5
 		var shape := side_shape(d.side)
-		if d.sel:
+		if sel:
 			_frame(c, fr.grow(2.5), shape, Color(0, 0, 0, 0), Color(col.r, col.g, col.b, 0.35), 3.0)
 		var fill := Color(0.05, 0.12, 0.2, 0.85) if d.jump else Color(0.02, 0.03, 0.05, 0.72)
 		_frame(c, fr, shape, fill, edge, w)
-		var gc := col.lerp(Color.WHITE, 0.25) if d.sel or d.hover else col
+		var gc := col.lerp(Color.WHITE, 0.25) if sel or d.hover else col
 		_glyph(c, d.kind, fr.get_center(), gc, d.squad)
 		c.draw_rect(d.bar, Color(0, 0, 0, 0.7))
 		c.draw_rect(Rect2(d.bar.position, Vector2(d.bar.size.x * clampf(d.hp, 0.0, 1.0), d.bar.size.y)), col)
