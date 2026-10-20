@@ -29,6 +29,8 @@ const PolygonHud := preload("res://ui/polygon_hud.gd")
 const HudHeader := preload("res://ui/hud_header.gd")
 
 const BIG := 1.0e9
+## Когда линии «Боя линий» без приказов сошлись на свою дистанцию (пакет GТ: 681 на 70-й секунде).
+const LINES_MET_S := 75.0
 
 var _defs: Defs
 
@@ -359,6 +361,19 @@ func test_four_sources_drawn_differently() -> void:
 
 # ───────────────────────── снимки «Перестрелки» ─────────────────────────
 
+## Прежний темп (пакет GТ) на числах главной сцены: OLD_TEMPO из case.gd — те же правки, что
+## `--overrides`, только по готовому объекту доктрины (путь с точками → поле с «_»).
+static func _old_tempo(d: Defs) -> void:
+	for k: String in OLD_TEMPO:
+		var v: float = OLD_TEMPO[k]
+		d.doctrine.set(k.replace(".", "_"), v)
+
+
+## Снимок огня трёх источников — в ПРЕЖНЕМ темпе (пакет GТ): он про картинку главного калибра,
+## батарей и лёгких, а не про темп. В новом (старт ±1050, тяжёлые × 0,6) «Перестрелка» без приказов
+## к 32-й секунде ещё не стреляет, главный калибр бьёт с 36,6-й, а батареи и лёгкие — не раньше
+## 90-й: чужие корветы наступают от своей линии, а она далеко. Темп снимают свои снимки —
+## test_hud_screens.gd, test_tempo_screens.
 func test_skirmish_snapshots() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var got := await hooks.set_window_size(size)
@@ -367,6 +382,10 @@ func test_skirmish_snapshots() -> void:
 		tree.root.add_child(main)
 		MainScript.boot = &""
 		await hooks.frames(6)
+		var dd: Defs = main.get("defs")
+		_old_tempo(dd)
+		main.call("open_polygon")
+		await hooks.frames(4)
 		var poly: Polygon = main.get("polygon")
 		var view := poly.view
 		view.speed = 4
@@ -485,7 +504,9 @@ func test_toast_not_on_status() -> void:
 # ───────────────────────── «Бой линий» на рабочем виде (G4; М14, часть) ─────────────────────────
 
 ## Рабочий вид (camera.dist_work, 2400) над серединой между линиями, когда линии сошлись на
-## свою дистанцию (30 с «Боя линий» без приказов): обе линии и середина на экране, центры
+## свою дистанцию (75 с «Боя линий» без приказов; до пакета GТ — 30 с: со старта ±1050 и при
+## тяжёлых × 0,6 линии в 2067 сходятся к 681 на 70-й секунде, на 30-й они ещё в 1669 и в кадр
+## 2400 не влезают): обе линии и середина на экране, центры
 ## линий на снимке — не ближе 0,2 высоты кадра (09, 8.2, М14) и не под панелью снизу.
 ## Откат — правкой числа (как --set): рабочий вид вдвое ближе (camera.dist_work 1200) —
 ## обе линии в кадр не влезают. Флажок --legacy-approach этот замер НЕ ловит (линии
@@ -506,7 +527,7 @@ func _lines_view(flags: Dictionary, size: Vector2i, save: bool, dist_k: float = 
 	var b := view.battle
 	# без вида — быстрее и одинаково: бой от вида не зависит (раздел 6 CLAUDE.md)
 	view.paused = true
-	while b.time < 30.0:
+	while b.time < LINES_MET_S:
 		view.paused = false
 		view.advance(Battle.STEP * 8.0)
 		view.paused = true

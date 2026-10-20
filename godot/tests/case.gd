@@ -17,7 +17,7 @@ const OLD_TEMPO := {"deploy.heavy_z": 650.0, "heavy.speed_k": 1.0, "heavy.thrust
 ## Ход как в JS — тяжёлые без множителей хода пакета GТ (heavy.speed_k, thrust_k, turn_k = 1).
 ## Эталоны таблиц 2.22 части 02, 2.20 части 03 и тормозного пути — замеры JS-версии, и сверяется с
 ## ними ФИЗИКА полёта (thrustTo, arriveSpeed, разворот), а не темп: множители GТ ходят одной дверью
-## (Ship.thrust/turn/max_speed) и проверяются отдельно — tests/test_sim_tempo.gd.
+## (Ship.thrust/turn/max_speed) и проверяются отдельно — tests/test_tempo_gt.gd.
 const JS_MOVE := {"heavy.speed_k": 1.0, "heavy.thrust_k": 1.0, "heavy.turn_k": 1.0}
 
 var tree: SceneTree

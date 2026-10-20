@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Прогон всех проверок среза — здесь и в CI одинаково (архитектура, 8.2).
-#   godot/tools/run_tests.sh            ярусы sim и ui, проверки данных, --selftest
+#   godot/tools/run_tests.sh            ярусы sim, tempo и ui, проверки данных, --selftest
 #   godot/tools/run_tests.sh render     плюс ярус картинки под xvfb В ОБОИХ отрисовщиках
 #                                       (Forward+ и Compatibility); снимки «Стола» —
 #                                       в $LOGS/shots (смотреть глазами)
@@ -39,7 +39,9 @@ mkdir -p "$CAPELLA_TMP"
 # (ниже) найдёт его в папке этого прогона. Кэш шейдеров при этом свой, холодный — как в CI.
 export XDG_DATA_HOME="$LOGS/xdg"
 mkdir -p "$XDG_DATA_HOME"
-TIERS=(sim ui)
+# ярус tempo (пакет GТ) — темп боя: окно первого выстрела, тот же бой в прежнем темпе, М16 «было —
+# стало» (бои «Стычки» до итога). Отдельно от sim: с ним sim доходил до 893 с из 900
+TIERS=(sim tempo ui)
 # ярус hud (план GИ) — снимки экрана боя: цвет и форма знаков по точкам экрана. Отдельно от
 # render, чтобы тот держался под пределом 900 с (Forward+ в CI доходил до 659 с)
 if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility hud:forward_plus hud:gl_compatibility); fi

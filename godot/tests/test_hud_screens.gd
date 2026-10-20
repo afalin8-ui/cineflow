@@ -75,9 +75,34 @@ func _shot(name: String) -> Image:
 	return img
 
 
-## Цвет рамки знака на снимке: самая яркая точка верхней кромки (середина рамки ± треть ширины,
-## три строки вокруг кромки) — рамка тонкая и сглаженная, а вокруг тёмное небо и тёмная заливка.
+## Цвет рамки знака на снимке: в каждом столбце средней трети верхней кромки — самая яркая точка
+## из трёх строк вокруг неё (рамка тонкая и сглаженная, а вокруг тёмное небо и тёмная заливка),
+## и из этих столбцов — СРЕДНИЙ по «зелёное минус красное». Самая яркая точка всей кромки, как было
+## до пакета GТ, ловила не рамку, а светлый корпус рядом с ней: на стартовом виде нос флагмана
+## торчит над его знаком на точку-две (1920), а над кромкой знака корвета «Исса» V на старте ±650
+## (1366) светлеет корпус корабля за ним — белое и бежевое, и цвет стороны «не сходился». Корпус занимает один-два
+## столбца из девяти, середина их не видит; а откат «цвет по клану» перекрашивает всю рамку.
 static func _edge_color(img: Image, fr: Rect2) -> Color:
+	var cols: Array[Color] = []
+	var y0 := roundi(fr.position.y)
+	for x in range(roundi(fr.position.x + fr.size.x * 0.33), roundi(fr.end.x - fr.size.x * 0.33) + 1):
+		var best := Color(0, 0, 0)
+		for y in range(y0 - 1, y0 + 2):
+			if x < 0 or y < 0 or x >= img.get_width() or y >= img.get_height():
+				continue
+			var c := img.get_pixel(x, y)
+			if c.r + c.g + c.b > best.r + best.g + best.b:
+				best = c
+		cols.append(best)
+	if cols.is_empty():
+		return Color(0, 0, 0)
+	cols.sort_custom(func(a: Color, b: Color) -> bool: return a.g - a.r < b.g - b.r)
+	return cols[floori(cols.size() * 0.5)]
+
+
+## Прежняя мерка (до GТ) — самая яркая точка всей средней трети кромки. Только для заметки: у каких
+## знаков она видит не рамку, а то, что рядом.
+static func _edge_brightest(img: Image, fr: Rect2) -> Color:
 	var best := Color(0, 0, 0)
 	var y0 := roundi(fr.position.y)
 	for y in range(y0 - 1, y0 + 2):
@@ -132,6 +157,7 @@ func _check_marks(p: Polygon, img: Image, flat: Image) -> Dictionary:
 	var bad_col := 0
 	var bad_shape := 0
 	var ex := PackedStringArray()
+	var lit := PackedStringArray()
 	for m in p.view.markers.drawn:
 		if m.squad:
 			continue
@@ -139,16 +165,21 @@ func _check_marks(p: Polygon, img: Image, flat: Image) -> Dictionary:
 		var own := m.side == p.view.my_side
 		var c := _edge_color(img, m.frame)
 		var col_ok := (c.g > c.r + 0.15) if own else (c.r > c.g + 0.15)
+		var cb := _edge_brightest(img, m.frame)
+		if col_ok and not ((cb.g > cb.r + 0.15) if own else (cb.r > cb.g + 0.15)) and lit.size() < 3:
+			lit.append("%s у (%d, %d): %s" % [m.label, roundi(m.frame.position.x), roundi(m.frame.position.y), cb])
 		var cor := _corner(flat, m.frame)
 		var shape_ok := (cor > 0.35) if own else (cor < 0.3)
 		if not col_ok:
 			bad_col += 1
 			if ex.size() < 3:
-				ex.append("%s %s: %s" % ["свой" if own else "чужой", m.label, c])
+				ex.append("%s %s у (%d, %d): %s" % ["свой" if own else "чужой", m.label, roundi(m.frame.position.x), roundi(m.frame.position.y), c])
 		if not shape_ok:
 			bad_shape += 1
 			if ex.size() < 3:
 				ex.append("%s %s: угол %.2f в %s" % ["свой" if own else "чужой", m.label, cor, m.frame.position])
+	if not lit.is_empty():
+		note("    самая яркая точка кромки — не рамка (прежняя мерка не сошлась бы): %s" % "; ".join(lit))
 	return {"n": n, "col": bad_col, "shape": bad_shape, "ex": "; ".join(ex)}
 
 
@@ -282,7 +313,7 @@ func test_marker_bar_and_selected_on_screen() -> void:
 	ok(whole(o2["picked"]) < whole(o2["plain"]) + 2, "откат «выбранный как невыбранный» краснеет: %d точек против %d" % [whole(o2["picked"]), whole(o2["plain"])])
 
 
-## Быстрый бой как его видит игрок (пакет GТ): старт и 30-я секунда на 1920 и 1366 — снимки
+## Быстрый бой как его видит игрок (пакет GТ): старт, 20-я и 30-я секунды на 1920 и 1366 — снимки
 ## `hud_tempo_*` в $CAPELLA_SHOTS, их смотрят глазами. На старте на экране только СВОЙ строй, и он
 ## весь — мятные прямоугольники; противник за верхним краем. К 30-й секунде на экране и чужие —
 ## красные шестиугольники: сближение видно, бой ещё не начался.
@@ -301,8 +332,15 @@ func test_tempo_screens() -> void:
 					foe += 1
 		note("%d×%d, старт: %s; своих %d, чужих %d" % [size.x, size.y, _say(r), own, foe])
 		ok(own >= 8 and whole(r["col"]) == 0 and whole(r["shape"]) == 0, "%d×%d, старт: свой строй на экране знаками своей стороны (%d), чужих %d" % [size.x, size.y, own, foe])
+		# 20-я секунда — снимок для глаз: кольцо орудия планеты (предупреждение на 16,8 с, залп на
+		# 23,8 с — текст выпуска 0.8 зовёт увести корабли из него)
 		p.view.paused = false
-		for i in roundi(30.0 / Battle.STEP):
+		for i in roundi(20.0 / Battle.STEP):
+			p.view.advance(Battle.STEP)
+		p.view.paused = true
+		await _shot("hud_tempo_20s_%d" % size.x)
+		p.view.paused = false
+		for i in roundi(10.0 / Battle.STEP):
 			p.view.advance(Battle.STEP)
 		p.view.paused = true
 		var img30 := await _shot("hud_tempo_30s_%d" % size.x)
