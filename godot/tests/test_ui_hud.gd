@@ -16,6 +16,7 @@ const Weapons := preload("res://sim/weapons.gd")
 const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
+const GroundGun := preload("res://sim/ground_gun.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const BattleInput := preload("res://input/battle_input.gd")
 const BattleView := preload("res://view/battle_view.gd")
@@ -2609,7 +2610,8 @@ func test_walkthrough_071() -> void:
 ## 2) «Смотреть: ИИ против ИИ» — оба флота идут навстречу, первый залп раньше: на 15–30-й;
 ## 3) «Весь флот» (F2), колесо до упора и обратно — выбранные знаки снова над своими кораблями:
 ##    в отходе их не больше, чем у того же выбора, сделанного заново.
-func test_release_walkthrough() -> void:
+## (С выпуска 0.8.1 — прежний текст; «Что попробовать» 0.8.1 — test_walkthrough_081 ниже.)
+func test_walkthrough_08() -> void:
 	var p := await _open_by_menu(Vector2i(1366, 768), "go")
 	if not ok(p != null, "шаг 1: в меню «В бой» нажимается и открывает бой"):
 		await _close()
@@ -2701,4 +2703,153 @@ func test_release_walkthrough() -> void:
 			fresh += 1
 	note("шаг 3: весь флот (%d), колесо до упора и обратно — в отходе %d, тот же выбор заново — %d" % [sel.size(), back, fresh])
 	ok(sel.size() >= 8 and back <= fresh, "шаг 3: после колеса туда и обратно выбранные знаки над своими кораблями — в отходе %d, не больше, чем у выбора заново (%d)" % [back, fresh])
+	await _close()
+
+
+# ───────────────────────── текст выпуска 0.8.1 «Темп» — шаг за шагом ─────────────────────────
+
+## Шаг 2 совета 0.8.1 в открытом бою q: дождаться кольца, через секунду — рамкой своих в кольце и ПКМ
+## подальше за его краем, бой до залпа. → кого выбрала рамка, был ли приказ, кого задело, на какой
+## доле радиуса от середины залпа ближайший задетый, сколько погибло.
+func _dodge_salvo(q: Polygon) -> Dictionary:
+	q.view.paused = true
+	q.view.rig.edge_enabled = false
+	var qb := q.battle
+	q.view.paused = false
+	while not qb.gun.warned and qb.time < 30.0:
+		q.view.advance(Battle.STEP)
+	# человек заметил кольцо — через секунду
+	for i in roundi(1.0 / Battle.STEP):
+		q.view.advance(Battle.STEP)
+	q.view.paused = true
+	await hooks.frames(3)
+	var aim := qb.gun.aim
+	var ring := qb.gun.def.radius
+	var cam := q.view.rig.camera
+	var box := Rect2()
+	var first := true
+	var inside: Array[int] = []
+	var c := Vector2.ZERO
+	for s in qb.ships:
+		if s.side == q.view.my_side and not s.dead and s.pos.distance_to(aim) <= ring:
+			var sp := cam.unproject_position(q.view.ship_point(s))
+			if first:
+				box = Rect2(sp, Vector2.ZERO)
+				first = false
+			else:
+				box = box.expand(sp)
+			inside.append(s.uid)
+			c += s.pos
+	var out := {"inside": inside.size(), "same": false, "ordered": false, "fired": false, "hit": 0, "lost": 0, "near": INF}
+	if inside.is_empty():
+		return out
+	c /= float(inside.size())
+	box = box.grow(28.0)
+	await _drag(box.position, box.end)
+	var sel: Array[int] = []
+	sel.assign(q.view.selection)
+	var in_sorted := inside.duplicate()
+	in_sorted.sort()
+	var sel_sorted := sel.duplicate()
+	sel_sorted.sort()
+	out["same"] = sel_sorted == in_sorted
+	var away := (c - aim).normalized() if c.distance_to(aim) > 1.0 else Vector2(1, 0)
+	var to := aim + away * (ring + 150.0)
+	var j0 := qb.cmds.journal.size()
+	await hooks.click(cam.unproject_position(Vector3(to.x, 0.0, to.y)), MOUSE_BUTTON_RIGHT)
+	q.view.paused = false
+	q.view.advance(Battle.STEP)
+	q.view.paused = true
+	for k in range(j0, qb.cmds.journal.size()):
+		var cmd: Dictionary = qb.cmds.journal[k]
+		if cmd.get("op", &"") == &"move":
+			var ids: Array = cmd.get("ids", [])
+			var got: Array[int] = []
+			for u: int in ids:
+				got.append(u)
+			got.sort()
+			out["ordered"] = flag(out["ordered"]) or got == sel_sorted
+	q.view.paused = false
+	while not flag(out["fired"]) and qb.time < 30.0:
+		q.view.advance(Battle.STEP)
+		for e: Array in qb.events:
+			if e[0] == &"gun_fire":
+				out["fired"] = true
+				var at: Vector2 = e[2]
+				var hu: PackedInt32Array = e[3]
+				for u in inside:
+					if hu.has(u):
+						var s2 := qb.ship_by_uid(u)
+						out["hit"] = whole(out["hit"]) + 1
+						if s2 != null:
+							out["near"] = minf(num(out["near"]), s2.pos.distance_to(at) / ring)
+							if s2.dead:
+								out["lost"] = whole(out["lost"]) + 1
+	q.view.paused = true
+	return out
+
+
+## «Что попробовать» capella-v0.8.1 (хвост проверки GТ, пакет GЭ) событиями ввода, на 1366 и 1920:
+## 1) «В бой», ничего не нажимая: около 17-й секунды загорается кольцо (часы «ЯДР» в шапке), залп — на
+##    24-й (через 7 с после кольца);
+## 2) «В меню» вверху справа, подтвердить, снова «В бой»; как только загорелось кольцо — рамкой своих
+##    в кольце и правой кнопкой подальше за краем кольца: рамка выбрала ровно своих в кольце, у них
+##    в журнале приказ «идти», залп никого из них не убил и задел разве что краем (не ближе половины
+##    радиуса от середины). Совет держится на двухстах боях модели (godot/CLAUDE.md, 23); здесь —
+##    что путь ввода, описанный в тексте, работает как написано. Откат — «кольцо ведёт корабль»
+##    (`GroundGun.rollback_aim_at_fire`): залп ложится серединой на уведённого — проверка краснеет.
+## (С выпуска 0.9 — прежний текст; «Что попробовать» 0.9 — tests/test_fx_effects.gd → test_release_walkthrough.)
+func test_walkthrough_081() -> void:
+	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+		var tag := "%d×%d" % [size.x, size.y]
+		var p := await _open_by_menu(size, "go")
+		if not ok(p != null, "%s, шаг 1: «В бой» нажимается" % tag):
+			await _close()
+			continue
+		var b := p.battle
+		p.view.paused = false
+		while not b.gun.warned and b.time < 30.0:
+			p.view.advance(Battle.STEP)
+		var warn_t := b.time
+		p.view.paused = true
+		await hooks.frames(2)
+		var gun_text := p.hud.header.gun_btn.text
+		ok(warn_t >= 16.0 and warn_t <= 18.0 and gun_text.begins_with(b.gun.def.short), "%s, шаг 1: кольцо загорелось на %.1f с (около 17-й), часы в шапке «%s»" % [tag, warn_t, gun_text])
+		var fire_t := -1.0
+		p.view.paused = false
+		while fire_t < 0.0 and b.time < 30.0:
+			p.view.advance(Battle.STEP)
+			for e: Array in b.events:
+				if e[0] == &"gun_fire":
+					fire_t = b.time
+		p.view.paused = true
+		ok(fire_t >= 23.0 and fire_t <= 25.0 and absf(fire_t - warn_t - 7.0) < 0.5, "%s, шаг 1: залп на %.1f с — через 7 с после кольца" % [tag, fire_t])
+		# шаг 2: «В меню» вверху справа, подтвердить, снова «В бой»
+		var main: Node = _main
+		ok(await _press(p.leave_btn), "%s, шаг 2: «В меню» вверху справа нажимается" % tag)
+		ok(await _press(p.leave_panel.find_child("yes", true, false) as Button), "%s, шаг 2: подтверждение нажимается" % tag)
+		await hooks.frames(2)
+		var m: QuickMenu = main.get("menu")
+		var go: Button = m.buttons.get("go") if m != null else null
+		ok(await _press(go), "%s, шаг 2: в меню снова «В бой»" % tag)
+		await hooks.frames(4)
+		var q: Polygon = main.get("polygon")
+		if not ok(q != null and q != p, "%s, шаг 2: новый бой открылся" % tag):
+			await _close()
+			continue
+		var r := await _dodge_salvo(q)
+		note("%s: кольцо на %.1f с, залп на %.1f с; во втором бою в кольце %d, задело %d (ближайший — на %.2f радиуса от середины), погибло %d" % [
+			tag, warn_t, fire_t, whole(r["inside"]), whole(r["hit"]), num(r["near"]), whole(r["lost"])])
+		ok(whole(r["inside"]) > 0 and flag(r["same"]), "%s, шаг 2: рамка выбрала ровно своих в кольце (%d)" % [tag, whole(r["inside"])])
+		ok(flag(r["ordered"]), "%s, шаг 2: ПКМ за краем кольца — приказ «идти» выбранным в журнале боя" % tag)
+		ok(flag(r["fired"]) and whole(r["lost"]) == 0 and num(r["near"]) >= 0.5, "%s, шаг 2: уведённых залп не убил и задел разве что краем (задело %d, ближе всего %.2f радиуса, погибло %d)" % [tag, whole(r["hit"]), num(r["near"]), whole(r["lost"])])
+		await _close()
+	# откат: залп ложится туда, где корабль В МИГ ЗАЛПА («кольцо ведёт корабль»)
+	GroundGun.rollback_aim_at_fire = true
+	var o := await _open_by_menu(Vector2i(1366, 768), "go")
+	if ok(o != null, "откат: «В бой» нажимается"):
+		var ro := await _dodge_salvo(o)
+		note("откат «кольцо ведёт корабль»: задело %d, ближе всего %.2f радиуса, погибло %d" % [whole(ro["hit"]), num(ro["near"]), whole(ro["lost"])])
+		ok(whole(ro["lost"]) > 0 or num(ro["near"]) < 0.5, "откат «кольцо ведёт корабль»: залп накрыл уведённого серединой — проверка краснеет")
+	GroundGun.rollback_aim_at_fire = false
 	await _close()

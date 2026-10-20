@@ -136,6 +136,9 @@ var m16_move_s := 0.0
 var m16_dir: Dictionary[int, int] = {}
 var m16_moving: Dictionary[int, bool] = {}
 var m16_settled: Dictionary[int, bool] = {}
+## ТОЛЬКО для проверки отката (хвост проверки GТ), в игре false: вход в пояс на ходу считается
+## троганием, как в 0.8 — на первом шаге «держит дистанцию» записи «двигался ли» ещё нет.
+static var rollback_m16_entry_start := false
 
 ## М3: ни одного шага L < 360, пока у обеих сторон есть линия (09, 8.2).
 const M3_FLOOR := 360.0
@@ -155,6 +158,9 @@ const M16_V := 3.0
 
 ## М16 за шаг: тяжёлый в фазе «бой» — скорость, ход вдоль оси своей стороны и держит ли он
 ## дистанцию на этом шаге (с первого такого шага он «вышел на дистанцию»).
+## «Тронулся» — переход из «стоит» в «движется» ПОСЛЕ выхода на дистанцию: вход в пояс на ходу
+## (первый шаг «держит дистанцию» при скорости больше M16_V) — это конец подхода, а не трогание
+## (хвост проверки GТ: на первом таком шаге записи «двигался ли» не было, и он считался троганием).
 func sample_fuss(uid: int, vel: Vector2, ax: Vector2, holds: bool, dt: float) -> void:
 	if holds:
 		m16_settled[uid] = true
@@ -164,9 +170,10 @@ func sample_fuss(uid: int, vel: Vector2, ax: Vector2, holds: bool, dt: float) ->
 	m16_set_s += dt
 	m16_path += sp * dt
 	var mv := sp > M16_V
+	var was_known := m16_moving.has(uid) or rollback_m16_entry_start
 	if mv:
 		m16_move_s += dt
-		if not m16_moving.get(uid, false):
+		if was_known and not m16_moving.get(uid, false):
 			m16_starts += 1
 	m16_moving[uid] = mv
 	var along := vel.dot(ax)
