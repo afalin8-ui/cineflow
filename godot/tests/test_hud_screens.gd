@@ -16,9 +16,14 @@ const Settings := preload("res://view/settings.gd")
 const Weapons := preload("res://sim/weapons.gd")
 
 var _main: Node
+## Расстановка старта: −1 — как в игре; OLD_START — прежняя ±650 (пакет GТ). Цвет и форму знаков
+## сверяем в кадре, где на экране ОБЕ стороны и тесно, — им до GТ был старт. С GТ старт другой:
+## противник за верхним краем, на экране только свой строй (снимки нового старта и 30-й секунды —
+## test_tempo_screens).
+const OLD_START := 650.0
 
 
-func _open(size: Vector2i, watch: bool = false, mirror: bool = false) -> Polygon:
+func _open(size: Vector2i, watch: bool = false, mirror: bool = false, start_z: float = OLD_START) -> Polygon:
 	await hooks.set_window_size(size)
 	Settings.path = tmp("hud_screens_settings.cfg")
 	if FileAccess.file_exists(Settings.path):
@@ -29,6 +34,8 @@ func _open(size: Vector2i, watch: bool = false, mirror: bool = false) -> Polygon
 	tree.root.add_child(_main)
 	await hooks.frames(3)
 	var defs: Defs = _main.get("defs")
+	if start_z >= 0.0:
+		defs.doctrine.deploy_heavy_z = start_z       # у каждой главной сцены свои числа
 	var cfg := QuickMenu.default_cfg(defs, watch)
 	if mirror:
 		cfg["defender"] = cfg["attacker"]
@@ -273,3 +280,37 @@ func test_marker_bar_and_selected_on_screen() -> void:
 	ok(num(o["fill"]) > 0.95, "откат «полоска всегда полная» краснеет на снимке: залито %.2f при прочности %.2f" % [num(o["fill"]), num(o["hp"])])
 	var o2 := await _bar_and_sel(false, true)
 	ok(whole(o2["picked"]) < whole(o2["plain"]) + 2, "откат «выбранный как невыбранный» краснеет: %d точек против %d" % [whole(o2["picked"]), whole(o2["plain"])])
+
+
+## Быстрый бой как его видит игрок (пакет GТ): старт и 30-я секунда на 1920 и 1366 — снимки
+## `hud_tempo_*` в $CAPELLA_SHOTS, их смотрят глазами. На старте на экране только СВОЙ строй, и он
+## весь — мятные прямоугольники; противник за верхним краем. К 30-й секунде на экране и чужие —
+## красные шестиугольники: сближение видно, бой ещё не начался.
+func test_tempo_screens() -> void:
+	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
+		var p := await _open(size, false, false, -1.0)
+		var img := await _shot("hud_tempo_start_%d" % size.x)
+		var r := _check_marks(p, img, await _flat_shot("hud_tempo_start_%d" % size.x))
+		var own := 0
+		var foe := 0
+		for m in p.view.markers.drawn:
+			if not m.squad:
+				if m.side == p.view.my_side:
+					own += 1
+				else:
+					foe += 1
+		note("%d×%d, старт: %s; своих %d, чужих %d" % [size.x, size.y, _say(r), own, foe])
+		ok(own >= 8 and whole(r["col"]) == 0 and whole(r["shape"]) == 0, "%d×%d, старт: свой строй на экране знаками своей стороны (%d), чужих %d" % [size.x, size.y, own, foe])
+		p.view.paused = false
+		for i in roundi(30.0 / Battle.STEP):
+			p.view.advance(Battle.STEP)
+		p.view.paused = true
+		var img30 := await _shot("hud_tempo_30s_%d" % size.x)
+		var r30 := _check_marks(p, img30, await _flat_shot("hud_tempo_30s_%d" % size.x))
+		var foe30 := 0
+		for m in p.view.markers.drawn:
+			if not m.squad and m.side != p.view.my_side:
+				foe30 += 1
+		note("%d×%d, 30-я секунда: %s; чужих знаков %d, выстрел главного калибра был: %s" % [size.x, size.y, _say(r30), foe30, str(p.battle.metrics.first_gun > 0.0)])
+		ok(foe30 > 0 and whole(r30["col"]) == 0 and whole(r30["shape"]) == 0, "%d×%d, 30-я секунда: противник подошёл и виден (%d знаков), цвет и форма по стороне" % [size.x, size.y, foe30])
+		await _close()

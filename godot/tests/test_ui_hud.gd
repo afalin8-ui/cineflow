@@ -39,6 +39,12 @@ const KEY_OF := {&"amove": KEY_A, &"hold": KEY_H, &"guard": KEY_Y, &"hunt": KEY_
 	&"recall": KEY_V, &"ecm_jam": KEY_J, &"ecm_shield": KEY_K, &"ecm_off": KEY_L}
 
 var _main: Node
+## Расстановка старта для проверок раскладки знаков: −1 — как в игре; OLD_START — прежняя ±650
+## (пакет GТ). Знаки проверяются в САМОМ ТЕСНОМ кадре, а им до GТ был старт: обе линии на экране,
+## чужой строй у шапки. С GТ старт другой (±1050: противник за верхним краем, под шапкой никого —
+## test_start_camera_own_formation), и на нём раскладке почти нечего раскладывать: 8 знаков своих.
+var _start_z := -1.0
+const OLD_START := 650.0
 
 
 # ───────────────────────── общее ─────────────────────────
@@ -47,17 +53,19 @@ var _main: Node
 ## экрана. Знаки — по умолчанию (включены): настройки — в своём файле прогона. still — пауза
 ## ДО первого кадра: бой стоит на расстановке старта при любой скорости машины (иначе до паузы
 ## успевает пройти разное число шагов — раздел 22 godot/CLAUDE.md).
-func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: String = "hud", still: bool = false) -> Polygon:
+func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: String = "hud", still: bool = false, seed_v: int = 4242) -> Polygon:
 	await hooks.set_window_size(size)
 	Settings.path = tmp(dir + "_settings.cfg")
 	if FileAccess.file_exists(Settings.path):
 		DirAccess.remove_absolute(Settings.path)
 	MainScript.out_override = tmp(dir)
-	MainScript.seed_override = 4242
+	MainScript.seed_override = seed_v
 	_main = MainScene.instantiate()
 	tree.root.add_child(_main)
 	await hooks.frames(3)
 	var defs: Defs = _main.get("defs")
+	if _start_z >= 0.0:
+		defs.doctrine.deploy_heavy_z = _start_z       # у каждой главной сцены свои числа — наружу не уходит
 	var cfg := QuickMenu.default_cfg(defs, watch)
 	if mirror:
 		cfg["defender"] = cfg["attacker"]
@@ -86,6 +94,9 @@ func _open_by_menu(size: Vector2i, key: String) -> Polygon:
 	_main = MainScene.instantiate()
 	tree.root.add_child(_main)
 	await hooks.frames(4)
+	if _start_z >= 0.0:
+		var dd: Defs = _main.get("defs")
+		dd.doctrine.deploy_heavy_z = _start_z
 	var m: QuickMenu = _main.get("menu")
 	var mb: Button = m.buttons.get(key) if m != null else null
 	if not await _press(mb):
@@ -311,16 +322,19 @@ func _busy_fleet(p: Polygon) -> void:
 
 ## Один выбранный корабль: строка «чем занят» в панели есть всегда (план GИ, п. 5; замечание
 ## к GИ, must: на 1366 у одного тяжёлого она пропадала — строка класса переносилась на две, и
-## вариант «без занятий» выбирался первым). Бой — 12 с «Охоты» всего флота (T настоящей клавишей,
+## вариант «без занятий» выбирался первым). Бой — 25 с «Охоты» всего флота (T настоящей клавишей,
 ## шаги без кадров — от скорости машины не зависит), потом по очереди выбран каждый свой корабль
-## (к 12-й секунде живы 6 из 8, у тяжёлых — «враг вплотную — отходит · главным по … · батареей
-## по …»).
+## (к 25-й секунде живы 5 из 8, у тяжёлых — «враг вплотную — отходит · главным по … · батареей
+## по …»). До пакета GТ хватало 12 с; тяжёлые теперь вдвое медленнее, и к 12-й секунде у них
+## ещё короткое «выходит на дистанцию» — откат там не краснел (проба 8…40 с, обе расстановки:
+## при ±650 откат теряет строку у флагмана и крейсера с 20–25-й секунды; при новой ±1050 — одну
+## на 40-й, когда своих живо уже 4).
 func _single_doing(size: Vector2i, rollback: bool) -> Dictionary:
 	PolygonHud.rollback_drop_doing = rollback
 	var p := await _open(size, false, false, "hud", true)
 	await hooks.key(KEY_F2)
 	await hooks.key(KEY_T)
-	_steps(p, roundi(12.0 / Battle.STEP))
+	_steps(p, roundi(25.0 / Battle.STEP))
 	var lost := PackedStringArray()
 	var cut := 0
 	var n := 0
@@ -345,6 +359,13 @@ func _single_doing(size: Vector2i, rollback: bool) -> Dictionary:
 
 
 func test_single_keeps_doing() -> void:
+	_start_z = OLD_START
+	await _single_keeps_doing_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _single_keeps_doing_case() -> void:
 	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
 		var r := await _single_doing(size, false)
 		var lost: PackedStringArray = r["lost"]
@@ -599,6 +620,107 @@ func test_grid_lights_from_selection() -> void:
 	ok(e1 == "горит «Глушение» [купол] · обычная «Прикрытие» [купол]" and e2 == "обычная «Глушение» [купол] · горит «Прикрытие» [купол]",
 		"купол — горит нынешний режим: %s → %s" % [e1, e2])
 	await _close()
+
+
+## Наведение сквозь кнопки шапки (хвост GИ, пакет GТ): мышь на кнопке «В меню», а под ней — чужой
+## корабль. В 0.7.1 «кто под курсором» считался в _input, раньше интерфейса, и корабль за кнопкой
+## подсвечивался (пояс чужого, имя у знака). Теперь корабль под курсором ищется там, куда движение
+## доходит, только если его не взяла кнопка (BattleInput._unhandled_input). Контроль — тот же корабль
+## под мышью на поле. Откат `BattleInput.rollback_hover_through_ui`.
+func _hover_header(rollback: bool) -> Dictionary:
+	BattleInput.rollback_hover_through_ui = rollback
+	var p := await _open(Vector2i(1366, 768), false, false, "hud", true)
+	var out := {"set": false}
+	var foe: Ship = null
+	for s in p.battle.side_ships(1 - p.view.my_side):
+		if not s.dead and s.def.id == &"cruiser":
+			foe = s
+			break
+	var btn: Button = p.hud.header.buttons.get(&"menu")
+	if foe != null and btn != null and btn.is_visible_in_tree():
+		var cam := p.view.rig.camera
+		var c := btn.get_global_rect().get_center()
+		var o := cam.project_ray_origin(c)
+		var d := cam.project_ray_normal(c)
+		if d.y < -0.01:
+			var q := o + d * (-o.y / d.y)
+			p.view._height[foe.uid] = 0.0
+			hooks.place_ship(foe, Vector2(q.x, q.z))
+			p.view._prev[foe.uid] = Vector3(q.x, q.z, foe.yaw)
+			await hooks.frames(2)
+			var under := Picking.pick(p.view, c)
+			out["set"] = under != null and under.uid == foe.uid
+			await hooks.move(c)
+			await hooks.frames(1)
+			out["over_btn"] = p.view.hover_uid
+			out["btn_hovered"] = p.get_viewport().gui_get_hovered_control() == btn
+			# контроль: тот же корабль под мышью на поле — в середине экрана
+			var mid := Vector2(683.0, 400.0)
+			var o2 := cam.project_ray_origin(mid)
+			var d2 := cam.project_ray_normal(mid)
+			var q2 := o2 + d2 * (-o2.y / d2.y)
+			hooks.place_ship(foe, Vector2(q2.x, q2.z))
+			p.view._prev[foe.uid] = Vector3(q2.x, q2.z, foe.yaw)
+			await hooks.frames(2)
+			await hooks.move(mid)
+			await hooks.frames(1)
+			out["on_field"] = p.view.hover_uid
+			out["uid"] = foe.uid
+	BattleInput.rollback_hover_through_ui = false
+	await _close()
+	return out
+
+
+func test_hover_not_through_header() -> void:
+	var r := await _hover_header(false)
+	if not ok(flag(r["set"]), "чужой крейсер поставлен под кнопку «В меню» (выбор по точке берёт его)"):
+		return
+	ok(flag(r["btn_hovered"]) and whole(r["over_btn"]) == 0, "мышь на кнопке «В меню» — под курсором никого, корабль за кнопкой не подсвечен (%d)" % whole(r["over_btn"]))
+	ok(whole(r["on_field"]) == whole(r["uid"]), "контроль: тот же корабль под мышью на поле — под курсором он")
+	var o := await _hover_header(true)
+	ok(whole(o.get("over_btn", 0)) == whole(o.get("uid", -1)), "откат «как в 0.7.1» — корабль за кнопкой подсвечен (%d) — проверка краснеет" % whole(o.get("over_btn", 0)))
+
+
+## «В гипер» с носителем в выборе (хвост GИ, пакет GТ): носитель ушёл — за ним отходит весь флот, и
+## отход уже не отменить (sim/battle.gd, C17). В 0.7.1 кнопка об этом молчала: выбрал носитель, нажал
+## G — и бой проигран. Теперь мелкая строка кнопки «и весь флот» (влезает в своё место) и строка
+## в подсказке; у одного крейсера — как было. Откат `PolygonHud.rollback_no_fleet_hint`.
+func _hyper_hint(rollback: bool) -> Dictionary:
+	PolygonHud.rollback_no_fleet_hint = rollback
+	var p := await _open(Vector2i(1366, 768))
+	var out := {}
+	var car := _first(p, func(s: Ship) -> bool: return s.def.cls == &"carrier")
+	var cru := _first(p, func(s: Ship) -> bool: return s.def.id == &"cruiser")
+	out["have"] = car != null and cru != null
+	if car != null and cru != null:
+		p.view.selection = [car.uid]
+		await hooks.frames(3)
+		var b: Button = p.hud.grid.buttons.get(&"hyper")
+		var top := b.get_node("top") as Label
+		out["car"] = _grid_look(p, &"hyper")
+		out["car_tip"] = str(b.get_meta(&"cf_tip", ""))
+		out["fits"] = top.get_theme_font("font").get_string_size(top.text, HORIZONTAL_ALIGNMENT_LEFT, -1, top.get_theme_font_size("font_size")).x <= top.size.x
+		p.view.selection = [cru.uid]
+		await hooks.frames(3)
+		# набор команд сменился (у крейсера нет пуска) — сетка собрана заново, кнопка новая
+		b = p.hud.grid.buttons.get(&"hyper")
+		out["cru"] = _grid_look(p, &"hyper")
+		out["cru_tip"] = str(b.get_meta(&"cf_tip", ""))
+	PolygonHud.rollback_no_fleet_hint = false
+	await _close()
+	return out
+
+
+func test_hyper_with_carrier_says_fleet() -> void:
+	var r := await _hyper_hint(false)
+	if not ok(flag(r["have"]), "в составе есть свой носитель и крейсер"):
+		return
+	note("носитель: %s; подсказка «%s» · крейсер: %s" % [r["car"], str(r["car_tip"]).replace("\n", " / "), r["cru"]])
+	ok(str(r["car"]) == "обычная «В гипер» [%s]" % Texts.HYPER_FLEET_TOP and flag(r["fits"]), "носитель в выборе — у «В гипер» мелкая строка «%s», и она влезает: %s" % [Texts.HYPER_FLEET_TOP, r["car"]])
+	ok(str(r["car_tip"]).contains(Texts.HYPER_FLEET_TIP), "подсказка «В гипер» с носителем говорит, что уйдёт весь флот")
+	ok(str(r["cru"]) == "обычная «В гипер» [уйти]" and not str(r["cru_tip"]).contains(Texts.HYPER_FLEET_TIP), "один крейсер — как было: %s" % r["cru"])
+	var o := await _hyper_hint(true)
+	ok(str(o["car"]) == "обычная «В гипер» [уйти]" and not str(o["car_tip"]).contains(Texts.HYPER_FLEET_TIP), "откат «как в 0.7.1» — кнопка с носителем молчит про флот (%s) — проверка краснеет" % o["car"])
 
 
 ## Часы орудия планеты в шапке (план GИ, п. 2; 07, 2.4): «<орудие> N с» по игровым часам, за секунду
@@ -1252,6 +1374,13 @@ func _three_frames(size: Vector2i) -> Array[Dictionary]:
 
 
 func test_markers_no_overlap() -> void:
+	_start_z = OLD_START
+	await _markers_no_overlap_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _markers_no_overlap_case() -> void:
 	var names := ["старт", "весь флот", "предел 5000"]
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var fr := await _three_frames(size)
@@ -1358,6 +1487,13 @@ func _start_missing(size: Vector2i, rollback: bool) -> Dictionary:
 
 
 func test_markers_for_ships_under_header() -> void:
+	_start_z = OLD_START
+	await _markers_for_ships_under_header_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _markers_for_ships_under_header_case() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var r := await _start_missing(size, false)
 		var miss: PackedStringArray = r["miss"]
@@ -1411,6 +1547,13 @@ func _far_missing(rollback: bool) -> Dictionary:
 
 
 func test_markers_visible_at_5000() -> void:
+	_start_z = OLD_START
+	await _markers_visible_at_5000_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _markers_visible_at_5000_case() -> void:
 	var r := await _far_missing(false)
 	ok(whole(r["n"]) > 20 and whole(r["miss"]) == 0, "предел 5000: у всех %d кораблей на поле есть знак (меньше 4 точек на экране — %d)" % [whole(r["n"]), whole(r["tiny"])])
 	var o := await _far_missing(true)
@@ -1454,12 +1597,21 @@ func _marker_click(rollback: bool, jumps: bool = false) -> Dictionary:
 		await hooks.click(c)
 		var one: Array[int] = [uid]
 		out["click"] = p.view.selection == one
-		await hooks.frames(2)
-		var m2 := p.view.markers.mark_of(uid)
-		var r := m2.frame.grow(3.0) if m2 != null else Rect2()
-		out["box_ok"] = not r.has_point(m2.p) if m2 != null else false
-		await _drag(r.position, r.end)
-		out["box"] = uid in p.view.selection
+		# рамка — заново: снова весь флот (F2, у знаков имена — тесно, есть отошедшие) и мышь в
+		# стороне. С пакета GТ выбранный знак не липкий: выбранный щелчком, когда мышь с него ушла,
+		# возвращается на своё место, если оно освободилось. Берётся знак, отошедший теперь
+		await hooks.key(KEY_F2)
+		await hooks.move(Vector2(1366.0 * 0.85, 768.0 * 0.3))
+		await hooks.frames(3)
+		var m2 := _moved_mark(p)
+		out["box_ok"] = false
+		out["box"] = false
+		if m2 != null:
+			var bu := m2.uid
+			var r := m2.frame.grow(3.0)
+			out["box_ok"] = not r.has_point(m2.p)
+			await _drag(r.position, r.end)
+			out["box"] = bu in p.view.selection
 	Picking.rollback_no_markers = false
 	Markers.rollback_hover_jumps = false
 	await _close()
@@ -1493,6 +1645,13 @@ func _drag(a: Vector2, b: Vector2) -> void:
 
 
 func test_marker_click_and_box() -> void:
+	_start_z = OLD_START
+	await _marker_click_and_box_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _marker_click_and_box_case() -> void:
 	var r := await _marker_click(false)
 	if not ok(flag(r["found"]), "на пределе 5000 есть свой знак, отошедший от корабля дальше 45 точек"):
 		return
@@ -1509,7 +1668,7 @@ func test_marker_click_and_box() -> void:
 ## must: проба проверяющего мазала 1–2 раза из 30). Как у человека: мышь уведена в сторону, потом
 ## наведена на середину рамки и щелчок. Предел камеры 5000, «Сражение» (зерно 4242), 1366 и 1920,
 ## без выбора и при «Весь флот» (у выбранных — имена, знаки шире). → промахи словами.
-func _click_every_mark(size: Vector2i, with_all: bool, turn: float) -> Dictionary:
+func _click_every_mark(size: Vector2i, with_all: bool, turn: float, only_hover: bool = false) -> Dictionary:
 	var p := await _open(size, false, false, "hud", true)
 	p.view.rig.set_view(p.view.rig.look, p.view.rig.yaw + turn, 5000.0, true)
 	await hooks.frames(3)
@@ -1519,10 +1678,14 @@ func _click_every_mark(size: Vector2i, with_all: bool, turn: float) -> Dictionar
 		if not mm.squad:
 			uids.append(mm.uid)
 	var bad := PackedStringArray()
+	var shifted := PackedStringArray()
 	var n := 0
 	for u in uids:
 		if with_all:
 			await hooks.key(KEY_F2)
+			# «Весь флот» ведёт камеру к середине флота плавно; без остановки рамка ехала бы вместе
+			# с камерой между кадрами до и после наведения, и сдвиг под курсором мерил бы камеру
+			p.view.rig.set_view(p.view.rig.look, p.view.rig.yaw, p.view.rig.dist, true)
 		else:
 			p.view.selection = []
 		await hooks.move(away)
@@ -1532,11 +1695,18 @@ func _click_every_mark(size: Vector2i, with_all: bool, turn: float) -> Dictionar
 			continue
 		n += 1
 		var fc := mk.frame.get_center()
+		var fr0 := mk.frame
 		var di0 := mk.di
 		await hooks.move(fc)
 		await hooks.frames(1)
 		var mk2 := p.view.markers.mark_of(u)
 		var stays := mk2 != null and mk2.frame.grow(2.0).has_point(fc)
+		# рамка под курсором не сдвигается НИ НА ТОЧКУ (шаг отхода — от рамки, а не от имени):
+		# щелчок по середине рамки сдвиг в полимени ещё прощает, глаз — нет
+		if mk2 != null and mk2.frame.position.distance_to(fr0.position) > 0.5:
+			shifted.append("%s (отход %d): %+.0f, %+.0f" % [p.battle.ship_by_uid(u).name, di0, mk2.frame.position.x - fr0.position.x, mk2.frame.position.y - fr0.position.y])
+		if only_hover:
+			continue
 		await hooks.click(fc)
 		await hooks.frames(1)
 		var one: Array[int] = [u]
@@ -1545,7 +1715,7 @@ func _click_every_mark(size: Vector2i, with_all: bool, turn: float) -> Dictionar
 			var g := p.battle.ship_by_uid(p.view.selection[0]) if p.view.selection.size() == 1 else null
 			bad.append("%s (отход %d%s) → %s" % [s.name, di0, "" if stays else ", знак уехал из-под курсора: отход %d" % (mk2.di if mk2 != null else -1), g.name if g != null else str(p.view.selection)])
 	await _close()
-	return {"n": n, "bad": bad}
+	return {"n": n, "bad": bad, "shifted": shifted}
 
 
 ## Откаты — каждая причина промаха своим флажком, как было в capella-v0.7: (1) знак под курсором
@@ -1555,29 +1725,52 @@ func _click_every_mark(size: Vector2i, with_all: bool, turn: float) -> Dictionar
 ## повёрнута на 0,6 рад: на повёрнутой нашёлся промах, которого прямая не видела, — два РЭБ
 ## в 68 по глубине, знак одного на корпусе другого). Бой стоит на расстановке старта (still) —
 ## раскладка знаков от скорости машины не зависит.
-func _click_every_mark_all(rb_name: bool, rb_hull: bool) -> Dictionary:
+func _click_every_mark_all(rb_name: bool, rb_hull: bool, rb_step: bool = false) -> Dictionary:
 	Markers.rollback_name_moves = rb_name
 	Picking.rollback_hull_entry = rb_hull
-	var out := {"n": 0, "miss": 0, "say": PackedStringArray()}
+	Markers.rollback_step_by_name = rb_step
+	var out := {"n": 0, "miss": 0, "shift": 0, "say": PackedStringArray(), "shifted": PackedStringArray()}
 	for turn: float in [0.0, 0.6]:
 		for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
 			for wa: bool in [false, true]:
-				var r := await _click_every_mark(size, wa, turn)
+				if rb_step and wa:
+					continue          # откат шага виден без выбора: у выбранных имя уже было до наведения
+				var r := await _click_every_mark(size, wa, turn, rb_step)
 				var bad: PackedStringArray = r["bad"]
+				var sh: PackedStringArray = r["shifted"]
 				out["n"] = whole(out["n"]) + whole(r["n"])
 				out["miss"] = whole(out["miss"]) + bad.size()
+				out["shift"] = whole(out["shift"]) + sh.size()
+				var all_sh: PackedStringArray = out["shifted"]
+				all_sh.append_array(sh)
 				var say: PackedStringArray = out["say"]
-				say.append("%d%s, %s: %d из %d%s" % [size.x, " (камера повёрнута)" if turn != 0.0 else "", "весь флот" if wa else "без выбора", whole(r["n"]) - bad.size(), whole(r["n"]), (" — мимо: " + "; ".join(bad)) if not bad.is_empty() else ""])
+				say.append("%d%s, %s: %d из %d%s%s" % [size.x, " (камера повёрнута)" if turn != 0.0 else "", "весь флот" if wa else "без выбора", whole(r["n"]) - bad.size(), whole(r["n"]), (" — мимо: " + "; ".join(bad)) if not bad.is_empty() else "", (" — сдвинулись под курсором: " + "; ".join(sh)) if not sh.is_empty() else ""])
 	Markers.rollback_name_moves = false
 	Picking.rollback_hull_entry = false
+	Markers.rollback_step_by_name = false
 	return out
 
 
 func test_marker_click_every_mark() -> void:
+	_start_z = OLD_START
+	await _marker_click_every_mark_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _marker_click_every_mark_case() -> void:
 	var r := await _click_every_mark_all(false, false)
 	var say: PackedStringArray = r["say"]
 	note("щелчок по каждому знаку на 5000: %s" % " | ".join(say))
 	ok(whole(r["n"]) >= 200 and whole(r["miss"]) == 0, "1366 и 1920, без выбора и «Весь флот», камера прямо и повёрнута: щелчок по каждому из %d знаков выбирает его корабль (мимо %d)" % [whole(r["n"]), whole(r["miss"])])
+	var sh0: PackedStringArray = r["shifted"]
+	ok(whole(r["shift"]) == 0, "рамка знака под курсором не сдвигается ни на точку — шаг отхода от рамки, а не от имени (сдвинулись %d: %s)" % [whole(r["shift"]), "; ".join(sh0)])
+	# откат одного правила «шаг отхода — от рамки» (пакет GТ, хвост GИ): щелчок по середине рамки
+	# сдвиг в полимени прощает — прежняя проверка оставалась зелёной, — а сдвиг рамки виден сразу
+	var o3 := await _click_every_mark_all(false, false, true)
+	var s3: PackedStringArray = o3["shifted"]
+	note("откат «шаг отхода от имени»: сдвинулись %d — %s" % [whole(o3["shift"]), "; ".join(s3)])
+	ok(whole(o3["shift"]) > 0, "откат «шаг отхода считается с именем» краснеет: под курсором сдвинулись %d знаков — %s" % [whole(o3["shift"]), "; ".join(s3)])
 	var o1 := await _click_every_mark_all(true, false)
 	var s1: PackedStringArray = o1["say"]
 	note("откат «ищет место с именем»: мимо %d — %s" % [whole(o1["miss"]), " | ".join(s1)])
@@ -1586,6 +1779,296 @@ func test_marker_click_every_mark() -> void:
 	var s2: PackedStringArray = o2["say"]
 	note("откат «корпус по входу луча»: мимо %d — %s" % [whole(o2["miss"]), " | ".join(s2)])
 	ok(whole(o2["miss"]) > 0, "откат «корпус соседа важнее по входу луча» краснеет: мимо %d — %s" % [whole(o2["miss"]), " | ".join(s2)])
+
+
+## Стартовая камера быстрого боя (C76, пакет GТ): свой строй на экране целиком — над нижней
+## панелью и под шапкой, противник ВЫШЕ своей линии (камера смотрит на него), и ни один корабль
+## не стоит в полосе шапки — знаков, втиснутых под шапку (UNDER_TOP), на старте нет. Откат —
+## точка взгляда посередине поля (camera.start_ahead = deploy.heavy_z): своя линия уходит вниз,
+## носители — под панель. → замер словами и беды.
+func _start_view(size: Vector2i, ahead: float) -> Dictionary:
+	var p := await _open(size, false, false, "hud", true)
+	var d: Defs = _main.get("defs")
+	var keep := d.doctrine.camera_start_ahead
+	if ahead >= 0.0:
+		d.doctrine.camera_start_ahead = ahead
+		p.view.rig.start_view(d.doctrine, true)
+		await hooks.frames(3)
+	var cam := p.view.rig.camera
+	var top: float = p.view.markers.top
+	var floor_y := float(size.y)
+	for r in p.hud.panel_rects():
+		if r.size.x > size.x * 0.4:
+			floor_y = minf(floor_y, r.position.y)       # нижняя панель — во всю ширину
+	var bad := PackedStringArray()
+	var own_top := INF
+	var own_low := -INF
+	var foe_low := -INF
+	var band := 0
+	for s in p.battle.ships:
+		var pt := cam.unproject_position(p.view.ship_point(s))
+		var behind := cam.is_position_behind(p.view.ship_point(s))
+		if not behind and pt.y >= 0.0 and pt.y < top and pt.x >= 0.0 and pt.x <= size.x:
+			band += 1
+			bad.append("%s в полосе шапки (%.0f)" % [s.name, pt.y])
+		if s.side == p.view.my_side:
+			own_top = minf(own_top, pt.y)
+			own_low = maxf(own_low, pt.y)
+			if pt.y <= top or pt.y >= floor_y or pt.x < 0.0 or pt.x > size.x:
+				bad.append("свой %s не на экране (%.0f, %.0f)" % [s.name, pt.x, pt.y])
+		elif s.heavy() and not s.station:
+			foe_low = maxf(foe_low, pt.y)
+	var under := 0
+	for m in p.view.markers.drawn:
+		if m.di >= Markers.TRY.size():
+			under += 1
+	if foe_low >= own_top:
+		bad.append("чужие тяжёлые не выше своего строя (%.0f против %.0f)" % [foe_low, own_top])
+	if under > 0:
+		bad.append("знаков под шапкой %d" % under)
+	d.doctrine.camera_start_ahead = keep
+	await _close()
+	return {"bad": bad, "say": "свой строй от %.2f до %.2f высоты (шапка до %.2f, панель с %.2f), чужие тяжёлые ниже всего на %.2f, в полосе шапки %d" % [
+		own_top / size.y, own_low / size.y, top / size.y, floor_y / size.y, foe_low / size.y, band]}
+
+
+func test_start_camera_own_formation() -> void:
+	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+		var r := await _start_view(size, -1.0)
+		var bad: PackedStringArray = r["bad"]
+		note("%d, старт быстрого боя: %s" % [size.x, str(r["say"])])
+		ok(bad.is_empty(), "%d: свой строй на экране целиком, противник выше — камера смотрит на него, под шапкой ни корабля, ни знака (%s)" % [size.x, "; ".join(bad.slice(0, 4))])
+		var o := await _start_view(size, 1050.0)
+		var ob: PackedStringArray = o["bad"]
+		note("%d, откат «взгляд посередине поля»: %s" % [size.x, str(o["say"])])
+		ok(not ob.is_empty(), "%d: откат «камера смотрит в середину поля» краснеет (%s)" % [size.x, "; ".join(ob.slice(0, 3))])
+
+
+## Раскладка знаков — только когда что-то сдвинулось (пакет GТ, хвост GИ: ~3,5 мс на кадр в
+## худшем бою, и каждый кадр, даже на паузе с неподвижной камерой). Бой на паузе, мышь в стороне:
+## за 20 кадров раскладка не делается ни разу (держится прежняя, холст не перерисовывается); камеру
+## сдвинули — раскладка заново, и знаки стоят там же, где их поставила бы раскладка с нуля; навели
+## мышь на знак — заново (знак получил имя); корабль ушёл вдоль луча камеры (на экране стоит, а
+## глубина другая) — заново, и глубина знака новая. Откаты: «каждый кадр, как в 0.7.1» — 20 раскладок
+## из 20; «пропуск смотрит только на экран» — глубина у знака старая.
+func _relayout_counts(always: bool) -> Dictionary:
+	Markers.rollback_relayout_always = always
+	var p := await _open(Vector2i(1366, 768), false, false, "hud", true)
+	var mk := p.view.markers
+	# покачивание (view.bob) идёт и на паузе — по часам вида; здесь его нет, чтобы «покой» не зависел
+	# от скорости машины (на медленной за 20 кадров часы вида уходят дальше)
+	var dd: Defs = _main.get("defs")
+	dd.doctrine.view_bob = 0.0
+	await hooks.move(Vector2(1366.0 * 0.85, 768.0 * 0.3))
+	await hooks.frames(3)
+	var r0 := mk.relaid
+	await hooks.frames(20)
+	var idle := mk.relaid - r0
+	var rig := p.view.rig
+	rig.set_view(rig.look + Vector3(120.0, 0.0, 0.0), rig.yaw, rig.dist, true)
+	var r1 := mk.relaid
+	await hooks.frames(1)
+	var moved := mk.relaid - r1
+	# после сдвига камеры знаки — ровно те, что дала бы раскладка с нуля
+	var before := PackedStringArray()
+	for m in mk.drawn:
+		before.append("%d %s %d" % [m.uid, str(m.frame), m.di])
+	Markers.rollback_relayout_always = true
+	mk.layout()
+	Markers.rollback_relayout_always = always
+	var fresh := PackedStringArray()
+	for m in mk.drawn:
+		fresh.append("%d %s %d" % [m.uid, str(m.frame), m.di])
+	var m0: Markers.Mark = mk.drawn[0] if not mk.drawn.is_empty() else null
+	var hov := 0
+	if m0 != null:
+		var r2 := mk.relaid
+		await hooks.move(m0.frame.get_center())
+		await hooks.frames(2)
+		hov = mk.relaid - r2
+	# корабль уходит ВДОЛЬ луча камеры на 10% расстояния: на экране его точка та же, а глубина
+	# знака (выбор по лучу, Picking.marker_beats) обязана стать новой
+	await hooks.move(Vector2(1366.0 * 0.85, 768.0 * 0.3))
+	await hooks.frames(2)
+	var dep := {"relaid": 0, "was": 0.0, "now": 0.0, "want": 0.0}
+	var sm: Markers.Mark = null
+	for m in mk.drawn:
+		if not m.squad and not m.sel and not m.hover:
+			sm = m
+			break
+	if sm != null:
+		var s := p.battle.ship_by_uid(sm.uid)
+		var cam := p.view.rig.camera
+		var cp := p.view.ship_point(s)
+		var q := cp + (cp - cam.global_position).normalized() * 0.1 * cam.global_position.distance_to(cp)
+		p.view._height[s.uid] = q.y
+		hooks.place_ship(s, Vector2(q.x, q.z))
+		p.view._prev[s.uid] = Vector3(q.x, q.z, s.yaw)
+		dep["was"] = sm.depth
+		var r3 := mk.relaid
+		await hooks.frames(1)
+		dep["relaid"] = mk.relaid - r3
+		var sm2 := mk.mark_of(s.uid)
+		dep["now"] = sm2.depth if sm2 != null else -1.0
+		dep["want"] = cam.global_position.distance_to(p.view.ship_point(s))
+	Markers.rollback_relayout_always = false
+	await _close()
+	return {"idle": idle, "moved": moved, "same": before == fresh, "hover": hov, "n": before.size(), "dep": dep}
+
+
+func test_markers_relayout_only_on_change() -> void:
+	var r := await _relayout_counts(false)
+	note("раскладка знаков: за 20 кадров покоя — %d, после сдвига камеры — %d, после наведения — %d; знаков %d, совпали с раскладкой с нуля: %s" % [whole(r["idle"]), whole(r["moved"]), whole(r["hover"]), whole(r["n"]), str(flag(r["same"]))])
+	ok(whole(r["idle"]) == 0, "бой на паузе, камера и мышь стоят: раскладки нет ни на одном из 20 кадров (%d)" % whole(r["idle"]))
+	ok(whole(r["moved"]) == 1 and flag(r["same"]) and whole(r["n"]) > 0, "камеру сдвинули — раскладка заново (%d), и знаки те же, что у раскладки с нуля" % whole(r["moved"]))
+	ok(whole(r["hover"]) >= 1, "мышь на знак — раскладка заново: знак получает имя (%d)" % whole(r["hover"]))
+	var dep: Dictionary = r["dep"]
+	note("корабль ушёл вдоль луча камеры: раскладок %d, глубина знака %.0f → %.0f (на деле %.0f)" % [whole(dep["relaid"]), num(dep["was"]), num(dep["now"]), num(dep["want"])])
+	ok(whole(dep["relaid"]) == 1 and absf(num(dep["now"]) - num(dep["want"])) < 1.0, "корабль ушёл вдоль луча камеры (на экране не сдвинулся) — раскладка заново, глубина знака новая")
+	var o := await _relayout_counts(true)
+	ok(whole(o["idle"]) >= 20, "откат «раскладка каждый кадр, как в 0.7.1» краснеет: %d раскладок за 20 кадров покоя" % whole(o["idle"]))
+	Markers.rollback_screen_only = true
+	var o2 := await _relayout_counts(false)
+	Markers.rollback_screen_only = false
+	var od: Dictionary = o2["dep"]
+	ok(whole(od["relaid"]) == 0 and absf(num(od["now"]) - num(od["want"])) > 1.0, "откат «пропуск смотрит только на экран» краснеет: раскладок %d, глубина знака %.0f при настоящей %.0f" % [whole(od["relaid"]), num(od["now"]), num(od["want"])])
+
+
+## «+N» не ложится на имя знака — ни чужое, ни СВОЁ (пакет GТ, хвост GИ). В 0.7.1 «+N» сверялся со
+## всеми местами, кроме своего, а своё место с доработки GИ включает и имя сбоку от рамки —
+## проба нашла «+N» на собственном имени в 5 случаях из 16 (зёрна 7 и 4242). Случаи: «Весь флот»
+## (имена у своих) и наведение на каждый знак, у которого есть «+N» (имя у чужого — только под
+## курсором). → [случаев, описание первых трёх]
+func _badge_hits(p: Polygon) -> PackedStringArray:
+	var out := PackedStringArray()
+	for d in p.view.markers.drawn:
+		if not d.badge.has_area():
+			continue
+		for e in p.view.markers.drawn:
+			if e.name_r.has_area() and d.badge.intersects(e.name_r):
+				out.append("«+%d» у %s на имени %s" % [d.more, d.label, "своём" if e == d else e.label])
+	return out
+
+
+func _badges_on_names(rollback: bool) -> Dictionary:
+	Markers.rollback_badge_on_name = rollback
+	var hits := PackedStringArray()
+	var badges := 0
+	var cases := 0
+	for seed_v: int in [7, 4242]:
+		for t: float in [0.0, 30.0]:
+			for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+				for far: bool in [false, true]:
+					var p := await _open(size, false, false, "hud", true, seed_v)
+					if t > 0.0:
+						_steps(p, roundi(t / Battle.STEP))
+					if far:
+						p.view.rig.set_view(p.view.rig.look, p.view.rig.yaw, 5000.0, true)
+					await hooks.move(Vector2(size.x * 0.85, size.y * 0.3))
+					await hooks.frames(3)
+					await hooks.key(KEY_F2)
+					await hooks.frames(3)
+					var h := _badge_hits(p)
+					for d in p.view.markers.drawn:
+						if d.more > 0:
+							badges += 1
+					p.view.selection = []
+					await hooks.frames(2)
+					var with_more: Array[int] = []
+					for d in p.view.markers.drawn:
+						if d.more > 0 and not d.squad:
+							with_more.append(d.uid)
+					for u in with_more:
+						var mk := p.view.markers.mark_of(u)
+						if mk == null:
+							continue
+						await hooks.move(mk.frame.get_center())
+						await hooks.frames(2)
+						h.append_array(_badge_hits(p))
+						badges += 1
+					cases += 1
+					for x in h:
+						hits.append("зерно %d, %.0f с, %d%s: %s" % [seed_v, t, size.x, ", камера 5000" if far else "", x])
+					await _close()
+	Markers.rollback_badge_on_name = false
+	return {"hits": hits, "badges": badges, "cases": cases}
+
+
+func test_badge_not_on_name() -> void:
+	_start_z = OLD_START
+	await _badge_not_on_name_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _badge_not_on_name_case() -> void:
+	var r := await _badges_on_names(false)
+	var h: PackedStringArray = r["hits"]
+	note("«+N» на имени: %d случаев из %d, «+N» осмотрено %d" % [h.size(), whole(r["cases"]), whole(r["badges"])])
+	ok(whole(r["badges"]) > 0, "в осмотренных случаях есть «+N» (%d) — проверке есть что ловить" % whole(r["badges"]))
+	ok(h.is_empty(), "«+N» не ложится ни на своё имя, ни на чужое (зёрна 7 и 4242, 0 и 30 с, 1366 и 1920, старт и 5000, «Весь флот» и наведение): %s" % "; ".join(h))
+	var o := await _badges_on_names(true)
+	var oh: PackedStringArray = o["hits"]
+	note("откат «своё имя не препятствие»: %d — %s" % [oh.size(), "; ".join(oh.slice(0, 4))])
+	ok(not oh.is_empty(), "откат ««+N» не видит своего имени, как в 0.7.1» краснеет: %d — %s" % [oh.size(), "; ".join(oh.slice(0, 4))])
+
+
+## Выбранный знак не «прилипает» к отходу (пакет GТ, хвост GИ): «Весь флот» (F2) на пределе 5000 —
+## знаки теснятся и разъезжаются по отходам; вернулись к стартовой камере, где места хватает, —
+## знаков в отходе не больше, чем у того же выбора, сделанного заново на этой камере. В 0.7.1
+## выбранный знак держал прежний отход насовсем (откат Markers.rollback_sel_sticky).
+func _sel_back_home(size: Vector2i, sticky: bool) -> Dictionary:
+	Markers.rollback_sel_sticky = sticky
+	var p := await _open(size, false, false, "hud", true)
+	var rig := p.view.rig
+	var look0 := rig.look
+	var yaw0 := rig.yaw
+	var dist0 := rig.dist
+	await hooks.move(Vector2(size.x * 0.85, size.y * 0.3))
+	rig.set_view(look0, yaw0, 5000.0, true)
+	await hooks.frames(3)
+	await hooks.key(KEY_F2)
+	await hooks.frames(3)
+	var far := 0
+	for m in p.view.markers.drawn:
+		if m.sel and m.moved:
+			far += 1
+	var uids: Array[int] = []
+	uids.assign(p.view.selection)
+	rig.set_view(look0, yaw0, dist0, true)
+	await hooks.frames(4)
+	var back := PackedStringArray()
+	for m in p.view.markers.drawn:
+		if m.sel and m.moved:
+			back.append(p.battle.ship_by_uid(m.uid).name if not m.squad else "звено")
+	p.view.selection = []
+	await hooks.frames(3)
+	p.view.selection = uids
+	await hooks.frames(4)
+	var fresh := PackedStringArray()
+	for m in p.view.markers.drawn:
+		if m.sel and m.moved:
+			fresh.append(p.battle.ship_by_uid(m.uid).name if not m.squad else "звено")
+	Markers.rollback_sel_sticky = false
+	await _close()
+	return {"far": far, "sel": uids.size(), "back": back, "fresh": fresh}
+
+
+func test_selected_mark_not_sticky() -> void:
+	var worst_rb := 0
+	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+		var r := await _sel_back_home(size, false)
+		var back: PackedStringArray = r["back"]
+		var fresh: PackedStringArray = r["fresh"]
+		note("%d: весь флот (%d) на 5000 — в отходе %d; вернулись к стартовой камере — %d (%s), тот же выбор заново — %d" % [size.x, whole(r["sel"]), whole(r["far"]), back.size(), ", ".join(back), fresh.size()])
+		ok(whole(r["far"]) > 0, "%d: на пределе 5000 выбранные знаки теснятся (в отходе %d) — проверке есть что ловить" % [size.x, whole(r["far"])])
+		ok(back.size() <= fresh.size(), "%d: вернулись к стартовой камере — выбранных знаков в отходе %d, не больше, чем у выбора заново (%d): %s" % [size.x, back.size(), fresh.size(), ", ".join(back)])
+		var o := await _sel_back_home(size, true)
+		var ob: PackedStringArray = o["back"]
+		var of: PackedStringArray = o["fresh"]
+		note("%d, откат «выбранный липкий»: вернулись — в отходе %d (%s), заново — %d" % [size.x, ob.size(), ", ".join(ob), of.size()])
+		worst_rb = maxi(worst_rb, ob.size() - of.size())
+	ok(worst_rb > 0, "откат «выбранный знак липкий, как в 0.7.1» краснеет: после возврата в отходе на %d знаков больше, чем у выбора заново" % worst_rb)
 
 
 ## Имя корабля — под курсором (и у выбранных), а не у всех: наводим мышь на знак своего корабля
@@ -1677,6 +2160,12 @@ func _behind(rollback: bool) -> Dictionary:
 	return out
 
 
+## С пакета GТ проверка держит и пропуск раскладки знаков (view/markers.gd, SAME_PX): корвет
+## ставится ВДОЛЬ луча камеры, на экране его точка не сдвигается, а глубина — да. Пока пропуск
+## сравнивал только точки экрана, у знака оставалась прежняя глубина, и места «знак дальнего на
+## корпусе ближнего» проверка не находила (найдено этой проверкой; с `rollback_relayout_always`
+## — находила). Теперь сравнивается и глубина (SAME_DEPTH); отдельная проверка с откатом —
+## test_markers_relayout_only_on_change.
 func test_marker_not_over_nearer_hull() -> void:
 	var r := await _behind(false)
 	if not ok(flag(r["found"]), "нашлось место, где знак дальнего корабля лёг на корпус ближнего флагмана"):
@@ -1741,6 +2230,13 @@ static func _lab(lin: Color) -> Vector3:
 ## флагман и крейсер одним ромбом, всё лёгкое — шевроном) оставляла ярусы зелёными; откат —
 ## порчей кода (godot/CLAUDE.md, 22). Рисунок самих значков — на снимках яруса hud (глазами).
 func test_marker_kind_by_class() -> void:
+	_start_z = OLD_START
+	await _marker_kind_by_class_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _marker_kind_by_class_case() -> void:
 	var p := await _open(Vector2i(1920, 1080))
 	await hooks.key(KEY_F2)
 	await hooks.frames(3)
@@ -1974,6 +2470,13 @@ func _hint(size: Vector2i, rollback: bool) -> Dictionary:
 
 
 func test_hint_above_roster() -> void:
+	_start_z = OLD_START
+	await _hint_above_roster_case()
+	_start_z = -1.0
+
+
+## (тот же кадр, что до пакета GТ: расстановка ±650 — см. _start_z)
+func _hint_above_roster_case() -> void:
 	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
 		var h := await _hint(size, false)
 		note("%d×%d: подсказка %s, кораблей под ней %d" % [size.x, size.y, h["rect"], whole(h["under"])])
@@ -1983,15 +2486,14 @@ func test_hint_above_roster() -> void:
 	ok(whole(o["under"]) > 0, "откат «подсказка как в 0.6 — две длинные строки под шапкой» краснеет: под ней %d кораблей чужой линии" % whole(o["under"]))
 
 
-## Текст выпуска capella-v0.7.1 (godot/RELEASE, «Что попробовать») — шаг за шагом событиями ввода,
-## как у игрока: из меню, кнопками и щелчками (замечание к GИ: каждый совет проверен на деле).
-## 1) «В бой», колесо до упора, щелчок по ЛЮБОМУ знаку — выбран его корабль и у знака имя
-## (перебираются все знаки кораблей, мышь каждый раз уводится в сторону; бой на паузе — расстановка
-## от скорости машины не зависит); 2) знак своего флагмана или крейсера — в панели имя, класс с
-## прочностью и строка «чем занят»; 3) «Авианосцы» → «Перехватчик» и «Истребитель» — два звена,
-## «Авиация» — оба выбраны, V — оба на посадку.
-func test_release_walkthrough() -> void:
+## Советы выпуска 0.7.1 — колесо до упора и щелчок по каждому знаку, знак флагмана с тремя строками,
+## «Авианосцы» → два звена → «Авиация» → V — событиями ввода, как у игрока (в 0.8 эти советы не
+## повторяются, но то, что они обещали, обязано работать и дальше). Кадр — прежний старт ±650
+## (_start_z): с пакета GТ на дальней камере со старта видно меньше знаков, а проверка ценна теснотой.
+func test_walkthrough_071() -> void:
+	_start_z = OLD_START
 	var p := await _open_by_menu(Vector2i(1366, 768), "go")
+	_start_z = -1.0
 	if not ok(p != null, "шаг 1: в меню «В бой» нажимается и открывает бой"):
 		await _close()
 		return
@@ -2096,4 +2598,107 @@ func test_release_walkthrough() -> void:
 	for u in sqs:
 		both = both and u in back
 	ok(both, "шаг 3: V — оба звена на посадку")
+	await _close()
+
+
+# ───────────────────────── текст выпуска 0.8 «Темп» — шаг за шагом ─────────────────────────
+
+## «Что попробовать» capella-v0.8 (godot/RELEASE) событиями ввода, как у игрока:
+## 1) «В бой» — на экране свой строй, противника не видно (он за верхним краем); ничего не нажимая,
+##    к 30-й секунде чужие уже на экране, первый залп главного калибра — на 25–40-й секунде;
+## 2) «Смотреть: ИИ против ИИ» — оба флота идут навстречу, первый залп раньше: на 15–30-й;
+## 3) «Весь флот» (F2), колесо до упора и обратно — выбранные знаки снова над своими кораблями:
+##    в отходе их не больше, чем у того же выбора, сделанного заново.
+func test_release_walkthrough() -> void:
+	var p := await _open_by_menu(Vector2i(1366, 768), "go")
+	if not ok(p != null, "шаг 1: в меню «В бой» нажимается и открывает бой"):
+		await _close()
+		return
+	var my := p.view.my_side
+	var own0 := 0
+	var foe0 := 0
+	for m in p.view.markers.drawn:
+		if not m.squad:
+			if m.side == my:
+				own0 += 1
+			else:
+				foe0 += 1
+	var cam := p.view.rig.camera
+	var foe_above := true
+	for s in p.battle.ships:
+		if s.side != my and s.heavy() and not s.station:
+			foe_above = foe_above and cam.unproject_position(p.view.ship_point(s)).y < p.view.markers.top
+	ok(own0 >= 8 and foe0 == 0 and foe_above, "шаг 1: на старте свой строй (%d знаков), противника на экране нет, его крупные корабли выше края" % own0)
+	var foe30 := 0
+	var fg := -1.0
+	p.view.paused = false
+	for i in roundi(60.0 / Battle.STEP):
+		p.view.advance(Battle.STEP)
+		if i == roundi(30.0 / Battle.STEP):
+			p.view.paused = true
+			await hooks.frames(2)
+			for m in p.view.markers.drawn:
+				if not m.squad and m.side != my:
+					foe30 += 1
+			p.view.paused = false
+		if p.battle.metrics.first_gun > 0.0 and fg < 0.0:
+			fg = p.battle.metrics.first_gun
+			break
+	p.view.paused = true
+	note("шаг 1: знаков противника к 30-й секунде %d, первый залп главного калибра на %.1f с" % [foe30, fg])
+	ok(foe30 > 0, "шаг 1: к 30-й секунде противник на экране (%d знаков)" % foe30)
+	ok(fg >= 25.0 and fg <= 40.0, "шаг 1: первый залп главного калибра на 25–40-й секунде (%.1f)" % fg)
+	await _close()
+	var w := await _open_by_menu(Vector2i(1366, 768), "watch")
+	var wg := -1.0
+	if ok(w != null, "шаг 2: «Смотреть: ИИ против ИИ» нажимается"):
+		w.view.paused = false
+		for i in roundi(60.0 / Battle.STEP):
+			w.view.advance(Battle.STEP)
+			if w.battle.metrics.first_gun > 0.0:
+				wg = w.battle.metrics.first_gun
+				break
+		w.view.paused = true
+		note("шаг 2: «ИИ против ИИ» — первый залп на %.1f с" % wg)
+		ok(wg >= 15.0 and wg <= 30.0 and wg < fg, "шаг 2: оба флота идут навстречу — первый залп раньше, на 15–30-й секунде (%.1f)" % wg)
+	await _close()
+	var q := await _open_by_menu(Vector2i(1366, 768), "go")
+	if not ok(q != null, "шаг 3: «В бой» снова"):
+		await _close()
+		return
+	var rig := q.view.rig
+	var mid := Vector2(683.0, 380.0)
+	await hooks.move(mid)
+	await hooks.key(KEY_F2)
+	for dir: MouseButton in [MOUSE_BUTTON_WHEEL_DOWN, MOUSE_BUTTON_WHEEL_UP]:
+		for i in 40:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = dir
+			ev.pressed = true
+			ev.position = mid
+			ev.global_position = mid
+			Input.parse_input_event(ev)
+			await hooks.frames(1)
+		var n := 0
+		while (absf(rig.s_dist - rig.dist) > 5.0 or rig.s_look.distance_to(rig.look) > 5.0) and n < 900:
+			await hooks.frames(1)
+			n += 1
+	await hooks.move(Vector2(1366.0 * 0.85, 768.0 * 0.3))
+	await hooks.frames(3)
+	var back := 0
+	for m in q.view.markers.drawn:
+		if m.sel and m.moved:
+			back += 1
+	var sel: Array[int] = []
+	sel.assign(q.view.selection)
+	q.view.selection = []
+	await hooks.frames(3)
+	q.view.selection = sel
+	await hooks.frames(3)
+	var fresh := 0
+	for m in q.view.markers.drawn:
+		if m.sel and m.moved:
+			fresh += 1
+	note("шаг 3: весь флот (%d), колесо до упора и обратно — в отходе %d, тот же выбор заново — %d" % [sel.size(), back, fresh])
+	ok(sel.size() >= 8 and back <= fresh, "шаг 3: после колеса туда и обратно выбранные знаки над своими кораблями — в отходе %d, не больше, чем у выбора заново (%d)" % [back, fresh])
 	await _close()

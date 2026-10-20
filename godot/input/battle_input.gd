@@ -100,6 +100,9 @@ static var rollback_ecm_not_light := false
 ## ТОЛЬКО для проверки отката (07, 2.8): щелчок по ячейке ростера — всегда весь класс, по одному
 ## не перебрать. В игре false.
 static var rollback_roster_whole := false
+## ТОЛЬКО для проверки отката (пакет GТ, хвост GИ): «под курсором» считается и сквозь кнопки шапки
+## и панели — как в capella-v0.7.1: навёл мышь на «В меню», а под ней подсветился корабль. В игре false.
+static var rollback_hover_through_ui := false
 
 var _lmb := false
 var _lmb_from := Vector2.ZERO
@@ -190,6 +193,11 @@ func _say(text: String) -> void:
 # ───────────────────────── мышь ─────────────────────────
 
 func _unhandled_input(event: InputEvent) -> void:
+	var mm := event as InputEventMouseMotion
+	if mm != null:
+		if not rollback_hover_through_ui:
+			_hover(mm.position)                 # мышь над полем, а не над кнопкой (см. _input)
+		return
 	var mb := event as InputEventMouseButton
 	if mb != null and mb.pressed:
 		# жест начинается только на поле (нажатие по панели сюда не дошло)
@@ -213,7 +221,14 @@ func _unhandled_input(event: InputEvent) -> void:
 func _input(event: InputEvent) -> void:
 	var mm := event as InputEventMouseMotion
 	if mm != null:
-		_hover(mm.position)
+		# «кто под курсором» — ПОСЛЕ разбора события интерфейсом (хвост GИ: сквозь кнопки шапки
+		# подсвечивался корабль). _input идёт раньше интерфейса, поэтому здесь «никого», а корабль
+		# под курсором ищет _unhandled_input — туда движение доходит, только если ни кнопка, ни
+		# панель, ловящая мышь, его не взяли (17). Оба шага — в одном разборе события, до кадра
+		if rollback_hover_through_ui:
+			_hover(mm.position)
+		elif view != null and not rollback_no_hover:
+			view.set("hover_uid", 0)
 		if _lmb:
 			if not _lmb_moved and _far(mm.position, _lmb_from):
 				_lmb_moved = true

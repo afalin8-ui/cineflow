@@ -10,9 +10,11 @@
 # - Числа в текст — форматом, а не str() (00, 6.6).
 extends RefCounted
 
-## Цвета (07, 2.1): свои — мятные, чужие — красные; «горит» — акцент.
-const OWN := Color(0.56, 1.0, 0.78)
-const FOE := Color(1.0, 0.42, 0.35)
+## Цвета (07, 2.1): свои — мятные, чужие — красные (одно место на знаки, кольца и шапку —
+## view/side_colors.gd); «горит» — акцент.
+const SideColors := preload("res://view/side_colors.gd")
+const OWN := SideColors.OWN
+const FOE := SideColors.FOE
 const ACCENT := Color(0.91, 0.64, 0.24)
 const TEXT := Color(0.85, 0.92, 1.0)
 const DIM := Color(0.6, 0.66, 0.74)

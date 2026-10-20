@@ -135,13 +135,13 @@ func test_keys_rotate_and_pan() -> void:
 	eq(rig.yaw, y2, "повтор Q (echo) камеру не вертит")
 	# стрелка вверх везёт вглубь (−z при повороте 0)
 	var d := _defs.doctrine
-	rig.set_view(Vector3(0, 0, d.camera_start_look_z), 0.0, d.camera_dist_start, true)
+	rig.set_view(Vector3(0, 0, (d.deploy_heavy_z - d.camera_start_ahead)), 0.0, d.camera_dist_start, true)
 	# время — СУММОЙ шагов кадра, которыми камера и едет, а не часами стенда: первый кадр после
 	# нажатия несёт и время ДО замера, и на свободной машине (кадры по миллисекунде) часы давали
 	# меньше, чем камера честно проехала, — проверка краснела через раз в полном ярусе
 	var sec := await _hold_timed(rig, KEY_UP, 8)
-	ok(rig.look.z < d.camera_start_look_z, "стрелка вверх — вглубь стола: z %.1f" % rig.look.z)
-	ok(d.camera_start_look_z - rig.look.z <= d.camera_dist_start * d.camera_edge_speed_k * sec * 1.05 + 1.0, "скорость не больше dist × 0,44 в секунду (%.1f за %.3f с)" % [d.camera_start_look_z - rig.look.z, sec])
+	ok(rig.look.z < (d.deploy_heavy_z - d.camera_start_ahead), "стрелка вверх — вглубь стола: z %.1f" % rig.look.z)
+	ok((d.deploy_heavy_z - d.camera_start_ahead) - rig.look.z <= d.camera_dist_start * d.camera_edge_speed_k * sec * 1.05 + 1.0, "скорость не больше dist × 0,44 в секунду (%.1f за %.3f с)" % [(d.deploy_heavy_z - d.camera_start_ahead) - rig.look.z, sec])
 	# русская раскладка: клавиша по месту (06, ловушка 49) — «й» на месте Q
 	var y3 := rig.yaw
 	var ev := InputEventKey.new()

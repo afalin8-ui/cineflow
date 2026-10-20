@@ -558,6 +558,8 @@ func _update_grid(b: Object) -> void:
 					word = Texts.cmd(&"unhyper", "word")
 					top = Texts.cmd(&"unhyper", "top")
 					how = Builder.Look.ON
+				elif _carrier_in(own) and not rollback_no_fleet_hint:
+					top = Texts.HYPER_FLEET_TOP     # уход носителя — отход всей стороны (C17)
 			&"launch_interceptor", &"launch_fighter", &"launch_bomber":
 				var free := 0
 				for u in car_ids:
@@ -578,7 +580,18 @@ func _update_grid(b: Object) -> void:
 		return
 	var hb := grid.buttons[&"hyper"]
 	var tip_id := &"unhyper" if hb.get_meta(&"cf_look", -1) == Builder.Look.ON else &"hyper"
-	hb.set_meta(&"cf_tip", Texts.tip(tip_id, Texts.cmd(tip_id, "word"), false))
+	var tip := Texts.tip(tip_id, Texts.cmd(tip_id, "word"), false)
+	if tip_id == &"hyper" and _carrier_in(own) and not rollback_no_fleet_hint:
+		tip += "\n" + Texts.HYPER_FLEET_TIP
+	hb.set_meta(&"cf_tip", tip)
+
+
+## Есть ли среди выбранных носитель: его уход в гипер уводит всю сторону (sim/battle.gd, C17).
+static func _carrier_in(own: Array[Ship]) -> bool:
+	for s in own:
+		if s.def.cls == &"carrier" and not s.station:
+			return true
+	return false
 
 
 static func _part_look(k: int, n: int) -> Builder.Look:
@@ -900,6 +913,9 @@ static var rollback_hp_full := false
 ## нет «Авианосцев» и «Авиации» (09, 6.8 велит их оставить), и все звенья разом выбрать нечем.
 ## В игре false.
 static var rollback_no_air_quick := false
+## ТОЛЬКО для проверки отката (пакет GТ, хвост GИ): «В гипер» с выбранным носителем молчит о том,
+## что с носителем уйдёт весь флот (как в 0.7.1).
+static var rollback_no_fleet_hint := false
 
 
 ## Первый вариант «что выбрано», который целиком влезает в панель (строк не больше видимых).

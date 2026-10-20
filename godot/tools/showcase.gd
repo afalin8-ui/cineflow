@@ -28,6 +28,11 @@ const CRAFT_ROLES: Array[StringName] = [&"interceptor", &"fighter", &"bomber"]
 const CRAFT_PER_ROLE := 80
 const SQUAD := 6
 const SEED := 20261010
+## Линии «Стола» — на ±650, как стоял старт до пакета GТ: «Стол» — худший КАДР боя (две линии
+## «Генерального» с резервом и авиацией в кадре рабочего вида), а не старт боя. Старт с GТ дальше
+## (deploy.heavy_z ±1050: строи сходятся 25–40 с), и в кадр 2400 две линии в 2100 не влезают —
+## замер кадров (М15) мерил бы пустую середину. Число сценария, как зерно и круги звеньев.
+const LINE_Z := 650.0
 # Числа доктрины (высота-картинка ±40 и покачивание ±3 — 09, 11.6; носители по 260
 # вбок — 09, 5.1; расстояния камеры в пути замера — 09, 11.2) — из doctrine.json,
 # своих здесь нет. Здесь — только сценарий «Стола»: зерно, звенья, маршрут камеры.
@@ -90,12 +95,13 @@ func setup(p_defs: Defs, p_prewarm: bool = true) -> bool:
 	rig.name = "CameraRig"
 	add_child(rig)
 	rig.setup(defs.doctrine, defs.consts.field_half)
+	rig.start_view(defs.doctrine, true, LINE_Z)
 	env._fit_stars()
 	_build_path()
 	_place_side(attacker, 1)
 	_place_side(defender, -1)
 	# станция защитника — на station_back позади его линии старта
-	var st := Formation.station_place(defs, -1.0)
+	var st := Formation.station_place(defs, -1.0, LINE_Z)
 	_add_ship(&"station", Vector3(st.x, 0.0, st.y), -1)
 	crafts = CraftLayer.new()
 	crafts.name = "Crafts"
@@ -160,7 +166,7 @@ static func _lineup(entries: Array[Defs.FleetEntry]) -> Array[StringName]:
 ## Места — из модели (sim/formation.gd): та же таблица мест 09, 5.1–5.5, по которой
 ## встаёт «Полигон»; здесь только корабли вида на этих местах.
 func _place_side(ids: Array[StringName], side: int) -> void:
-	for place: Array in Formation.start_places(defs, FACTION, ids, float(side)):
+	for place: Array in Formation.start_places(defs, FACTION, ids, float(side), [], &"", false, LINE_Z):
 		var id: StringName = place[0]
 		var p: Vector2 = place[1]
 		_add_ship(id, Vector3(p.x, 0.0, p.y), side)
@@ -330,7 +336,8 @@ func _process(delta: float) -> void:
 ## Маршрут замера: (секунда, точка взгляда x, z, поворот, расстояние). Расстояния
 ## — ключи доктрины (camera.dist_start 3990, dist_work 2400, dist_max 5000: в пути
 ## и рабочий вид, и дальний предел — план G0, п. 7; на 5000 в кадре весь «стол»),
-## z = &"start" — стартовая точка взгляда camera.start_look_z (470). Числа здесь —
+## z = &"start" — стартовая точка взгляда: camera.start_ahead (180) впереди своей линии «Стола»
+## (LINE_Z − 180 = 470). Числа здесь —
 ## только сам маршрут: когда и куда смотреть.
 const PATH_PLAN: Array[Array] = [
 	[0.0, 0.0, &"start", 0.0, &"start"],
@@ -354,7 +361,7 @@ func _build_path() -> void:
 		var t: float = row[0]
 		var x: float = row[1]
 		var zv: Variant = row[2]
-		var z := d.camera_start_look_z
+		var z := LINE_Z - d.camera_start_ahead
 		if typeof(zv) != TYPE_STRING_NAME:
 			z = zv
 		var yaw: float = row[3]

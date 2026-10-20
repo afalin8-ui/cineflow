@@ -37,10 +37,11 @@ const Settings := preload("res://view/settings.gd")
 const MAX_STEPS := 8
 const SPEEDS: Array[int] = [1, 2, 4]
 
-## Цвета сторон (C43): свои — холодные, чужие — тёплые.
-const OWN_RING := Color(0.56, 1.0, 0.78)
-const FOE_RING := Color(1.0, 0.42, 0.35)
-const ORDER_FLASH := Color(0.56, 1.0, 0.78)
+## Цвета сторон (C43): свои — холодные, чужие — тёплые; одно место — view/side_colors.gd.
+const SideColors := preload("res://view/side_colors.gd")
+const OWN_RING := SideColors.OWN
+const FOE_RING := SideColors.FOE
+const ORDER_FLASH := SideColors.OWN
 const PLUME := Color(0.55, 0.8, 1.0)
 const PLUME_FOE := Color(1.0, 0.68, 0.38)
 ## Линия скорости выбранного — «скорость × 3 с» (06, 1.2).

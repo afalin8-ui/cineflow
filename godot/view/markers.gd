@@ -34,9 +34,10 @@ const Craft := preload("res://sim/craft.gd")
 const Weapons := preload("res://sim/weapons.gd")
 const Picking := preload("res://input/picking.gd")
 
-## Цвета сторон (07, 2.1; C43) — те же, что у колец вида.
-const SIDE_A := Color(0.56, 1.0, 0.78)
-const SIDE_B := Color(1.0, 0.42, 0.35)
+## Цвета сторон (07, 2.1; C43) — одно место на знаки, кольца и шапку (view/side_colors.gd).
+const SideColors := preload("res://view/side_colors.gd")
+const SIDE_A := SideColors.OWN
+const SIDE_B := SideColors.FOE
 ## Рамка корабля и звена, точки экрана.
 const FRAME := Vector2(26.0, 20.0)
 const SQ_FRAME := Vector2(18.0, 14.0)
@@ -112,11 +113,22 @@ var drawn: Array[Mark] = []
 var folded: Array[int] = []
 var _canvas: Control
 var _font: Font
-## Отход каждого знака на прошлом кадре (uid → номер в TRY): знак под курсором и выбранный
-## ОСТАЮТСЯ на прежнем месте — с именем, если имя там влезает, иначе без имени. Иначе наведение
-## поднимает знак в важности и даёт ему имя, он ищет место — и уезжает из-под курсора, а щелчок,
-## который шёл по нему, приходится в соседа или в пустоту (замечание к GИ: 1–2 промаха из 30).
+## Отход каждого знака на прошлом кадре (uid → номер в TRY): знак под курсором ОСТАЁТСЯ на прежнем
+## месте — с именем, если имя там влезает, иначе без имени. Иначе наведение поднимает знак в
+## важности и даёт ему имя, он ищет место — и уезжает из-под курсора, а щелчок, который шёл по
+## нему, приходится в соседа или в пустоту (замечание к GИ: 1–2 промаха из 30). Выбранный, но не
+## под курсором — НЕ липкий (пакет GТ, хвост GИ): он, как все, сперва пробует своё место. Липкость
+## выбранного держала знак в отходе насовсем: «Весь флот» (F2) на пределе 5000 разгонял знаки по
+## отходам, и вернувшись к стартовой камере, где тесноты уже нет, они так и стояли в стороне от
+## своих кораблей с линиями-выносками.
 var _last_di: Dictionary[int, int] = {}
+## ТОЛЬКО для проверки отката (пакет GТ) — как в capella-v0.7.1: выбранный знак тоже липкий и
+## остаётся в отходе, хотя своё место уже свободно. В игре false.
+static var rollback_sel_sticky := false
+## ТОЛЬКО для проверки отката (пакет GТ, хвост GИ) — одна часть отката rollback_name_moves: шаг
+## отхода считается с именем, и рамка того же отхода с именем стоит на полимени ниже-выше, чем
+## без имени — знак, получив имя под курсором, сдвигается. В игре false.
+static var rollback_step_by_name := false
 ## ТОЛЬКО для проверки отката (план GИ): знак под курсором встаёт заново, без памяти о прошлом
 ## месте. В игре false.
 static var rollback_hover_jumps := false
@@ -181,32 +193,107 @@ func _name_width(text: String) -> float:
 	return w
 
 
-## Раскладка знаков на этот кадр (зовёт вид после того, как расставил корабли).
-func layout() -> void:
+## Раскладка за кадр (пакет GТ, хвост GИ). Раскладка стоила ~3,5 мс на кадр в худшем бою и
+## делалась КАЖДЫЙ кадр, даже на паузе с неподвижной камерой. Теперь сначала собирается только
+## дешёвое — точки кораблей на экране и их признаки (выбран, под курсором, прочность, гипер), — и
+## если ничего не сдвинулось больше SAME_PX с прошлой раскладки, раскладки и перерисовки нет:
+## холст держит прежний рисунок. Отставание знака от корабля — меньше SAME_PX, и оно не копится:
+## сравнение идёт с точками ПРОШЛОЙ РАСКЛАДКИ, а не прошлого кадра. Сама раскладка не заводит
+## массивов на каждую пробу места (сетка соседей — плоская, места и имена считаются по номеру).
+const SAME_PX := 0.5
+## …и глубина (от камеры до корабля) не изменилась больше чем на эту долю (1%: покачивание вида —
+## ±3 единицы — на рабочем виде 2400 его не переходит; выбор по лучу различает 10%).
+const SAME_DEPTH := 0.01
+## Сколько раз раскладка сделана и сколько раз пропущена (проверки читают; в игре — для замера).
+var relaid := 0
+var reused := 0
+## ТОЛЬКО для проверки отката (пакет GТ): раскладка каждый кадр, как в capella-v0.7.1. В игре false.
+static var rollback_relayout_always := false
+## ТОЛЬКО для проверки отката (пакет GТ): пропуск раскладки смотрит лишь на точки экрана — корабль,
+## ушедший вдоль луча камеры, остаётся со старой глубиной знака. В игре false.
+static var rollback_screen_only := false
+# собранное на этом кадре (_g_*) и на прошлой раскладке (_s_*) — меняются местами, без копий
+var _g_obj: Array[Object] = []
+var _g_pt := PackedVector3Array()
+var _g_p := PackedVector2Array()
+var _g_uid := PackedInt64Array()
+var _g_hp := PackedFloat64Array()
+var _g_fl := PackedInt32Array()
+var _s_obj: Array[Object] = []
+var _s_pt := PackedVector3Array()
+var _s_p := PackedVector2Array()
+var _s_uid := PackedInt64Array()
+var _s_hp := PackedFloat64Array()
+var _s_fl := PackedInt32Array()
+var _s_ok := false
+var _s_vs := Vector2.ZERO
+var _s_top := 0.0
+var _s_avoid: Array[Rect2] = []
+var _s_cam := Transform3D()
+var _s_rb := 0
+var _s_side := -1
+# постоянное у корабля — один раз на корабль (имя, длина модели)
+var _lab: Dictionary[int, String] = {}
+var _vlen: Dictionary[int, float] = {}
+# сетка соседей: ячейки CELL × CELL по окну, у ячейки — список записей (голова и «следующий»)
+var _placed: Array[Rect2] = []
+var _gw := 1
+var _gh := 1
+var _head := PackedInt32Array()
+var _nxt := PackedInt32Array()
+var _ent := PackedInt32Array()
+
+
+## Знаков нет вовсе (выключены, нет боя или камеры) — и раскладку на следующем кадре делать заново.
+func _reset() -> void:
 	drawn.clear()
 	folded.clear()
+	_s_ok = false
+	_canvas.queue_redraw()
+
+
+## Флажки отката как одно число: переключили посреди боя — раскладка заново.
+static func _rb_mask() -> int:
+	var flags: Array[bool] = [rollback_no_layout, rollback_names_free, rollback_no_top, rollback_one_shape,
+		rollback_clan_color, rollback_fade_far, rollback_hover_jumps, rollback_name_moves, rollback_hover_no_name,
+		rollback_hp_full, rollback_sel_plain, rollback_sel_sticky, rollback_step_by_name, rollback_no_under_top,
+		rollback_badge_on_name]
+	var m := 0
+	for i in flags.size():
+		if flags[i]:
+			m |= 1 << i
+	return m
+
+
+## Раскладка знаков на этот кадр (зовёт вид после того, как расставил корабли).
+func layout() -> void:
 	if not on or view == null:
-		_canvas.queue_redraw()
+		_reset()
 		return
 	var b: Object = view.get("battle")
 	var rig: Node3D = view.get("rig")
 	var cam: Camera3D = rig.get("camera") if rig != null else null
 	if b == null or cam == null:
-		_canvas.queue_redraw()
+		_reset()
 		return
 	var vs := _canvas.get_viewport_rect().size
 	var my_side: int = view.get("my_side")
 	var sel: Array[int] = view.get("selection")
 	var hover: int = view.get("hover_uid")
-	var right := cam.global_transform.basis.x
-	var items: Array[Mark] = []
-	var sides: Array = b.get("sides")
+	var vmap: Dictionary = view.get("_vis")
+	# 1) дёшево: точки на экране и признаки
+	_g_obj.clear()
+	_g_pt.clear()
+	_g_p.clear()
+	_g_uid.clear()
+	_g_hp.clear()
+	_g_fl.clear()
 	var ships: Array = b.get("ships")
 	for o: Object in ships:
 		var s := o as Ship
 		if not Picking.shown(s, my_side):
 			continue
-		var vis: Node3D = view.call("visual_of", s)
+		var vis: Node3D = vmap.get(s.uid)
 		if vis == null:
 			continue
 		var pt: Vector3 = vis.global_position
@@ -215,26 +302,12 @@ func layout() -> void:
 		var p := cam.unproject_position(pt)
 		if p.x < -60.0 or p.y < -60.0 or p.x > vs.x + 60.0 or p.y > vs.y + 60.0:
 			continue
-		var vlen: float = vis.call("length")
-		var m := Mark.new()
-		m.rpx = cam.unproject_position(pt + right * maxf(vlen, 1.0) * 0.5).distance_to(p)
-		if rollback_fade_far and m.rpx < 10.0:
-			continue
-		m.uid = s.uid
-		m.side = s.side
-		var sd: Object = sides[s.side]
-		m.clan = sd.get("clan")
-		m.kind = kind_of(s)
-		m.p = p
-		m.sel = s.uid in sel
-		m.hover = s.uid == hover
-		m.hp = 1.0 if rollback_hp_full else s.hp_frac()
-		m.depth = cam.global_position.distance_to(pt)
-		m.label = Weapons.short_name(s)
-		m.jump = s.charging()
-		var rk: int = RANK.get(m.kind, 1)
-		m.pri = (4.0e6 if m.hover else 0.0) + (2.0e6 if m.sel else 0.0) + float(rk) * 1000.0 + m.rpx
-		items.append(m)
+		_g_obj.append(s)
+		_g_pt.append(pt)
+		_g_p.append(p)
+		_g_uid.append(s.uid)
+		_g_hp.append(s.hp_frac())
+		_g_fl.append((1 if s.uid in sel else 0) | (2 if s.uid == hover else 0) | (4 if s.charging() else 0) | (s.side << 4))
 	var squads: Array = b.get("squads")
 	for o2: Object in squads:
 		var q := o2 as Squad
@@ -251,44 +324,132 @@ func layout() -> void:
 		var hpq := 0.0
 		for c in q.craft:
 			hpq += c.hp_frac()
-		var mq := Mark.new()
-		mq.uid = q.uid
-		mq.squad = true
-		mq.side = q.side
-		var sd2: Object = sides[q.side]
-		mq.clan = sd2.get("clan")
-		mq.kind = q.role
-		mq.p = p2
-		mq.rpx = 6.0
-		mq.sel = q.uid in sel
-		mq.hover = q.uid == hover
-		mq.hp = 1.0 if rollback_hp_full else hpq / float(q.craft.size())
-		mq.depth = cam.global_position.distance_to(qp)
-		mq.label = "%s ×%d" % [_role_short(b, q.role), q.craft.size()]
-		mq.pri = (4.0e6 if mq.hover else 0.0) + (2.0e6 if mq.sel else 0.0) + 500.0
-		items.append(mq)
+		_g_obj.append(q)
+		_g_pt.append(qp)
+		_g_p.append(p2)
+		_g_uid.append(q.uid)
+		_g_hp.append(hpq / float(q.craft.size()) + float(q.craft.size()) * 10.0)     # и число машин — в подписи
+		_g_fl.append((1 if q.uid in sel else 0) | (2 if q.uid == hover else 0) | 8 | (q.side << 4))
+	# 2) ничего не сдвинулось с прошлой раскладки — она и остаётся
+	var rb := _rb_mask()
+	var cxf := cam.global_transform
+	if _s_ok and not rollback_relayout_always and vs == _s_vs and top == _s_top and avoid == _s_avoid and rb == _s_rb \
+			and my_side == _s_side and _g_uid == _s_uid and _g_fl == _s_fl and _g_hp == _s_hp \
+			and cxf.origin.distance_squared_to(_s_cam.origin) < 1e-4:
+		var same := true
+		var co := cxf.origin
+		for i in _g_p.size():
+			# и ГЛУБИНА: корабль, ушедший вдоль луча камеры, на экране стоит, а глубина у знака
+			# (выбор по лучу, Picking.marker_beats — порог там 10% расстояния) и размер на экране —
+			# другие. Допуск — SAME_DEPTH доли расстояния: покачивание вида (±view.bob, идёт и на
+			# паузе) его не переходит, и раскладка на паузе по-прежнему не повторяется
+			var dn := co.distance_to(_g_pt[i])
+			if _g_p[i].distance_squared_to(_s_p[i]) > SAME_PX * SAME_PX or (absf(dn - co.distance_to(_s_pt[i])) > SAME_DEPTH * dn and not rollback_screen_only):
+				same = false
+				break
+		if same:
+			reused += 1
+			return
+	relaid += 1
+	_relayout(cam, vs, vmap)
+	_s_ok = true
+	_s_vs = vs
+	_s_top = top
+	_s_avoid = avoid.duplicate()
+	_s_rb = rb
+	_s_side = my_side
+	_s_cam = cxf
+	# собранное становится прошлым — обменом, без копий
+	var t_obj := _s_obj
+	_s_obj = _g_obj
+	_g_obj = t_obj
+	var t_pt := _s_pt
+	_s_pt = _g_pt
+	_g_pt = t_pt
+	var t_p := _s_p
+	_s_p = _g_p
+	_g_p = t_p
+	var t_uid := _s_uid
+	_s_uid = _g_uid
+	_g_uid = t_uid
+	var t_hp := _s_hp
+	_s_hp = _g_hp
+	_g_hp = t_hp
+	var t_fl := _s_fl
+	_s_fl = _g_fl
+	_g_fl = t_fl
+
+
+## Раскладка заново по собранному на этом кадре (_g_*).
+func _relayout(cam: Camera3D, vs: Vector2, vmap: Dictionary) -> void:
+	drawn.clear()
+	folded.clear()
+	var b: Object = view.get("battle")
+	var sides: Array = b.get("sides")
+	var right := cam.global_transform.basis.x
+	var items: Array[Mark] = []
+	for i in _g_obj.size():
+		var m := Mark.new()
+		m.p = _g_p[i]
+		m.uid = _g_uid[i]
+		var fl := _g_fl[i]
+		m.sel = (fl & 1) != 0
+		m.hover = (fl & 2) != 0
+		m.depth = cam.global_position.distance_to(_g_pt[i])
+		var sh := _g_obj[i] as Ship
+		if sh != null:
+			if not _vlen.has(sh.uid):
+				var vis: Node3D = vmap.get(sh.uid)
+				_vlen[sh.uid] = vis.call("length")
+				_lab[sh.uid] = Weapons.short_name(sh)
+			m.rpx = cam.unproject_position(_g_pt[i] + right * maxf(_vlen[sh.uid], 1.0) * 0.5).distance_to(m.p)
+			if rollback_fade_far and m.rpx < 10.0:
+				continue
+			m.side = sh.side
+			var sd: Object = sides[sh.side]
+			m.clan = sd.get("clan")
+			m.kind = kind_of(sh)
+			m.hp = 1.0 if rollback_hp_full else sh.hp_frac()
+			m.label = _lab[sh.uid]
+			m.jump = (fl & 4) != 0
+			var rk: int = RANK.get(m.kind, 1)
+			m.pri = (4.0e6 if m.hover else 0.0) + (2.0e6 if m.sel else 0.0) + float(rk) * 1000.0 + m.rpx
+		else:
+			var q := _g_obj[i] as Squad
+			var hpq := 0.0
+			for c in q.craft:
+				hpq += c.hp_frac()
+			m.squad = true
+			m.side = q.side
+			var sd2: Object = sides[q.side]
+			m.clan = sd2.get("clan")
+			m.kind = q.role
+			m.rpx = 6.0
+			m.hp = 1.0 if rollback_hp_full else hpq / float(q.craft.size())
+			m.label = "%s ×%d" % [_role_short(b, q.role), q.craft.size()]
+			m.pri = (4.0e6 if m.hover else 0.0) + (2.0e6 if m.sel else 0.0) + 500.0
+		items.append(m)
 	items.sort_custom(func(x: Mark, y: Mark) -> bool: return x.pri > y.pri)
-	var grid: Dictionary[Vector2i, Array] = {}
-	var placed: Array[Rect2] = []
+	_grid_begin(vs)
 	for m in items:
 		var want_name := (m.hover and not rollback_hover_no_name) or m.sel
 		var got := CROWDED
-		var keep := (m.hover or m.sel) and _last_di.has(m.uid) and not rollback_hover_jumps
+		var keep := (m.hover or (m.sel and rollback_sel_sticky)) and _last_di.has(m.uid) and not rollback_hover_jumps
 		if keep and not rollback_name_moves:
 			# прежнее место — с именем, если влезает, иначе без имени, но НА МЕСТЕ
-			got = _place(m, want_name, vs, grid, placed, _last_di[m.uid])
+			got = _place(m, want_name, vs, _last_di[m.uid])
 			if got != PLACED and want_name:
-				got = _place(m, false, vs, grid, placed, _last_di[m.uid])
+				got = _place(m, false, vs, _last_di[m.uid])
 		if got != PLACED:
-			got = _place(m, want_name, vs, grid, placed, -1, keep and rollback_name_moves)
+			got = _place(m, want_name, vs, -1, keep and rollback_name_moves)
 		if got != PLACED and want_name:
-			got = _place(m, false, vs, grid, placed, -1, keep and rollback_name_moves)
+			got = _place(m, false, vs, -1, keep and rollback_name_moves)
 		if got == PLACED:
 			drawn.append(m)
 		elif got == CROWDED:
 			folded.append(m.uid)
 			_fold_into(m)
-	_badges(vs, placed)
+	_badges(vs, _placed)
 	_last_di.clear()
 	for m in drawn:
 		_last_di[m.uid] = m.di
@@ -333,7 +494,8 @@ const HIDDEN := 2
 ## Место знака: рамка, полоска и (если надо) имя; свободное от уже поставленных, в окне,
 ## не выше шапки и не под панелями. Нашлось — поля раскладки у m заполнены. only ≥ 0 — только
 ## этот отход (прежнее место знака под курсором); old_first — откат rollback_name_moves.
-func _place(m: Mark, with_name: bool, vs: Vector2, grid: Dictionary[Vector2i, Array], placed: Array[Rect2], only: int = -1, old_first: bool = false) -> int:
+## Места (TRY, потом UNDER_TOP) и места имени перебираются по номеру — массивов на пробу нет.
+func _place(m: Mark, with_name: bool, vs: Vector2, only: int = -1, old_first: bool = false) -> int:
 	var fr := SQ_FRAME if m.squad else FRAME
 	var up := maxf(MIN_UP, m.rpx * UP_K)
 	var base := Vector2(m.p.x, m.p.y - up)          # низ полоски
@@ -342,55 +504,70 @@ func _place(m: Mark, with_name: bool, vs: Vector2, grid: Dictionary[Vector2i, Ar
 	# шаг отхода — от рамки, а НЕ от имени: рамка одного и того же отхода с именем и без стоит
 	# на одном месте (имя — над рамкой), и знак, получив имя под курсором, не сдвигается
 	var step := Vector2(fr.x + 4.0, fr.y + BAR_H + BAR_GAP)
-	if rollback_name_moves and with_name:
+	if (rollback_name_moves or rollback_step_by_name) and with_name:
 		step.y += nh * 0.5
 	# места: TRY от своего места, а у корабля под шапкой — ещё ряды сразу под шапкой (UNDER_TOP)
-	var spots: Array[Vector2] = []
-	for d in TRY:
-		spots.append(base + Vector2(d.x * step.x, d.y * step.y))
 	var own_top := base.y - BAR_H - BAR_GAP - fr.y
-	if not rollback_no_under_top and m.p.y >= 0.0 and own_top < top:
-		var y0 := top + PAD + fr.y + BAR_GAP + BAR_H        # низ полоски: верх рамки — у низа шапки
-		for d in UNDER_TOP:
-			spots.append(Vector2(m.p.x + d.x * step.x, y0 + d.y * step.y))
-	var idx: Array[int] = []
+	var under := not rollback_no_under_top and m.p.y >= 0.0 and own_top < top
+	var n_spots := TRY.size() + (UNDER_TOP.size() if under else 0)
+	var y0 := top + PAD + fr.y + BAR_GAP + BAR_H        # низ полоски: верх рамки — у низа шапки
+	var first := -1
+	var count := n_spots
 	if only >= 0:
-		if only < spots.size():
-			idx.append(only)
-	else:
-		for i in spots.size():
-			idx.append(i)
-	if old_first and _last_di[m.uid] < spots.size():
-		idx.push_front(_last_di[m.uid])
+		count = 1 if only < n_spots else 0
+	elif old_first and _last_di[m.uid] < n_spots:
+		first = _last_di[m.uid]
+		count += 1
 	if rollback_no_layout:
-		idx = [0]
+		count = 1
 	var rules_any := false
-	for i in idx:
-		var a := spots[i]
+	for k in count:
+		var i := k
+		if rollback_no_layout:
+			i = 0
+		elif only >= 0:
+			i = only
+		elif first >= 0:
+			i = first if k == 0 else k - 1
+		var a := Vector2.ZERO
+		if i < TRY.size():
+			a = base + Vector2(TRY[i].x * step.x, TRY[i].y * step.y)
+		else:
+			var d := UNDER_TOP[i - TRY.size()]
+			a = Vector2(m.p.x + d.x * step.x, y0 + d.y * step.y)
 		var bar := Rect2(a.x - fr.x * 0.5, a.y - BAR_H, fr.x, BAR_H)
 		var frame := Rect2(a.x - fr.x * 0.5, bar.position.y - BAR_GAP - fr.y, fr.x, fr.y)
 		# имя — над рамкой; не влезает — справа или слева от рамки в её ряд (знак при этом на месте:
 		# под шапкой, у края, рядом с соседом); у знака, чей корабль ВЫШЕ него (под шапкой), — ещё и
 		# под полоской: линия к кораблю уходит вверх, и под знаком имени ничто не мешает
-		var names: Array[Rect2] = [Rect2()]
+		var n_names := 1
+		var sides_ok := with_name and not rollback_name_moves
+		var below_ok := with_name and m.p.y < frame.position.y and not rollback_no_under_top
 		if with_name:
-			names = [Rect2(a.x - nw * 0.5, frame.position.y - NAME_GAP - nh, nw, nh)]
-			if not rollback_name_moves:
-				var ny := frame.position.y + (fr.y - nh) * 0.5
-				names.append(Rect2(frame.end.x + NAME_GAP + 1.0, ny, nw, nh))
-				names.append(Rect2(frame.position.x - NAME_GAP - 1.0 - nw, ny, nw, nh))
-			if m.p.y < frame.position.y and not rollback_no_under_top:
-				names.append(Rect2(a.x - nw * 0.5, bar.end.y + NAME_GAP, nw, nh))
-		for name_r in names:
-			var unit := frame.merge(bar)
+			n_names = 1 + (2 if sides_ok else 0) + (1 if below_ok else 0)
+		var unit0 := frame.merge(bar)
+		for ni in n_names:
+			var name_r := Rect2()
+			if with_name:
+				if ni == 0:
+					name_r = Rect2(a.x - nw * 0.5, frame.position.y - NAME_GAP - nh, nw, nh)
+				elif sides_ok and ni <= 2:
+					var ny := frame.position.y + (fr.y - nh) * 0.5
+					if ni == 1:
+						name_r = Rect2(frame.end.x + NAME_GAP + 1.0, ny, nw, nh)
+					else:
+						name_r = Rect2(frame.position.x - NAME_GAP - 1.0 - nw, ny, nw, nh)
+				else:
+					name_r = Rect2(a.x - nw * 0.5, bar.end.y + NAME_GAP, nw, nh)
+			var unit := unit0
 			if name_r.has_area() and not rollback_names_free:
 				unit = unit.merge(name_r)
 			if not _rules_ok(unit, vs):
 				continue
 			rules_any = true
-			if not rollback_no_layout and _hits_placed(unit, grid, placed):
+			if not rollback_no_layout and _hits_placed(unit):
 				continue
-			_add(unit, grid, placed)
+			_add(unit)
 			m.unit = unit
 			m.frame = frame
 			m.bar = bar
@@ -415,31 +592,48 @@ func _rules_ok(r: Rect2, vs: Vector2) -> bool:
 	return true
 
 
-func _cells(r: Rect2) -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	for cx in range(floori(r.position.x / CELL), floori(r.end.x / CELL) + 1):
-		for cy in range(floori(r.position.y / CELL), floori(r.end.y / CELL) + 1):
-			out.append(Vector2i(cx, cy))
-	return out
+## Сетка соседей на кадр: ячейка CELL × CELL по окну (за краем — крайняя ячейка: сетка только
+## указатель, пересечение всё равно проверяется точно), у ячейки — цепочка записей.
+func _grid_begin(vs: Vector2) -> void:
+	_gw = maxi(1, ceili(vs.x / CELL) + 1)
+	_gh = maxi(1, ceili(vs.y / CELL) + 1)
+	if _head.size() != _gw * _gh:
+		_head.resize(_gw * _gh)
+	_head.fill(-1)
+	_nxt.clear()
+	_ent.clear()
+	_placed.clear()
 
 
-func _hits_placed(r: Rect2, grid: Dictionary[Vector2i, Array], placed: Array[Rect2]) -> bool:
+func _hits_placed(r: Rect2) -> bool:
 	var g := r.grow(PAD)
-	for c in _cells(g):
-		var list: Array = grid.get(c, [])
-		for i: int in list:
-			if placed[i].intersects(g):
-				return true
+	var x0 := clampi(floori(g.position.x / CELL), 0, _gw - 1)
+	var x1 := clampi(floori(g.end.x / CELL), 0, _gw - 1)
+	var y0 := clampi(floori(g.position.y / CELL), 0, _gh - 1)
+	var y1 := clampi(floori(g.end.y / CELL), 0, _gh - 1)
+	for cy in range(y0, y1 + 1):
+		for cx in range(x0, x1 + 1):
+			var e := _head[cy * _gw + cx]
+			while e >= 0:
+				if _placed[_ent[e]].intersects(g):
+					return true
+				e = _nxt[e]
 	return false
 
 
-func _add(r: Rect2, grid: Dictionary[Vector2i, Array], placed: Array[Rect2]) -> void:
-	placed.append(r)
-	var i := placed.size() - 1
-	for c in _cells(r):
-		if not grid.has(c):
-			grid[c] = []
-		grid[c].append(i)
+func _add(r: Rect2) -> void:
+	_placed.append(r)
+	var idx := _placed.size() - 1
+	var x0 := clampi(floori(r.position.x / CELL), 0, _gw - 1)
+	var x1 := clampi(floori(r.end.x / CELL), 0, _gw - 1)
+	var y0 := clampi(floori(r.position.y / CELL), 0, _gh - 1)
+	var y1 := clampi(floori(r.end.y / CELL), 0, _gh - 1)
+	for cy in range(y0, y1 + 1):
+		for cx in range(x0, x1 + 1):
+			var c := cy * _gw + cx
+			_ent.append(idx)
+			_nxt.append(_head[c])
+			_head[c] = _ent.size() - 1
 
 
 ## Знак, которому нет места, складывается в ближайший знак своей стороны: тот пишет «+N».
@@ -457,6 +651,11 @@ func _fold_into(m: Mark) -> void:
 		best.more += 1
 
 
+## ТОЛЬКО для проверки отката (пакет GТ, хвост GИ) — как в capella-v0.7.1: «+N» не видит имени
+## своего же знака и ложится на него, когда имя стоит сбоку от рамки. В игре false.
+static var rollback_badge_on_name := false
+
+
 ## Место под «+N» у сложивших: справа от рамки, нет — слева, нет — внутри угла рамки.
 func _badges(vs: Vector2, placed: Array[Rect2]) -> void:
 	for d in drawn:
@@ -469,11 +668,15 @@ func _badges(vs: Vector2, placed: Array[Rect2]) -> void:
 		for c in cands:
 			if not _rules_ok(c, vs):
 				continue
-			var clash := false
+			# своё место знака пропускаем (рамка и полоска — «+N» встаёт вплотную к ним), но СВОЁ ИМЯ —
+			# препятствие, как чужое: имя сбоку от рамки стоит ровно там, куда просится «+N»
+			# (пакет GТ, хвост GИ: проба нашла «+N» на собственном имени в 5 случаях из 16)
+			var clash := not rollback_badge_on_name and d.name_r.has_area() and d.name_r.grow(PAD).intersects(c)
 			for r in placed:
+				if clash:
+					break
 				if r != d.unit and r.grow(PAD).intersects(c):
 					clash = true
-					break
 			if not clash:
 				got = c
 				break

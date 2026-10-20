@@ -72,9 +72,13 @@ func setup(d: Defs.Doctrine, field_half: float) -> void:
 	start_view(d, true)
 
 
-## Стартовый вид (09, 11.4): атакующий смотрит с yaw 0 на точку z = +start_look_z.
-func start_view(d: Defs.Doctrine, attacker: bool) -> void:
-	set_view(Vector3(0.0, 0.0, d.camera_start_look_z * (1.0 if attacker else -1.0)), 0.0 if attacker else PI, d.camera_dist_start, true)
+## Стартовый вид (09, 11.4; C76): атакующий смотрит с yaw 0 на точку на camera.start_ahead впереди
+## своей линии старта (z = deploy.heavy_z − start_ahead), защитник — зеркально, с поворотом π. Свой
+## строй — в кадре, вверху — путь к противнику; чужая линия на старте за верхним краем (пакет GТ).
+## line_z — своя линия старта (по умолчанию deploy.heavy_z; «Стол» отдаёт свою).
+func start_view(d: Defs.Doctrine, attacker: bool, line_z: float = -1.0) -> void:
+	var z := (d.deploy_heavy_z if line_z < 0.0 else line_z) - d.camera_start_ahead
+	set_view(Vector3(0.0, 0.0, z * (1.0 if attacker else -1.0)), 0.0 if attacker else PI, d.camera_dist_start, true)
 
 
 ## Поставить камеру; instant — сразу, без сглаживания.
