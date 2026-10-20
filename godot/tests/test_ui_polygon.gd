@@ -433,6 +433,8 @@ func test_small_behind_plume() -> void:
 	Hooks.place_ship(cap, Vector2(0.0, 0.0))
 	cap.set_yaw(0.0)
 	cap.thrust_fwd = 1.0
+	# факел догоняет тягу плавно (пакет GЭ, по игровому времени) — на паузе он не вырос бы: сразу
+	p.view._plume_k.erase(cap.uid)
 	Hooks.place_ship(cor, Vector2(0.0, 2000.0))      # пока в стороне: меряем флагман один
 	p.view._height[cap.uid] = 0.0
 	p.view._bob[cap.uid] = 0.0
@@ -483,6 +485,7 @@ func test_small_behind_plume() -> void:
 	ok(got == cap, "откат «рамка всего нарисованного, с факелами»: выбран флагман — проверка краснеет (%s)" % _who(got))
 	# контроль: факел погашен — тот же откат берёт корвет, то есть краснел он от факела
 	cap.thrust_fwd = 0.0
+	p.view._plume_k.erase(cap.uid)
 	p.view.draw_state()
 	ok(not plume.visible, "факел погашен")
 	var ctl := Picking.pick(p.view, at)

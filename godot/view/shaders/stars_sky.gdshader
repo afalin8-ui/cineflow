@@ -9,6 +9,10 @@
 // это отражения и окружающий свет для металла кораблей (часть 08, ловушка 11).
 // ЛОВУШКИ: в шейдере неба нельзя писать return — он не собирается.
 // test_magenta — проверочная сборка (тест ореола): всё небо одного цвета.
+// Звезда системы (план GЭ, п. 6) — диск с тёплым ореолом в направлении `sun_dir`: оттуда
+// же светит тёплый ключ сцены (view/space_env.gd), и в карте окружения её ореол шире —
+// металл кораблей ловит тёплый блик с той же стороны, откуда свет. Туманность (GЭ):
+// облака с тёмными пылевыми прожилками и полоса Галактики с ядром — тусклее кораблей.
 shader_type sky;
 
 uniform vec3 deep : source_color = vec3(0.006, 0.008, 0.016);
@@ -20,6 +24,9 @@ uniform float star_cells = 900.0;
 uniform float star_share = 0.0022;     // доля ячеек со звездой
 uniform float env_gain = 3.0;          // туманность в карте окружения ярче
 uniform bool test_magenta = false;
+uniform vec3 sun_dir = vec3(-0.645, 0.616, -0.452);
+uniform vec3 sun_col : source_color = vec3(1.0, 0.82, 0.6);
+uniform float sun_disc = 0.006;        // радиус диска звезды, радиан (~0,35°)
 
 float hash13(vec3 p) {
 	p = fract(p * 0.1031);
@@ -52,12 +59,21 @@ void sky() {
 	float n1 = fbm(d * 2.2 + vec3(3.0, 1.0, 7.0));
 	float n2 = fbm(d * 3.7 + vec3(11.0, 5.0, 2.0));
 	float band = exp(-pow(dot(d, normalize(vec3(0.3, 0.55, -0.78))) * 2.6, 2.0));
+	// пыль — тёмные прожилки поперёк облаков и полосы: без них туманность — ровная дымка
+	float dust = smoothstep(0.42, 0.62, fbm(d * 6.3 + vec3(2.0, 8.0, 4.0)));
+	float core = exp(-pow(length(d - normalize(vec3(0.42, 0.5, -0.76))) * 2.2, 2.0));
 	vec3 neb = neb_a * smoothstep(0.45, 0.85, n1) * 0.8 + neb_b * smoothstep(0.5, 0.9, n2) * 0.7 + band_col * band * (0.35 + 0.65 * n2);
+	neb += vec3(0.24, 0.16, 0.13) * core * band * 0.5;
+	neb *= 1.0 - 0.55 * dust * (0.4 + 0.6 * band);
+	// звезда: диск и ореол (в карте окружения — шире, это тёплые блики на металле)
+	float sa = acos(clamp(dot(d, normalize(sun_dir)), -1.0, 1.0));
 	vec3 col = deep;
 	if (AT_CUBEMAP_PASS) {
 		col += neb * env_gain + vec3(0.04, 0.045, 0.07);
+		col += sun_col * (exp(-sa * 3.0) * 0.9 + exp(-sa * 12.0) * 2.0);
 	} else {
 		col += neb;
+		col += sun_col * (smoothstep(sun_disc, sun_disc * 0.6, sa) * 6.0 + exp(-sa / (sun_disc * 4.0)) * 0.9 + exp(-sa * 9.0) * 0.12);
 		// звёзды: одна на ячейку, центр со сдвигом внутри ячейки, размер — в пикселях
 		vec3 cell = floor(d * star_cells);
 		float h = hash13(cell);

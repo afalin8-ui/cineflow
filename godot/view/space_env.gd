@@ -8,6 +8,11 @@
 #   Дальняя плоскость камеры 20 000 (doctrine camera.far) с запасом накрывает её
 #   и с дальнего предела 5000 из любой точки поля: самое дальнее — около 15 600.
 #   С прежней 4000 планета срезалась бы целиком — так и проверяет тест ореола.
+# - Свет (план GЭ, п. 6): тёплый КЛЮЧ от звезды — та же звезда видна диском на небе,
+#   и планета с венцом знают, где она (`sun_dir`): у планеты день и ночь с терминатором,
+#   венец ярче на дневной стороне и светится против звезды; холодный ОБЪЁМ — встречный
+#   свет снизу и окружающий цветом; «ФАРА» — слабый свет из камеры вдоль взгляда (ловит
+#   борта, повёрнутые к нам от звезды; на планету не светит — слой 2, иначе ночи бы не было).
 extends Node3D
 
 const SKY_SHADER := preload("res://view/shaders/stars_sky.gdshader")
@@ -19,12 +24,22 @@ const CORONA_SHADER := preload("res://view/shaders/corona.gdshader")
 const PLANET_CENTER := Vector3(3000.0, -4900.0, -5500.0)
 const PLANET_RADIUS := 760.0
 const CORONA_K := 1.07
+## Слой планеты и венца: фара на них не светит (`cull_mask`).
+const PLANET_LAYER := 2
 
 var env: Environment
 var sky_mat: ShaderMaterial
 var planet: MeshInstance3D
 var corona: MeshInstance3D
 var sun: DirectionalLight3D
+var fill: DirectionalLight3D
+## «Фара»: светит вдоль взгляда камеры, едет за ней (`_process`).
+var headlight: DirectionalLight3D
+var planet_mat: ShaderMaterial
+var corona_mat: ShaderMaterial
+## ТОЛЬКО для проверки отката (план GЭ, п. 6): дымка у края планеты и венец о звезде не знают —
+## светятся ровно по кругу, как до GЭ. В игре false.
+static var rollback_flat_haze := false
 
 
 func _ready() -> void:
@@ -37,8 +52,8 @@ func _ready() -> void:
 	sky.radiance_size = Sky.RADIANCE_SIZE_256
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.36, 0.42, 0.62)
-	env.ambient_light_energy = 0.55
+	env.ambient_light_color = Color(0.32, 0.4, 0.66)
+	env.ambient_light_energy = 0.42
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.tonemap_exposure = 1.15
@@ -53,15 +68,22 @@ func _ready() -> void:
 
 	# тёплый ключ сбоку и сверху, холодный встречный снизу (часть 08, ловушка 22)
 	sun = DirectionalLight3D.new()
-	sun.light_color = Color(1.0, 0.88, 0.72)
-	sun.light_energy = 1.7
+	sun.light_color = Color(1.0, 0.86, 0.68)
+	sun.light_energy = 1.8
 	sun.rotation_degrees = Vector3(-38.0, -125.0, 0.0)
 	add_child(sun)
-	var fill := DirectionalLight3D.new()
-	fill.light_color = Color(0.45, 0.42, 0.8)
-	fill.light_energy = 0.45
+	fill = DirectionalLight3D.new()
+	fill.light_color = Color(0.4, 0.46, 0.9)
+	fill.light_energy = 0.5
 	fill.rotation_degrees = Vector3(25.0, 50.0, 0.0)
+	fill.light_cull_mask = 1
 	add_child(fill)
+	headlight = DirectionalLight3D.new()
+	headlight.light_color = Color(0.78, 0.84, 1.0)
+	headlight.light_energy = 0.32
+	headlight.light_specular = 0.25
+	headlight.light_cull_mask = 1
+	add_child(headlight)
 
 	planet = MeshInstance3D.new()
 	var sm := SphereMesh.new()
@@ -70,9 +92,10 @@ func _ready() -> void:
 	sm.radial_segments = 96
 	sm.rings = 48
 	planet.mesh = sm
-	var pm := ShaderMaterial.new()
-	pm.shader = PLANET_SHADER
-	planet.material_override = pm
+	planet_mat = ShaderMaterial.new()
+	planet_mat.shader = PLANET_SHADER
+	planet.material_override = planet_mat
+	planet.layers = PLANET_LAYER
 	planet.position = PLANET_CENTER
 	planet.rotation_degrees = Vector3(12.0, 30.0, -8.0)
 	add_child(planet)
@@ -84,13 +107,32 @@ func _ready() -> void:
 	cm.radial_segments = 96
 	cm.rings = 48
 	corona.mesh = cm
-	var cmat := ShaderMaterial.new()
-	cmat.shader = CORONA_SHADER
-	corona.material_override = cmat
+	corona_mat = ShaderMaterial.new()
+	corona_mat.shader = CORONA_SHADER
+	corona.material_override = corona_mat
+	corona.layers = PLANET_LAYER
 	corona.position = PLANET_CENTER
 	add_child(corona)
+	var sd := sun_dir()
+	sky_mat.set_shader_parameter("sun_dir", sd)
+	planet_mat.set_shader_parameter("sun_dir", sd)
+	corona_mat.set_shader_parameter("sun_dir", sd)
+	planet_mat.set_shader_parameter("flat_k", 1.0 if rollback_flat_haze else 0.0)
+	corona_mat.set_shader_parameter("flat_k", 1.0 if rollback_flat_haze else 0.0)
 	get_viewport().size_changed.connect(_fit_stars)
 	_fit_stars()
+
+
+## Направление НА звезду (в мире): свет идёт вдоль −Z узла, звезда — по +Z.
+func sun_dir() -> Vector3:
+	return sun.transform.basis.z.normalized()
+
+
+## Фара едет за камерой: светит туда, куда смотрим.
+func _process(_delta: float) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam != null:
+		headlight.global_basis = cam.global_basis
 
 
 ## Звезда — точка в пикселях: угол одного пикселя по вертикали окна.

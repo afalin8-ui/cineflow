@@ -45,6 +45,13 @@ var input_enabled := true
 var edge_enabled := true
 ## ТОЛЬКО для проверки отката (план GИ): край экрана ведёт камеру и над кнопками. В игре false.
 static var rollback_edge_over_buttons := false
+## Откат проверок картинки `--old-camera` (план G8 и GЭ; М14, 09, 8.4): камера JS-версии на старте
+## (C76; 06, 7.2 п. 7) — обзор 52°, наклон 0,52 рад, расстояние 1100. Числа — ТОЛЬКО этого отката,
+## поэтому здесь, а не в doctrine.json. В игре false; ставит `main.gd → apply_flags`.
+static var old_camera := false
+const OLD_FOV_DEG := 52.0
+const OLD_TILT_RAD := 0.52
+const OLD_DIST := 1100.0
 
 var _keys: Dictionary[Key, bool] = {}
 var _mouse_seen := false
@@ -63,6 +70,9 @@ func setup(d: Defs.Doctrine, field_half: float) -> void:
 	camera.current = true
 	add_child(camera)
 	tilt_deg = d.camera_tilt_deg
+	if old_camera:
+		camera.fov = OLD_FOV_DEG
+		tilt_deg = rad_to_deg(OLD_TILT_RAD)
 	dist_min = d.camera_dist_min
 	dist_max = d.camera_dist_max
 	edge_k = d.camera_edge_speed_k
@@ -78,7 +88,7 @@ func setup(d: Defs.Doctrine, field_half: float) -> void:
 ## line_z — своя линия старта (по умолчанию deploy.heavy_z; «Стол» отдаёт свою).
 func start_view(d: Defs.Doctrine, attacker: bool, line_z: float = -1.0) -> void:
 	var z := (d.deploy_heavy_z if line_z < 0.0 else line_z) - d.camera_start_ahead
-	set_view(Vector3(0.0, 0.0, z * (1.0 if attacker else -1.0)), 0.0 if attacker else PI, d.camera_dist_start, true)
+	set_view(Vector3(0.0, 0.0, z * (1.0 if attacker else -1.0)), 0.0 if attacker else PI, OLD_DIST if old_camera else d.camera_dist_start, true)
 
 
 ## Поставить камеру; instant — сразу, без сглаживания.

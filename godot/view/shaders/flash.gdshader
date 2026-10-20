@@ -3,6 +3,8 @@
 //   origin          — место;
 //   basis.z         — цвет (rgb);
 //   basis.y.x       — свой нижний предел в точках экрана (0 — общий min_px);
+//   basis.y.y       — сила белой середины (1 — как было, 0 — без неё: огонь взрыва и
+//                     попаданий не белый, белым — только маленькое короткое ядро; пакет GЭ);
 //   INSTANCE_CUSTOM — (рождение, срок, размер в мире, яркость).
 // Не меньше min_px точек экрана, иначе на дальнем виде вспышка — пылинка.
 shader_type spatial;
@@ -14,6 +16,7 @@ uniform float min_px = 3.0;
 varying float v_fade;
 varying vec2 v_uv;
 varying vec3 v_col;
+varying float v_core;
 
 void vertex() {
 	float age = now - INSTANCE_CUSTOM.x;
@@ -29,6 +32,7 @@ void vertex() {
 	v_fade = alive ? (1.0 - k) * (1.0 - k) * INSTANCE_CUSTOM.w : 0.0;
 	v_uv = VERTEX.xy * 2.0;
 	v_col = MODEL_MATRIX[2].xyz;
+	v_core = MODEL_MATRIX[1].y;
 	VERTEX = alive ? c + vec3(VERTEX.xy * size, 0.0) : vec3(0.0, 0.0, 10.0);
 	NORMAL = vec3(0.0, 0.0, 1.0);
 }
@@ -37,5 +41,5 @@ void fragment() {
 	float r = length(v_uv);
 	float a = clamp(1.0 - r, 0.0, 1.0);
 	a = a * a * v_fade;
-	ALBEDO = (v_col + vec3(pow(clamp(1.0 - r * 1.8, 0.0, 1.0), 3.0))) * a;
+	ALBEDO = (v_col + vec3(pow(clamp(1.0 - r * 1.8, 0.0, 1.0), 3.0)) * v_core) * a;
 }

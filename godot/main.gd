@@ -21,6 +21,8 @@
 #                                       на любой частоте и без вида обязан совпасть до бита
 #   capella.x86_64 -- --old-ecm         «Бой линий» с помехами по-старому (откат 09, 1.7: главный
 #                                       калибр под куполом бьёт только ближе lockRange)
+#   capella.x86_64 -- --old-camera      камера JS-версии (обзор 52°, наклон 0,52 рад, старт 1100) —
+#                                       откат проверок картинки М14 (план G8 и GЭ), не стенда
 #   capella.x86_64 -- --bench …         стенд «бой без отрисовки» (tools/bench_core.gd): строка
 #                                       JSON на бой, --load battle|skirmish|lines|brake|clear,
 #                                       --n, --seed, --swap, флажки отката 09, 8.4 (--legacy-approach,
@@ -38,6 +40,7 @@ const Battle := preload("res://sim/battle.gd")
 const Showcase := preload("res://tools/showcase.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const FpsCounter := preload("res://ui/fps_counter.gd")
+const CameraRig := preload("res://view/camera_rig.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
 const BenchReport := preload("res://ui/bench_report.gd")
 const ShipModels := preload("res://view/ship_models.gd")
@@ -334,9 +337,12 @@ func _replay_checked(good: bool, text: String) -> void:
 
 
 ## Флажки боя из командной строки (tools/polygon.gd): `--old-ecm` — откат 09, 1.7;
-## `--bomber-direct` и `--patrol-mid` — откаты авиации 09, 8.4 (G3).
+## `--bomber-direct` и `--patrol-mid` — откаты авиации 09, 8.4 (G3). `--old-camera` — откат
+## проверок картинки (М14; план G8 и GЭ): камера JS-версии — обзор 52°, наклон 0,52 рад, старт 1100.
 static func apply_flags(args: PackedStringArray) -> void:
 	Polygon.flags = BenchCore.flags_from_args(args)
+	if "--old-camera" in args:
+		CameraRig.old_camera = true
 
 
 ## Запись боя из файла (JSON). Относительный путь — от папок запуска (как --overrides).

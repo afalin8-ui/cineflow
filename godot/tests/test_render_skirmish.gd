@@ -57,16 +57,19 @@ func _shots_dir() -> String:
 	return d
 
 
-## Бой-проба на чёрном поле (без неба): своё расставляет setup.call(battle).
-func _lab_view(setup: Callable) -> BattleView:
+## Бой-проба на чёрном поле (без неба): своё расставляет setup.call(battle). extra — добавки
+## к составу боя (пакет GЭ: орудие планеты `ground_gun`), env — с небом и планетой, как в игре.
+func _lab_view(setup: Callable, extra: Dictionary = {}, env: bool = false) -> BattleView:
 	await hooks.set_window_size(Vector2i(1600, 900))
-	var b := Battle.create(_get_defs(), {"attacker": &"troyden", "defender": &"plektor", "size": &"small", "seed": 3, "reserve": false}) as Battle
+	var cfg := {"attacker": &"troyden", "defender": &"plektor", "size": &"small", "seed": 3, "reserve": false}
+	cfg.merge(extra, true)
+	var b := Battle.create(_get_defs(), cfg) as Battle
 	b.ships.clear()
 	setup.call(b)
 	var v := BattleView.new()
 	v.name = "LabView"
 	tree.root.add_child(v)
-	v.setup(_get_defs(), b, false)
+	v.setup(_get_defs(), b, env)
 	v.paused = true                          # шагает сама проверка, а не часы кадров
 	# часы вида стоят: покачивание (view.bob) считается от НАСТОЯЩИХ часов, и концы
 	# луча от прогона к прогону сдвигались на доли точки — откат «тонкий луч» гулял
@@ -351,7 +354,7 @@ func test_four_sources_drawn_differently() -> void:
 	for k: StringName in [&"main", &"sec", &"light", &"pd"]:
 		ok(whole(f.get(k, 0)) > 0, "%s: выстрел «%s» нарисован" % [renderer(), k])
 	eq(fx.tracers_written - tracers0, 3 * whole(f.get(&"sec", 0)) + whole(f.get(&"pd", 0)), "%s: батарея — очередью из трёх росчерков, ПВО — одним летящим отрезком" % renderer())
-	eq(fx.beams_written - beams0, 2 * whole(f.get(&"main", 0)) + whole(f.get(&"light", 0)), "%s: главный калибр — двойной луч, лёгкое — одиночный" % renderer())
+	eq(fx.beams_written - beams0, 3 * whole(f.get(&"main", 0)) + whole(f.get(&"light", 0)), "%s: главный калибр — тройной луч (тело, белая середина, остывающий след; пакет GЭ), лёгкое — одиночный" % renderer())
 	ok(BattleFx.SEC_OWN.h != BattleFx.MAIN_OWN.h and BattleFx.SEC_FOE.h != BattleFx.MAIN_FOE.h, "%s: у батареи своя пара оттенков" % renderer())
 	v.draw_state()
 	await hooks.frames(2)
@@ -395,9 +398,12 @@ func test_skirmish_snapshots() -> void:
 			if s.side == Ship.ATTACKER and s.def.id == &"cruiser":
 				sel.append(s.uid)
 		view.selection = sel
-		var t0 := Time.get_ticks_msec()
-		while b.time < 32.0 and Time.get_ticks_msec() - t0 < 120000:
-			await hooks.frames(1)
+		# бой — шагами модели, а не настоящими кадрами (пакет GЭ): на 4× кадр шагает не больше 8 шагов,
+		# и на загруженной машине без видеокарты (кадр с эффектами ~1 с) 32 с боя не успевали за 120 с
+		# настоящего времени — проверка снимка краснела от скорости машины, а не от снимка
+		view.paused = false
+		while b.time < 32.0:
+			view.advance(Battle.STEP)
 		view.paused = true
 		await hooks.frames(3)
 		var tag := "%d×%d" % [got.x, got.y]

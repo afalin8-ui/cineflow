@@ -23,6 +23,7 @@ const Craft := preload("res://sim/craft.gd")
 const Squad := preload("res://sim/squad.gd")
 const Proj := preload("res://sim/proj.gd")
 const FxPool := preload("res://view/fx_pool.gd")
+const BattleFx := preload("res://view/battle_fx.gd")
 const CraftLayer := preload("res://view/craft_layer.gd")
 const SPRITE_SHADER := preload("res://view/shaders/sprite.gdshader")
 
@@ -34,7 +35,9 @@ const DOT_FOE := Color(1.0, 0.72, 0.42)
 const DOT_SEL := Color(1.0, 1.0, 1.0)
 const GUN_OWN := Color(0.62, 0.88, 1.0)
 const GUN_FOE := Color(1.0, 0.69, 0.44)
-const BOOM := Color(1.0, 0.75, 0.44)
+## Очередь машины — тоньше трассы ПВО (2,4) и очереди батареи (3,2): свой нижний предел в точках.
+const GUN_PX := 1.3
+const BOOM := Color(1.0, 0.5, 0.2)
 ## След кладётся раз в 0,12 игровой секунды и живёт 0,9 с (space.js: клуб раз в 0,16 с
 ## жизнью 0,34 — у нас отрезок, и он должен пережить разворот, чтобы вираж читался).
 const TRAIL_EVERY := 0.12
@@ -215,8 +218,9 @@ func consume(e: Array) -> void:
 			var at: Vector2 = e[2]
 			var y: float = _h.get(du, 0.0)
 			var p := Vector3(at.x, y, at.y)
-			fx.flash(p, BOOM, 10.0, 0.7, 2.6)
-			fx.flash(p, Color(1, 0.95, 0.85), 4.0, 0.3, 3.0)
+			# машина гибнет огнём, а не белой кляксой: белое — маленькое короткое ядро (08, ловушка 6)
+			fx.flash(p, BOOM, 10.0, 0.6, 1.4, 0.0, 0.0)
+			fx.flash(p, Color(1, 0.95, 0.85), 3.0, 0.1, 2.0, 0.0, 1.0)
 			_forget(du)
 		&"craft_gone":
 			var gu: int = e[1]
@@ -229,7 +233,14 @@ func consume(e: Array) -> void:
 			if c2 != null:
 				var from := point_of(c2, 1.0)
 				var to := _target_pt(tu, tat)
-				fx.tracer(from + Vector3(c2.dir.x, 0.0, c2.dir.y) * 4.0, to, GUN_OWN if c2.side == my_side else GUN_FOE, 0.5, 600.0, 18.0, 2.2)
+				# очередь машины — СВОЙ вид (08, 7.4; план GЭ, п. 4): две короткие тонкие чёрточки
+				# подряд, короче и тоньше трассы ПВО и очереди батареи
+				if BattleFx.rollback_one_look:
+					# откат проверки «источник читается»: все выстрелы — одним видом
+					fx.beam(from, to, BattleFx.LIGHT_OWN, 0.9, 0.3, 1.9)
+				else:
+					for k in 2:
+						fx.tracer(from + Vector3(c2.dir.x, 0.0, c2.dir.y) * 4.0, to, GUN_OWN if c2.side == my_side else GUN_FOE, 0.4, 700.0, 9.0, 2.2, k * 0.05, GUN_PX)
 		&"reload":
 			var ru: int = e[1]
 			var c3 := battle.craft_by_uid(ru)

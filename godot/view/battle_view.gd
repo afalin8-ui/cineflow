@@ -11,9 +11,11 @@
 #   а список событий шага чистится в его начале).
 # - Высота — только картинка (09, 11.6): у каждого корабля своя постоянная высота
 #   ±view.height_spread и покачивание ±view.bob; логика её не видит.
-# - Факел — двумя числами модели (08, 7.2 п. 7): маршевый — от тяги по носу,
-#   у носа — короткий огонь реверса. Тяжёлый по доктрине пятится носом к врагу,
-#   и маршевый факел от реверса рисовал бы «газует вперёд, уезжая назад».
+# - Факел — двумя числами модели (08, 7.2 п. 7): маршевый — от тяги по носу (две скрещённые
+#   плоскости от сопла, view/shaders/plume.gdshader, пакет GЭ), у реверса СВОЙ знак — короткие
+#   вспышки и росчерки вперёд у носа. Тяжёлый по доктрине пятится носом к врагу, и маршевый
+#   факел от реверса рисовал бы «газует вперёд, уезжая назад». Доля тяги сглаживается по
+#   ИГРОВОМУ времени (на паузе факел стоит), в последние 2 с гипера факел тянется в разы.
 # Вид модель только ЧИТАЕТ: приказы идут дверью battle.queue (input/battle_input.gd).
 extends Node3D
 
@@ -32,6 +34,9 @@ const Craft := preload("res://sim/craft.gd")
 const Squad := preload("res://sim/squad.gd")
 const Markers := preload("res://view/markers.gd")
 const Settings := preload("res://view/settings.gd")
+const HyperFx := preload("res://view/hyper_fx.gd")
+const Movement := preload("res://sim/movement.gd")
+const PLUME_SHADER := preload("res://view/shaders/plume.gdshader")
 
 ## 4× при 30 кадрах — 4 шага; больше — бой замедляется, а не дробит шаг (архитектура, 3).
 const MAX_STEPS := 8
@@ -44,6 +49,12 @@ const FOE_RING := SideColors.FOE
 const ORDER_FLASH := SideColors.OWN
 const PLUME := Color(0.55, 0.8, 1.0)
 const PLUME_FOE := Color(1.0, 0.68, 0.38)
+## Доля тяги на факеле догоняет модель со скоростью PLUME_FOLLOW в игровую секунду (08, 2.9:
+## «сглаживание долей clamp(dt·6)»): тяга шага скачет, а факел не мигает.
+const PLUME_FOLLOW := 6.0
+## Знак реверса — вспышки у носа раз в REV_EVERY игровой секунды, пока реверс больше REV_MIN.
+const REV_EVERY := 0.12
+const REV_MIN := 0.08
 ## Линия скорости выбранного — «скорость × 3 с» (06, 1.2).
 const VEL_LINE_S := 3.0
 ## Кольцо выделения — тонкая линия (07, 1.6; план GИ, п. 7): отрезков на круг и доля радиуса
@@ -103,6 +114,9 @@ var _arrived_step := -1
 ## ТОЛЬКО для проверки отката (план GИ, п. 7): кольцо выделения прежнее — плоский тор толщиной
 ## max(2, 5% радиуса), а не тонкая линия.
 static var rollback_torus_ring := false
+## ТОЛЬКО для проверки отката (план GЭ, п. 1; 08, 7.2 п. 7): маршевый факел — от СКОРОСТИ, как
+## thrustNow в JS (без направления тяги): пятящийся тяжёлый «газует вперёд», знака реверса нет.
+static var rollback_plume_by_speed := false
 ## ТОЛЬКО для проверок отката (план GИ), в игре false: выбор не чистится от погибших — панель
 ## пишет о мёртвом корабле, пока его не снимут руками (06, 2.5);
 static var rollback_keep_dead := false
@@ -119,12 +133,22 @@ var _ring: Dictionary[int, MeshInstance3D] = {}
 var _plume: Dictionary[int, Array] = {}      # [маршевые MeshInstance3D…], реверс — последним
 var _plume_len: Dictionary[int, PackedFloat64Array] = {}
 var _nose: Dictionary[int, Vector2] = {}     # (z носа, y середины) в осях модели
+## Сглаженная доля тяги (по носу, против носа) и когда были вспышки реверса — по игровому времени.
+var _plume_k: Dictionary[int, Vector2] = {}
+var _rev_t: Dictionary[int, float] = {}
+var _last_game_t := -1.0
+## Нарисованный факел на этом кадре (проверки): uid → (длина маршевого, доля реверса).
+var drawn_plumes: Dictionary[int, Vector2] = {}
+## Гипер: воронки, кольца накачки, росчерки ухода и выхода (view/hyper_fx.gd, пакет GЭ).
+var hyper: HyperFx
+## Кадров, пока держится прогрев: узлы с редкими материалами видны (схлопнуты), потом прячутся.
+var warm_frames := 3
 var _lines: MeshInstance3D
 var _lines_mesh: ImmediateMesh
 var _lines_mat: StandardMaterial3D
-var _plume_mesh: CylinderMesh
-var _plume_mat: StandardMaterial3D
-var _plume_mat_foe: StandardMaterial3D
+var _plume_mesh: ArrayMesh
+var _plume_mat: ShaderMaterial
+var _plume_mat_foe: ShaderMaterial
 var _ring_mat_own: StandardMaterial3D
 var _ring_mat_foe: StandardMaterial3D
 var _fx_rng := RandomNumberGenerator.new()
@@ -176,6 +200,11 @@ func setup(p_defs: Defs, p_battle: Battle, with_env: bool = true) -> void:
 	air.proj_pt = bfx.proj_point
 	bfx.craft_pt = air.point_of
 	bfx.craft_at = air.point_by_uid
+	hyper = HyperFx.new()
+	hyper.name = "HyperFx"
+	add_child(hyper)
+	hyper.setup(battle, bfx.gfx, point_of, visual_of)
+	hyper.warm = not BattleFx.rollback_no_warm
 	for s in battle.ships:
 		_add_visual(s)
 	markers = Markers.new()
@@ -207,16 +236,42 @@ func _make_materials() -> void:
 	_lines_mat.vertex_color_use_as_albedo = true
 	_lines_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_lines_mat.no_depth_test = true
-	_plume_mesh = CylinderMesh.new()
-	_plume_mesh.top_radius = 0.0
-	_plume_mesh.bottom_radius = 1.0
-	_plume_mesh.height = 1.0
-	_plume_mesh.radial_segments = 10
-	_plume_mesh.rings = 1
-	_plume_mat = _glow(PLUME)
-	_plume_mat_foe = _glow(PLUME_FOE)
+	_plume_mesh = plume_mesh()
+	_plume_mat = plume_material(PLUME)
+	_plume_mat_foe = plume_material(PLUME_FOE)
 	_ring_mat_own = _flat(OWN_RING)
 	_ring_mat_foe = _flat(FOE_RING)
+
+
+## Факел — две скрещённые плоскости (08, 2.9): ось — y от −0,5 (сопло) до 0,5 (кончик), поперёк
+## ±1; UV.y от 0 у сопла до 1 у кончика. Масштаб узла (ширина, длина, ширина) задаёт вид.
+static func plume_mesh() -> ArrayMesh:
+	var v := PackedVector3Array()
+	var uv := PackedVector2Array()
+	var idx := PackedInt32Array()
+	for plane in 2:
+		var b := v.size()
+		for corner in 4:
+			var across := -1.0 if corner == 0 or corner == 3 else 1.0
+			var along := -0.5 if corner < 2 else 0.5
+			v.append(Vector3(across, along, 0.0) if plane == 0 else Vector3(0.0, along, across))
+			uv.append(Vector2(0.5 + across * 0.5, along + 0.5))
+		idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = v
+	arr[Mesh.ARRAY_TEX_UV] = uv
+	arr[Mesh.ARRAY_INDEX] = idx
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
+
+
+static func plume_material(c: Color) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = PLUME_SHADER
+	m.set_shader_parameter("color", Vector3(c.r, c.g, c.b))
+	return m
 
 
 static func _glow(c: Color) -> StandardMaterial3D:
@@ -298,12 +353,12 @@ func _add_plumes(s: Ship, v: ShipVisual) -> void:
 		if at == null:
 			continue
 		var mi := _plume_instance(mat)
-		# конус остриём назад (+z модели): ось цилиндра y поворотом +90° ложится на +z
+		# ось факела y поворотом +90° ложится на +z модели — назад, туда же, куда корма
 		mi.rotation_degrees = Vector3(90.0, 0.0, 0.0)
 		at.add_child(mi)
 		list.append(mi)
 		lens.append(size)
-	# реверс — короткий огонь у носа (08, 7.2 п. 7)
+	# реверс — свой знак у носа (08, 7.2 п. 7): вспышки и росчерки вперёд, а не маршевый факел
 	var aabb: Array = v.record.get("aabb", [])
 	var nose_z := -v.length() * 0.5
 	var mid_y := 0.0
@@ -315,18 +370,12 @@ func _add_plumes(s: Ship, v: ShipVisual) -> void:
 		var hy: float = hi[1]
 		nose_z = lz
 		mid_y = (ly + hy) * 0.5
-	var rv := _plume_instance(mat)
-	rv.rotation_degrees = Vector3(-90.0, 0.0, 0.0)       # остриём вперёд (−z)
-	rv.position = Vector3(0.0, mid_y, nose_z)
-	v.add_child(rv)
 	_nose[s.uid] = Vector2(nose_z, mid_y)
-	list.append(rv)
-	lens.append(maxf(v.width() * 0.22, 6.0))
 	_plume[s.uid] = list
 	_plume_len[s.uid] = lens
 
 
-func _plume_instance(mat: StandardMaterial3D) -> MeshInstance3D:
+func _plume_instance(mat: ShaderMaterial) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = "plume"
 	mi.mesh = _plume_mesh
@@ -390,6 +439,7 @@ func _consume(events: Array[Array]) -> void:
 		var kind: StringName = e[0]
 		bfx.consume(e)
 		air.consume(e)
+		hyper.consume(e)
 		match kind:
 			&"spawn":
 				var u: int = e[1]
@@ -399,7 +449,7 @@ func _consume(events: Array[Array]) -> void:
 			&"jump_out", &"jump_in":
 				var u2: int = e[1]
 				var s2 := battle.ship_by_uid(u2)
-				if s2 != null and _vis.has(u2):
+				if s2 != null and _vis.has(u2) and HyperFx.rollback_no_funnel:
 					fx.flash(_point(s2, 1.0), Color(0.7, 0.85, 1.0), maxf(_vis[u2].length(), 30.0) * 1.6, 0.6, 2.5)
 				if kind == &"jump_in" and s2 != null and s2.side == my_side:
 					# вышедшее подкрепление — одной партией за шаг (01, 4.2 п. 8)
@@ -445,6 +495,13 @@ func _y(uid: int) -> float:
 func draw_state() -> void:
 	var a := alpha()
 	clean_selection()
+	# игровые часы на этом кадре: начало шага + доля шага (на паузе стоят)
+	var game_t := battle.time - Battle.STEP + a * Battle.STEP
+	var gdt := clampf(game_t - _last_game_t, 0.0, 0.25) if _last_game_t >= 0.0 else 1.0
+	_last_game_t = game_t
+	_plume_mat.set_shader_parameter("now", game_t)
+	_plume_mat_foe.set_shader_parameter("now", game_t)
+	drawn_plumes.clear()
 	for s in battle.ships:
 		var v: ShipVisual = _vis.get(s.uid)
 		if v == null:
@@ -459,13 +516,13 @@ func draw_state() -> void:
 		var ring: MeshInstance3D = _ring.get(s.uid)
 		if ring != null:
 			ring.visible = rollback_torus_ring and s.uid in selection
-		_draw_plumes(s)
+		_draw_plumes(s, gdt, game_t)
 	_draw_lines(a)
 	fx.set_time(clock)
-	# игровые часы на этом кадре: начало шага + доля шага (на паузе стоят)
-	var game_t := battle.time - Battle.STEP + a * Battle.STEP
 	air.draw(a, game_t, selection)
 	bfx.draw(a, game_t, selection, hover_uid)
+	hyper.draw(a, game_t)
+	_warm_tick()
 	if markers != null:
 		markers.layout()
 
@@ -487,27 +544,74 @@ func ring_radius(s: Ship) -> float:
 	return maxf(v.length(), v.width()) * RING_K
 
 
-func _draw_plumes(s: Ship) -> void:
+func _draw_plumes(s: Ship, gdt: float, game_t: float) -> void:
 	var list: Array = _plume.get(s.uid, [])
 	var lens: PackedFloat64Array = _plume_len.get(s.uid, PackedFloat64Array())
-	var n := list.size()
-	for i in n:
+	var want := Vector2(s.thrust_fwd, s.thrust_rev)
+	if rollback_plume_by_speed:
+		# откат: «тяга» — это скорость без направления, как thrustNow в JS (08, 2.9)
+		want = Vector2(clampf(s.vel.length() / maxf(s.max_speed(), 1.0), 0.0, 1.0), 0.0)
+	var k: Vector2 = _plume_k.get(s.uid, want)
+	k = k.lerp(want, clampf(gdt * PLUME_FOLLOW, 0.0, 1.0))
+	_plume_k[s.uid] = k
+	# последние 2 с гипера — разгон по носу, факел вытягивается в разы (08, 2.9)
+	var run := s.hyper_left > 0.0 and s.hyper_left < Movement.HYPER_RUN
+	var longest := 0.0
+	for i in list.size():
 		var mi: MeshInstance3D = list[i]
-		var k := s.thrust_rev if i == n - 1 else s.thrust_fwd
-		if k < 0.02:
-			mi.visible = false
+		if k.x < 0.02 and not run:
+			# прогрев: первые кадры факел есть — крошечный, — потом прячется (07-29, 08-15)
+			mi.visible = warm_frames > 0 and not BattleFx.rollback_no_warm
+			mi.scale = Vector3(0.01, 0.01, 0.01)
 			continue
 		mi.visible = true
-		# маршевый: от 0,6 до 2 размеров сопла по тяге; реверс — короткий, у носа
-		var l := lens[i] * (0.6 + 1.4 * k) if i < n - 1 else lens[i] * k
-		var w := lens[i] * 0.22
+		# маршевый: от 0,6 до 2 размеров сопла по тяге
+		var l := lens[i] * (0.6 + 1.4 * k.x)
+		var w := lens[i] * 0.32
+		if run:
+			l = lens[i] * (1.6 + (Movement.HYPER_RUN - s.hyper_left) * 3.2)
+			w *= 1.3
 		mi.scale = Vector3(w, l, w)
-		# конус стоит основанием у сопла (у носа): центр — на половине длины по оси
-		if i < n - 1:
-			mi.position = Vector3(0.0, 0.0, l * 0.5)
-		else:
-			var nz: Vector2 = _nose.get(s.uid, Vector2.ZERO)
-			mi.position = Vector3(0.0, nz.y, nz.x - l * 0.5)
+		# факел стоит основанием у сопла: центр — на половине длины по оси
+		mi.position = Vector3(0.0, 0.0, l * 0.5)
+		longest = maxf(longest, l)
+	drawn_plumes[s.uid] = Vector2(longest, k.y)
+	# знак реверса: короткие вспышки и росчерки ВПЕРЁД у носа (08, 7.2 п. 7)
+	if k.y < REV_MIN or rollback_plume_by_speed or run:
+		return
+	var last: float = _rev_t.get(s.uid, -1e9)
+	if game_t - last < REV_EVERY:
+		return
+	_rev_t[s.uid] = game_t
+	var v: ShipVisual = _vis.get(s.uid)
+	if v == null:
+		return
+	var nz: Vector2 = _nose.get(s.uid, Vector2.ZERO)
+	var xf := v.global_transform
+	var fwd := -xf.basis.z.normalized()
+	var side := xf.basis.x.normalized()
+	var col := PLUME if s.side == my_side else PLUME_FOE
+	var g := bfx.gfx
+	g.now = game_t
+	var w2 := v.width() * 0.3
+	for sgn: float in [-1.0, 1.0]:
+		var at := xf * Vector3(sgn * w2, nz.y, nz.x)
+		g.flash(at, col, v.width() * (0.14 + 0.16 * k.y) * _fx_rng.randf_range(0.7, 1.1), 0.07, 1.5, 3.0, 0.4)
+		g.particle(at, fwd * (40.0 + 60.0 * k.y) + side * sgn * 10.0, col, 1.6, 0.6, 0.22, FxPool.SPARK, 2.0, 1.4)
+
+
+## Прогрев (07, ловушка 29; 08, ловушка 15): первые кадры боя показывают — схлопнутыми или
+## прозрачными — то, чего на экране ещё нет (стенку купола, воронку, дым), чтобы их конвейеры
+## собрались сразу, а не на первом взрыве или выборе РЭБ; потом ПРЯЧУТ, а не освобождают.
+func _warm_tick() -> void:
+	if warm_frames < 0:
+		return
+	if BattleFx.rollback_no_warm:
+		warm_frames = -1
+		bfx.warm(false)
+		return
+	bfx.warm(warm_frames > 0)
+	warm_frames -= 1
 
 
 ## Линии выбранных: кольцо выделения линией в точку (07, 1.6: мятное у своих, красное у
@@ -564,6 +668,12 @@ func _draw_lines(a: float) -> void:
 			var fc2 := Color(FOCUS_LINE.r, FOCUS_LINE.g, FOCUS_LINE.b, 0.6)
 			pts.append_array([qp, _point(qt, a)])
 			cols.append_array([fc2, fc2])
+	if warm_frames > 0 and not BattleFx.rollback_no_warm and pts.is_empty():
+		# прогрев (план GЭ, п. 7): первые кадры линия выбора есть — прозрачная, в точке взгляда, —
+		# и её конвейер собран до первого выбора
+		var at := rig.s_look if rig != null else Vector3.ZERO
+		pts.append_array([at, at + Vector3(0.1, 0.0, 0.0)])
+		cols.append_array([Color(0, 0, 0, 0), Color(0, 0, 0, 0)])
 	if pts.is_empty():
 		return                           # пустую поверхность ImmediateMesh не заводит
 	_lines_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
