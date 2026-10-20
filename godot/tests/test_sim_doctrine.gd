@@ -71,8 +71,8 @@ static func _had(b: Battle, uid: int, st: int) -> bool:
 
 ## Два тяжёлых навстречу с 1300, оба на «Охоте», стреляют мимо (оружия нет — меряется
 ## подход). → [ближе всего, R пары].
-func _head_on(a: StringName, d: StringName, no_share: bool) -> Vector2:
-	var b := _lab({"no_share_close": no_share})
+func _head_on(a: StringName, d: StringName, no_share: bool, old: bool = false) -> Vector2:
+	var b := _lab({"no_share_close": no_share}, Defs.load_default(OLD_TEMPO) as Defs) if old else _lab({"no_share_close": no_share})
 	var s1 := _tough(_put(b, Ship.ATTACKER, &"troyden", a, Vector2(0, 650)))
 	var s2 := _tough(_put(b, Ship.DEFENDER, &"plektor", d, Vector2(0, -650)))
 	s1.stance = &"hunt"
@@ -93,9 +93,15 @@ func test_head_on_share_of_closing() -> void:
 		var r := _head_on(a, d, false)
 		note("навстречу %s — %s: ближе всего %.0f (%.3f R)" % [a, d, r.x, r.x / r.y])
 		ok(r.x >= 0.75 * r.y, "%s и %s навстречу: сходятся не ближе 0,75 R — %.0f (%.2f R)" % [a, d, r.x, r.x / r.y])
+	# откат краснеет ТОЙ ЖЕ границей 0,75 R, что держит правило: с пакета GТ (тяжёлые × 0,6)
+	# проскок меньше — 565 (0,72 R) против 525 (0,67 R) до GТ, — и прежняя граница отката «< 0,7 R»
+	# его уже не видела; в прежнем темпе (OLD_TEMPO) — по-прежнему 525
 	var o := _head_on(&"cruiser", &"cruiser", true)
 	note("откат --no-share-close: два крейсера сходятся до %.0f (%.3f R)" % [o.x, o.x / o.y])
-	ok(o.x < 0.7 * o.y, "откат «без доли сближения»: два крейсера проскакивают до %.0f (%.2f R; 09, 2.3 — 525) — проверка краснеет" % [o.x, o.x / o.y])
+	ok(o.x < 0.75 * o.y, "откат «без доли сближения»: два крейсера проскакивают до %.0f (%.2f R; 09, 2.3 — 565, до GТ 525) — проверка краснеет" % [o.x, o.x / o.y])
+	var q := _head_on(&"cruiser", &"cruiser", true, true)
+	note("откат --no-share-close в прежнем темпе: %.0f (%.3f R)" % [q.x, q.x / q.y])
+	ok(q.x < 0.7 * q.y, "откат «без доли сближения», прежний темп: %.0f (%.2f R; 09, 2.3 до GТ — 525) — проверка краснеет" % [q.x, q.x / q.y])
 
 
 # ───────────────────────── отход задним ходом (09, 2.4) ─────────────────────────
@@ -103,9 +109,12 @@ func test_head_on_share_of_closing() -> void:
 ## Корабль стоит, враг (неподвижный крейсер) в 200 по носу; отход продлён, чтобы мерить
 ## таблицу 2.4 (belt.back_off_k = 5: «до 0,5 R» наступило бы через пару секунд). →
 ## отошёл за 10 и 30 с и сколько из 30 с нос держал врага в конусе главного калибра.
-func _back_off(clan: StringName, id: StringName, nose_along: bool) -> Vector3:
+func _back_off(clan: StringName, id: StringName, nose_along: bool, old: bool = false) -> Vector3:
 	HeavyDoctrine.rollback_nose_along = nose_along
-	var d := Defs.load_default({"belt.back_off_k": 5.0}) as Defs
+	var over := {"belt.back_off_k": 5.0}
+	if old:
+		over.merge(OLD_TEMPO)
+	var d := Defs.load_default(over) as Defs
 	var b := _lab({"attacker": clan}, d)
 	var s := _tough(_put(b, Ship.ATTACKER, clan, id, Vector2(0, 0)))
 	s.stance = &"hunt"
@@ -125,8 +134,12 @@ func _back_off(clan: StringName, id: StringName, nose_along: bool) -> Vector3:
 	return out
 
 
+## Таблица 09, 2.4 — в НОВОМ темпе (пакет GТ: тяга и предел хода тяжёлых × 0,6 — пути за то же
+## время ровно × 0,6: разгон до предела занимает те же секунды) и в прежнем (OLD_TEMPO — числа
+## 09, 2.4 до GТ, 260 / 1020 у крейсера): множители ходят ОДНОЙ дверью, и без них ход прежний.
 func test_retreat_backward_table_2_4() -> void:
-	var want := {&"cruiser": [&"troyden", 260.0, 1020.0], &"capital": [&"troyden", 193.0, 793.0], &"sinho": [&"plektor", 176.0, 716.0]}
+	var want := {&"cruiser": [&"troyden", 156.0, 612.0, 260.0, 1020.0], &"capital": [&"troyden", 116.0, 476.0, 193.0, 793.0],
+		&"sinho": [&"plektor", 105.0, 429.0, 176.0, 716.0]}
 	for id: StringName in want:
 		var w: Array = want[id]
 		var clan: StringName = w[0]
@@ -134,9 +147,15 @@ func test_retreat_backward_table_2_4() -> void:
 		var w30: float = w[2]
 		var r := _back_off(clan, id, false)
 		note("отход задним ходом %s: за 10 с %.0f, за 30 с %.0f, главный калибр мог бить %.1f с из 30" % [id, r.x, r.y, r.z])
-		near(r.x, w10, 5.0, "%s: задним ходом за 10 с — %.0f (09, 2.4: %.0f)" % [id, r.x, w10])
-		near(r.y, w30, 5.0, "%s: за 30 с — %.0f (09, 2.4: %.0f)" % [id, r.y, w30])
+		near(r.x, w10, 5.0, "%s: задним ходом за 10 с — %.0f (09, 2.4, с GТ: %.0f)" % [id, r.x, w10])
+		near(r.y, w30, 5.0, "%s: за 30 с — %.0f (09, 2.4, с GТ: %.0f)" % [id, r.y, w30])
 		ok(r.z >= 29.0, "%s: нос на враге весь отход — главный калибр мог бить %.1f с из 30" % [id, r.z])
+		var o10: float = w[3]
+		var o30: float = w[4]
+		var q := _back_off(clan, id, false, true)
+		note("прежний темп, %s: за 10 с %.0f, за 30 с %.0f" % [id, q.x, q.y])
+		near(q.x, o10, 5.0, "%s, прежний темп: за 10 с — %.0f (09, 2.4 до GТ: %.0f)" % [id, q.x, o10])
+		near(q.y, o30, 5.0, "%s, прежний темп: за 30 с — %.0f (09, 2.4 до GТ: %.0f)" % [id, q.y, o30])
 	var o := _back_off(&"troyden", &"cruiser", true)
 	note("откат «нос по ходу» (разворот кормой): крейсер за 30 с %.0f, главный калибр мог бить %.1f с" % [o.y, o.z])
 	ok(o.z < 5.0, "откат «нос по ходу отхода»: главный калибр молчит (%.1f с из 30) — проверка краснеет" % o.z)
@@ -147,8 +166,10 @@ func test_retreat_backward_table_2_4() -> void:
 ## Нос от врага, враг — цель главного калибра в поясе; корабль на «Держать» (стоит, только
 ## поворачивается). → сколько секунд до носа в ±5°. turn_k — множитель разворота (откат
 ## правкой числа, как --set).
-func _turn_180(clan: StringName, id: StringName, turn_k: float) -> float:
+func _turn_180(clan: StringName, id: StringName, turn_k: float, old: bool = false) -> float:
 	var over := {}
+	if old:
+		over.merge(OLD_TEMPO)
 	if turn_k != 1.0:
 		var t0: float = _defs().ship(clan, id).turn
 		over["space.ships.%s.%s.turn" % [clan, id]] = t0 * turn_k
@@ -169,17 +190,22 @@ func _turn_180(clan: StringName, id: StringName, turn_k: float) -> float:
 	return got
 
 
+## Разворот тяжёлых с пакета GТ — × 1/0,6 (heavy.turn_k): доля оставшегося угла за секунду
+## меньше в 0,6 раза, и время до ±5° ровно в 1/0,6 больше. В прежнем темпе — числа 09, 2.4 до GТ.
 func test_turn_180() -> void:
-	var want := {&"cruiser": [&"troyden", 9.0], &"capital": [&"troyden", 13.8], &"sinho": [&"plektor", 14.9]}
+	var want := {&"cruiser": [&"troyden", 14.9, 9.0], &"capital": [&"troyden", 22.9, 13.8], &"sinho": [&"plektor", 24.8, 14.9]}
 	for id: StringName in want:
 		var w: Array = want[id]
 		var clan: StringName = w[0]
 		var t: float = w[1]
 		var got := _turn_180(clan, id, 1.0)
-		note("разворот на 180° %s: %.2f с (09, 2.4: %.1f)" % [id, got, t])
-		near(got, t, 0.2, "%s: разворот на 180° до ±5° — %.2f с (09, 2.4: %.1f)" % [id, got, t])
+		note("разворот на 180° %s: %.2f с (09, 2.4, с GТ: %.1f)" % [id, got, t])
+		near(got, t, 0.2, "%s: разворот на 180° до ±5° — %.2f с (09, 2.4, с GТ: %.1f)" % [id, got, t])
+		var t0: float = w[2]
+		var old := _turn_180(clan, id, 1.0, true)
+		near(old, t0, 0.2, "%s, прежний темп: разворот на 180° — %.2f с (09, 2.4 до GТ: %.1f)" % [id, old, t0])
 	var o := _turn_180(&"troyden", &"cruiser", 1.5)
-	ok(absf(o - 9.0) > 0.5, "откат «разворот × 1,5» (правка turn): крейсер за %.2f с — проверка краснеет" % o)
+	ok(absf(o - 14.9) > 0.5, "откат «разворот × 1,5» (правка turn): крейсер за %.2f с — проверка краснеет" % o)
 
 
 # ───────────────────────── «не оторваться» (09, 2.6, п. 2; 9.5 пп. 13, 19) ─────────────────────────
@@ -515,7 +541,9 @@ func test_escort_no_self_retreat_on_the_move() -> void:
 	ok(not flag(r[1]) and num(r[0]) <= 250.0, "охрана своего на ходу: сам не отходит, отстаёт не больше 250 — %.0f" % num(r[0]))
 	var o := _escort(true)
 	note("откат «охрана на ходу как на месте»: отставание %.0f, отход %s" % [num(o[0]), str(flag(o[1]))])
-	ok(flag(o[1]) and num(o[0]) > 500.0, "откат «охрана на ходу отходит сама»: отставание %.0f — проверка краснеет" % num(o[0]))
+	# откат краснеет той же границей, что держит правило (отход и отставание больше 250): с пакета
+	# GТ носитель и крейсер идут × 0,6, и отставание в откате 474, а не ~700, как до GТ
+	ok(flag(o[1]) and num(o[0]) > 250.0, "откат «охрана на ходу отходит сама»: отход и отставание %.0f — проверка краснеет" % num(o[0]))
 
 
 ## Тяжёлый охраняет свой ВОЮЮЩИЙ лёгкий (второе замечание к G4; 09, 6.6 п. 2 и 6.5): корвет
@@ -604,7 +632,8 @@ func _escort_heavy_amove(stance: StringName, foe_at: Vector2, rollback: bool) ->
 	var esc := 0.0
 	var esc_end := -1.0
 	var meet := -1.0
-	for i in roundi(30.0 / Battle.STEP):
+	# 50 с, а не 30: с пакета GТ охраняемый крейсер идёт × 0,6, и встреча на «Охоте» — на ~32-й
+	for i in roundi(50.0 / Battle.STEP):
 		b.step()
 		var d := w.pos.distance_to(foe.pos)
 		if meet < 0.0 and (d <= r or d < dead):
@@ -869,11 +898,19 @@ func test_start_without_orders() -> void:
 
 ## «Сражение» без резерва и без орудия планеты, с G5 обе стороны под ИИ целиком и до итога, 8 зёрен
 ## (стенд, BenchCore). Медианы по боям — как в сводке стенда.
-func _bench(load_id: String, seed0: int, n: int, flags: Dictionary) -> Array[Dictionary]:
+func _bench(load_id: String, seed0: int, n: int, flags: Dictionary, d: Defs = null) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for i in n:
-		out.append(BenchCore.run_one(_defs(), BenchCore.setup_for(load_id, seed0 + i, false, flags), BenchCore.MAX_S, "capella-проверка"))
+		out.append(BenchCore.run_one(d if d != null else _defs(), BenchCore.setup_for(load_id, seed0 + i, false, flags), BenchCore.MAX_S, "capella-проверка"))
 	return out
+
+
+var _old: Defs
+## Прежний темп (до пакета GТ) числами доктрины — OLD_TEMPO в tests/case.gd.
+func _old_defs() -> Defs:
+	if _old == null:
+		_old = Defs.load_default(OLD_TEMPO) as Defs
+	return _old
 
 
 static func _med(reps: Array[Dictionary], key: String) -> float:
@@ -934,11 +971,33 @@ func test_bench_battle_measures() -> void:
 	# эпизодов — godot/CLAUDE.md, раздел 21): эпизод «вплотную» у флагмана, к которому подошёл корвет.
 	# Утверждение «М2: медиана эпизода ≤ 10 с» стояло здесь в G4 (на этих же 8 зёрнах — 5,9 с под
 	# заглушкой строя) и в G5 СНЯТО: под двумя ИИ до итога — 11,4 с, ИИ его не держит (CLAUDE.md, 21)
-	note("не держат порогов 09, 8.2: М2 — медиана эпизода %.1f с (порог 10), М6 — эпизод %.1f с (порог 8), центр линии назад %.0f (порог 400), длина боя %.0f с (порог 180–420)" % [m2e, m6e, m6b, _med(reps, "len")])
-	# откат --legacy-approach (подход лёгкого «на 0,68», как в JS) — проваливает М3 и М9
-	var lg := _bench("battle", 1000, 2, {"legacy_approach": true})
-	note("откат --legacy-approach: М2 %.3f · М3 %.3f R · пар тяжёлых ближе 360 %.0f" % [_med(lg, "m2"), _med(lg, "m3_med_k"), _worst(lg, "m9_heavy")])
-	ok(_med(lg, "m3_med_k") < 0.7 and _worst(lg, "m9_heavy") > 0.0, "откат --legacy-approach: линии сходятся до %.2f R и тяжёлые в упор — М3 и М9 краснеют" % _med(lg, "m3_med_k"))
+	# С пакета GТ (старт ±1050, тяжёлые × 0,6) в этих восьми боях эпизодов «вплотную» и отхода нет
+	# вовсе (медиана −1 — «не было»): заметка называет, что держится и что нет, а не печатает −1 как беду
+	var held := PackedStringArray()
+	var miss := PackedStringArray()
+	var len_med := _med(reps, "len")
+	var rows := [
+		[m2e <= 10.0, "М2 эпизод %s (порог 10)" % ("— эпизодов нет" if m2e < 0.0 else "%.1f с" % m2e)],
+		[m6e <= 8.0, "М6 эпизод %s (порог 8)" % ("— отходов нет" if m6e < 0.0 else "%.1f с" % m6e)],
+		[m6b <= 400.0, "линия назад %.0f (порог 400)" % m6b],
+		[len_med >= 180.0 and len_med <= 420.0, "длина боя %.0f с (порог 180–420)" % len_med]]
+	for row: Array in rows:
+		var good: bool = row[0]
+		var txt: String = row[1]
+		if good:
+			held.append(txt)
+		else:
+			miss.append(txt)
+	note("пороги 09, 8.2: держат — %s; не держат — %s" % ["; ".join(held) if not held.is_empty() else "—", "; ".join(miss) if not miss.is_empty() else "—"])
+	# откат --legacy-approach (подход лёгкого «на 0,68», как в JS) — проваливает М3 и М9 в ПРЕЖНЕМ
+	# темпе (OLD_TEMPO). В новом (пакет GТ) тяжёлые идут × 0,6 и тормозят раньше: тот же откат даёт
+	# М3 0,79 R и ни одной пары ближе 360 — порога не переходит, это записано (CLAUDE.md, раздел 23),
+	# а замер проверяется там, где беда видна
+	var lg_new := _bench("battle", 1000, 2, {"legacy_approach": true})
+	note("откат --legacy-approach в новом темпе: М2 %.3f · М3 %.3f R · пар тяжёлых ближе 360 %.0f" % [_med(lg_new, "m2"), _med(lg_new, "m3_med_k"), _worst(lg_new, "m9_heavy")])
+	var lg := _bench("battle", 1000, 2, {"legacy_approach": true}, _old_defs())
+	note("откат --legacy-approach в прежнем темпе: М2 %.3f · М3 %.3f R · пар тяжёлых ближе 360 %.0f" % [_med(lg, "m2"), _med(lg, "m3_med_k"), _worst(lg, "m9_heavy")])
+	ok(_med(lg, "m3_med_k") < 0.7 and _worst(lg, "m9_heavy") > 0.0, "откат --legacy-approach (прежний темп): линии сходятся до %.2f R и тяжёлые в упор — М3 и М9 краснеют" % _med(lg, "m3_med_k"))
 	# откат --ecm-01L — места двух своих ближе hull + hull (М10)
 	var ec := _bench("battle", 1000, 1, {"ecm_01l": true})
 	ok(_worst(ec, "m10_self") > 0.0, "откат --ecm-01L: мест ближе hull + hull — %.0f шагов — М10 краснеет" % _worst(ec, "m10_self"))
@@ -1009,10 +1068,14 @@ func test_bench_m9_sees_entries() -> void:
 ## одни тяжёлые линия на линию; «brake» и «clear» — сценарии стенда (BenchCore).
 func test_bench_flags_fail_their_measure() -> void:
 	var base := _bench("lines", 1000, 2, {})
-	var ns := _bench("lines", 1000, 2, {"no_share_close": true})
-	note("«линии»: М3 %.3f R, откат --no-share-close — %.3f R" % [_med(base, "m3_med_k"), _med(ns, "m3_med_k")])
+	var ns_new := _bench("lines", 1000, 2, {"no_share_close": true})
+	var ns := _bench("lines", 1000, 2, {"no_share_close": true}, _old_defs())
+	note("«линии»: М3 %.3f R, откат --no-share-close — %.3f R (в прежнем темпе %.3f R)" % [_med(base, "m3_med_k"), _med(ns_new, "m3_med_k"), _med(ns, "m3_med_k")])
 	ok(_med(base, "m3_med_k") >= 0.7, "«линии»: две линии тяжёлых стоят на %.3f R (≥ 0,7)" % _med(base, "m3_med_k"))
-	ok(_med(ns, "m3_med_k") < 0.7, "откат --no-share-close: линии сходятся до %.3f R — М3 краснеет" % _med(ns, "m3_med_k"))
+	# в новом темпе (пакет GТ) проскок меньше, и М3 под откатом 0,73 R — над порогом 0,7: беда видна
+	# в прежнем темпе (OLD_TEMPO), там замер и проверяется; лабораторная проверка правила —
+	# test_head_on_share_of_closing (там откат краснеет и в новом темпе)
+	ok(_med(ns, "m3_med_k") < 0.7, "откат --no-share-close (прежний темп): линии сходятся до %.3f R — М3 краснеет" % _med(ns, "m3_med_k"))
 	var br := _bench("brake", 1, 1, {})
 	var nb := _bench("brake", 1, 1, {"no_foe_brake": true})
 	note("«brake»: М2 %.3f, М6 %.3f; откат --no-foe-brake — М2 %.3f, М6 %.3f" % [_med(br, "m2"), _med(br, "m6"), _med(nb, "m2"), _med(nb, "m6")])

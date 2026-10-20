@@ -30,6 +30,14 @@ func _defs() -> Defs:
 	return defs
 
 
+var _old: Defs
+## Прежний темп (до пакета GТ) числами доктрины — OLD_TEMPO в tests/case.gd.
+func _old_defs() -> Defs:
+	if _old == null:
+		_old = Defs.load_default(OLD_TEMPO) as Defs
+	return _old
+
+
 ## Пустое поле: игрок — атакующий, без ИИ; ИИ заводится руками (_arm) после расстановки.
 ## d — свои данные (откат правкой числа), по умолчанию — общие.
 func _lab(setup: Dictionary = {}, d: Defs = null) -> Battle:
@@ -893,12 +901,18 @@ func test_watch_draw_and_limit() -> void:
 
 
 # ───────────────────────── тыловой рубеж под ИИ (09, 2.6; находки стенда G5) ─────────────────────────
+# Все четыре случая нашёл стенд G5 в ПРЕЖНЕМ темпе, и в нём они и проверяются (OLD_TEMPO: с этими
+# числами бой совпадает с 0.7.1 до бита, отпечаток тот же). В новом темпе (пакет GТ: старт ±1050,
+# тяжёлые ×0,6, спокойная доктрина) их нет вовсе — перебор с откатами: «Сражение» без РЭБ у
+# защитника, зёрна 1000–1023 (толчок), Плэктор × Тройден 1000–1023 (гасить на рубеже), «Сражение»
+# с резервом Тройден × Тройден 4000–4011 и «Генеральное» 4000–4005 (подходящие) — ни шага за рубежом
+# и с откатом. Правила при этом не лишние: темп — числа доктрины, и вернись они — вернутся и случаи.
 
 ## Шагов, когда место тяжёлого под ИИ стоит за тыловым рубежом своей стороны (дальше допуска
 ## прихода), и наибольший заход — «Стычка» Тройден × Плэктор, зерно 1016, до итога.
 func _hurt_slots(past_rear: bool) -> Dictionary:
 	Ai.rollback_hurt_past_rear = past_rear
-	var b := Battle.create(_defs(), BenchCore.setup_for("skirmish", 1016, false, {}), "capella-проверка") as Battle
+	var b := Battle.create(_old_defs(), BenchCore.setup_for("skirmish", 1016, false, {}), "capella-проверка") as Battle
 	var bad := 0
 	var worst := 0.0
 	var hurt := 0
@@ -934,7 +948,7 @@ func test_hurt_heavy_not_past_rear() -> void:
 ## резерв атакующего выходит на 32-й секунде.
 func _rear_after_arrival(old: bool) -> int:
 	Battle.rollback_rear_arrivals = old
-	var b := Battle.create(_defs(), BenchCore.setup_for("battle_full", 4000, false, {}, "troyden,troyden"), "capella-проверка") as Battle
+	var b := Battle.create(_old_defs(), BenchCore.setup_for("battle_full", 4000, false, {}, "troyden,troyden"), "capella-проверка") as Battle
 	while not b.over and b.time < 50.0:
 		b.step()
 	var n := b.metrics.m6_rear
@@ -954,7 +968,7 @@ func test_m6_rear_skips_arrivals() -> void:
 ## «Сражение» Тройден × Плэктор без РЭБ у защитника, зерно 1030 (до правки — 2757 шагов).
 func _rear_pushed(old: bool) -> int:
 	HeavyDoctrine.rollback_push_past_rear = old
-	var b := Battle.create(_defs(), BenchCore.setup_for("battle_noecm_d", 1030, false, {}), "capella-проверка") as Battle
+	var b := Battle.create(_old_defs(), BenchCore.setup_for("battle_noecm_d", 1030, false, {}), "capella-проверка") as Battle
 	while not b.over and b.time < 300.0:
 		b.step()
 	var n := b.metrics.m6_rear
@@ -974,7 +988,7 @@ func test_push_not_past_rear() -> void:
 ## «Сражение» Плэктор × Тройден, зерно 1045 (флагман Тройдена).
 func _rear_exact(old: bool) -> int:
 	HeavyDoctrine.rollback_rear_exact = old
-	var b := Battle.create(_defs(), BenchCore.setup_for("battle", 1045, false, {}, "plektor,troyden"), "capella-проверка") as Battle
+	var b := Battle.create(_old_defs(), BenchCore.setup_for("battle", 1045, false, {}, "plektor,troyden"), "capella-проверка") as Battle
 	while not b.over and b.time < 300.0:
 		b.step()
 	var n := b.metrics.m6_rear

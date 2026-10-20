@@ -271,7 +271,8 @@ const TURN_REF := {
 
 func _first_shot(id: StringName, deg: float) -> float:
 	var clan := &"plektor" if id == &"sinho" else &"troyden"
-	var b := _lab(clan, &"troyden" if clan == &"plektor" else &"plektor")
+	# эталон — замер JS: ход тяжёлых без множителей GТ (JS_MOVE в tests/case.gd)
+	var b := _lab(clan, &"troyden" if clan == &"plektor" else &"plektor", {}, Defs.load_default(JS_MOVE) as Defs)
 	var s := _put(b, Ship.ATTACKER, id, Vector2.ZERO)
 	s.set_yaw(0.0)
 	var r0 := s.range0() * 0.68
@@ -572,7 +573,7 @@ func test_c100_unarmed_hold_position() -> void:
 ## 0,92 R — подходит на 0,8 R; ближе мёртвой зоны — отходит от неё (без поводка) и бьёт
 ## батареей; «Держать» — стоит всегда (сам не отходит). Откат --legacy-approach — подход
 ## «на 0,68 R», как в JS: к цели в 700 уходит на 530.
-func _heavy_focus_case(legacy: bool, stance: StringName, dist: float) -> Dictionary:
+func _heavy_focus_case(legacy: bool, stance: StringName, dist: float, secs: float = 15.0) -> Dictionary:
 	var b := _lab(&"troyden", &"plektor", {"legacy_approach": legacy})
 	var tc := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))
 	tc.stance = stance
@@ -580,7 +581,7 @@ func _heavy_focus_case(legacy: bool, stance: StringName, dist: float) -> Diction
 	tc.max_hp = BIG
 	var pc := _dummy(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -dist)))
 	b.queue({"op": &"focus", "ids": [tc.uid], "target": pc.uid})
-	var log := _log(b, 15.0)
+	var log := _log(b, secs)
 	var out := {"moved": tc.pos.length(), "d": tc.pos.distance_to(pc.pos), "sec": _shots(log, &"sec", tc.uid).size()}
 	b.dispose()
 	return out
@@ -591,7 +592,7 @@ func test_heavy_focus_takes_belt() -> void:
 	for st: StringName in [&"guard", &"hunt"]:
 		var inb := _heavy_focus_case(false, st, 700.0)
 		ok(num(inb["moved"]) < 0.5, "фокус на цель в поясе (700, %s): стоит — сдвиг %.2f" % [st, num(inb["moved"])])
-		var fa := _heavy_focus_case(false, st, 1100.0)
+		var fa := _heavy_focus_case(false, st, 1100.0, 30.0)     # с пакета GТ крейсер идёт × 0,6: 15 с мало
 		ok(num(fa["d"]) <= 0.92 * r and num(fa["d"]) >= 0.75 * r, "фокус на цель в 1100 (%s): вышел на дистанцию — до цели %.0f (0,8 R = 624)" % [st, num(fa["d"])])
 		var dz := _heavy_focus_case(false, st, 200.0)
 		ok(num(dz["d"]) >= 0.5 * r - 10.0, "фокус на цель в мёртвой зоне (200, %s): отошёл задним ходом до %.0f (0,5 R = 390)" % [st, num(dz["d"])])
@@ -640,7 +641,7 @@ func _hunt_lead_case(rollback: bool) -> Dictionary:
 	b.step()
 	var lead_ok := car.guard_of == cru and cor.guard_of == null
 	b.queue({"op": &"move", "ids": [cru.uid], "x": 600.0, "z": 0.0})
-	_steps(b, 30.0)
+	_steps(b, 50.0)                                 # с пакета GТ флагман идёт × 0,6: за 30 с — 488
 	var out := {"lead": lead_ok, "gap": car.pos.distance_to(cru.pos), "lead_moved": cru.pos.distance_to(Vector2.ZERO),
 		"ring": cru.hull + car.hull + Battle.LEAD_PAD}
 	b.dispose()

@@ -131,6 +131,12 @@ var thrust_rev := 0.0        # доля тяги против носа (реве
 ## — доля от выбитых; в срезе его трогает только проверка «двигатели × 0,5»: разгон
 ## и тормозной путь обязаны меняться вместе, потому что оба берут thrust().
 var engine_k := 1.0
+## Тяжёлые на ходу (09, 2.11; пакет GТ): множители класса — скорость, тяга, разворот (Defs.move_k:
+## у флагмана, крейсера, «Синхо» и носителя — heavy.* доктрины, у лёгких и станции — 1). Ставит
+## Battle.spawn. Читают их ТОЛЬКО функции ниже: тормозной путь берёт ту же thrust(), что разгон.
+var speed_k := 1.0
+var thrust_k := 1.0
+var turn_k := 1.0
 
 ## Ангар носителя и станции (04, 2.2): места, постройка, поднятые звенья; null — нет.
 ## Отдельной частью корабля, а не флагами (04, 7.4: потом выбитый ангар — меньше bays).
@@ -159,15 +165,15 @@ func switch_off(node: StringName, until: float) -> void:
 # ── свойства функциями (09, 10.3) ──
 
 func thrust() -> float:
-	return def.thrust * engine_k
+	return def.thrust * thrust_k * engine_k
 
 
 func turn() -> float:
-	return def.turn * engine_k
+	return def.turn * turn_k * engine_k
 
 
 func max_speed() -> float:
-	return def.max_speed
+	return def.max_speed * speed_k
 
 
 func armor_toward(_from_dir: Vector2) -> float:

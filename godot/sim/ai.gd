@@ -276,6 +276,12 @@ func _line(b: State, leaderless_ok: bool) -> Array:
 	if step.length() > d.line_shift_max:
 		step = step * (d.line_shift_max / step.length())
 	var p := sd.line_p + step
+	# мёртвая зона места (5.6; пакет GТ): желаемое место ближе line.shift_dead к нынешнему и ось
+	# повернуть меньше чем на line.turn_dead_deg — место не трогать вовсе. Иначе линия «дышала» за
+	# каждым шагом противника на 10–30 единиц, и тяжёлые переставлялись на каждом тике
+	if (f - want_ax * want_back).distance_to(sd.line_p) < d.line_shift_dead and sd.line_ax.dot(want_ax) >= _cos_sin(deg_to_rad(d.line_turn_dead_deg)).x:
+		ax = sd.line_ax
+		p = sd.line_p
 	# P не убегает вперёд своей линии тяжёлых дальше line.lead_max (найдено стендом G4: P
 	# считается от чужих тяжёлых, которые ещё в пути, и P обеих сторон съезжались до 300 —
 	# шеренги лёгких проходили сквозь друг друга). ТОЛЬКО ВПЕРЁД: если свои отошли, P на месте

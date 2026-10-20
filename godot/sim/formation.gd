@@ -366,11 +366,11 @@ static func _fit(list: Array[Member], width: float, extra: float) -> int:
 ## Места стороны на старте (09, 5.5): та же places() от линии старта ±deploy.heavy_z, ось —
 ## на противника; предел ширины — по чужой линии старта. → [id, Vector2(x, z)] по порядку
 ## расстановки. sign_z: +1 — атакующий (z > 0), −1 — защитник.
-static func start_places(defs: Defs, clan: StringName, ids: Array[StringName], sign_z: float, foe_ids: Array[StringName] = [], foe_clan: StringName = &"", ecm_01l: bool = false) -> Array:
+static func start_places(defs: Defs, clan: StringName, ids: Array[StringName], sign_z: float, foe_ids: Array[StringName] = [], foe_clan: StringName = &"", ecm_01l: bool = false, line_z: float = -1.0) -> Array:
 	var members := members_of(defs, clan, ids)
 	var spec := Spec.new()
 	spec.ecm_01l = ecm_01l
-	spec.p = Vector2(0.0, sign_z * defs.doctrine.deploy_heavy_z)
+	spec.p = Vector2(0.0, sign_z * (defs.doctrine.deploy_heavy_z if line_z < 0.0 else line_z))
 	spec.ax = Vector2(0.0, -sign_z)
 	spec.by_pos = false
 	if not foe_ids.is_empty():
@@ -412,9 +412,10 @@ static func members_from(ships: Array[Ship]) -> Array[Member]:
 	return out
 
 
-## Станция защитника — на deploy.station_back позади его линии старта (09, 5.5).
-static func station_place(defs: Defs, sign_z: float) -> Vector2:
-	return Vector2(0.0, sign_z * (defs.doctrine.deploy_heavy_z + defs.doctrine.deploy_station_back))
+## Станция защитника — на deploy.station_back позади его линии старта (09, 5.5); line_z — своя
+## линия старта («Стол» отдаёт свою), по умолчанию deploy.heavy_z.
+static func station_place(defs: Defs, sign_z: float, line_z: float = -1.0) -> Vector2:
+	return Vector2(0.0, sign_z * ((defs.doctrine.deploy_heavy_z if line_z < 0.0 else line_z) + defs.doctrine.deploy_station_back))
 
 
 ## Линия стороны (09, 5.1): центр её тяжёлых в строю — живых, без станции, не копящих

@@ -376,6 +376,8 @@ class Doctrine:
 	var line_rear: float
 	var line_shift_max: float
 	var line_turn_max_deg: float
+	var line_shift_dead: float          # мёртвая зона места линии ИИ: сдвиг меньше — не трогать (GТ)
+	var line_turn_dead_deg: float       # …и поворот оси меньше этого
 	var line_lead_max: float            # P не впереди своей линии тяжёлых дальше (только вперёд)
 	var line_edge: float                # P не ближе к краю поля (ref retreat.edge)
 	var line_light_rank2: String        # правило словами: второй лёгкой шеренги нет (was — откат)
@@ -384,6 +386,10 @@ class Doctrine:
 	var reinforce_exit_pad: float       # точка выхода подкрепления: место + тормозной путь + запас
 	var reinforce_exit_edge: float      # точка выхода не ближе к краю поля (ref retreat.edge)
 	var hyper_exit_free_max_s: float    # окно после выхода из гипера — не дольше (вопрос 1 части 02)
+	var heavy_speed_k: float            # тяжёлые на ходу (09, 2.11; пакет GТ): предел скорости ×
+	var heavy_thrust_k: float           # …тяга (разгон и тормозной путь — одной дверью thrust())
+	var heavy_turn_k: float             # …разворот
+	var heavy_settle: float             # порог «не дёргаться»: участок ближе — тяжёлый стоит
 	var deploy_heavy_z: float
 	var deploy_station_back: float
 	var deploy_carrier_lat: float
@@ -424,7 +430,7 @@ class Doctrine:
 	var camera_dist_max: float
 	var camera_dist_start: float
 	var camera_dist_work: float
-	var camera_start_look_z: float
+	var camera_start_ahead: float       # точка взгляда на старте — впереди своей линии старта
 	var camera_edge_speed_k: float
 	var camera_wheel_step: float
 	var camera_rotate_speed: float
@@ -479,6 +485,16 @@ func dmg_mult(key: StringName, cls_i: int) -> float:
 	if row.is_empty() or cls_i < 0 or cls_i >= row.size():
 		return 1.0
 	return row[cls_i]
+
+
+## Множители хода корабля (09, 2.11; пакет GТ): [скорость, тяга, разворот]. Тяжёлые — классы
+## capital и carrier (флагман, крейсер, «Синхо», носитель) — числа heavy.* доктрины; станция не
+## двигается, лёгкие — как в выгрузке (1). Ставит Battle.spawn, читают ТОЛЬКО функции корабля
+## thrust() / turn() / max_speed(): разгон и тормозной путь — от одной тяги (09, 9.5 п. 4).
+func move_k(def: ShipDef) -> PackedFloat64Array:
+	if def.station or not (def.cls == &"capital" or def.cls == &"carrier"):
+		return PackedFloat64Array([1.0, 1.0, 1.0])
+	return PackedFloat64Array([doctrine.heavy_speed_k, doctrine.heavy_thrust_k, doctrine.heavy_turn_k])
 
 
 func ship(clan: StringName, id: StringName) -> ShipDef:

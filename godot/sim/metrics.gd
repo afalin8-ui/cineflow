@@ -124,15 +124,17 @@ var m10_self := 0
 ## сторон съезжались до 300 — шеренги лёгких проходили сквозь друг друга (найдено стендом G4).
 var p_min := INF
 ## М16 «суета» тяжёлых (пакет GТ; отзыв о capella-v0.6: «большие корабли слишком быстрые
-## и активно маневрируют»): путь тяжёлых за фазу «бой», развороты хода вдоль оси своей стороны
-## (вперёд ↔ назад: подход, отход, место линии) и доля тяжёлый-секунд в движении ПОСЛЕ того, как
-## тяжёлый впервые вышел на дистанцию (цель главного калибра в поясе). Знак хода по uid — для
-## разворотов; кто уже выходил на дистанцию — для доли.
+## и активно маневрируют»). Считается у каждого тяжёлого ПОСЛЕ выхода на дистанцию — с первого шага
+## в состоянии «держит дистанцию» (марш и подход к поясу — не суета, это сход строёв): путь,
+## развороты хода вдоль оси своей стороны (вперёд ↔ назад: подход, отход, место линии), сколько
+## раз трогался с места и доля времени в движении. Знак хода и «двигался ли» — по uid.
+var m16_set_s := 0.0
 var m16_path := 0.0
 var m16_flips := 0
-var m16_dir: Dictionary[int, int] = {}
-var m16_set_s := 0.0
+var m16_starts := 0
 var m16_move_s := 0.0
+var m16_dir: Dictionary[int, int] = {}
+var m16_moving: Dictionary[int, bool] = {}
 var m16_settled: Dictionary[int, bool] = {}
 
 ## М3: ни одного шага L < 360, пока у обеих сторон есть линия (09, 8.2).
@@ -151,10 +153,22 @@ const M9_HEAVY := 360.0
 const M16_V := 3.0
 
 
-## М16 за шаг: тяжёлый в фазе «бой» — скорость, ход вдоль оси своей стороны, в поясе ли.
-func sample_fuss(uid: int, vel: Vector2, ax: Vector2, in_belt: bool, dt: float) -> void:
+## М16 за шаг: тяжёлый в фазе «бой» — скорость, ход вдоль оси своей стороны и держит ли он
+## дистанцию на этом шаге (с первого такого шага он «вышел на дистанцию»).
+func sample_fuss(uid: int, vel: Vector2, ax: Vector2, holds: bool, dt: float) -> void:
+	if holds:
+		m16_settled[uid] = true
+	if not m16_settled.has(uid):
+		return
 	var sp := vel.length()
+	m16_set_s += dt
 	m16_path += sp * dt
+	var mv := sp > M16_V
+	if mv:
+		m16_move_s += dt
+		if not m16_moving.get(uid, false):
+			m16_starts += 1
+	m16_moving[uid] = mv
 	var along := vel.dot(ax)
 	var dirn := 1 if along > M16_V else (-1 if along < -M16_V else 0)
 	if dirn != 0:
@@ -162,12 +176,6 @@ func sample_fuss(uid: int, vel: Vector2, ax: Vector2, in_belt: bool, dt: float) 
 		if prev != 0 and prev != dirn:
 			m16_flips += 1
 		m16_dir[uid] = dirn
-	if in_belt:
-		m16_settled[uid] = true
-	if m16_settled.has(uid):
-		m16_set_s += dt
-		if sp > M16_V:
-			m16_move_s += dt
 
 
 func book(side: int, key: StringName, cls_i: int, dealt: float) -> void:
@@ -369,8 +377,10 @@ func lines_summary() -> Dictionary:
 		"m10_self": m10_self, "p_min": p_min if p_min < INF else -1.0,
 		"first_hit": first_hit, "first_gun": first_gun,
 		"m11_gap": max_gap, "m12_jam": share(m12_jam_s, heavy_s),
-		# М16 (пакет GТ): путь и развороты — на тяжёлый-минуту фазы «бой»; доля в движении
-		"m16_path": m16_path * 60.0 / heavy_s if heavy_s > 0.0 else -1.0,
-		"m16_flips": float(m16_flips) * 60.0 / heavy_s if heavy_s > 0.0 else -1.0,
+		# М16 (пакет GТ): после выхода на дистанцию — путь, развороты хода и «тронулся с места» на
+		# тяжёлый-минуту, доля времени в движении
+		"m16_path": m16_path * 60.0 / m16_set_s if m16_set_s > 0.0 else -1.0,
+		"m16_flips": float(m16_flips) * 60.0 / m16_set_s if m16_set_s > 0.0 else -1.0,
+		"m16_starts": float(m16_starts) * 60.0 / m16_set_s if m16_set_s > 0.0 else -1.0,
 		"m16_move": share(m16_move_s, m16_set_s),
 	}

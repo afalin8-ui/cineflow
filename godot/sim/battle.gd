@@ -326,6 +326,10 @@ func spawn(side: int, def: Defs.ShipDef, pos: Vector2) -> Ship:
 	s.cls_i = def.cls_i
 	s.hit_r = def.radius                                 # радиус КЛАССА, не модели (01, ловушка 8)
 	s.armor = def.armor
+	var mk := defs.move_k(def)                           # тяжёлые на ходу (09, 2.11; пакет GТ)
+	s.speed_k = mk[0]
+	s.thrust_k = mk[1]
+	s.turn_k = mk[2]
 	if def.hangar > 0:
 		s.hangar = Hangar.make(def.hangar)              # ангар (04, 2.2): носитель и станция
 	var c := defs.consts
@@ -633,7 +637,7 @@ func _sample_lines() -> void:
 			var in_belt := t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0
 			if in_belt:
 				m.m1_s += STEP
-			m.sample_fuss(s.uid, s.vel, sd.ax, in_belt, STEP)    # М16 «суета» (пакет GТ)
+			m.sample_fuss(s.uid, s.vel, sd.ax, s.belt == HeavyDoctrine.BELT, STEP)    # М16 «суета» (пакет GТ)
 			# ближайший чужой — из снимка начала шага (sim/space.gd: тот же проход пар, что
 			# расталкивание), а не перебором объектов (godot/CLAUDE.md, 3). Сдвиг на шаг — доли
 			# единицы; видимость в срезе — «да» всегда (sim/vision.gd), появится скрытность —
@@ -1000,7 +1004,7 @@ func _place_arrivals(side: int, got: Array[Ship]) -> void:
 			continue
 		var place := out.at[k] if out.band[k] != Formation.NONE else spec.p
 		s.anchor = place
-		var v := s.def.max_speed * c.reinforce_drop_exit_speed_k
+		var v := s.max_speed() * c.reinforce_drop_exit_speed_k       # одна дверь хода (09, 2.11)
 		var u := spec.ax.normalized()
 		if not rollback_drop_at_edge:
 			# тормозной путь — от той же thrust(), что разгон (09, 9.5 п. 4); тормозят против носа

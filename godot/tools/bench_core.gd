@@ -211,7 +211,7 @@ static func main(defs: Defs, args: PackedStringArray, build: String) -> int:
 static func summary(reps: Array[Dictionary]) -> Dictionary:
 	var keys := ["m1", "m2", "m2_ep_med", "m3_med", "m3_med_k", "m3_p5", "m3_short", "m4", "m4_back", "m6", "m6_ep_med",
 		"m6_back", "m6_rear", "m6_edge", "m9_entries", "m9_heavy", "m10_heavy", "m10_corvette", "m10_frigate", "m10_self", "p_min", "first_gun", "first_hit", "len",
-		"m11_gap", "m12_jam", "jam_block", "m16_path", "m16_flips", "m16_move"]
+		"m11_gap", "m12_jam", "jam_block", "m16_path", "m16_flips", "m16_starts", "m16_move"]
 	var out := {"n": reps.size()}
 	var wins := PackedInt32Array([0, 0, 0])
 	for r in reps:

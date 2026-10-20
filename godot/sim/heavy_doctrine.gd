@@ -177,7 +177,10 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 		var d := s.pos.distance_to(t.pos)
 		var leash := _leashed(s)
 		var going := s.belt == APPROACH and d > dc.belt_work_k * r + ARRIVED
-		if (d > dc.belt_far_k * r or going) and clear and not rollback_g2_stand:
+		# «не дёргаться» и у пояса (2.11; пакет GТ): тяжёлый, который уже ДЕРЖИТ дистанцию, трогается
+		# к цели, только если она ушла дальше 0,92 R ещё на heavy.settle (цель в дальности — бьёт с места)
+		var far := dc.belt_far_k * r + (dc.heavy_settle if s.belt == BELT else 0.0)
+		if (d > far or going) and clear and not rollback_g2_stand:
 			desired = _approach(b, s, t, r, vmax, leash, near_d)
 			if desired != Vector2.ZERO:
 				st = APPROACH
@@ -187,7 +190,7 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 			st = BLOCKED                 # путь закрыт: дальних бьёт, когда подойдут (2.1)
 		else:
 			st = BELT
-		if (st == BELT or st == BLOCKED) and leash and s.pos.distance_to(s.anchor) > leash_r(b, s, r) and clear:
+		if (st == BELT or st == BLOCKED) and leash and s.pos.distance_to(s.anchor) > leash_r(b, s, r) + _settle(b, s) and clear:
 			# пояс держит в поводке: участок уехал дальше поводка — к краю поводка (5.6)
 			var rel := s.pos - s.anchor
 			desired = _cap(Movement.arrive(s, s.anchor + rel.normalized() * leash_r(b, s, r), vmax, p.rev, p.brake_k), _foe_brake(b, s, r, near_d, vmax))
@@ -198,7 +201,7 @@ static func update(b: State, s: Ship, push: Vector2, dt: float) -> void:
 			st = MOVE
 		else:
 			st = BLOCKED if not clear else IDLE
-	elif s.stance == &"guard" and s.pos.distance_to(s.anchor) > Movement.ANCHOR_SLOP and clear:
+	elif s.stance == &"guard" and s.pos.distance_to(s.anchor) > Movement.ANCHOR_SLOP + _settle(b, s) and clear:
 		desired = _cap(Movement.arrive(s, s.anchor, vmax, p.rev, p.brake_k), _foe_brake(b, s, r, near_d, vmax))
 		st = MOVE
 	if st == IDLE and futile_close:
@@ -268,6 +271,13 @@ static func _move_target(b: State, s: Ship) -> Ship:
 	if t != null and not t.dead:
 		return t
 	return null
+
+
+## Порог «не дёргаться» (09, 2.11; пакет GТ): стоящий тяжёлый трогается к участку (или к краю
+## поводка), только если тот ушёл дальше heavy.settle; пошёл («идёт», MOVE) — идёт до прихода, а не до
+## порога: иначе он вставал бы в 40 от места и трогался снова на следующем сдвиге.
+static func _settle(b: State, s: Ship) -> float:
+	return 0.0 if s.belt == MOVE else b.defs.doctrine.heavy_settle
 
 
 ## «Охрана» без фокуса и без атаки с ходу — пояс держится в поводке (2.6, п. 3). У фокуса

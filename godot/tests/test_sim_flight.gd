@@ -84,13 +84,17 @@ func _brake(b: Battle, s: Ship) -> float:
 
 # ───────────────────────── таблица 2.22: приход и торможение ─────────────────────────
 
+## Эталоны — замеры JS: тяжёлые здесь идут без множителей хода GТ (JS_MOVE), лёгкие — в бою как
+## есть (множители их не касаются, и это тоже проверка: таблица у лёгких та же до 0,003 с).
 func test_arrival_table_2_22() -> void:
 	var d := _defs()
+	var js := Defs.load_default(JS_MOVE) as Defs
 	var worst_dt := 0.0
 	for id in CLASSES:
 		var refs: Array = ARRIVE_REF[id]
+		var dd := js if d.ship(_clan(id), id).cls != &"escort" else d
 		for k in 3:
-			var b := _lab(_clan(id))
+			var b := _lab(_clan(id), 7, dd)
 			var s := _one(b, id)
 			var r := _go(b, s, GOALS[k])
 			var t: float = r["t"]
@@ -102,7 +106,7 @@ func test_arrival_table_2_22() -> void:
 			ok(over <= 1e-6, "%s %s: перелёт %.3f (ждали 0)" % [id, ["вперёд 600", "вбок 400", "назад 600"][k], over])
 			ok(near_d < 2.0, "%s: встал ближе 2 к точке (%.2f)" % [id, near_d])
 			b.dispose()
-		var b2 := _lab(_clan(id))
+		var b2 := _lab(_clan(id), 7, dd)
 		var path := _brake(b2, _one(b2, id))
 		var bref: float = BRAKE_REF[id]
 		ok(absf(path - bref) <= bref * 0.02, "%s: тормозной путь %.1f, в JS %.1f (±2%%)" % [id, path, bref])
@@ -121,25 +125,34 @@ func test_arrival_table_2_22() -> void:
 
 ## Двигатели × 0,5 (09, 10.4; 09, 9.5 п. 4): разгон и тормозной путь меняются вместе,
 ## перелёта нет. Откат — тормоз от тяги из таблицы, а не от thrust() корабля.
+## С пакета GТ сравнение — с ЦЕЛЫМИ двигателями в том же бою (а не с эталоном JS): у тяжёлых
+## тяга и предел хода уже × 0,6, и выбитые двигатели ложатся на них той же дверью (thrust()).
 func test_engines_half_move_together() -> void:
 	for id: StringName in [&"corvette", &"cruiser", &"capital"]:
+		var b0 := _lab()
+		var full := _go(b0, _one(b0, id), GOALS[0], 200.0)
+		var t_full: float = full["t"]
+		b0.dispose()
 		var b := _lab()
 		var s := _one(b, id)
 		s.engine_k = 0.5
 		var r := _go(b, s, GOALS[0], 200.0)
 		var over: float = r["over"]
 		var t: float = r["t"]
-		var refs: Array = ARRIVE_REF[id]
-		var t_full: float = refs[0]
-		ok(t > t_full * 1.2, "%s, двигатели × 0,5: приход дольше (%.2f против %.2f)" % [id, t, t_full])
+		# приход дольше хотя бы на десятую: с пакета GТ у тяжёлых и разгон, и предел хода × 0,6, путь
+		# на разгон и торможение — меньшая доля от 600, и выбитые двигатели удлиняют приход меньше
+		# (крейсер 35,6 против 30,9 с — × 1,15; до GТ проверка ждала × 1,2 против эталона JS)
+		ok(t > t_full * 1.1, "%s, двигатели × 0,5: приход дольше (%.2f против %.2f с целыми)" % [id, t, t_full])
 		ok(over <= 1e-6, "%s, двигатели × 0,5: перелёта нет (%.3f)" % [id, over])
 		b.dispose()
+		var b1 := _lab()
+		var bref := _brake(b1, _one(b1, id))
+		b1.dispose()
 		var b2 := _lab()
 		var s2 := _one(b2, id)
 		s2.engine_k = 0.5
 		var path := _brake(b2, s2)
-		var bref: float = BRAKE_REF[id]
-		ok(absf(path / bref - 2.0) <= 0.04, "%s, двигатели × 0,5: тормозной путь вдвое (%.1f против %.1f)" % [id, path, bref])
+		ok(absf(path / bref - 2.0) <= 0.04, "%s, двигатели × 0,5: тормозной путь вдвое (%.1f против %.1f с целыми)" % [id, path, bref])
 		b2.dispose()
 	Movement.rollback_brake_table = true
 	var bo := _lab()
@@ -453,9 +466,11 @@ func test_exit_from_hyper_no_jump() -> void:
 		ok(not flag(r["capped"]), "%s: после окна скорость не выше 1,25 × maxSpeed" % clan)
 		note("%s: выход — наибольший скачок %.2f за шаг; окно до %.1f с" % [clan, num(r["jump"]), num(r["window"])])
 	# откат «ровно 6 с» (как в JS): у тяжёлых скорость срезается скачком (крейсер 65,3 → 47,3)
+	# с пакета GТ ход тяжёлых × 0,6, и скачок в откате меньше (крейсер 37,8 → 28,5 вместо 65,3 → 47,3);
+	# откат краснеет той же границей, что держит правило, — больше 2 за шаг
 	var d6 := Defs.load_default({"hyper.exit_free_max_s": 6.0}) as Defs
 	var r6 := _exit_run(d6, &"troyden", troy)
-	ok(num(r6["jump"]) > 10.0, "откат «окно ровно 6 с»: скачок %.1f за шаг (%s) — проверка краснеет" % [num(r6["jump"]), str(r6["who"])])
+	ok(num(r6["jump"]) > 2.0, "откат «окно ровно 6 с»: скачок %.1f за шаг (%s) — проверка краснеет" % [num(r6["jump"]), str(r6["who"])])
 
 
 ## Куда идут прибывшие (09, 5.5; план G4, п. 8): каждый — на СВОЁ место в строю от
@@ -937,7 +952,10 @@ func test_move_group_slowest_and_layout() -> void:
 	var bad := march_layout_problems(r)
 	ok(bad.is_empty(), "ПКМ по полю: строй по ролям у точки — %s" % ("; ".join(bad) if not bad.is_empty() else "корвет %.0f впереди (0,35 L), тяжёлые на линии через точку, между ними %.0f (hull + hull %.0f)" % [num(r["corv"]), num(r["heavy_gap"]), num(r["need"])]))
 	ok(num(r["fastest"]) <= num(r["slow"]) + 0.5, "корвет в строю не быстрее самого медленного: %.1f при %.1f (ловушка 6 части 02)" % [num(r["fastest"]), num(r["slow"])])
-	ok(flag(r["all"]) and num(r["spread"]) < 8.0, "строй пришёл вместе: разброс прихода %.1f с" % num(r["spread"]))
+	# «вместе» — в пути строя: разброс прихода × скорость строя (самого медленного). До пакета GТ было
+	# «меньше 8 с» при флагмане 30 — это 240; с GТ флагман идёт 18 (× 0,6), и те же места дают
+	# больше секунд, а в пути — столько же
+	ok(flag(r["all"]) and num(r["spread"]) * num(r["slow"]) < 240.0, "строй пришёл вместе: разброс прихода %.1f с — %.0f пути строя (меньше 240)" % [num(r["spread"]), num(r["spread"]) * num(r["slow"])])
 	note("ПКМ по полю: корвет %.0f впереди, тяжёлые через %.0f, приход разошёлся на %.1f с" % [num(r["corv"]), num(r["heavy_gap"]), num(r["spread"])])
 	var own := _march(true, false)
 	ok(num(own["fastest"]) > num(own["slow"]) * 1.3, "откат «каждый своей скоростью»: корвет %.1f при самом медленном %.1f — проверка краснеет" % [num(own["fastest"]), num(own["slow"])])

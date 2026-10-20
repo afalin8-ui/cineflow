@@ -744,14 +744,14 @@ func test_patrol_band_craft() -> void:
 ## звеном к чужой линии), &"sticks" (цель-корабль прилипает — машина не важнее лёгкого).
 ## → по зерну: «висело» (с прихода к точке патруля до первой цели, с), доли оси гибели,
 ## машино-шаги с целью-машиной (и сколько из них на своей половине), с целью-кораблём.
-func _polygon_place(launch_s: float, mode: StringName) -> Array[Dictionary]:
+func _polygon_place(launch_s: float, mode: StringName, win: float = 40.0, d: Defs = null) -> Array[Dictionary]:
 	Air.rollback_patrol_any_craft = mode == &"any_craft"
 	Air.rollback_patrol_ship_sticks = mode == &"sticks"
 	var out: Array[Dictionary] = []
 	for sd: int in [Polygon.SEED, 2, 3]:
 		var st := Polygon.setup_dict(sd)
 		st["patrol_mid"] = mode == &"patrol_mid"
-		var b := Battle.create(_defs(), st) as Battle
+		var b := Battle.create(d if d != null else _defs(), st) as Battle
 		var car: Ship = null
 		for s in b.ships:
 			if s.side == Ship.ATTACKER and s.hangar != null and not s.station and car == null:
@@ -764,7 +764,7 @@ func _polygon_place(launch_s: float, mode: StringName) -> Array[Dictionary]:
 		var on_craft := 0
 		var own_half := 0
 		var on_ship := 0
-		for i in roundi((launch_s + 40.0) / Battle.STEP):
+		for i in roundi((launch_s + win) / Battle.STEP):
 			if b.steps == roundi(launch_s / Battle.STEP):
 				for role: StringName in [&"interceptor", &"fighter", &"bomber"]:
 					b.queue({"op": &"launch", "ids": PackedInt32Array([car.uid]), "role": role})
@@ -825,33 +825,41 @@ static func _deep_share(r: Dictionary) -> float:
 	return float(n) / maxf(float(ds.size()), 1.0)
 
 
-## Пуск на первой секунде: звено висит над своей линией (6–8 с), пока к ней не подошли чужие
-## корветы, и гибнет на СВОЕЙ половине (доля оси < 0,5). Откат «машина ≤ 1000 от самой машины»
-## — первая цель через 2,4 с после прихода, чужой перехватчик за чужой линией (доля 1,12),
-## 80–100% гибелей у чужого строя.
+## Пуск на первой секунде: звено висит над своей линией, пока к ней никто не подошёл, и воюет на
+## СВОЕЙ половине (доля оси < 0,5): цели-машины бьёт там и гибнет — если гибнет — там же.
+## С пакета GТ бой медленнее: первые чужие звенья подходят к нашей линии к 31-й секунде (было
+## к 8–12-й), звено висит ~25 с и за 70 с не теряет ни машины. Поэтому окно — 70 с, а мерило
+## «где воюет» — доля машино-шагов с целью-машиной на своей половине (≥ 0,9) и доли оси гибелей.
+## Откаты: «--patrol-mid» — гибель у чужого строя (доля 0,63–0,72) на всех трёх зёрнах; «машина
+## ≤ 1000 от самой машины» (как в 0.4.1) — первая цель через 10 с после прихода, за чужими
+## звеньями к чужой линии: 80% машино-шагов на чужой половине, гибель на долях 1,04–1,73.
 func test_interceptor_place_in_polygon() -> void:
-	for r in _polygon_place(1.0, &"ok"):
-		note("«Полигон», пуск на 1 с, зерно %d: у точки патруля с %.1f с, первая цель на %.1f с (висело %.1f с), гибель на долях оси [%s]; по машинам %d, по кораблям %d" % [whole(r["seed"]), num(r["arrived"]), num(r["first"]), num(r["hang"]), _deaths_text(r), whole(r["craft"]), whole(r["ship"])])
+	for r in _polygon_place(1.0, &"ok", 70.0):
+		note("«Полигон», пуск на 1 с, зерно %d: у точки патруля с %.1f с, первая цель на %.1f с (висело %.1f с), гибель на долях оси [%s]; по машинам %d (на своей половине %d), по кораблям %d" % [whole(r["seed"]), num(r["arrived"]), num(r["first"]), num(r["hang"]), _deaths_text(r), whole(r["craft"]), whole(r["own"]), whole(r["ship"])])
 		ok(num(r["hang"]) >= 4.0, "зерно %d: перехватчики висят над своей линией %.1f с, пока к ней никто не подошёл" % [whole(r["seed"]), num(r["hang"])])
-		var ds: PackedFloat64Array = r["deaths"]
-		ok(ds.size() >= 3 and _deep_share(r) == 0.0, "зерно %d: звено воюет на своей половине — все %d гибелей на доле оси < 0,5 [%s]" % [whole(r["seed"]), ds.size(), _deaths_text(r)])
+		ok(_own_ok(r), "зерно %d: звено воюет на своей половине — по машинам %d шагов, из них на своей половине %d; гибели на долях оси < 0,5 [%s]" % [whole(r["seed"]), whole(r["craft"]), whole(r["own"]), _deaths_text(r)])
 	# флажок --patrol-mid (09, 8.4; хвост G3: свою беду он обязан показывать и на составе
-	# «Полигона», а не только в лаборатории): патруль посередине. Звено над своей линией не висит ни секунды — по пути
-	# к середине оно встречает чужих и ввязывается — и часть его гибнет у чужого строя (доля
-	# ≥ 0,5). Краснеют ОБЕ проверки выше, на каждом зерне
-	for o in _polygon_place(1.0, &"patrol_mid"):
+	# «Полигона», а не только в лаборатории): патруль посередине — часть звена гибнет у чужого строя
+	for o in _polygon_place(1.0, &"patrol_mid", 70.0):
 		note("откат «--patrol-mid», зерно %d: у точки с %.1f с, висело %.1f с, гибель на долях [%s]" % [whole(o["seed"]), num(o["arrived"]), num(o["hang"]), _deaths_text(o)])
-		ok(num(o["hang"]) < 4.0 and _deep_share(o) > 0.0, "откат «--patrol-mid», зерно %d: над своей линией висело %.1f с, у чужого строя %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), num(o["hang"]), _deep_share(o) * 100.0])
-	for o in _polygon_place(1.0, &"any_craft"):
-		note("откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, гибель на долях [%s]" % [whole(o["seed"]), num(o["hang"]), _deaths_text(o)])
-		ok(num(o["hang"]) < 4.0 and _deep_share(o) >= 0.5, "откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, у чужого строя (доля ≥ 0,5) — %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), num(o["hang"]), _deep_share(o) * 100.0])
+		ok(not _own_ok(o) and _deep_share(o) > 0.0, "откат «--patrol-mid», зерно %d: у чужого строя %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), _deep_share(o) * 100.0])
+	for o in _polygon_place(1.0, &"any_craft", 70.0):
+		note("откат «машина ≤ 1000 от самой машины», зерно %d: висело %.1f с, по машинам %d (на своей половине %d), гибель на долях [%s]" % [whole(o["seed"]), num(o["hang"]), whole(o["craft"]), whole(o["own"]), _deaths_text(o)])
+		ok(not _own_ok(o) and _deep_share(o) >= 0.5, "откат «машина ≤ 1000 от самой машины», зерно %d: у чужого строя (доля ≥ 0,5) — %.0f%% гибелей — проверка краснеет" % [whole(o["seed"]), _deep_share(o) * 100.0])
+
+
+## Звено воюет на своей половине: цель-машину бьёт там (≥ 90% машино-шагов) и ни одна гибель — не
+## на доле оси ≥ 0,5.
+static func _own_ok(r: Dictionary) -> bool:
+	return whole(r["craft"]) > 0 and whole(r["own"]) >= roundi(0.9 * float(whole(r["craft"]))) and _deep_share(r) == 0.0
 
 
 ## Пуск на 20-й секунде, когда к нашей линии подходят чужие бомбардировщики: звено бросается
 ## на чужие звенья (машинам — больше, чем кораблям) и бьёт их на своей половине. Откат
 ## «цель-корабль прилипает»: звено держится за подошедший корвет — кораблям больше.
 func test_interceptor_meets_squads_in_polygon() -> void:
-	for r in _polygon_place(20.0, &"ok"):
+	# с пакета GТ чужие звенья подходят к 31-й секунде — окно 50 с после пуска на 20-й
+	for r in _polygon_place(20.0, &"ok", 50.0):
 		note("«Полигон», пуск на 20 с, зерно %d: по машинам %d шагов (на своей половине %d), по кораблям %d, гибель на долях [%s]" % [whole(r["seed"]), whole(r["craft"]), whole(r["own"]), whole(r["ship"]), _deaths_text(r)])
 		ok(whole(r["craft"]) > whole(r["ship"]), "зерно %d: перехватчики бросаются на чужие звенья — по машинам %d шагов против %d по кораблям" % [whole(r["seed"]), whole(r["craft"]), whole(r["ship"])])
 		ok(whole(r["own"]) >= roundi(0.9 * float(whole(r["craft"]))), "зерно %d: и бьют их на своей половине (%d из %d шагов)" % [whole(r["seed"]), whole(r["own"]), whole(r["craft"])])
@@ -859,8 +867,10 @@ func test_interceptor_meets_squads_in_polygon() -> void:
 	# линии, и корвет в полосу патруля входит не в каждом зерне: на зёрнах 2 и 3 звену
 	# не из чего выбирать, и откат «прилипает» там ничего не ломает (само правило держит
 	# лаборатория test_patrol_band_craft). Краснеть он обязан на зерне «Полигона» — там
-	# корвет входит в полосу, когда к линии подходят чужие звенья
-	for o in _polygon_place(20.0, &"sticks"):
+	# корвет входит в полосу, когда к линии подходят чужие звенья. С пакета GТ — в ПРЕЖНЕМ темпе
+	# (OLD_TEMPO): в новом корвет в полосу патруля к приходу чужих звеньев не входит ни на одном
+	# из трёх зёрен, и откат не меняет ни шага (по машинам 4475 / 3480 / 3415 и с ним, и без)
+	for o in _polygon_place(20.0, &"sticks", 40.0, Defs.load_default(OLD_TEMPO) as Defs):
 		note("откат «цель-корабль прилипает», зерно %d: по машинам %d, по кораблям %d" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
 		if whole(o["seed"]) == Polygon.SEED:
 			ok(whole(o["craft"]) < whole(o["ship"]), "откат «цель-корабль прилипает», зерно «Полигона» %d: по машинам %d против %d по кораблям — проверка краснеет" % [whole(o["seed"]), whole(o["craft"]), whole(o["ship"])])
@@ -1036,13 +1046,13 @@ func test_landing_from_all_sides() -> void:
 ## на 0,35 газа (≈ 25) медленнее уходящего носителя и не садится вовсе. Истребителю
 ## и перехватчику и 0,35 газа хватает (замер: откат на них не краснеет) — правило держит
 ## именно бомбардировщиков. → [не село за 30 с, дольше всего].
-func _land_moving(clan: StringName, role: StringName, no_catch: bool) -> Vector2:
+func _land_moving(clan: StringName, role: StringName, no_catch: bool, d: Defs = null) -> Vector2:
 	Air.rollback_land_no_catch = no_catch
 	var fails := 0
 	var worst := 0.0
 	var other: StringName = &"plektor" if clan != &"plektor" else &"troyden"
 	for k in 8:
-		var b := _lab(clan, other)
+		var b := _lab(clan, other, {}, d)
 		var car := _put(b, Ship.ATTACKER, &"carrier", Vector2(-1600, 900))
 		car.hp = BIG
 		car.max_hp = BIG
@@ -1074,14 +1084,20 @@ func _land_moving(clan: StringName, role: StringName, no_catch: bool) -> Vector2
 	return Vector2(float(fails), worst)
 
 
+## С пакета GТ носитель — тяжёлый и идёт × 0,6: бомбардировщик догоняет его и без LAND_CATCH (откат
+## в новом темпе не краснеет ни у одного клана). Правило не лишнее — оно держит носитель на ходу
+## JS (JS_MOVE, как до GТ), и откат проверяется там; в новом темпе — что V сажает все звенья.
 func test_landing_on_moving_carrier() -> void:
+	var js := Defs.load_default(JS_MOVE) as Defs
 	for clan: StringName in _defs().faction_ids:
 		var role: StringName = &"bomber"
 		var r := _land_moving(clan, role, false)
 		note("посадка %s %s на уходящий носитель с 8 точек: не село %d, дольше всего %.1f с" % [clan, role, roundi(r.x), r.y])
 		ok(roundi(r.x) == 0, "%s, %s: носитель уходит полным ходом — V сажает все звенья (дольше всего %.1f с)" % [clan, role, r.y])
-		var o := _land_moving(clan, role, true)
-		note("откат «без LAND_CATCH», %s %s: не село %d из 8" % [clan, role, roundi(o.x)])
+		var rj := _land_moving(clan, role, false, js)
+		ok(roundi(rj.x) == 0, "%s, %s: носитель уходит полным ходом JS (без × 0,6) — V сажает все звенья (дольше всего %.1f с)" % [clan, role, rj.y])
+		var o := _land_moving(clan, role, true, js)
+		note("откат «без LAND_CATCH», носитель на ходу JS, %s %s: не село %d из 8" % [clan, role, roundi(o.x)])
 		ok(roundi(o.x) > 0, "откат «у дома газ без LAND_CATCH»: %s, %s — за 30 с не село %d из 8, бомбардировщик медленнее уходящего носителя — проверка краснеет" % [clan, role, roundi(o.x)])
 
 
@@ -1145,13 +1161,13 @@ func test_dead_squads_leave_launched() -> void:
 ## СВОИМ звеньям: пуск Z/X/C, фокус своего звена на чужое звено и посадку V (замечание ко
 ## второй проверке G3: на шагах 720 и 900 свои перехватчики и истребители были уже сбиты,
 ## и приказ мёртвому не отдавался вовсе — в журнале их не было). Откат — прежние шаги.
-func _demo_air(late: bool) -> Dictionary:
+func _demo_air(late: bool, d: Defs = null) -> Dictionary:
 	Polygon.rollback_late_air_orders = late
 	var side_of: Dictionary[int, int] = {}
 	var each := func(bb: Battle) -> void:
 		for q in bb.squads:
 			side_of[q.uid] = q.side
-	var b := Polygon.demo_battle(_defs(), "capella-проверка", Polygon.DEMO_STEPS, each)
+	var b := Polygon.demo_battle(d if d != null else _defs(), "capella-проверка", Polygon.DEMO_STEPS, each)
 	var rec := b.record()
 	b.dispose()
 	Polygon.rollback_late_air_orders = false
@@ -1183,8 +1199,10 @@ func test_demo_record_air_orders() -> void:
 	var r := _demo_air(false)
 	note("показательная запись: пусков %d, посадок своих звеньев %d, фокусов своего звена на чужое %d" % [whole(r["launch"]), whole(r["recall"]), whole(r["focus"])])
 	ok(whole(r["launch"]) >= 3 and whole(r["recall"]) >= 1 and whole(r["focus"]) >= 1, "в журнале показательного боя есть пуски (%d), посадка своего звена (%d) и фокус своего звена на чужое (%d)" % [whole(r["launch"]), whole(r["recall"]), whole(r["focus"])])
-	var o := _demo_air(true)
-	ok(whole(o["recall"]) == 0 and whole(o["focus"]) == 0, "откат «прежние шаги 720 и 900»: своих звеньев к ним нет, приказов в журнале ни одного — проверка краснеет")
+	# откат — в прежнем темпе (OLD_TEMPO), где его беда и нашлась: в новом (пакет GТ) бой идёт
+	# медленнее, и к шагам 720 и 900 свои звенья ещё живы — приказы в журнале есть и в откате
+	var o := _demo_air(true, Defs.load_default(OLD_TEMPO) as Defs)
+	ok(whole(o["recall"]) == 0 and whole(o["focus"]) == 0, "откат «прежние шаги 720 и 900» (прежний темп): своих звеньев к ним нет, приказов в журнале ни одного — проверка краснеет")
 
 
 # ───────────────────────── длинный бой: C99 и прочность в каждом шаге ─────────────────────────

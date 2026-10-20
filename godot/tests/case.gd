@@ -5,6 +5,21 @@ extends RefCounted
 
 const Hooks := preload("res://tests/hooks.gd")
 
+## Прежний темп боя (до пакета GТ, capella-v0.7.1) — ЧИСЛАМИ доктрины: расстановка ±650, тяжёлые
+## без множителей хода, место линии без мёртвой зоны и с прежним сдвигом за тик, без «не
+## дёргаться». Все правки GТ — числа doctrine.json, и с этими числами бой совпадает с 0.7.1 ДО БИТА
+## (test_sim_flight → test_old_tempo_same_battle). Проверкам, чей случай нашёлся в прежнем темпе
+## и в новом не возникает (тыловой рубеж, флажки 8.4), — сюда; в новом темпе они меряются отдельно.
+const OLD_TEMPO := {"deploy.heavy_z": 650.0, "heavy.speed_k": 1.0, "heavy.thrust_k": 1.0, "heavy.turn_k": 1.0,
+	"heavy.settle": 0.0, "line.shift_max": 120.0, "line.turn_max_deg": 15.0, "line.shift_dead": 0.0,
+	"line.turn_dead_deg": 0.0}
+
+## Ход как в JS — тяжёлые без множителей хода пакета GТ (heavy.speed_k, thrust_k, turn_k = 1).
+## Эталоны таблиц 2.22 части 02, 2.20 части 03 и тормозного пути — замеры JS-версии, и сверяется с
+## ними ФИЗИКА полёта (thrustTo, arriveSpeed, разворот), а не темп: множители GТ ходят одной дверью
+## (Ship.thrust/turn/max_speed) и проверяются отдельно — tests/test_sim_tempo.gd.
+const JS_MOVE := {"heavy.speed_k": 1.0, "heavy.thrust_k": 1.0, "heavy.turn_k": 1.0}
+
 var tree: SceneTree
 var hooks: Hooks
 var checks := 0
