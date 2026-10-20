@@ -18,6 +18,7 @@ const GroundGun := preload("res://sim/ground_gun.gd")
 const Vision := preload("res://sim/vision.gd")
 const Air := preload("res://sim/air.gd")
 const Hangar := preload("res://sim/hangar.gd")
+const Fmath := preload("res://sim/fmath.gd")
 const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Ai := preload("res://sim/ai.gd")
 
@@ -1356,7 +1357,7 @@ func _cmd_guard(list: Array[Ship], ward: Ship) -> void:
 		var a := float(i) / float(mine.size()) * TAU + GUARD_RING_A0
 		var r := ward.hull + s.hull + GUARD_RING_PAD
 		s.guard_of = ward
-		s.guard_off = Vector2(cos(a) * r, sin(a) * r)
+		s.guard_off = Vector2(Fmath.cos_(a) * r, Fmath.sin_(a) * r)
 		s.anchor = ward.pos + s.guard_off
 		s.stance = &"guard"
 		s.has_move = false
@@ -1408,7 +1409,7 @@ func _set_stance(list: Array[Ship], id: StringName) -> void:
 			wi += 1
 			var r := lead.hull + s.hull + LEAD_PAD
 			s.guard_of = lead
-			s.guard_off = Vector2(cos(a) * r, sin(a) * r)
+			s.guard_off = Vector2(Fmath.cos_(a) * r, Fmath.sin_(a) * r)
 		if id != &"hunt":
 			s.target = null
 		if id == &"hold":

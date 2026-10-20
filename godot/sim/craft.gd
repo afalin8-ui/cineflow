@@ -9,6 +9,7 @@
 extends "res://sim/body.gd"
 
 const Defs := preload("res://sim/defs.gd")
+const Fmath := preload("res://sim/fmath.gd")
 
 var def: Defs.CraftDef
 var role: StringName             # &"interceptor" &"fighter" &"bomber"
@@ -16,6 +17,7 @@ var squad: RefCounted            # своё звено (Squad); кольцо с�
 var slot := 0                    # номер в звене: им разводятся траектории (04, 2.1)
 var yaw := 0.0
 var dir := Vector2(0.0, -1.0)
+var _dir_at := NAN          # курс, для которого посчитан dir (как у Ship)
 
 var cd := 0.0                    # перезарядка оружия: случайный старт 0…cd (04, 2.3)
 var target: RefCounted           # Body: корабль, машина или ракета; «прилипает» (04, 2.6)
@@ -38,7 +40,9 @@ var back := 0
 
 func set_yaw(a: float) -> void:
 	yaw = a
-	dir = Vector2(-sin(a), -cos(a))
+	if a != _dir_at:
+		dir = Fmath.nose(a)     # свои синус и косинус (sim/fmath.gd)
+		_dir_at = a
 
 
 func unlink() -> void:

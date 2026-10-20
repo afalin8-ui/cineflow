@@ -68,6 +68,13 @@ const BANNED := [
 		"объект по строке или номеру — в обход сторожа узлов: str_to_var(\"Object(Node3D…)\") создаёт узел (проверено); взятая как значение (var f := str_to_var) — та же дверь"],
 ]
 
+## Углы библиотеки C (пакет GТ): sin, cos, atan2 и прочие у Linux и Windows разные в последнем бите
+## (Windows-сборка — MinGW, её считает x87), и бой на двух системах расходится; угловые методы
+## Vector2 — float32 и тоже из библиотеки C. В модели их считает sim/fmath.gd — только он и может
+## (за флажком отката). Вызов и значение (var f := sin) — одна дверь.
+const LIBM := "(?<![.\\w])(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|pow|exp|log|cubic_interpolate_angle|lerp_angle|rotate_toward)\\b|\\.\\s*(angle|angle_to|angle_to_point|rotated|from_angle|slerp)\\s*\\("
+const LIBM_HOME := "res://sim/fmath.gd"
+
 ## Классы движка, которые модели НЕ узлы и не ресурсы, но всё равно чужие.
 const EXTRA_BANNED := {
 	"SceneTree": "дерево сцены", "MainLoop": "дерево сцены", "SceneTreeTimer": "дерево сцены",
@@ -331,6 +338,12 @@ static func violations(text: String, foreign: Dictionary = {}, file: String = PR
 			var m := re.search(lines[n])
 			if m != null:
 				out.append("строка %d: «%s» — %s" % [n + 1, m.get_string(), str(pat[1])])
+	if file != LIBM_HOME:
+		var lm := RegEx.create_from_string(LIBM)
+		for n in lines.size():
+			var m := lm.search(lines[n])
+			if m != null:
+				out.append("строка %d: «%s» — углы библиотеки C у Linux и Windows разные в последнем бите, и бой на двух системах расходится; в модели — Fmath (sim/fmath.gd: sin_, cos_, atan2_, nose)" % [n + 1, m.get_string()])
 	var word := RegEx.create_from_string("\\b[A-Z][A-Za-z0-9_]*\\b")
 	for n in lines.size():
 		for m in word.search_all(lines[n]):
@@ -429,6 +442,15 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"	list.sort_custom(func(a: Ship, b: Ship) -> bool: return a.get_instance_id() < b.get_instance_id())": "порядок по номеру объекта",
 		"	var h := hash(s)": "hash объекта — адрес в памяти",
 		"	var c := Crypto.new()": "случайность ОС",
+		# пакет GТ: углы библиотеки C — у Windows-сборки другие (на копии теста без правки — все зелёные)
+		"	dir = Vector2(-sin(a), -cos(a))": "синус и косинус библиотеки C",
+		"	return atan2(-d.x, -d.y)": "арктангенс библиотеки C",
+		"	var f := cos": "косинус как значение",
+		"	var a := v.angle()": "угол Vector2 (float32, библиотека C)",
+		"	var w := d.rotated(0.3)": "поворот Vector2",
+		"	var u := Vector2.from_angle(a)": "вектор по углу",
+		"	var p := pow(x, 1.5)": "степень библиотеки C",
+		"	var e := exp(-t)": "экспонента библиотеки C",
 	}
 	for line: String in dirty:
 		ok(violations(line).size() > 0, "грязная строка поймана (%s): %s" % [dirty[line], line])
@@ -518,8 +540,17 @@ func test_rollback_dirty_text_is_caught() -> void:
 		"var arr: PackedFloat64Array = []",
 		"var ship := ShipDef.new()",
 		"var node_count := 3",
+		"var d := Fmath.nose(a)",
+		"var w := Fmath.atan2_(-v.x, -v.y)",
+		"var cs := _cos_sin(deg_to_rad(10.0))",
+		"var cosine := 1.0",
+		"var exp_k := 2.0",
+		"var s := v.length() + v.angle_x",
 	])
 	ok(violations(clean).is_empty(), "пояснения, строки, своё и rng.randf() — не нарушения: %s" % "; ".join(violations(clean)))
+	# свои углы считает sim/fmath.gd — ему библиотека C можно (за флажком отката), больше никому
+	ok(violations("	return sin(x)", {}, LIBM_HOME).is_empty(), "sin в sim/fmath.gd — не нарушение")
+	ok(violations("	return sin(x)", {}, "res://sim/ship.gd").size() > 0, "sin в sim/ship.gd — нарушение")
 
 
 ## Строгая типизация (архитектура, 10.2 п. 2): все unsafe_* и untyped_declaration —

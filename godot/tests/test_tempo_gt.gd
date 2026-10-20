@@ -14,6 +14,7 @@ const BenchCore := preload("res://tools/bench_core.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
 const MainScript := preload("res://main.gd")
 const Flight := preload("res://tests/test_sim_flight.gd")
+const Fmath := preload("res://sim/fmath.gd")
 
 ## Отпечатки 0.6–0.7.1 (godot/CLAUDE.md, раздел 13): показательный бой «Полигона» и 60 с «ИИ против
 ## ИИ» по выбору меню — те, что `--selftest` печатал до пакета GТ.
@@ -170,20 +171,26 @@ func _fps(d: Defs) -> PackedStringArray:
 	return out
 
 
-## С прежними числами (OLD_TEMPO) показательный бой и «ИИ против ИИ» дают ровно отпечатки 0.7.1: всё,
-## что GТ поменял в бою, — числа doctrine.json (кроме замера М16, который в отпечаток не входит).
-## Откат — прежние числа без одного (heavy.thrust_k оставлен новым): отпечатки другие.
+## С прежними числами (OLD_TEMPO) и углами библиотеки C, как считал 0.7.1 (Fmath.rollback_libm),
+## показательный бой и «ИИ против ИИ» дают ровно отпечатки 0.7.1: всё, что GТ поменял в бою, — числа
+## doctrine.json и свой счёт углов (sim/fmath.gd: у Windows-сборки библиотечные sin, cos и atan2
+## другие, и бой на двух системах расходился). Замер М16 в отпечаток не входит. Откат — прежние
+## числа без одного (heavy.thrust_k оставлен новым): отпечатки другие.
 func test_old_tempo_same_battle() -> void:
+	Fmath.rollback_libm = true
 	var f := _fps(Defs.load_default(OLD_TEMPO) as Defs)
-	note("прежний темп: показательный бой %s, «ИИ против ИИ» %s (0.7.1: %s, %s)" % [f[0], f[1], FP_DEMO_071, FP_AI_071])
-	ok(f[0] == FP_DEMO_071 and f[1] == FP_AI_071, "прежние числа доктрины — бой 0.7.1 до бита: показательный %s, «ИИ» %s" % [f[0], f[1]])
-	var now := _fps(_defs())
-	note("новый темп: показательный бой %s, «ИИ против ИИ» %s" % [now[0], now[1]])
-	ok(now[0] != FP_DEMO_071 and now[1] != FP_AI_071, "новый темп — другой бой (отпечатки %s, %s)" % [now[0], now[1]])
 	var part := OLD_TEMPO.duplicate()
 	part.erase("heavy.thrust_k")
 	var o := _fps(Defs.load_default(part) as Defs)
+	Fmath.rollback_libm = false
+	note("прежний темп, углы библиотеки C: показательный бой %s, «ИИ против ИИ» %s (0.7.1: %s, %s)" % [f[0], f[1], FP_DEMO_071, FP_AI_071])
+	ok(f[0] == FP_DEMO_071 and f[1] == FP_AI_071, "прежние числа доктрины и углы библиотеки C — бой 0.7.1 до бита: показательный %s, «ИИ» %s" % [f[0], f[1]])
 	ok(o[0] != FP_DEMO_071 and o[1] != FP_AI_071, "откат «прежние числа без heavy.thrust_k»: отпечатки %s, %s — проверка краснеет" % [o[0], o[1]])
+	var own := _fps(Defs.load_default(OLD_TEMPO) as Defs)
+	note("прежний темп, свои углы: показательный бой %s, «ИИ против ИИ» %s — другие в последнем бите, как и бой Windows" % [own[0], own[1]])
+	var now := _fps(_defs())
+	note("новый темп: показательный бой %s, «ИИ против ИИ» %s" % [now[0], now[1]])
+	ok(now[0] != FP_DEMO_071 and now[1] != FP_AI_071, "новый темп — другой бой (отпечатки %s, %s)" % [now[0], now[1]])
 
 
 # ───────────────────────── всё влезает в поле (09, 5.5) ─────────────────────────

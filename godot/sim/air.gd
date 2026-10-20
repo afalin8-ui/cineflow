@@ -34,6 +34,7 @@ const Weapons := preload("res://sim/weapons.gd")
 const Hangar := preload("res://sim/hangar.gd")
 const Formation := preload("res://sim/formation.gd")
 const Vision := preload("res://sim/vision.gd")
+const Fmath := preload("res://sim/fmath.gd")
 
 # Числа JS, перенесённые как есть (часть 04, 2.4–2.10); числа доктрины — в doctrine.json.
 const REV := 0.3                    # space.js:1127 thrustTo: против носа машины — 0,3 тяги
@@ -236,7 +237,7 @@ static func fly(b: State, c: Craft, aim: Vector2, throttle: float) -> void:
 	var def := c.def
 	var v := aim - c.pos
 	if v.length_squared() > 1e-8:
-		var want := atan2(-v.x, -v.y)
+		var want := Fmath.atan2_(-v.x, -v.y)    # свой арктангенс: у Windows-сборки другой (sim/fmath.gd)
 		var k := clampf(def.turn * dt, 0.0, 1.0)
 		c.set_yaw(c.yaw + wrapf(want - c.yaw, -PI, PI) * k)
 	var desired := c.dir * (def.max_speed * throttle)
@@ -383,7 +384,7 @@ static func update_craft(b: State, c: Craft) -> void:
 			if pp != null:
 				anchor = pp                   # ДОКТРИНА 09, 4.2: над своей лёгкой линией
 		var ph := b.time * PATROL_W + float(c.slot)
-		fly(b, c, anchor + Vector2(sin(ph), cos(ph)) * PATROL_R, T_PATROL)
+		fly(b, c, anchor + Vector2(Fmath.sin_(ph), Fmath.cos_(ph)) * PATROL_R, T_PATROL)
 		return
 	var d := c.pos.distance_to(t.pos)
 	var wr := c.def.rng
@@ -521,10 +522,10 @@ static func _dogfight(b: State, c: Craft, t: Body, d: float, wr: float) -> void:
 	var aim: Vector2
 	if d < desired * DOG_PASS_K:
 		aim = c.pos + (c.pos - t.pos).normalized() * DOG_PASS
-		aim.x += sin(b.time + float(c.slot) * 2.0) * DOG_PASS_WOBBLE
+		aim.x += Fmath.sin_(b.time + float(c.slot) * 2.0) * DOG_PASS_WOBBLE
 	else:
 		aim = t.pos
-		aim.x += sin(b.time * 1.3 + float(c.slot) * 1.7) * DOG_AIM_WOBBLE
+		aim.x += Fmath.sin_(b.time * 1.3 + float(c.slot) * 1.7) * DOG_AIM_WOBBLE
 	fly(b, c, aim, 1.0)
 	c.cd -= State.STEP                        # убывает ТОЛЬКО здесь (04, 2.7)
 	if d <= wr and c.cd <= 0.0:

@@ -10,6 +10,7 @@
 extends "res://sim/body.gd"
 
 const Defs := preload("res://sim/defs.gd")
+const Fmath := preload("res://sim/fmath.gd")
 const Squad := preload("res://sim/squad.gd")
 
 ## Стороны: 0 — атакующий (z > 0, знак +1), 1 — защитник (z < 0, знак −1).
@@ -25,6 +26,9 @@ var station: bool
 
 var yaw := 0.0               # курс носа; 0 — нос в −Z
 var dir := Vector2(0.0, -1.0)
+## Курс, для которого посчитан dir (NAN — ещё ни для какого): dir — функция одного курса, и
+## пересчитывать его, когда курс не сдвинулся, незачем (Fmath считает в GDScript, а не в C).
+var _dir_at := NAN
 
 var fled := false            # ушёл в гипер (а не погиб)
 var flee_told := false       # лента «копит гипер — добить» уже сказала (05, 2.16: раз на корабль)
@@ -208,12 +212,14 @@ func range0() -> float:
 
 func set_yaw(a: float) -> void:
 	yaw = a
-	dir = Vector2(-sin(a), -cos(a))
+	if a != _dir_at:
+		dir = Fmath.nose(a)     # синус и косинус свои: у Windows-сборки они другие (sim/fmath.gd)
+		_dir_at = a
 
 
 ## Курс «нос по направлению» (x, z).
 static func yaw_of(d: Vector2) -> float:
-	return atan2(-d.x, -d.y)
+	return Fmath.atan2_(-d.x, -d.y)
 
 
 ## Разорвать ссылки на другие корабли: RefCounted не собирает кольца (архитектура, 2.12).

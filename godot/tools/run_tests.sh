@@ -17,6 +17,7 @@
 # 7. процессы — только по PID (никакого pkill -f: он убивает чужие прогоны).
 # Плюс: главная сцена и в режиме --selftest, и С ОКНОМ (--quit-after); пропавшая
 # модель — код 1 у замера и --selftest; --overrides с относительным путём из чужой папки;
+# математика Windows-сборки (x87 через LD_PRELOAD: тот же бой, откат «углы библиотекой C»);
 # повтор боя без вида и с видом на 60 и 144 кадрах (с откатами); номер выпуска по каждому случаю двери;
 # «есть ли выпуск» на заглушке gh (с откатом на прежний «gh | grep -q»); выпуск
 # черновиком на заглушке gh с памятью (с откатом «без --draft»).
@@ -278,6 +279,35 @@ if [[ $code -ne 1 ]] || ! grep -q '^BENCH ОТКАЗ' "$LOGS/bench_core_bad.log"
   fail "--bench с испорченными данными не отказал (код $code)"; show_tail "$LOGS/bench_core_bad.log"
 else
   say "   откат «данные с ошибкой»: код 1, $(grep -m1 '^BENCH ОТКАЗ' "$LOGS/bench_core_bad.log")"
+fi
+
+# ── математика Windows-сборки (пакет GТ): sin, cos и atan2 у выгруженной Windows-сборки (MinGW,
+# x87) в последнем бите другие, чем у glibc, и показательный бой Linux и Windows разошёлся (CI, прогон
+# 39395472501). Модель считает углы сама (sim/fmath.gd), а здесь — тот же бой на «математике Windows»:
+# tools/x87m.c подменяет sin, cos и atan2 инструкциями x87 через LD_PRELOAD. Свои углы — отпечатки
+# обязаны совпасть; откат «углы библиотекой C» (Fmath.rollback_libm, как до GТ) — обязаны разойтись.
+say "── математика Windows-сборки (x87): тот же бой"
+CC="$(command -v gcc || command -v cc || true)"
+if [[ -z "$CC" ]]; then
+  fail "нет компилятора C (gcc) — математику Windows-сборки не проверить"
+elif ! "$CC" -O2 -shared -fPIC -o "$LOGS/x87m.so" "$PROJ/tools/x87m.c" -lm >"$LOGS/x87_cc.log" 2>&1; then
+  fail "tools/x87m.c не собрался"; show_tail "$LOGS/x87_cc.log"
+else
+  fm_run() {  # fm_run <own|libm> <библиотека для LD_PRELOAD или пусто> → «бой … ИИ …»
+    local log="$LOGS/fmath_$1${2:+_x87}.log"
+    LD_PRELOAD="$2" timeout 300 "$GODOT" --headless --path "$PROJ" -s res://tests/probe_fmath.gd -- "$1" >"$log" 2>&1
+    grep -m1 '^FMATH' "$log" | sed 's/^FMATH [^ ]* //'
+  }
+  fa="$(fm_run own "")"; fb="$(fm_run own "$LOGS/x87m.so")"
+  say "   свои углы: glibc «$fa», x87 «$fb»"
+  if [[ -z "$fa" || "$fa" != "$fb" ]]; then fail "свои углы: бой на математике Windows-сборки другой"; fi
+  fc="$(fm_run libm "")"; fd="$(fm_run libm "$LOGS/x87m.so")"
+  if [[ -n "$fc" && -n "$fd" && "$fc" != "$fd" ]]; then
+    say "   откат «углы библиотекой C» краснеет: glibc «$fc», x87 «$fd»"
+  else
+    fail "откат «углы библиотекой C» не краснеет: «$fc» и «$fd»"
+  fi
+  if grep -q 'SCRIPT ERROR' "$LOGS"/fmath_*.log; then fail "SCRIPT ERROR в пробе математики"; show_tail "$LOGS/fmath_own.log"; fi
 fi
 
 # ── повтор боя (G1; архитектура, 2.9): запись — зерно + журнал команд + отпечаток на
