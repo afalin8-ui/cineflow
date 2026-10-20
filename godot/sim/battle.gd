@@ -630,8 +630,10 @@ func _sample_lines() -> void:
 			m.r_line = minf(m.r_line, s.def.main.rng)
 			m.heavy_s += STEP
 			var t := s.target as Ship
-			if t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0:
+			var in_belt := t != null and not t.dead and Weapons.main_reach(s, s.pos.distance_to(t.pos)) == 0
+			if in_belt:
 				m.m1_s += STEP
+			m.sample_fuss(s.uid, s.vel, sd.ax, in_belt, STEP)    # М16 «суета» (пакет GТ)
 			# ближайший чужой — из снимка начала шага (sim/space.gd: тот же проход пар, что
 			# расталкивание), а не перебором объектов (godot/CLAUDE.md, 3). Сдвиг на шаг — доли
 			# единицы; видимость в срезе — «да» всегда (sim/vision.gd), появится скрытность —

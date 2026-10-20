@@ -123,6 +123,17 @@ var m10_self := 0
 ## P считается от чужих тяжёлых, которые ещё в пути, и без предела line.lead_max места обеих
 ## сторон съезжались до 300 — шеренги лёгких проходили сквозь друг друга (найдено стендом G4).
 var p_min := INF
+## М16 «суета» тяжёлых (пакет GТ; отзыв о capella-v0.6: «большие корабли слишком быстрые
+## и активно маневрируют»): путь тяжёлых за фазу «бой», развороты хода вдоль оси своей стороны
+## (вперёд ↔ назад: подход, отход, место линии) и доля тяжёлый-секунд в движении ПОСЛЕ того, как
+## тяжёлый впервые вышел на дистанцию (цель главного калибра в поясе). Знак хода по uid — для
+## разворотов; кто уже выходил на дистанцию — для доли.
+var m16_path := 0.0
+var m16_flips := 0
+var m16_dir: Dictionary[int, int] = {}
+var m16_set_s := 0.0
+var m16_move_s := 0.0
+var m16_settled: Dictionary[int, bool] = {}
 
 ## М3: ни одного шага L < 360, пока у обеих сторон есть линия (09, 8.2).
 const M3_FLOOR := 360.0
@@ -134,6 +145,29 @@ const M4_HURT := 0.3
 ## (09, 5.7) — это ровно радиус расталкивания чужих (sim/space.gd → FOE_ROOM), и пары берутся
 ## из того же прохода пар снимка (space.foe_in, heavy_close).
 const M9_HEAVY := 360.0
+## М16: быстрее — «в движении», и ход вдоль оси быстрее этого засчитывается направлением (развороты
+## хода — смена знака). То же число, что «стоит» у прихода части 02 (space.js:1287 «медленнее 3»,
+## sim/movement.gd → ARRIVED_V): медленнее — корабль стоит, его доворот или толчок — не ход.
+const M16_V := 3.0
+
+
+## М16 за шаг: тяжёлый в фазе «бой» — скорость, ход вдоль оси своей стороны, в поясе ли.
+func sample_fuss(uid: int, vel: Vector2, ax: Vector2, in_belt: bool, dt: float) -> void:
+	var sp := vel.length()
+	m16_path += sp * dt
+	var along := vel.dot(ax)
+	var dirn := 1 if along > M16_V else (-1 if along < -M16_V else 0)
+	if dirn != 0:
+		var prev: int = m16_dir.get(uid, 0)
+		if prev != 0 and prev != dirn:
+			m16_flips += 1
+		m16_dir[uid] = dirn
+	if in_belt:
+		m16_settled[uid] = true
+	if m16_settled.has(uid):
+		m16_set_s += dt
+		if sp > M16_V:
+			m16_move_s += dt
 
 
 func book(side: int, key: StringName, cls_i: int, dealt: float) -> void:
@@ -335,4 +369,8 @@ func lines_summary() -> Dictionary:
 		"m10_self": m10_self, "p_min": p_min if p_min < INF else -1.0,
 		"first_hit": first_hit, "first_gun": first_gun,
 		"m11_gap": max_gap, "m12_jam": share(m12_jam_s, heavy_s),
+		# М16 (пакет GТ): путь и развороты — на тяжёлый-минуту фазы «бой»; доля в движении
+		"m16_path": m16_path * 60.0 / heavy_s if heavy_s > 0.0 else -1.0,
+		"m16_flips": float(m16_flips) * 60.0 / heavy_s if heavy_s > 0.0 else -1.0,
+		"m16_move": share(m16_move_s, m16_set_s),
 	}

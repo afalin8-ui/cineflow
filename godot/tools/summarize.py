@@ -73,7 +73,7 @@ def checks(rs):
     """→ список (замер, значение, порог, прошёл?)."""
     out = []
     def add(name, val, cond, rule):
-        out.append((name, val, rule, None if val is None else cond(val)))
+        out.append((name, val, rule, None if val is None or cond is None else cond(val)))
     col = lambda k: [r.get(k) for r in rs]
     add("М1 тяжёлые в поясе, медиана", med(col("m1")), lambda v: v >= 0.65, "≥ 0,65")
     add("М1 у 10% худших", worst(col("m1"), 0.1, True), lambda v: v >= 0.5, "≥ 0,5")
@@ -128,6 +128,11 @@ def checks(rs):
     if lr:
         add("М11 длина боя, медиана (с)", med(col("len")), lambda v, lr=lr: lr[0] <= v <= lr[1], f"{lr[0]:.0f}–{lr[1]:.0f} с")
     add("М12 под чужими помехами, медиана", med(col("m12_jam")), lambda v: v <= 0.30, "≤ 0,30")
+    # М16 «суета» тяжёлых (пакет GТ): порога в 09, 8.2 нет — меряется против прежней сборки на тех же
+    # зёрнах (было — стало), поэтому строка без «ок/НЕТ»
+    add("М16 путь тяжёлого за минуту боя, медиана", med(col("m16_path")), None, "— (было — стало)")
+    add("М16 развороты хода на тяжёлый-минуту, медиана", med(col("m16_flips")), None, "— (было — стало)")
+    add("М16 доля в движении после выхода на дистанцию, медиана", med(col("m16_move")), None, "— (было — стало)")
     sm = [r.get("step_ms", {}) for r in rs]
     add("шаг модели p50, медиана (мс)", med([s.get("p50") for s in sm]), lambda v: v <= 2.0, "≤ 2 мс (пока предупреждение)")
     add("шаг модели p99, медиана (мс)", med([s.get("p99") for s in sm]), lambda v: True, "—")
