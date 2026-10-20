@@ -16,6 +16,7 @@ const MainScript := preload("res://main.gd")
 const Flight := preload("res://tests/test_sim_flight.gd")
 const Fmath := preload("res://sim/fmath.gd")
 const GroundGun := preload("res://sim/ground_gun.gd")
+const Metrics := preload("res://sim/metrics.gd")
 
 ## Отпечатки 0.6–0.7.1 (godot/CLAUDE.md, раздел 13): показательный бой «Полигона» и 60 с «ИИ против
 ## ИИ» по выбору меню — те, что `--selftest` печатал до пакета GТ.
@@ -387,6 +388,40 @@ static func _m16_text(r: Dictionary) -> String:
 
 static func _calmer(now: Dictionary, was: Dictionary) -> bool:
 	return num(now["m16_flips"]) <= 0.5 * num(was["m16_flips"]) and num(now["m16_starts"]) < num(was["m16_starts"]) and num(now["m16_path"]) < num(was["m16_path"])
+
+
+## М16 «тронулся с места» — переход из «стоит» в «движется» ПОСЛЕ выхода на дистанцию (хвост проверки
+## GТ): вход в пояс на ходу — конец подхода, а не трогание. В 0.8 первый шаг «держит дистанцию» при
+## скорости больше 3 считался троганием — записи «двигался ли» на нём ещё не было (sim/metrics.gd).
+## Лаборатория: тяжёлый входит в пояс на ходу, идёт, встаёт, трогается снова — трогание одно; откат
+## `Metrics.rollback_m16_entry_start` — два. Бой «Стычки» (зерно 1000): с откатом троганий больше.
+func test_m16_entry_on_the_move_not_a_start() -> void:
+	var got := PackedInt32Array()
+	for rb: bool in [false, true]:
+		Metrics.rollback_m16_entry_start = rb
+		var m := Metrics.new()
+		var ax := Vector2(0.0, -1.0)
+		var dt := Battle.STEP
+		for i in 30:
+			m.sample_fuss(7, Vector2(0.0, 0.0), ax, false, dt)          # марш до пояса — не считается
+		for i in 30:
+			m.sample_fuss(7, Vector2(0.0, -20.0), ax, true, dt)         # вошёл в пояс на ходу и идёт
+		for i in 30:
+			m.sample_fuss(7, Vector2(0.0, 0.0), ax, true, dt)           # встал
+		for i in 30:
+			m.sample_fuss(7, Vector2(0.0, -20.0), ax, true, dt)         # тронулся
+		got.append(m.m16_starts)
+	Metrics.rollback_m16_entry_start = false
+	ok(got[0] == 1, "лаборатория: вошёл в пояс на ходу, встал, тронулся — трогание одно (%d)" % got[0])
+	ok(got[1] == 2, "откат «вход в пояс на ходу — трогание»: два (%d) — проверка краснеет" % got[1])
+	var st := PackedFloat64Array()
+	for rb: bool in [false, true]:
+		Metrics.rollback_m16_entry_start = rb
+		var r := BenchCore.run_one(_defs(), BenchCore.setup_for("skirmish", 1000, false, {}), BenchCore.MAX_S, "capella-проверка")
+		st.append(num(r.get("m16_starts", -1.0)))
+	Metrics.rollback_m16_entry_start = false
+	note("«Стычка», зерно 1000: троганий на тяжёлый-минуту %.2f, с откатом %.2f" % [st[0], st[1]])
+	ok(st[0] >= 0.0 and st[1] > st[0], "в бою вход в пояс на ходу больше не трогание: %.2f, с откатом %.2f — откат краснеет" % [st[0], st[1]])
 
 
 ## Тяжёлые в поясе дёргаются меньше, чем в 0.7.1 (прежний темп целиком — OLD_TEMPO, бой тот же до
