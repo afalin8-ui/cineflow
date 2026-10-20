@@ -15,6 +15,7 @@ const QuickMenu := preload("res://ui/quick_menu.gd")
 const MainScript := preload("res://main.gd")
 const Flight := preload("res://tests/test_sim_flight.gd")
 const Fmath := preload("res://sim/fmath.gd")
+const GroundGun := preload("res://sim/ground_gun.gd")
 
 ## Отпечатки 0.6–0.7.1 (godot/CLAUDE.md, раздел 13): показательный бой «Полигона» и 60 с «ИИ против
 ## ИИ» по выбору меню — те, что `--selftest` печатал до пакета GТ.
@@ -81,6 +82,103 @@ func test_first_main_gun_window() -> void:
 	ok(early == seeds.size(), "откат «старт ±650, как в 0.7.1»: первый выстрел раньше %d с во всех боях (%s) — проверка краснеет" % [roundi(FIRST_GUN_MIN), ", ".join(og)])
 	var o2 := _first_gun(Defs.load_default(OLD_TEMPO) as Defs, Polygon.SEED)
 	note("прежний темп целиком (0.7.1): первый главный калибр на %.1f с" % o2)
+
+
+# ───────────────────────── орудие планеты на старте (доработка GТ) ─────────────────────────
+
+## Первый залп орудия планеты в быстром бою по умолчанию (ядерная ракета Плэктора, 0,7 периода —
+## выгрузка JS, GТ его не трогал): кольцо загорается за 7 с, флоты к залпу ещё не сошлись. Игрок не
+## отдаёт приказов (dodge = false) — наводка на свой корабль, и он там и стоит; dodge — на
+## предупреждении все свои в кольце (+30) идут «идти» на 250 за его край, как человек мышью.
+## → время кольца и залпа, первый главный калибр, ближайший свой к центру залпа, задето своих,
+## наибольшая доля прочности, снятая залпом с одного своего, погибших.
+func _gun_first(d: Defs, seed_n: int, dodge: bool) -> Dictionary:
+	var b := Battle.create(d, Polygon.quick_setup(QuickMenu.default_cfg(d, false), seed_n), "capella-проверка") as Battle
+	var warn_t := -1.0
+	var fire_t := -1.0
+	var hit := 0
+	var lost := 0
+	var worst := 0.0
+	var near := INF
+	while b.time < 40.0 and not b.over and fire_t < 0.0:
+		var pre: Dictionary[int, float] = {}
+		for s in b.ships:
+			pre[s.uid] = s.hp
+		b.step()
+		for e: Array in b.events:
+			if e[0] == &"gun_warn" and warn_t < 0.0:
+				warn_t = b.time
+				var aim: Vector2 = e[2]
+				var ring: float = e[3]
+				var inside := PackedInt32Array()
+				var c := Vector2.ZERO
+				for s in b.ships:
+					if s.side == Ship.ATTACKER and not s.dead and s.pos.distance_to(aim) <= ring + 30.0:
+						inside.append(s.uid)
+						c += s.pos
+				if dodge and not inside.is_empty():
+					c /= float(inside.size())
+					var away := (c - aim).normalized() if c.distance_to(aim) > 1.0 else Vector2(1, 0)
+					var to := aim + away * (ring + 250.0)
+					b.queue({"op": &"move", "ids": inside, "x": to.x, "z": to.y})
+			elif e[0] == &"gun_fire" and fire_t < 0.0:
+				fire_t = b.time
+				var at: Vector2 = e[2]
+				var hu: PackedInt32Array = e[3]
+				for s in b.ships:
+					if s.side != Ship.ATTACKER or not pre.has(s.uid):
+						continue
+					near = minf(near, s.pos.distance_to(at))
+					if hu.has(s.uid):
+						hit += 1
+						worst = maxf(worst, (pre[s.uid] - s.hp) / s.def.hp)
+						if s.dead:
+							lost += 1
+	var out := {"warn": warn_t, "fire": fire_t, "gun": b.metrics.first_gun, "hit": hit, "lost": lost, "worst": worst, "near": near,
+		"period": b.gun.def.period if b.gun != null else -1.0, "lead": b.gun.def.warn if b.gun != null else -1.0,
+		"radius": b.gun.def.radius if b.gun != null else -1.0}
+	b.dispose()
+	return out
+
+
+## Что обещает текст выпуска 0.8.1 о первом залпе — проверено пробой на 200 зёрнах (godot/CLAUDE.md,
+## 23), здесь — правило на трёх: (1) залп на 0,7 периода, кольцо — за `warn` до него, и флоты к залпу
+## ещё не сошлись (главный калибр не стрелял); (2) никто не уводит — центр залпа на своём корабле
+## (ближе 30), задет хотя бы один; (3) уводят в миг, когда кольцо загорелось, — никто не гибнет и центр
+## залпа не на корабле (ближайший свой дальше FREE_OF_CENTER). Краем задевает часто: крупный корабль за
+## 7 с из кольца не выходит (зерно 2 — носитель в 82 от центра, снято 9%; на 200 зёрнах пробы — задеты
+## в 151 бою, снято до 25%, погибших 0). Откат — «кольцо ведёт корабль» (GroundGun.rollback_aim_at_fire):
+## уведённым не уйти — центр залпа на корабле, (3) краснеет.
+## «Центр залпа не на корабле»: ближайший к центру свой дальше этого (корпус крупного корабля — до ~45
+## от его середины). Откат «кольцо ведёт корабль» ставит центр на корабль — ближе 1.
+const FREE_OF_CENTER := 50.0
+
+func test_planet_gun_first_salvo_dodge() -> void:
+	var d := _defs()
+	var bad := PackedStringArray()
+	var rb_near := INF
+	for sn: int in [Polygon.SEED, 1, 2]:
+		var st := _gun_first(d, sn, false)
+		var dg := _gun_first(d, sn, true)
+		GroundGun.rollback_aim_at_fire = true
+		var rb := _gun_first(d, sn, true)
+		GroundGun.rollback_aim_at_fire = false
+		rb_near = minf(rb_near, num(rb["near"]))
+		note("зерно %d: кольцо %.1f с, залп %.1f с, главный калибр %s; стоят — ближайший к центру %.0f, задето %d, снято до %.0f%%, погибло %d; уводят — ближайший %.0f, задето %d, снято до %.0f%%, погибло %d; откат — ближайший %.0f, погибло %d" % [
+			sn, num(st["warn"]), num(st["fire"]), ("%.1f с" % num(st["gun"])) if num(st["gun"]) > 0.0 else "ещё не стрелял",
+			num(st["near"]), whole(st["hit"]), 100.0 * num(st["worst"]), whole(st["lost"]),
+			num(dg["near"]), whole(dg["hit"]), 100.0 * num(dg["worst"]), whole(dg["lost"]), num(rb["near"]), whole(rb["lost"])])
+		var p := num(st["period"])
+		if absf(num(st["fire"]) - 0.7 * p) > Battle.STEP + 1e-6 or absf(num(st["fire"]) - num(st["warn"]) - num(st["lead"])) > Battle.STEP + 1e-6:
+			bad.append("зерно %d: залп %.2f с (ждали %.2f), кольцо за %.2f с (ждали %.0f)" % [sn, num(st["fire"]), 0.7 * p, num(st["fire"]) - num(st["warn"]), num(st["lead"])])
+		if num(st["gun"]) > 0.0:
+			bad.append("зерно %d: главный калибр выстрелил раньше залпа (%.1f с)" % [sn, num(st["gun"])])
+		if num(st["near"]) > 30.0 or whole(st["hit"]) == 0:
+			bad.append("зерно %d: стоящих залп не накрыл (ближайший %.0f, задето %d)" % [sn, num(st["near"]), whole(st["hit"])])
+		if whole(dg["lost"]) > 0 or num(dg["near"]) < FREE_OF_CENTER:
+			bad.append("зерно %d: уведённые — ближайший к центру %.0f, погибло %d" % [sn, num(dg["near"]), whole(dg["lost"])])
+	ok(bad.is_empty(), "первый залп орудия планеты: на 0,7 периода, кольцо — за 7 с, до схода флотов; стоящих накрывает центром, уведённых из кольца — в худшем краем, никто не гибнет%s" % ((": " + "; ".join(bad)) if not bad.is_empty() else ""))
+	ok(rb_near < FREE_OF_CENTER, "откат «кольцо ведёт корабль»: центр залпа на корабле (ближайший %.0f) — проверка краснеет" % rb_near)
 
 
 # ───────────────────────── тяжёлые медленнее — одной дверью (09, 2.11; 9.5 п. 4) ─────────────────────────

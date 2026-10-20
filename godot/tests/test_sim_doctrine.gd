@@ -905,14 +905,6 @@ func _bench(load_id: String, seed0: int, n: int, flags: Dictionary, d: Defs = nu
 	return out
 
 
-var _old: Defs
-## Прежний темп (до пакета GТ) числами доктрины — OLD_TEMPO в tests/case.gd.
-func _old_defs() -> Defs:
-	if _old == null:
-		_old = Defs.load_default(OLD_TEMPO) as Defs
-	return _old
-
-
 static func _med(reps: Array[Dictionary], key: String) -> float:
 	var a := PackedFloat64Array()
 	for r in reps:
@@ -989,15 +981,9 @@ func test_bench_battle_measures() -> void:
 		else:
 			miss.append(txt)
 	note("пороги 09, 8.2: держат — %s; не держат — %s" % ["; ".join(held) if not held.is_empty() else "—", "; ".join(miss) if not miss.is_empty() else "—"])
-	# откат --legacy-approach (подход лёгкого «на 0,68», как в JS) — проваливает М3 и М9 в ПРЕЖНЕМ
-	# темпе (OLD_TEMPO). В новом (пакет GТ) тяжёлые идут × 0,6 и тормозят раньше: тот же откат даёт
-	# М3 0,79 R и ни одной пары ближе 360 — порога не переходит, это записано (CLAUDE.md, раздел 23),
-	# а замер проверяется там, где беда видна
-	var lg_new := _bench("battle", 1000, 2, {"legacy_approach": true})
-	note("откат --legacy-approach в новом темпе: М2 %.3f · М3 %.3f R · пар тяжёлых ближе 360 %.0f" % [_med(lg_new, "m2"), _med(lg_new, "m3_med_k"), _worst(lg_new, "m9_heavy")])
-	var lg := _bench("battle", 1000, 2, {"legacy_approach": true}, _old_defs())
-	note("откат --legacy-approach в прежнем темпе: М2 %.3f · М3 %.3f R · пар тяжёлых ближе 360 %.0f" % [_med(lg, "m2"), _med(lg, "m3_med_k"), _worst(lg, "m9_heavy")])
-	ok(_med(lg, "m3_med_k") < 0.7 and _worst(lg, "m9_heavy") > 0.0, "откат --legacy-approach (прежний темп): линии сходятся до %.2f R и тяжёлые в упор — М3 и М9 краснеют" % _med(lg, "m3_med_k"))
+	# откат --legacy-approach (подход лёгкого «на 0,68», как в JS) проваливает М3 и М9 только в ПРЕЖНЕМ
+	# темпе (OLD_TEMPO): в новом (пакет GТ) тяжёлые идут × 0,6 и тормозят раньше — М3 0,79 R и ни одной
+	# пары ближе 360. Проверяется в ярусе tempo (test_tempo_old → test_legacy_approach_fails_m3_m9_old_tempo)
 	# откат --ecm-01L — места двух своих ближе hull + hull (М10)
 	var ec := _bench("battle", 1000, 1, {"ecm_01l": true})
 	ok(_worst(ec, "m10_self") > 0.0, "откат --ecm-01L: мест ближе hull + hull — %.0f шагов — М10 краснеет" % _worst(ec, "m10_self"))
@@ -1068,14 +1054,11 @@ func test_bench_m9_sees_entries() -> void:
 ## одни тяжёлые линия на линию; «brake» и «clear» — сценарии стенда (BenchCore).
 func test_bench_flags_fail_their_measure() -> void:
 	var base := _bench("lines", 1000, 2, {})
-	var ns_new := _bench("lines", 1000, 2, {"no_share_close": true})
-	var ns := _bench("lines", 1000, 2, {"no_share_close": true}, _old_defs())
-	note("«линии»: М3 %.3f R, откат --no-share-close — %.3f R (в прежнем темпе %.3f R)" % [_med(base, "m3_med_k"), _med(ns_new, "m3_med_k"), _med(ns, "m3_med_k")])
+	note("«линии»: М3 %.3f R" % _med(base, "m3_med_k"))
 	ok(_med(base, "m3_med_k") >= 0.7, "«линии»: две линии тяжёлых стоят на %.3f R (≥ 0,7)" % _med(base, "m3_med_k"))
-	# в новом темпе (пакет GТ) проскок меньше, и М3 под откатом 0,73 R — над порогом 0,7: беда видна
-	# в прежнем темпе (OLD_TEMPO), там замер и проверяется; лабораторная проверка правила —
-	# test_head_on_share_of_closing (там откат краснеет и в новом темпе)
-	ok(_med(ns, "m3_med_k") < 0.7, "откат --no-share-close (прежний темп): линии сходятся до %.3f R — М3 краснеет" % _med(ns, "m3_med_k"))
+	# откат --no-share-close: в новом темпе (пакет GТ) проскок меньше, и М3 под ним 0,73 R — над порогом
+	# 0,7; беда видна в прежнем темпе, там замер и проверяется — ярус tempo (test_tempo_old →
+	# test_no_share_close_fails_m3_old_tempo); лабораторная проверка правила — test_head_on_share_of_closing
 	var br := _bench("brake", 1, 1, {})
 	var nb := _bench("brake", 1, 1, {"no_foe_brake": true})
 	note("«brake»: М2 %.3f, М6 %.3f; откат --no-foe-brake — М2 %.3f, М6 %.3f" % [_med(br, "m2"), _med(br, "m6"), _med(nb, "m2"), _med(nb, "m6")])

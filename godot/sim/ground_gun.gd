@@ -20,6 +20,10 @@ const EMP_TARGETS := 2
 
 ## ТОЛЬКО для проверки отката: первый залп — через полный период, а не на 0,7 периода.
 static var rollback_first_full := false
+## ТОЛЬКО для проверки отката (доработка GТ): кольцо «ведёт» корабль — центр ядерного залпа ставится
+## на ближайший к наводке корабль в МИГ ЗАЛПА, а не остаётся там, где загорелось кольцо. Так уйти из-под
+## залпа было бы нельзя, и совет выпуска «уведите корабли из кольца» потерял бы смысл.
+static var rollback_aim_at_fire := false
 
 
 static func create(b: State, clan: StringName) -> void:
@@ -72,6 +76,13 @@ static func _fire(b: State, g: State.GunState, list: Array[Ship]) -> void:
 	var d := g.def
 	var hit := PackedInt32Array()
 	var at := g.aim if g.has_aim else list[0].pos
+	if rollback_aim_at_fire and g.has_aim:
+		var bd := INF
+		for s in list:
+			var dd := s.pos.distance_squared_to(g.aim)
+			if dd < bd:
+				bd = dd
+				at = s.pos
 	match d.kind:
 		&"beam":
 			# ионный луч: корабль, ближайший к наводке В МОМЕНТ ЗАЛПА — урон и 10 с без
