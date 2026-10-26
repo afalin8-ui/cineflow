@@ -1,0 +1,10 @@
+# Библиотеки, которые мост скачивает при первом запуске — не хранятся в репозитории
+cinelight-vendor/
+
+# Всё, что создаётся при сборке приложения
+app/www/
+app/node_modules/
+app/ios/
+app/android/
+
+.claude/settings.local.json

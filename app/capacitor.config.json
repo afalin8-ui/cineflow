@@ -1,0 +1,12 @@
+{
+  "appId": "com.cineflow.cinelight",
+  "appName": "CineLight",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#1a1918"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
