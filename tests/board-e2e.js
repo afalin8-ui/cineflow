@@ -53,7 +53,8 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
       const b = [...document.querySelectorAll('.cf-tabbar button, header button')]
         .find(x => /Ещё/.test(x.textContent));
       if (b) { b.click(); await new Promise(r => setTimeout(r, 500)); }
-      const d = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Доски');
+      // На планшете «Доски» — значок в шапке с подсказкой, а не слово.
+      const d = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Доски' || x.title === 'Доски');
       if (d) d.click();
       await new Promise(r => setTimeout(r, 900));
     });
@@ -66,7 +67,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   // а подсказка — то, что обещано человеку.
   const acts = () => ({
     put: !!document.querySelector('[title^="Положить на доску"]'),
-    sticky: !!document.querySelector('[title="Стикер"]'),
+    sticky: !!document.querySelector('[data-cf="board-sticky"]'),
     ref: !!document.querySelector('[title="Новый референс"]')
   });
   const strip = await ph.evaluate(acts);
@@ -100,13 +101,13 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   // Действие правда работает
   const acted = await ph.evaluate(async () => {
     const before = JSON.parse(localStorage.getItem('cf_stickies') || '[]').length;
-    const b = [...document.querySelectorAll('.cf-menu button')].find(x => /Новый стикер/.test(x.textContent));
-    if (!b) return { err: 'строки «Новый стикер» нет' };
+    const b = [...document.querySelectorAll('.cf-menu button')].find(x => /Новая заметка/.test(x.textContent));
+    if (!b) return { err: 'строки «Новая заметка» нет' };
     b.click();
     await new Promise(r => setTimeout(r, 900));
     return { before, after: JSON.parse(localStorage.getItem('cf_stickies') || '[]').length };
   });
-  ok('строка «Новый стикер» правда заводит стикер',
+  ok('строка «Новая заметка» правда заводит стикер',
      acted.after === acted.before + 1, JSON.stringify(acted));
 
   // ---- ПЛАНШЕТ: иконки остаются на месте
@@ -114,6 +115,28 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   const tabStrip = await tab.evaluate(acts);
   ok('на планшете все три остались в полосе под рукой',
      tabStrip.put && tabStrip.sticky && tabStrip.ref, JSON.stringify(tabStrip));
+  // Кнопка заметки ПОДПИСАНА и нажимается (на касании подсказки нет),
+  // а в «···» та же строка с названием есть и на планшете.
+  const labeled = await tab.evaluate(() => {
+    const b = document.querySelector('[data-cf="board-sticky"]');
+    const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { text: b.textContent.trim(), hit: !!t && (t === b || b.contains(t)), w: r.width };
+  });
+  ok('на планшете кнопка заметки подписана словом и попадает под палец', labeled.text === 'Заметка' && labeled.hit && labeled.w > 60, JSON.stringify(labeled));
+  const tabMenu = await tab.evaluate(async () => {
+    const before = JSON.parse(localStorage.getItem('cf_stickies') || '[]').length;
+    // «···» ДОСКИ, а не шапки: на планшете в шапке своё «···» (Проект, Доступ).
+    const menu = document.querySelector('button[title^="Выгрузить доску"]');
+    menu.click(); await new Promise(r => setTimeout(r, 400));
+    const b = document.querySelector('.cf-menu [data-cf="menu-sticky"]');
+    if (!b) return { err: 'строки «Новая заметка» в «···» на планшете нет' };
+    const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const hit = !!t && (t === b || b.contains(t));
+    b.click(); await new Promise(r2 => setTimeout(r2, 900));
+    return { text: b.textContent.trim(), hit, before, after: JSON.parse(localStorage.getItem('cf_stickies') || '[]').length };
+  });
+  ok('в «···» на планшете строка «Новая заметка» есть, нажимается и заводит стикер',
+     !tabMenu.err && /Новая заметка/.test(tabMenu.text) && tabMenu.hit && tabMenu.after === tabMenu.before + 1, JSON.stringify(tabMenu));
 
   await browser.close(); server.kill();
   console.log(bad ? `\n${bad} проверок не прошло` : '\nВсё прошло');

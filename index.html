@@ -22977,8 +22977,17 @@
                               с самой доски. */}
                           <button onClick={() => setScenePickerOpen(v => !v)} title="Положить на доску: референсы, документы, сцены"
                                   className={`cf-tool cf-edit-only ${scenePickerOpen ? 'on' : ''}`}><Icons.Scene/></button>
-                          <button onClick={addStickyHere}
-                                  className="cf-tool cf-edit-only" title="Стикер"><Icons.Sticky/></button>
+                          {/* ЗАМЕТКА — С ПОДПИСЬЮ, как «Прибор» на схеме. Жалоба
+                              с iPad: «пропала кнопка сделать заметку» — кнопка
+                              стояла, но безымянным значком-листком среди таких
+                              же значков, а на касании подсказки нет. На экране
+                              сцены те же стикеры зовутся «Заметки», и ищут
+                              здесь именно это слово. */}
+                          <button onClick={addStickyHere} data-cf="board-sticky"
+                                  className="cf-tool cf-edit-only" title="Заметка (стикер) на доску"
+                                  style={{ width: 'auto', padding: '0 10px', gap: 6, display: 'inline-flex', alignItems: 'center' }}>
+                            <Icons.Sticky/><span style={{ fontSize: 'var(--fs-2)' }}>Заметка</span>
+                          </button>
                           <button onClick={addRefCardHere}
                                   className="cf-tool cf-edit-only" title="Новый референс"><Icons.Gallery/></button>
                           {/* «Связь» в два нажатия — у доски Excalidraw её рельса нет,
@@ -23008,13 +23017,18 @@
                                   className={`cf-tool ${boardMenu ? 'on' : ''}`} style={{ letterSpacing: 1 }}>···</button>
                           {boardMenu && (
                             <div className="cf-menu">
-                              {isPhone && !excScheme && (
+                              {/* Строки с НАЗВАНИЯМИ — на любом экране, не только
+                                  на телефоне: на iPad подсказки на касании тоже
+                                  нет, и что значит значок в полосе, узнать негде.
+                                  Значки на планшете остаются под рукой, меню —
+                                  второй путь к тому же, с именем у каждой строки. */}
+                              {!excScheme && (
                                 <React.Fragment>
                                   <button className="cf-edit-only" onClick={() => { setBoardMenu(false); setScenePickerOpen(true); }}>
                                     <Icons.Scene/> Положить на доску…
                                   </button>
-                                  <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addStickyHere(); }}>
-                                    <Icons.Sticky/> Новый стикер
+                                  <button className="cf-edit-only" data-cf="menu-sticky" onClick={() => { setBoardMenu(false); addStickyHere(); }}>
+                                    <Icons.Sticky/> Новая заметка (стикер)
                                   </button>
                                   <button className="cf-edit-only" onClick={() => { setBoardMenu(false); addRefCardHere(); }}>
                                     <Icons.Gallery/> Новый референс
