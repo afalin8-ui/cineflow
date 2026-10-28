@@ -448,6 +448,10 @@
                         background: rgba(20,19,18,.72); border-radius: 6px; padding: 2px 7px; line-height: 1.5;
                         backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
         html.cf-touch .cf-frame-num { padding: 4px 9px; }
+        /* В свёрнутой ленте кадр 128 точек: номер тем же кеглем, но без полей —
+           иначе плашка заняла бы треть картинки. Правило касания выше по весу,
+           поэтому селектор повторён и для него. */
+        .cf-frame-num-sm, html.cf-touch .cf-frame-num-sm { padding: 1px 6px; border-radius: 4px; }
         .cf-sel { background: var(--raised) !important; color: var(--text) !important; box-shadow: 0 0 0 1px var(--border); }
         html.cf-touch .cf-seg > * { padding: 7px 10px; font-size: var(--fs-1); }
         /* ---------- инструменты доски ----------
@@ -531,6 +535,10 @@
         .cf-tab span { font-size: 12px; }
         .cf-tab.on { color: var(--accent); }
         .cf-tab.on span { font-weight: 600; }
+        /* Полоса «‹ предыдущая · N из M · следующая ›» над таб-баром на экране
+           сцены: в потоке, как таб-бар, той же высоты, что цель --tap. */
+        .cf-scenenav { display: flex; align-items: center; flex-shrink: 0; background: var(--bg); border-top: 1px solid var(--line); }
+        .cf-scenenav > button:disabled { color: var(--muted-2); opacity: .45; }
         /* Фильтр-пилюля: 30 точек в высоту плюс поля — палец попадает. */
         .cf-pill { flex-shrink: 0; white-space: nowrap; font-size: var(--fs-2); padding: 8px 14px; min-height: 36px;
                    border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); }
@@ -19229,6 +19237,24 @@
             try { localStorage.setItem('cf_scene_text', JSON.stringify(n)); } catch (e) {}
             return n;
           });
+          // РАСКАДРОВКА СВОРАЧИВАЕТСЯ ТАК ЖЕ — до ленты мелких кадров без
+          // описаний («свернуть ⤡» у подписи, `cf_scene_shots`, тоже отдельно
+          // для каждого положения). Жалоба: «пропала „свернуть“ у кадров,
+          // есть только для текста» — у раскадровки было лишь «развернуть все»
+          // (лента ↔ сетка), а убрать ленту с дороги было нечем. В отличие
+          // от текста, без выбора кадры РАЗВЁРНУТЫ в обоих положениях: сцену
+          // для оператора определяет кадр, и прятать его сам по себе экран
+          // не должен. Свёрнутый вид — не пустота, а те же кадры с номерами
+          // в треть высоты: что в сцене есть, видно и так.
+          const [sceneShotsPref, setSceneShotsPref] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('cf_scene_shots') || '{}') || {}; } catch (e) { return {}; }
+          });
+          const sceneShotsShut = sceneTextOrient in sceneShotsPref ? !!sceneShotsPref[sceneTextOrient] : false;
+          const setSceneShots = (shut) => setSceneShotsPref(p => {
+            const n = { ...p, [sceneTextOrient]: !!shut };
+            try { localStorage.setItem('cf_scene_shots', JSON.stringify(n)); } catch (e) {}
+            return n;
+          });
           useEffect(() => {
             // Esc сворачивает развороты, а заодно и правую панель — но ТОЛЬКО
             // когда она лежит поверх содержимого. Стоящую рядом панель
@@ -20339,6 +20365,11 @@
                       // «Раскадровка» на пустой доске).
                       const SHOT_RATIO = projectRatio;
                       const FRAME_W = 280;
+                      // Кадр в свёрнутой ленте: на вертикальном планшете рядом со
+                      // списком сцен содержимому остаётся около 470 точек — видно
+                      // три с половиной кадра разом против полутора в обычной
+                      // ленте. Свёрнутая показывает больше, а не меньше.
+                      const FRAME_MINI_W = 128;
 
                       const frameThumb = (f, w) => (
                         f.image
@@ -20478,7 +20509,7 @@
                           const doneCount = frames.filter(f => f.shot).length;
                           const current = frames.find(f => !f.shot);
                           return (
-                            <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 20px' }}>
+                            <main data-cf="phone-scene-main" className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 20px' }}>
                               <div className="flex items-baseline gap-2.5 flex-wrap pb-1">
                                 <span style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em' }}>Съёмка</span>
                                 <span className="cf-meta">СЦ {s.number}{s.date ? ' · ' + formatDateDisplay(s.date) : ''}</span>
@@ -20543,7 +20574,7 @@
                         if (sceneMode === 'present') {
                           const shots = frames.filter(f => f.image);
                           return (
-                            <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 24px' }}>
+                            <main data-cf="phone-scene-main" className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 24px' }}>
                               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: 'var(--accent)', letterSpacing: '.12em' }}>СЦЕНА {s.number}</div>
                               <h1 style={{ fontSize: 'var(--fs-6)', margin: '4px 0 0' }}>{s.title || 'Без названия'}</h1>
                               {(s.content || '').trim() && (
@@ -20575,7 +20606,7 @@
                         const strip = sceneMode === 'scout' ? scoutPhotos : sceneRefs;
                         const stripLabel = sceneMode === 'scout' ? 'фото со скаутинга' : 'референсы';
                         return (
-                          <main className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 24px' }}>
+                          <main data-cf="phone-scene-main" className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 24px' }}>
                             <div className="flex items-baseline gap-2">
                               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: 'var(--accent)', fontWeight: 600 }}>СЦ {s.number}</span>
                               <span className="cf-meta">{sceneBadge(s) || '—'}{s.date ? ' · ' + formatDateDisplay(s.date) : ''}</span>
@@ -21030,20 +21061,53 @@
                           <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 10 }}>
                             <span style={eyebrow}>Раскадровка</span>
                             <span className="cf-sub">{frames.length}</span>
-                            {frames.length > 0 && (
-                              <button onClick={() => setShotsExpanded(v => !v)} style={linkish}>
-                                {shotsExpanded ? 'свернуть ⤡' : 'развернуть все ⤢'}
-                              </button>
+                            {/* Три ступени, как масштаб: свёрнуто ‹ лента ‹ сетка.
+                                «свернуть ⤡» всегда на ступень ниже, «развернуть все ⤢»
+                                из ленты — в сетку. Свернуть — это чтение, cf-edit-only
+                                нет: гостю по ссылке кнопка нужна не меньше. Пустой
+                                раскадровке сворачиваться не во что. */}
+                            {frames.length > 0 && (sceneShotsShut ? (
+                              <button data-cf="scene-shots-fold" onClick={() => setSceneShots(false)} style={linkish}>развернуть ⤢</button>
+                            ) : (
+                              <React.Fragment>
+                                <button data-cf="scene-shots-fold" onClick={() => { if (shotsExpanded) setShotsExpanded(false); else setSceneShots(true); }} style={linkish}>свернуть ⤡</button>
+                                {!shotsExpanded && (
+                                  <button data-cf="scene-shots-grid" onClick={() => setShotsExpanded(true)} style={linkish}>развернуть все ⤢</button>
+                                )}
+                              </React.Fragment>
+                            ))}
+                            {!sceneShotsShut && (
+                              <span className="cf-seg">
+                                <button onClick={() => setShowImages(true)} className={showImages ? 'on' : ''} title="Кадры карточками">кадры</button>
+                                <button onClick={() => setShowImages(false)} className={!showImages ? 'on' : ''} title="Таблица: кадр, оптика, описание">текст</button>
+                              </span>
                             )}
-                            <span className="cf-seg">
-                              <button onClick={() => setShowImages(true)} className={showImages ? 'on' : ''} title="Кадры карточками">кадры</button>
-                              <button onClick={() => setShowImages(false)} className={!showImages ? 'on' : ''} title="Таблица: кадр, оптика, описание">текст</button>
-                            </span>
-                            <button onClick={addFrame} className="cf-edit-only shrink-0 rounded-lg px-3 font-semibold"
+                            {/* Новый кадр в свёрнутой ленте не виден — поэтому «+ кадр»
+                                сначала разворачивает её: действие обязано показать,
+                                что сделало. */}
+                            <button onClick={() => { if (sceneShotsShut) setSceneShots(false); addFrame(); }} className="cf-edit-only shrink-0 rounded-lg px-3 font-semibold"
                                     style={{ minHeight: 'var(--tap-sm)', fontSize: 'var(--fs-2)', color: 'var(--accent)', border: '1px solid var(--accent-line)' }}>+ кадр</button>
                           </div>
 
-                          {showImages ? (
+                          {sceneShotsShut ? (
+                            // СВЁРНУТАЯ РАСКАДРОВКА — лента кадров в треть ширины,
+                            // только картинка и номер: без описаний, полей, корзины
+                            // и «+ кадр». Это чтение, как четыре строки текста:
+                            // нажатие по ленте разворачивает. Пустой кадр остаётся
+                            // пунктирной рамкой — иначе сцена «из трёх кадров»
+                            // показала бы два.
+                            <div data-cf="scene-shots-shut" onClick={() => setSceneShots(false)} title="Развернуть раскадровку"
+                                 className="flex gap-2 mt-2 overflow-x-auto pb-1" style={{ cursor: 'pointer' }}>
+                              {frames.map(f => (
+                                <div key={f.id} className="relative shrink-0"
+                                     style={{ width: FRAME_MINI_W, aspectRatio: SHOT_RATIO, borderRadius: 'var(--r-sm)', overflow: 'hidden', boxSizing: 'border-box',
+                                              background: 'var(--card)', border: f.image ? 'none' : '1px dashed var(--border)' }}>
+                                  {f.image && <img src={f.image} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
+                                  <span data-cf="frame-num-mini" className="cf-frame-num cf-frame-num-sm absolute pointer-events-none" style={{ left: 4, bottom: 4 }}>{f.frameNum || '—'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : showImages ? (
                             <div className={shotsExpanded ? 'grid gap-x-4 gap-y-5 mt-2' : 'flex gap-4 mt-2 overflow-x-auto pb-1.5'}
                                  style={shotsExpanded ? { gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' } : null}>
                               {/* КАДР — КАРТИНКА НА СТРАНИЦЕ, А НЕ КАРТОЧКА. Рамка,
@@ -24606,6 +24670,57 @@
                   для остального. Стоит в потоке, а не поверх содержимого:
                   плавающая панель на телефоне закрывает последнюю строку
                   списка, и до неё не долистать. */}
+              {/* ПЕРЕХОД МЕЖДУ СЦЕНАМИ НА ТЕЛЕФОНЕ — полоса «‹ предыдущая ·
+                  N из M · следующая ›» над таб-баром. Жалоба: «нужна кнопка
+                  следующая/предыдущая, чтобы не бегать к списку каждый раз».
+                  Внизу, а не в шапке: шапка сцены занята «‹ Сцены», режимами
+                  и «···», а до низа достаёт большой палец — то же правило,
+                  что у таб-бара. Полоса одна на все три режима сцены, поэтому
+                  живёт здесь, рядом с таб-баром, а не в каждом <main>.
+                  Порядок — тот, что в СПИСКЕ под текущим фильтром («Смена 3»):
+                  листать смену и незаметно уехать в чужую было бы ловушкой;
+                  если открытой сцены в отфильтрованном списке нет (пришли из
+                  поиска), идём по всем. У края стрелка гаснет, а не исчезает:
+                  полоса не должна прыгать. Это чтение — у гостя по ссылке
+                  полоса есть. */}
+              {isPhone && !fullScout && currentView === 'notion' && phoneSceneOpen && (() => {
+                const cur = scenes.find(x => x.id === activeSceneId);
+                if (!cur) return null;
+                const shown = sortedScenes.filter(phoneKeep);
+                const list = shown.some(x => x.id === cur.id) ? shown : sortedScenes;
+                const i = list.findIndex(x => x.id === cur.id);
+                const prev = i > 0 ? list[i - 1] : null, next = i >= 0 && i < list.length - 1 ? list[i + 1] : null;
+                const jump = (sc) => {
+                  if (!sc) return;
+                  setActiveSceneId(sc.id);
+                  // <main> остаётся тем же узлом, и прокрутка прежней сцены
+                  // досталась бы новой: следующая открывалась бы с середины.
+                  const m = document.querySelector('[data-cf="phone-scene-main"]');
+                  if (m) m.scrollTop = 0;
+                };
+                const cell = (sc, dir) => (
+                  <button data-cf={dir === 'prev' ? 'scene-prev' : 'scene-next'} onClick={() => jump(sc)} disabled={!sc}
+                          title={sc ? `${dir === 'prev' ? 'Предыдущая' : 'Следующая'} сцена: #${sc.number} ${sc.title || ''}` : undefined}
+                          className={`flex-1 min-w-0 flex items-center gap-1.5 ${dir === 'prev' ? 'justify-start' : 'justify-end'}`}
+                          style={{ minHeight: 'var(--tap)', padding: '0 12px', color: 'var(--accent)' }}>
+                    {dir === 'prev' && <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>‹</span>}
+                    {sc && (
+                      <span className="min-w-0 flex items-baseline gap-1.5">
+                        <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', fontWeight: 600 }}>#{sc.number}</span>
+                        <span className="truncate" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>{listTitle(sc)}</span>
+                      </span>
+                    )}
+                    {dir === 'next' && <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>›</span>}
+                  </button>
+                );
+                return (
+                  <div data-cf="scene-nav" className="cf-scenenav">
+                    {cell(prev, 'prev')}
+                    <span data-cf="scene-nav-pos" className="cf-meta shrink-0" style={{ padding: '0 4px', whiteSpace: 'nowrap' }}>{i + 1} из {list.length}</span>
+                    {cell(next, 'next')}
+                  </div>
+                );
+              })()}
               {isPhone && !fullScout && (
                 <nav className="cf-tabbar z-40">
                   {/* По ссылке на одну страницу в таб-баре не должно быть

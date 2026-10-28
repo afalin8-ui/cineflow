@@ -1,6 +1,7 @@
 // Разгрузка интерфейса: читаемый список сцен, номер кадра поверх картинки,
-// текст сцены без коробки и сворачивается, заметки линейкой вместо цветной
-// плашки и выбранное без оранжевой заливки.
+// текст сцены без коробки и сворачивается, раскадровка сворачивается до ленты
+// мелких кадров, заметки линейкой вместо цветной плашки и выбранное без
+// оранжевой заливки.
 // Проверяется замером в браузере, а не чтением кода: «обрезано ли название»
 // и «попадает ли нажатие в номер» видно только в готовой вёрстке.
 const fs = require('fs'), os = require('os'), path = require('path');
@@ -99,10 +100,13 @@ TITLES.forEach((t, i) => {
 
   const tx = await p.evaluate(() => {
     const t = document.querySelector('[data-cf="scene-script"]'), cs = getComputedStyle(t), box = getComputedStyle(t.parentElement);
-    return { left: cs.borderLeftWidth, top: cs.borderTopWidth, resize: cs.resize, bg: box.backgroundColor, grow: t.scrollHeight <= t.clientHeight + 2 };
+    // Высота — по тексту, но не выше 70% экрана (правило самого поля):
+    // упёршийся в предел текст прокручивается внутри, и это не ошибка.
+    return { left: cs.borderLeftWidth, top: cs.borderTopWidth, resize: cs.resize, bg: box.backgroundColor,
+             grow: t.scrollHeight <= t.clientHeight + 2 || t.clientHeight >= innerHeight * 0.7 - 3, sh: t.scrollHeight, ch: Math.round(t.clientHeight) };
   });
   ok('текст сцены отбит линейкой слева, без коробки', tx.left === '2px' && tx.top === '0px' && tx.resize === 'none' && /rgba\(0, 0, 0, 0\)|transparent/.test(tx.bg), JSON.stringify(tx));
-  ok('высота текста — по содержимому, без своей прокрутки', tx.grow);
+  ok('высота текста — по содержимому (до 70% экрана), без своей прокрутки', tx.grow, `${tx.sh} в поле ${tx.ch}`);
 
   // Лёжа текст развёрнут; кнопкой сворачивается до четырёх строк, выбор помнится.
   const fold = async (pg) => pg.evaluate(async () => {
@@ -126,6 +130,57 @@ TITLES.forEach((t, i) => {
     return { open: !!document.querySelector('[data-cf="scene-script"]'), label: document.querySelector('[data-cf="scene-text-fold"]').textContent };
   });
   ok('нажатие по свёрнутому тексту разворачивает его', f2.open && /свернуть/.test(f2.label), JSON.stringify(f2));
+
+  // Раскадровка сворачивается так же: лента мелких кадров с номерами, без полей.
+  const sh = await p.evaluate(async () => {
+    const strip = document.querySelector('[data-cf="frame-num"]').closest('.overflow-x-auto');
+    const before = Math.round(strip.getBoundingClientRect().height);
+    const b = document.querySelector('[data-cf="scene-shots-fold"]');
+    const r = b.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const label = b.textContent, grid = !!document.querySelector('[data-cf="scene-shots-grid"]');
+    b.click(); await new Promise(r => setTimeout(r, 300));
+    const shut = document.querySelector('[data-cf="scene-shots-shut"]');
+    const seg = [...document.querySelectorAll('.cf-seg button')].some(x => x.textContent.trim() === 'кадры');
+    return { hit: !!hit && b.contains(hit), label, grid, before, shut: !!shut, after: shut ? Math.round(shut.getBoundingClientRect().height) : null,
+             nums: shut ? [...shut.querySelectorAll('[data-cf="frame-num-mini"]')].map(x => x.textContent) : [],
+             fields: shut ? shut.querySelectorAll('input, button, textarea').length : -1, seg,
+             label2: document.querySelector('[data-cf="scene-shots-fold"]').textContent, saved: localStorage.getItem('cf_scene_shots') };
+  });
+  ok('раскадровка: «свернуть» под пальцем, рядом «развернуть все»', sh.hit && /свернуть/.test(sh.label) && sh.grid, JSON.stringify(sh));
+  ok('свёрнутая раскадровка — лента кадров с номерами, вдвое с лишним ниже', sh.shut && sh.nums.join(' ') === '1.1 1.2' && sh.after < sh.before / 2, `${sh.before} → ${sh.after}, номера ${sh.nums.join(' ')}`);
+  ok('в свёрнутой ленте ни полей, ни кнопок; «кадры/текст» ушёл', sh.fields === 0 && !sh.seg, JSON.stringify({ fields: sh.fields, seg: sh.seg }));
+  ok('выбор раскадровки запомнен для этого положения', /"landscape":true/.test(sh.saved || '') && /развернуть/.test(sh.label2), sh.saved + ' ' + sh.label2);
+  const sh2 = await p.evaluate(async () => {
+    const shut = document.querySelector('[data-cf="scene-shots-shut"]');
+    const r = shut.getBoundingClientRect(), hit = document.elementFromPoint(r.left + 20, r.top + r.height / 2);
+    // Попадание считаем ДО нажатия: React переписывает тот же div на месте
+    // (лента и обычный ряд — оба div), и после разворота картинка под пальцем
+    // уже не его ребёнок.
+    const inside = !!hit && shut.contains(hit);
+    shut.click(); await new Promise(r => setTimeout(r, 300));
+    return { hit: inside, open: !document.querySelector('[data-cf="scene-shots-shut"]') && document.querySelectorAll('[data-cf="frame-num"]').length === 2,
+             label: document.querySelector('[data-cf="scene-shots-fold"]').textContent };
+  });
+  ok('нажатие по свёрнутой ленте разворачивает её', sh2.hit && sh2.open && /свернуть/.test(sh2.label), JSON.stringify(sh2));
+  const sh3 = await p.evaluate(async () => {
+    document.querySelector('[data-cf="scene-shots-fold"]').click(); await new Promise(r => setTimeout(r, 300));
+    const add = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '+ кадр');
+    add.click(); await new Promise(r => setTimeout(r, 400));
+    return { open: !document.querySelector('[data-cf="scene-shots-shut"]'), n: document.querySelectorAll('[data-cf="frame-num"]').length, saved: localStorage.getItem('cf_scene_shots') };
+  });
+  ok('«+ кадр» у свёрнутой ленты разворачивает её и кладёт кадр', sh3.open && sh3.n === 3 && /"landscape":false/.test(sh3.saved || ''), JSON.stringify(sh3));
+  const sh4 = await p.evaluate(async () => {
+    const q = (s) => document.querySelector(s), tick = () => new Promise(r => setTimeout(r, 300));
+    q('[data-cf="scene-shots-grid"]').click(); await tick();
+    const gridOn = !q('[data-cf="scene-shots-grid"]') && !q('[data-cf="scene-shots-shut"]') && /свернуть/.test(q('[data-cf="scene-shots-fold"]').textContent);
+    q('[data-cf="scene-shots-fold"]').click(); await tick();
+    const strip = !!q('[data-cf="scene-shots-grid"]') && !q('[data-cf="scene-shots-shut"]');
+    q('[data-cf="scene-shots-fold"]').click(); await tick();
+    const shut = !!q('[data-cf="scene-shots-shut"]');
+    q('[data-cf="scene-shots-fold"]').click(); await tick();
+    return { gridOn, strip, shut, back: !q('[data-cf="scene-shots-shut"]') };
+  });
+  ok('три ступени: сетка → лента → свёрнуто, «свернуть» всегда на ступень ниже', sh4.gridOn && sh4.strip && sh4.shut && sh4.back, JSON.stringify(sh4));
 
   // Заметка — текст с линейкой цвета стикера, без цветной плашки.
   const nt = await p.evaluate(() => [...document.querySelectorAll('[data-cf="scene-note"]')].map(n => {
@@ -180,6 +235,15 @@ TITLES.forEach((t, i) => {
     return { open: !!document.querySelector('[data-cf="scene-script"]'), saved: localStorage.getItem('cf_scene_text') };
   });
   ok('стоя разворачивается, и это помнится отдельно', pv2.open && /"portrait":false/.test(pv2.saved || ''), JSON.stringify(pv2));
+  // Раскадровка стоя НЕ свёрнута сама по себе — сначала кадр, потом анкета.
+  const pvs = await v.evaluate(async () => {
+    const b = document.querySelector('[data-cf="scene-shots-fold"]');
+    const open = !document.querySelector('[data-cf="scene-shots-shut"]'), label = b.textContent;
+    b.click(); await new Promise(r => setTimeout(r, 300));
+    return { open, label, shut: !!document.querySelector('[data-cf="scene-shots-shut"]'), saved: localStorage.getItem('cf_scene_shots') };
+  });
+  ok('стоя раскадровка развёрнута, пока её не свернули', pvs.open && /свернуть/.test(pvs.label), JSON.stringify(pvs));
+  ok('стоя сворачивается, и это помнится отдельно от текста', pvs.shut && /"portrait":true/.test(pvs.saved || ''), JSON.stringify(pvs));
   ok('без ошибок на планшете стоя', e3.length === 0, e3.join(' | '));
 
   // ---- ТЕЛЕФОН
