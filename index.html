@@ -448,6 +448,10 @@
                         background: rgba(20,19,18,.72); border-radius: 6px; padding: 2px 7px; line-height: 1.5;
                         backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
         html.cf-touch .cf-frame-num { padding: 4px 9px; }
+        /* В свёрнутой ленте кадр 128 точек: номер тем же кеглем, но без полей —
+           иначе плашка заняла бы треть картинки. Правило касания выше по весу,
+           поэтому селектор повторён и для него. */
+        .cf-frame-num-sm, html.cf-touch .cf-frame-num-sm { padding: 1px 6px; border-radius: 4px; }
         .cf-sel { background: var(--raised) !important; color: var(--text) !important; box-shadow: 0 0 0 1px var(--border); }
         html.cf-touch .cf-seg > * { padding: 7px 10px; font-size: var(--fs-1); }
         /* ---------- инструменты доски ----------
@@ -19229,6 +19233,24 @@
             try { localStorage.setItem('cf_scene_text', JSON.stringify(n)); } catch (e) {}
             return n;
           });
+          // РАСКАДРОВКА СВОРАЧИВАЕТСЯ ТАК ЖЕ — до ленты мелких кадров без
+          // описаний («свернуть ⤡» у подписи, `cf_scene_shots`, тоже отдельно
+          // для каждого положения). Жалоба: «пропала „свернуть“ у кадров,
+          // есть только для текста» — у раскадровки было лишь «развернуть все»
+          // (лента ↔ сетка), а убрать ленту с дороги было нечем. В отличие
+          // от текста, без выбора кадры РАЗВЁРНУТЫ в обоих положениях: сцену
+          // для оператора определяет кадр, и прятать его сам по себе экран
+          // не должен. Свёрнутый вид — не пустота, а те же кадры с номерами
+          // в треть высоты: что в сцене есть, видно и так.
+          const [sceneShotsPref, setSceneShotsPref] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('cf_scene_shots') || '{}') || {}; } catch (e) { return {}; }
+          });
+          const sceneShotsShut = sceneTextOrient in sceneShotsPref ? !!sceneShotsPref[sceneTextOrient] : false;
+          const setSceneShots = (shut) => setSceneShotsPref(p => {
+            const n = { ...p, [sceneTextOrient]: !!shut };
+            try { localStorage.setItem('cf_scene_shots', JSON.stringify(n)); } catch (e) {}
+            return n;
+          });
           useEffect(() => {
             // Esc сворачивает развороты, а заодно и правую панель — но ТОЛЬКО
             // когда она лежит поверх содержимого. Стоящую рядом панель
@@ -20339,6 +20361,11 @@
                       // «Раскадровка» на пустой доске).
                       const SHOT_RATIO = projectRatio;
                       const FRAME_W = 280;
+                      // Кадр в свёрнутой ленте: на вертикальном планшете рядом со
+                      // списком сцен содержимому остаётся около 470 точек — видно
+                      // три с половиной кадра разом против полутора в обычной
+                      // ленте. Свёрнутая показывает больше, а не меньше.
+                      const FRAME_MINI_W = 128;
 
                       const frameThumb = (f, w) => (
                         f.image
@@ -21030,20 +21057,53 @@
                           <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 10 }}>
                             <span style={eyebrow}>Раскадровка</span>
                             <span className="cf-sub">{frames.length}</span>
-                            {frames.length > 0 && (
-                              <button onClick={() => setShotsExpanded(v => !v)} style={linkish}>
-                                {shotsExpanded ? 'свернуть ⤡' : 'развернуть все ⤢'}
-                              </button>
+                            {/* Три ступени, как масштаб: свёрнуто ‹ лента ‹ сетка.
+                                «свернуть ⤡» всегда на ступень ниже, «развернуть все ⤢»
+                                из ленты — в сетку. Свернуть — это чтение, cf-edit-only
+                                нет: гостю по ссылке кнопка нужна не меньше. Пустой
+                                раскадровке сворачиваться не во что. */}
+                            {frames.length > 0 && (sceneShotsShut ? (
+                              <button data-cf="scene-shots-fold" onClick={() => setSceneShots(false)} style={linkish}>развернуть ⤢</button>
+                            ) : (
+                              <React.Fragment>
+                                <button data-cf="scene-shots-fold" onClick={() => { if (shotsExpanded) setShotsExpanded(false); else setSceneShots(true); }} style={linkish}>свернуть ⤡</button>
+                                {!shotsExpanded && (
+                                  <button data-cf="scene-shots-grid" onClick={() => setShotsExpanded(true)} style={linkish}>развернуть все ⤢</button>
+                                )}
+                              </React.Fragment>
+                            ))}
+                            {!sceneShotsShut && (
+                              <span className="cf-seg">
+                                <button onClick={() => setShowImages(true)} className={showImages ? 'on' : ''} title="Кадры карточками">кадры</button>
+                                <button onClick={() => setShowImages(false)} className={!showImages ? 'on' : ''} title="Таблица: кадр, оптика, описание">текст</button>
+                              </span>
                             )}
-                            <span className="cf-seg">
-                              <button onClick={() => setShowImages(true)} className={showImages ? 'on' : ''} title="Кадры карточками">кадры</button>
-                              <button onClick={() => setShowImages(false)} className={!showImages ? 'on' : ''} title="Таблица: кадр, оптика, описание">текст</button>
-                            </span>
-                            <button onClick={addFrame} className="cf-edit-only shrink-0 rounded-lg px-3 font-semibold"
+                            {/* Новый кадр в свёрнутой ленте не виден — поэтому «+ кадр»
+                                сначала разворачивает её: действие обязано показать,
+                                что сделало. */}
+                            <button onClick={() => { if (sceneShotsShut) setSceneShots(false); addFrame(); }} className="cf-edit-only shrink-0 rounded-lg px-3 font-semibold"
                                     style={{ minHeight: 'var(--tap-sm)', fontSize: 'var(--fs-2)', color: 'var(--accent)', border: '1px solid var(--accent-line)' }}>+ кадр</button>
                           </div>
 
-                          {showImages ? (
+                          {sceneShotsShut ? (
+                            // СВЁРНУТАЯ РАСКАДРОВКА — лента кадров в треть ширины,
+                            // только картинка и номер: без описаний, полей, корзины
+                            // и «+ кадр». Это чтение, как четыре строки текста:
+                            // нажатие по ленте разворачивает. Пустой кадр остаётся
+                            // пунктирной рамкой — иначе сцена «из трёх кадров»
+                            // показала бы два.
+                            <div data-cf="scene-shots-shut" onClick={() => setSceneShots(false)} title="Развернуть раскадровку"
+                                 className="flex gap-2 mt-2 overflow-x-auto pb-1" style={{ cursor: 'pointer' }}>
+                              {frames.map(f => (
+                                <div key={f.id} className="relative shrink-0"
+                                     style={{ width: FRAME_MINI_W, aspectRatio: SHOT_RATIO, borderRadius: 'var(--r-sm)', overflow: 'hidden', boxSizing: 'border-box',
+                                              background: 'var(--card)', border: f.image ? 'none' : '1px dashed var(--border)' }}>
+                                  {f.image && <img src={f.image} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
+                                  <span data-cf="frame-num-mini" className="cf-frame-num cf-frame-num-sm absolute pointer-events-none" style={{ left: 4, bottom: 4 }}>{f.frameNum || '—'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : showImages ? (
                             <div className={shotsExpanded ? 'grid gap-x-4 gap-y-5 mt-2' : 'flex gap-4 mt-2 overflow-x-auto pb-1.5'}
                                  style={shotsExpanded ? { gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' } : null}>
                               {/* КАДР — КАРТИНКА НА СТРАНИЦЕ, А НЕ КАРТОЧКА. Рамка,
