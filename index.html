@@ -10547,6 +10547,27 @@
             projAt.current = Date.now();
             syncDoc('settings', 'project', { title: v, savedAt: projAt.current });
           };
+          // СТАНДАРТНЫЙ КОМПЛЕКТ СВЕТА — ОДИН НА ПРОЕКТ, ТЕКСТОМ. На всякой
+          // картине есть набор, который едет на каждую смену, а у сцены
+          // в «Свете» перечисляют только ДОБОРЫ к нему. Писать комплект
+          // в каждую сцену — это сорок одинаковых списков, которые
+          // разъедутся при первой правке. Живёт в том же `settings/project`,
+          // что и название (одно на комнату, побеждает `savedAt`, своё эхо
+          // не применяем), плюс копия на устройстве — без связи комплект
+          // обязан быть на месте. Текстом, а не позициями каталога
+          // намеренно: комплект пишут словами («2× S60, флаги, рамы 4×4»),
+          // а считать его по сценам не нужно — он везде один
+          const [lightBase, setLightBase] = useState(() => {
+            try { return localStorage.getItem('cf_light_base') || ''; } catch (e) { return ''; }
+          });
+          const [lightBaseEdit, setLightBaseEdit] = useState(false);
+          const saveLightBase = (v) => {
+            if (READ_ONLY) return;
+            setLightBase(v);
+            try { localStorage.setItem('cf_light_base', v); } catch (e) {}
+            projAt.current = Date.now();
+            syncDoc('settings', 'project', { lightBase: v, savedAt: projAt.current });
+          };
 
 
           // --- Объекты (места съёмки со скаутинга) ---
@@ -14970,6 +14991,9 @@
                 const t = String(d.title || '');
                 setProjectTitle(t);
                 try { localStorage.setItem('cf_project_title', t); } catch (e) {}
+                const lb = String(d.lightBase || '');
+                setLightBase(lb);
+                try { localStorage.setItem('cf_light_base', lb); } catch (e) {}
               }, err => console.warn('sync project', err));
             return () => un();
           }, [user]);
@@ -15391,7 +15415,8 @@
             const lcat = Object.values(lightGearTypes || DEFAULT_LIGHT_GEAR).map(g => g.label).join(', ');
             return 'СЦЕНЫ ПРОЕКТА (' + rows.length + '):\n' + rows.join('\n')
                  + '\n\nКАТАЛОГ КАМЕРЫ: ' + (cat || '—')
-                 + '\nКАТАЛОГ СВЕТА: ' + (lcat || '—');
+                 + '\nКАТАЛОГ СВЕТА: ' + (lcat || '—')
+                 + (String(lightBase || '').trim() ? '\nСТАНДАРТНЫЙ КОМПЛЕКТ СВЕТА (едет на все смены; у сцен «свет» — только доборы к нему): ' + String(lightBase).trim().replace(/\s+/g, ' ') : '');
           };
 
           const AGENT_SYS = [
@@ -19329,11 +19354,47 @@
             // пальцем, а не мышью: 24 точки там — промах через раз.
             const sz = isPhone ? 38 : 24;
             const stepBtn = { width: sz, height: sz, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--muted)', flexShrink: 0, fontSize: isPhone ? 17 : 13 };
+            const baseText = isLight ? String(lightBase || '').trim() : '';
+            const grow = (el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } };
             return (
               <div className="px-4 pb-4 pt-1">
+                {/* СТАНДАРТНЫЙ КОМПЛЕКТ — один на проект, здесь он правится
+                    и здесь же читается на всякой сцене: в покое текст, поле
+                    по нажатию (правило «Покой»). Ниже — доборы ЭТОЙ сцены. */}
+                {isLight && (
+                  <div data-cf="light-base" style={{ borderBottom: '1px solid var(--line)', paddingBottom: 12, marginBottom: 12 }}>
+                    {/* В панели 300 точек подпись с пометкой не помещаются в строку —
+                        переносим пометку целиком, а не по слову. */}
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span style={{ fontSize: 'var(--fs-2)', fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Стандартный комплект</span>
+                      <span className="cf-meta" style={{ whiteSpace: 'nowrap' }}>на всех сменах</span>
+                    </div>
+                    {lightBaseEdit && !READ_ONLY ? (
+                      <textarea autoFocus value={lightBase} data-cf="light-base-input"
+                                onChange={(e) => saveLightBase(e.target.value)}
+                                onBlur={() => setTimeout(() => setLightBaseEdit(false), 200)}
+                                ref={grow} onInput={(e) => grow(e.currentTarget)}
+                                className="w-full bg-transparent focus:outline-none resize-none block"
+                                style={{ fontSize: isPhone ? 14 : 12.5, lineHeight: 1.6, color: 'var(--text-2)', marginTop: 6, padding: 0, minHeight: 48, border: 'none' }}
+                                placeholder="Что едет на каждую смену: приборы, штативы, флаги, рамы…" />
+                    ) : (
+                      <div data-cf="light-base-text" onClick={() => { if (!READ_ONLY) setLightBaseEdit(true); }}
+                           title={READ_ONLY ? undefined : 'Нажмите, чтобы поправить комплект'}
+                           style={{ fontSize: isPhone ? 14 : 12.5, lineHeight: 1.6, color: baseText ? 'var(--text-2)' : 'var(--muted-2)', marginTop: 6,
+                                    whiteSpace: 'pre-line', cursor: READ_ONLY ? 'auto' : 'text', minHeight: 'var(--tap-sm)' }}>
+                        {baseText || (READ_ONLY ? '—' : 'Не задан. Нажмите и впишите, что едет на каждую смену — у сцен останутся только доборы.')}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {baseText && (
+                  <span data-cf="light-extras-head" style={{ fontSize: 'var(--fs-2)', fontWeight: 600, color: 'var(--muted)' }}>Доборы в этой сцене</span>
+                )}
                 {mine.length === 0 && (
-                  <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', lineHeight: 1.6 }}>
-                    В этой сцене {isLight ? 'приборов' : 'техники'} пока нет. Впишите позицию ниже или возьмите из каталога.
+                  <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', lineHeight: 1.6, marginTop: baseText ? 4 : 0 }}>
+                    {baseText
+                      ? 'Доборов в этой сцене нет — едет только стандартный комплект. Что нужно сверх него, впишите ниже или возьмите из каталога.'
+                      : `В этой сцене ${isLight ? 'приборов' : 'техники'} пока нет. Впишите позицию ниже или возьмите из каталога.`}
                   </p>
                 )}
                 {mine.map(([k, item]) => (
@@ -24297,6 +24358,14 @@
                         });
                         return (
                           <div className="space-y-12">
+                            {/* Стандартный комплект — один раз на весь план, а не в каждой
+                                смене: он на всех сменах один, и у сцен ниже — только доборы. */}
+                            {String(lightBase || '').trim() && (
+                              <div data-cf="kpp-light-base" className="px-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+                                <span style={{ fontWeight: 600, color: 'var(--muted)' }}>Стандартный комплект света · на всех сменах: </span>{String(lightBase).trim()}
+                                <div className="cf-meta" style={{ marginTop: 2 }}>У сцен и смен ниже — только доборы к нему.</div>
+                              </div>
+                            )}
                             {/* Смена — РАЗДЕЛ СТРАНИЦЫ, а не коробка: рамка и
                                 подложка вокруг каждой смены давали «коробку
                                 в коробке», а воздух между сменами разделяет
@@ -24320,7 +24389,7 @@
                                       )}
                                       {Object.keys(lightSum).length > 0 && (
                                         <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">Итого свет</span>
+                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">{String(lightBase || '').trim() ? 'Доборы света' : 'Итого свет'}</span>
                                           {totalChips(lightSum, lightGearTypes || DEFAULT_LIGHT_GEAR, { chip: 'bg-amber-950/60 text-amber-200', num: 'bg-amber-700' })}
                                         </div>
                                       )}
@@ -24351,7 +24420,7 @@
                                               {(cam || lig) && (
                                                 <div className="flex flex-col gap-1 pt-1">
                                                   {cam && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-indigo-400 font-bold ">камера: </span>{cam}</span>)}
-                                                  {lig && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-amber-400 font-bold ">свет: </span>{lig}</span>)}
+                                                  {lig && (<span className="text-[length:var(--fs-1)] font-mono text-zinc-400 leading-relaxed"><span className="text-amber-400 font-bold ">{String(lightBase || '').trim() ? 'доборы: ' : 'свет: '}</span>{lig}</span>)}
                                                 </div>
                                               )}
                                             </div>
@@ -26070,7 +26139,13 @@
                     <p style={{fontSize: '9pt', color: '#777', margin: '0 0 16pt'}}>
                       «Нужно» — максимум за одну сцену, то есть сколько единиц требуется одновременно.
                     </p>
-                    {[{t: 'Камера и операторский грип', rows: gearSummary.camera}, {t: 'Осветительные приборы', rows: gearSummary.light}].map(block => (
+                    {String(lightBase || '').trim() && (
+                      <div className="print-keep" style={{margin: '0 0 14pt', padding: '6pt 10pt', borderLeft: '3px solid #cc7a5f'}}>
+                        <p style={{fontSize: '8pt', letterSpacing: '.12em', textTransform: 'uppercase', margin: '0 0 3pt', color: '#777'}}>Стандартный комплект света · на всех сменах</p>
+                        <p style={{fontSize: '10.5pt', margin: 0, whiteSpace: 'pre-wrap'}}>{String(lightBase).trim()}</p>
+                      </div>
+                    )}
+                    {[{t: 'Камера и операторский грип', rows: gearSummary.camera}, {t: String(lightBase || '').trim() ? 'Осветительные приборы · доборы к комплекту' : 'Осветительные приборы', rows: gearSummary.light}].map(block => (
                       <div key={block.t} style={{marginBottom: '16pt'}}>
                         <h2 style={{fontSize: '13pt', fontWeight: 800, margin: '0 0 6pt'}}>{block.t}</h2>
                         {block.rows.length === 0
@@ -26163,7 +26238,8 @@
                       </div>
                       {s.content && <p style={{fontSize: '11pt', margin: '0 0 8pt', whiteSpace: 'pre-wrap'}}>{s.content}</p>}
                       {Object.keys(s.gear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 4pt'}}><b>Техника:</b> {gearLine(s.gear, gearTypes)}</p>}
-                      {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>Свет:</b> {gearLine(s.lightGear, lightGearTypes)}</p>}
+                      {String(lightBase || '').trim() && <p style={{fontSize: '10pt', margin: '0 0 4pt', whiteSpace: 'pre-wrap'}}><b>Стандартный комплект света:</b> {String(lightBase).trim()}</p>}
+                      {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>{String(lightBase || '').trim() ? 'Доборы света:' : 'Свет:'}</b> {gearLine(s.lightGear, lightGearTypes)}</p>}
                       {pFrames.length > 0 && (
                         <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt', margin: '0 0 10pt'}}>
                           {pFrames.map(f => (
@@ -26197,6 +26273,14 @@
                   <h1 className="print-title">{projectTitle || 'План подготовки к съёмкам'}</h1>
                   <p className="print-meta">Сформировано: {new Date().toLocaleDateString('ru-RU')} · сцен: {scenes.length}</p>
                 </div>
+                {/* Комплект — один раз на весь план: он на всех сменах один,
+                    а у каждой сцены ниже — только доборы. */}
+                {String(lightBase || '').trim() && (
+                  <div className="print-keep" style={{margin: '0 0 14pt', padding: '6pt 10pt', borderLeft: '3px solid #cc7a5f'}}>
+                    <p style={{fontSize: '8pt', letterSpacing: '.12em', textTransform: 'uppercase', margin: '0 0 3pt', color: '#777'}}>Стандартный комплект света · на всех сменах</p>
+                    <p style={{fontSize: '10.5pt', margin: 0, whiteSpace: 'pre-wrap'}}>{String(lightBase).trim()}</p>
+                  </div>
+                )}
                 {[...scenes].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || String(a.number).localeCompare(String(b.number), undefined, {numeric: true})).map(s => {
                   const pFrames = storyboard.filter(f => f.sceneId === s.id);
                   const pLocs = locations.filter(l => (l.sceneIds || []).includes(s.id));
@@ -26211,7 +26295,7 @@
                       )}
                       {s.content && <p style={{fontSize: '11pt', margin: '0 0 8pt', whiteSpace: 'pre-wrap'}}>{s.content}</p>}
                       {Object.keys(s.gear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 4pt'}}><b>Техника:</b> {Object.entries(s.gear).map(([k, v]) => `${((gearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}
-                      {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>Свет:</b> {Object.entries(s.lightGear).map(([k, v]) => `${((lightGearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}
+                      {Object.keys(s.lightGear || {}).length > 0 && <p style={{fontSize: '10pt', margin: '0 0 8pt'}}><b>{String(lightBase || '').trim() ? 'Доборы света:' : 'Свет:'}</b> {Object.entries(s.lightGear).map(([k, v]) => `${((lightGearTypes || {})[k] || {label: k}).label} × ${v}`).join(', ')}</p>}
                       {pFrames.length > 0 && (
                         <div style={{display: 'flex', flexWrap: 'wrap', gap: '8pt'}}>
                           {pFrames.map(f => (
