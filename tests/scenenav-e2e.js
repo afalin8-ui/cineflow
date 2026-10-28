@@ -7,6 +7,9 @@
 // — #1, стрелка назад гаснет → в «Съёмке» полоса на месте, переход
 // сбрасывает прокрутку → под фильтром «Все» за #3 идёт #4 → на планшете
 // полосы нет → у гостя по ссылке она есть и работает.
+// Заодно — заметки сцены с телефона: пятая плитка «Заметки» → шторка →
+// «+ заметка» заводит заметку с курсором → текст ложится в запись →
+// на плитке счётчик → гостю список виден, а «+ заметка» нет.
 //
 // Запуск:  node tests/scenenav-e2e.js
 const fs = require('fs'), os = require('os'), path = require('path');
@@ -84,6 +87,9 @@ for (const sc of SCENES) for (let k = 1; k <= 14; k++) FRAMES.push({ id: `${sc.i
   // Нажатие по-настоящему: середина элемента обязана попадать в него самого.
   const tap = async (page, sel, label) => {
     const el = page.locator(sel).first();
+    // Цель может лежать ниже видимой части свитка — долистываем до неё,
+    // как долистал бы палец; попадание меряется уже по видимому месту.
+    await el.scrollIntoViewIfNeeded().catch(() => {});
     const b = await el.boundingBox();
     if (!b) { ok(label + ': есть на экране', false); return false; }
     const h = await el.elementHandle();
@@ -147,6 +153,25 @@ for (const sc of SCENES) for (let k = 1; k <= 14; k++) FRAMES.push({ id: `${sc.i
     await tap(page, '[data-cf="scene-row"][data-id="s3"]', 'строка #3');
     n = await nav(page);
     ok('под «Все» за #3 идёт #4 из другой смены, «3 из 5»', n && /#4/.test(n.next) && n.pos === '3 из 5', JSON.stringify(n));
+
+    // Заметки сцены: пятая плитка → шторка → «+ заметка» → курсор в новой → текст в записи
+    await tap(page, 'header .cf-seg button:has-text("Творч")', 'режим «Творч»');
+    const tile0 = await page.evaluate(() => { const t = document.querySelector('[data-cf="tile-notes"]'); if (!t) return null; const g = t.parentElement;
+      return { text: t.textContent.trim(), full: Math.abs(t.getBoundingClientRect().width - g.getBoundingClientRect().width) < 2 }; });
+    ok('плитка «Заметки» во всю ширину, пока без счётчика', tile0 && /^Заметки$/.test(tile0.text) && tile0.full, JSON.stringify(tile0));
+    await tap(page, '[data-cf="tile-notes"]', 'плитка «Заметки»');
+    const sheet = await page.evaluate(() => { const sh = document.querySelector('.cf-sheet'); return sh ? sh.textContent.replace(/\s+/g, ' ').slice(0, 120) : null; });
+    ok('шторка «Заметки сцены»: «+ заметка» и пустое состояние словами', sheet && /Заметки сцены/.test(sheet) && /\+ заметка/.test(sheet) && /Пока пусто/.test(sheet), sheet);
+    await tap(page, '[data-cf="note-add"]', '«+ заметка»');
+    const fresh = await page.evaluate(() => { const a = document.activeElement; return { n: document.querySelectorAll('.cf-sheet [data-cf="scene-note"]').length, focused: !!a && a.tagName === 'TEXTAREA' && !!a.closest('.cf-sheet') }; });
+    ok('новая заметка появилась в шторке и взяла курсор', fresh.n === 1 && fresh.focused, JSON.stringify(fresh));
+    await page.keyboard.type('Проверить розетки');
+    await page.waitForTimeout(1300);
+    const saved = await page.evaluate(() => (JSON.parse(localStorage.getItem('cf_stickies') || '[]').find(x => x.sceneId === 's3') || {}));
+    ok('текст заметки лёг в запись сцены #3', saved.text === 'Проверить розетки', JSON.stringify(saved).slice(0, 120));
+    await page.mouse.click(195, 60); await page.waitForTimeout(400);
+    const tile1 = await page.evaluate(() => ({ closed: !document.querySelector('.cf-sheet'), text: (document.querySelector('[data-cf="tile-notes"]') || {}).textContent }));
+    ok('шторка закрылась по затемнению, на плитке «Заметки · 1»', tile1.closed && /Заметки · 1/.test(tile1.text || ''), JSON.stringify(tile1));
     ok('без ошибок на странице', errs.length === 0, errs.join(' | '));
     await ctx.close();
   }
@@ -167,6 +192,10 @@ for (const sc of SCENES) for (let k = 1; k <= 14; k++) FRAMES.push({ id: `${sc.i
     await tap(page, '[data-cf="scene-next"]', '«следующая» у гостя');
     n = await nav(page);
     ok('и листает', n && n.scene === '2', JSON.stringify(n));
+    await tap(page, '[data-cf="tile-notes"]', 'плитка «Заметки» у гостя');
+    const g = await page.evaluate(() => { const b = document.querySelector('[data-cf="note-add"]'); const sh = document.querySelector('.cf-sheet');
+      return { sheet: !!sh && /Заметки сцены/.test(sh.textContent), add: !!b && b.offsetParent !== null }; });
+    ok('гость видит заметки, а «+ заметка» ему не показана', g.sheet && !g.add, JSON.stringify(g));
     ok('без ошибок у гостя', errs.length === 0, errs.join(' | '));
     await ctx.close();
   }
