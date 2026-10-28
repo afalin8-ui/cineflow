@@ -18997,14 +18997,18 @@
           // Заметка сцены — это стикер на доске сцены, а не отдельная
           // сущность: одна и та же бумажка, видная и на экране сцены,
           // и на холсте. Два списка заметок разошлись бы за неделю.
-          const addSceneNote = () => {
+          // quiet — без полоски: в шторке телефона она ложилась ровно на
+          // новую заметку, в которой уже стоит курсор, а результат и так виден.
+          const addSceneNote = (opts) => {
             if (READ_ONLY) return;
             if (!activeSceneId) return;
             const ns = { id: `st-${Date.now()}`, boardId: activeBoardId, sceneId: activeSceneId, text: '',
                          x: boardAt(300, 300).x, y: boardAt(300, 300).y,
                          w: STICKY_W, h: STICKY_H, color: '#fef08a' };
             setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
-            showToast('Заметка добавлена · она же лежит на доске');
+            setNoteFresh(ns.id);
+            if (!(opts && opts.quiet)) showToast('Заметка добавлена · она же лежит на доске');
+            return ns.id;
           };
           // Какую сцену печатать по «···» → «Экспорт сцены в PDF».
           const [printScene, setPrintScene] = useState(null);
@@ -19174,6 +19178,10 @@
           const fullScout = scoutFull && currentView === 'scout';
           // Заметка сцены, в которой сейчас курсор: ей одной показывается палитра.
           const [noteFocus, setNoteFocus] = useState(null);
+          // Только что заведённая заметка берёт курсор сама (как новая строка
+          // состава группы): пустая строка без курсора читается как «ничего
+          // не добавилось» — на телефоне в шторке особенно.
+          const [noteFresh, setNoteFresh] = useState(null);
           // Кадр раскадровки, который сейчас правят ({id, field}); остальные — картинка и текст.
           const [frameEdit, setFrameEdit] = useState(null);
           // Шторку смахивают вниз — за ручку или за любое её место сверху.
@@ -19429,6 +19437,51 @@
           // её разметку через возврат экрана было бы куда запутаннее.
           // Списки техники и света — те же самые, что в правой панели
           // на планшете: одно место правки, никакого второго вида.
+          // ЗАМЕТКИ СЦЕНЫ — ОДИН СПИСОК на блок «Заметки сцены» планшета
+          // и шторку «Заметки» телефона: второй вид разъехался бы с первым
+          // при первой правке. Заметка — текст, отбитый линейкой цвета
+          // стикера, а не цветной квадрат (см. «Воздух»). Объявлен ДО
+          // phoneSheetBody: та собирается при отрисовке, и ссылка на ещё
+          // не созданную функцию дала бы белый экран.
+          const sceneNotesList = (s) => {
+            const notes = s ? stickies.filter(st => st.sceneId === s.id) : [];
+            if (notes.length === 0) return (
+              <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 6, lineHeight: 1.6 }}>
+                Пока пусто. Заметку можно завести здесь или на доске — потяните за кружок сбоку заметки к карточке сцены.
+              </p>
+            );
+            return (
+              <div className="grid mt-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(260px, 100%), 1fr))', gap: '18px 32px' }}>
+                {notes.map(st => (
+                  <div key={st.id} data-cf="scene-note" className="cf-note relative group" style={{ borderLeftColor: st.color || STICKY_COLORS[0] }}>
+                    <button onClick={() => { setItemScene(st.id, 'sticky', ''); showToast('Заметка отвязана · осталась на доске'); }}
+                            title="Убрать из сцены — заметка останется на доске"
+                            className="cf-edit-only absolute flex items-center justify-center rounded-full cf-act1 transition-all"
+                            style={{ top: 0, right: 0, width: 'var(--tap-sm)', height: 'var(--tap-sm)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
+                    <textarea rows={1} value={st.text} autoFocus={noteFresh === st.id}
+                              onFocus={() => setNoteFocus(st.id)} onBlur={() => setTimeout(() => setNoteFocus(f => f === st.id ? null : f), 200)}
+                              onChange={(e) => { const up = stickies.map(x => x.id === st.id ? { ...x, text: e.target.value } : x); setStickies(up); syncDoc('stickies', st.id, up.find(x => x.id === st.id)); }}
+                              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
+                              onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
+                              className="w-full bg-transparent border-none focus:outline-none resize-none block"
+                              style={{ fontSize: 'var(--fs-3)', lineHeight: 1.55, color: 'var(--text-2)', minHeight: 26, padding: 0, paddingRight: 'calc(var(--tap-sm) + 4px)' }} placeholder="Текст заметки…" />
+                    {/* Палитра — только у заметки, в которой курсор. Не
+                        прозрачной, а ВОВСЕ: невидимая, она держала место,
+                        и линейка уходила на строку ниже текста. */}
+                    {noteFocus === st.id && (
+                      <div className="flex gap-1.5 mt-2">
+                        {STICKY_COLORS.map(c => (
+                          <button key={c} onClick={() => paintStickies(st.id, c)} title="Цвет заметки"
+                                  style={{ background: c, width: 18, height: 18, boxShadow: st.color === c ? '0 0 0 2px var(--bg), 0 0 0 3px var(--muted)' : 'none' }}
+                                  className="cf-edit-only rounded-full transition-shadow" />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          };
           const phoneSheetBody = (() => {
             if (!isPhone || !phoneSheet || phoneSheet === 'more') return null;
             const s = scenes.find(x => x.id === activeSceneId) || sortedScenes[0];
@@ -19437,6 +19490,20 @@
             const c = loc ? parseCoords(loc.coords) : null;
             if (phoneSheet === 'gear') return gearPanel(s, false);
             if (phoneSheet === 'light') return gearPanel(s, true);
+            // Заметки сцены — те же стикеры с доски сцены, что в блоке
+            // «Заметки сцены» на планшете. Жалоба: «нужна кнопка заметки
+            // кроме экспликации» — с телефона до заметок было не добраться
+            // вовсе, а пишут их как раз на площадке.
+            if (phoneSheet === 'notes') return (
+              <div className="px-4 pb-5 pt-1">
+                <button onClick={() => addSceneNote({ quiet: true })} data-cf="note-add"
+                        className="cf-edit-only flex items-center gap-1.5 rounded-lg px-4 font-semibold"
+                        style={{ minHeight: 'var(--tap)', fontSize: 'var(--fs-3)', background: 'var(--raised)', color: 'var(--text)' }}>
+                  + заметка
+                </button>
+                {sceneNotesList(s)}
+              </div>
+            );
             if (phoneSheet === 'expl') return (
               <div className="px-4 pb-5 pt-1">
                 <textarea value={s.content || ''} onChange={(e) => updateScene(s.id, 'content', e.target.value)}
@@ -20728,6 +20795,13 @@
                                 <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Pen /></span>
                                 Экспликация
                               </button>
+                              {/* Пятая плитка — заметки сцены, во всю ширину:
+                                  четыре стоят парами, и пятая в полклетки
+                                  оставила бы рядом пустую. */}
+                              <button onClick={() => setPhoneSheet('notes')} className="cf-tile" data-cf="tile-notes" style={{ gridColumn: '1 / -1' }}>
+                                <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Sticky /></span>
+                                Заметки{sceneNotes.length ? ` · ${sceneNotes.length}` : ''}
+                              </button>
                             </div>
 
                             <button onClick={() => setSceneToBoard(s.id)} className="cf-edit-only w-full rounded-lg mt-2.5"
@@ -21333,44 +21407,9 @@
                               <span style={eyebrow}>Заметки сцены</span>
                               <button onClick={addSceneNote} className="cf-edit-only" style={linkish}>+ заметка</button>
                             </div>
-                            {sceneNotes.length === 0 ? (
-                              <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 6, lineHeight: 1.6 }}>
-                                Пока пусто. Заметку можно завести здесь или на доске — потяните за кружок сбоку заметки к карточке сцены.
-                              </p>
-                            ) : (
-                              // ЗАМЕТКА — ТЕКСТ, ОТБИТЫЙ ЛИНЕЙКОЙ, а не цветной
-                              // квадрат: жёлтая плашка с жирным чёрным шрифтом
-                              // посреди тёмной страницы была громче текста сцены
-                              // и кадров. Цвет заметки остался — это цвет её
-                              // стикера на доске, — но только в линейке слева.
-                              <div className="grid mt-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(260px, 100%), 1fr))', gap: '18px 32px' }}>
-                                {sceneNotes.map(st => (
-                                  <div key={st.id} data-cf="scene-note" className="cf-note relative group" style={{ borderLeftColor: st.color || STICKY_COLORS[0] }}>
-                                    <button onClick={() => { setItemScene(st.id, 'sticky', ''); showToast('Заметка отвязана · осталась на доске'); }}
-                                            title="Убрать из сцены — заметка останется на доске"
-                                            className="cf-edit-only absolute flex items-center justify-center rounded-full cf-act1 transition-all"
-                                            style={{ top: 0, right: 0, width: 'var(--tap-sm)', height: 'var(--tap-sm)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
-                                    <textarea rows={1} value={st.text} onFocus={() => setNoteFocus(st.id)} onBlur={() => setTimeout(() => setNoteFocus(f => f === st.id ? null : f), 200)} onChange={(e) => { const up = stickies.map(x => x.id === st.id ? { ...x, text: e.target.value } : x); setStickies(up); syncDoc('stickies', st.id, up.find(x => x.id === st.id)); }}
-                                              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
-                                              onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
-                                              className="w-full bg-transparent border-none focus:outline-none resize-none block"
-                                              style={{ fontSize: 'var(--fs-3)', lineHeight: 1.55, color: 'var(--text-2)', minHeight: 26, padding: 0, paddingRight: 'calc(var(--tap-sm) + 4px)' }} placeholder="Текст заметки…" />
-                                    {/* Палитра — только у заметки, в которой курсор. Не
-                                        прозрачной, а ВОВСЕ: невидимая, она держала место,
-                                        и линейка уходила на строку ниже текста. */}
-                                    {noteFocus === st.id && (
-                                      <div className="flex gap-1.5 mt-2">
-                                        {STICKY_COLORS.map(c => (
-                                          <button key={c} onClick={() => paintStickies(st.id, c)} title="Цвет заметки"
-                                                  style={{ background: c, width: 18, height: 18, boxShadow: st.color === c ? '0 0 0 2px var(--bg), 0 0 0 3px var(--muted)' : 'none' }}
-                                                  className="cf-edit-only rounded-full transition-shadow" />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                            {/* Сам список — sceneNotesList: он же в шторке
+                                «Заметки» на телефоне, второго вида нет. */}
+                            {sceneNotesList(s)}
                           </div>
                         </main>
                       );
@@ -24779,7 +24818,8 @@
                     <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
                       <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600, letterSpacing: '-.01em', color: 'var(--text)' }}>
                         {phoneSheet === 'more' ? 'Ещё' : phoneSheet === 'gear' ? 'Камера и техника'
-                          : phoneSheet === 'light' ? 'Свет' : phoneSheet === 'sun' ? 'Объект и солнце' : 'Экспликация и замысел'}
+                          : phoneSheet === 'light' ? 'Свет' : phoneSheet === 'sun' ? 'Объект и солнце'
+                          : phoneSheet === 'notes' ? 'Заметки сцены' : 'Экспликация и замысел'}
                       </span>
                       <button onClick={() => setPhoneSheet(null)} className="ml-auto flex items-center justify-center"
                               style={{ width: 44, height: 44, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-3)' }}>✕</button>
