@@ -2910,6 +2910,77 @@
           if (b === 1) return one;
           return many;
         };
+        // ИМЯ ФАЙЛА — НЕ ПОДПИСЬ. У кадров, загруженных до того, как имя
+        // переехало в поле `file`, оно лежит в `label`, и на карточках
+        // стояло «Screenshot 2026-04-21 110215.png» (скриншот с iPad):
+        // не говорит ничего, а выглядит как подпись. Показ такое прячет,
+        // ЗАПИСЬ НЕ ТРОГАЕТ: по имени по-прежнему ищут, считают повторы
+        // и берут расширение для облака (`r.file || r.label`). Поля ввода
+        // подписи показывают настоящее значение — там его и правят.
+        const FILE_NAME_RE = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|avif|svg|mov|mp4|m4v|webm|pdf)$/i;
+        const looksLikeFileName = (v) => FILE_NAME_RE.test(String(v || '').trim());
+        const refCaption = (r) => { const l = String((r && r.label) || '').trim(); return looksLikeFileName(l) ? '' : l; };
+
+        // СЦЕНАРИЙ ИЗ PDF И .TXT ПРИХОДИТ С ПЕРЕНОСАМИ НА ШИРИНЕ ЛИСТА
+        // (около 58 знаков): каждая строка листа — своя строка. В колонке
+        // другой ширины такой текст идёт «лесенкой» — «…постройки военного /
+        // аэродрома. / Ветер полощет…» (скриншот с iPad). Склеиваем
+        // строки внутри абзаца, а сам абзац оставляем как есть.
+        // Правило: строка продолжается следующей, если (а) следующая
+        // начинается со строчной буквы — новая фраза сценария так не
+        // начинается никогда; или (б) первое слово следующей на эту
+        // строку уже не влезало — считаем от самой длинной строки
+        // абзаца (ширина листа). Не склеиваем с репликами и заголовками
+        // (строка без строчных — «ГОЛОС», «ИНТ. ДВОР»), с ремарками
+        // «(по-корейски)», с реплики на «—» и пунктов списка. Абзац
+        // трогаем, только если он и правда выглядит перенесённым: ширина
+        // 20…110 знаков (длиннее — это абзац целиком, так отдаёт Word),
+        // есть полные строки, и хотя бы треть из них ОБОРВАНА ПОСРЕДИ
+        // ФРАЗЫ — без точки, запятой-паузы, знака в конце. Это и отличает
+        // перенос листа от набранного руками списка фраз: в списке
+        // кадров («Общий план двора, камера на кране.» / «Средний план…»)
+        // каждая строка кончается точкой, и склеивать его нельзя — первая
+        // выкладка склеивала, поймано стендом. Пустые строки — границы
+        // абзацев — сохраняются.
+        const unwrapScript = (text) => {
+          const src = String(text || '');
+          if (!src.includes('\n')) return src;
+          const lines = src.split('\n').map(l => l.replace(/\s+$/, ''));
+          const hasLetters = (l) => /[A-Za-zА-Яа-яЁё]/.test(l);
+          const isCue = (l) => hasLetters(l) && !/[a-zа-яё]/.test(l);
+          const isParen = (l) => /^\(.*\)$/.test(l);
+          const startsItem = (l) => /^([-–—•*]|\d+[.)])\s/.test(l) || /^\(/.test(l);
+          const startsLower = (l) => /^[a-zа-яё]/.test(l);
+          const out = [];
+          let i = 0;
+          while (i < lines.length) {
+            if (!lines[i].trim()) { out.push(''); i++; continue; }
+            let j = i; while (j < lines.length && lines[j].trim()) j++;
+            const block = lines.slice(i, j), tr = block.map(l => l.trim());
+            const W = Math.max(...tr.map(l => l.length));
+            const body = tr.slice(0, -1);
+            // Полные строки абзаца (без реплик и ремарок) и те из них,
+            // что оборваны посреди фразы.
+            const cand = body.filter(l => l.length >= W * 0.6 && !isCue(l) && !isParen(l));
+            const evid = cand.filter(l => !/[.!?…:;»)]$/.test(l));
+            // Правило «слово не влезало» — только от сорока знаков: у короткой
+            // ширины оно срабатывало бы на любых двух коротких абзацах подряд.
+            const wrapped = block.length >= 2 && W >= 20 && W <= 110
+              && cand.length >= Math.min(2, body.length) && evid.length >= 1 && evid.length * 3 >= cand.length;
+            if (!wrapped) { block.forEach(l => out.push(l)); i = j; continue; }
+            let cur = block[0];
+            for (let k = 1; k < block.length; k++) {
+              const prev = tr[k - 1], next = tr[k];
+              const firstWord = (next.match(/^\S+/) || [''])[0];
+              const join = !isCue(prev) && !isParen(prev) && !isCue(next) && !isParen(next) && !startsItem(next)
+                && (startsLower(next) || (W >= 40 && prev.length + 1 + firstWord.length > W));
+              if (join) cur += ' ' + next; else { out.push(cur); cur = block[k]; }
+            }
+            out.push(cur); i = j;
+          }
+          return out.join('\n');
+        };
+        window.__cfUnwrap = unwrapScript;
         const hhmm = (d) => d ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
         // Сегодняшняя дата ПО МЕСТНЫМ ЧАСАМ. toISOString отдаёт дату по UTC,
         // и до трёх ночи по Москве это ещё вчера — раскладка дня уехала бы
@@ -4953,7 +5024,7 @@
                         )}
                         {/* ПОДПИСЬ ПРАВИТСЯ ЗДЕСЬ, а не на карточке галереи: назвать кадр можно, только когда его видишь. */}
                         {READ_ONLY
-                          ? (currentRef.label && <span className="px-3 md:px-5 py-1.5 md:py-2 glass-panel rounded-full text-xs md:text-sm font-medium text-white text-center truncate">{currentRef.label}</span>)
+                          ? (refCaption(currentRef) && <span className="px-3 md:px-5 py-1.5 md:py-2 glass-panel rounded-full text-xs md:text-sm font-medium text-white text-center truncate">{refCaption(currentRef)}</span>)
                           : <input type="text" value={currentRef.label || ''}
                                    onChange={(e) => onSetLabel && onSetLabel(currentRef.id, e.target.value)}
                                    placeholder="Как назовём кадр?"
@@ -11406,7 +11477,7 @@
                         <img src={printPhotos[ph.id] || ph.url} style={{width: '100%', border: '1px solid #ccc'}} />
                         {/* Ролик на листе — постер с пометкой, иначе кадр читается как фотография точки;
                             в выгрузке одного объекта ещё и ссылка: PDF сделает её нажимаемой */}
-                        {(ph.label || ph.video) && <div style={{marginTop: '2pt'}}>{ph.video ? `▶ видео · ${fmtDur(ph.dur)}${ph.label ? ' · ' + ph.label : ''}` : ph.label}</div>}
+                        {(refCaption(ph) || ph.video) && <div style={{marginTop: '2pt'}}>{ph.video ? `▶ видео · ${fmtDur(ph.dur)}${refCaption(ph) ? ' · ' + refCaption(ph) : ''}` : refCaption(ph)}</div>}
                         {/* ПОДПИСЬ СО СКАУТА. Снято визиром — значит известно,
                             чем и откуда: фокусное, камера, азимут и кто снимал.
                             Ради отчёта эти сведения и кладутся в запись кадра,
@@ -15595,7 +15666,7 @@
             });
             return out
               .map(s => ({ number: s.number, title: s.title,
-                           script: s.body.join('\n').replace(/\n{3,}/g, '\n\n').trim() }))
+                           script: unwrapScript(s.body.join('\n').replace(/\n{3,}/g, '\n\n').trim()) }))
               .filter(s => s.title || s.script);
           };
 
@@ -19244,6 +19315,31 @@
           // Одновременно они не помещаются, и притворяться, что помещаются,
           // значит сделать нечитаемым и то и другое.
           const [phoneSceneOpen, setPhoneSceneOpen] = useState(false);
+          // СЦЕНАРИЙ С ПЕРЕНОСАМИ ЛИСТА СКЛЕИВАЕТСЯ ОДИН РАЗ — В САМОЙ ЗАПИСИ,
+          // при открытии сцены (и когда её текст приехал из облака); гостю —
+          // только на показе. Склеивать «на показе» в поле ввода ПРОБОВАЛИ,
+          // и стенд поймал ловушку: поле показывало не то, что лежит
+          // в записи, пробел в конце строки съедался на каждом нажатии,
+          // а строку перед словом со строчной буквы было не разорвать —
+          // склейка собирала её обратно. Поэтому поле показывает запись
+          // как есть, а запись чинится один раз. Пока курсор в поле,
+          // запись не трогаем: это уже правка человека. Проходов не больше
+          // трёх на сцену: склейка сходится, но страховка от круга нужна.
+          const activeScript = (scenes.find(x => x.id === activeSceneId) || {}).script || '';
+          const unwrapPass = useRef({});
+          useEffect(() => {
+            if (READ_ONLY) return;
+            const sc = scenesRef.current.find(x => x.id === activeSceneId);
+            if (!sc) return;
+            const ae = document.activeElement;
+            if (ae && ae.tagName === 'TEXTAREA' && /scene-script/.test(ae.dataset.cf || '')) return;
+            const n = unwrapPass.current[sc.id] || 0;
+            if (n >= 3) return;
+            const u = unwrapScript(sc.script || '');
+            if (u === (sc.script || '')) return;
+            unwrapPass.current[sc.id] = n + 1;
+            updateScene(sc.id, 'script', u);
+          }, [activeSceneId, activeScript]);
           // «Экспликации» на телефоне — тоже два экрана, а не один свиток: список гайдов и схем занимал весь первый экран, и чтобы дойти до самого гайда, его каждый раз приходилось пролистывать.
           const [phoneDocOpen, setPhoneDocOpen] = useState(false);
           // «Объекты» на телефоне — тоже два экрана: список во всю ширину,
@@ -19536,6 +19632,10 @@
           // и значок оставляли названию сотню, и все сцены читались
           // одинаково: «ИНТ. …», «НАТ. …». Само название не трогаем —
           // режем только показ, и только если значок это место называет.
+          // Колонка номера — по самому длинному номеру в проекте: на 36
+          // точках «1-10» ломался на две строки («1–» / «10», скриншот
+          // с iPad). Одна ширина на все строки, иначе названия пляшут.
+          const numColW = useMemo(() => 8 + Math.max(1, ...sortedScenes.map(x => String(x.number || '').length)) * 9, [sortedScenes]);
           const listTitle = (s) => {
             const t = String(s.title || '').trim();
             if (!t) return 'Без названия';
@@ -20666,7 +20766,7 @@
                                                          background: on ? 'var(--card)' : 'transparent',
                                                          borderLeft: on ? '3px solid var(--accent)' : '3px solid transparent' }}>
                                           {sceneSel && selMark(sceneSel.includes(sc.id))}
-                                          <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', width: 36, fontWeight: on ? 600 : 400, color: on ? 'var(--accent)' : 'var(--muted)' }}>#{sc.number}</span>
+                                          <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', width: Math.max(36, numColW), whiteSpace: 'nowrap', fontWeight: on ? 600 : 400, color: on ? 'var(--accent)' : 'var(--muted)' }}>#{sc.number}</span>
                                           {cover && <img src={cover.url || cover.image} draggable="false" className="shrink-0" style={{ width: 52, height: 34, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} />}
                                           <span className="flex-1 min-w-0">
                                             <span className="block" title={sc.title} style={{ ...clamp2, fontSize: 'var(--fs-3)', fontWeight: on ? 600 : 400, color: 'var(--text)' }}>{listTitle(sc)}</span>
@@ -20861,7 +20961,7 @@
                                    с уголком «потянуть»: «развернуть» открывало окошко со своей
                                    прокруткой внутри прокручиваемого экрана, то есть не
                                    разворачивало. Высота — по scrollHeight, читают, листая экран. */
-                                <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
+                                <textarea value={READ_ONLY ? unwrapScript(s.script || '') : (s.script || '')} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
                                           data-cf="phone-scene-script"
                                           ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
                                           onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
@@ -20871,7 +20971,7 @@
                               ) : (
                                 <p style={{ fontSize: 'var(--fs-4)', lineHeight: 1.6, color: '#e3e0d7', margin: '8px 0 0', whiteSpace: 'pre-line',
                                             display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                  {(s.script || '').trim() || 'Текст сцены из сценария. Загрузить весь сценарий разом — «Ещё» → «Агент КПП».'}
+                                  {unwrapScript(s.script || '').trim() || 'Текст сцены из сценария. Загрузить весь сценарий разом — «Ещё» → «Агент КПП».'}
                                 </p>
                               )}
                               <button onClick={() => setPhoneTextOpen(v => !v)}
@@ -20997,7 +21097,7 @@
                                      className={`cf-row cf-scene-row flex items-start gap-2 px-3 ${on ? 'cf-row-on' : ''}`}
                                      style={{ minHeight: 'var(--tap)', paddingTop: 9, paddingBottom: 9, borderBottomColor: 'transparent' }}>
                                   {sceneSel && selMark(picked)}
-                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', lineHeight: 1.3, width: 30, flexShrink: 0, color: on ? 'var(--accent)' : 'var(--muted-2)' }}>{sc.number}</span>
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', lineHeight: 1.3, width: Math.max(30, numColW), whiteSpace: 'nowrap', flexShrink: 0, color: on ? 'var(--accent)' : 'var(--muted-2)' }}>{sc.number}</span>
                                   <span className="flex-1 min-w-0" title={sc.title}
                                         style={{ ...clamp2, fontSize: 'var(--fs-2)', fontWeight: on ? 600 : 400, color: on ? 'var(--text)' : 'var(--text-2)' }}>{listTitle(sc)}</span>
                                   {badge && <span className="shrink-0" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-1)', lineHeight: 1.6, color: 'var(--muted-2)' }}>{badge}</span>}
@@ -21133,7 +21233,7 @@
                                    className="relative shrink-0 cursor-pointer"
                                    style={{ width: 340, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
                                 <img src={r.url} style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} draggable="false" />
-                                {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                 {videoBadge(r, { right: 6, top: 6 })}
                               </div>
                             ))}
@@ -21458,10 +21558,10 @@
                                      className="cf-scene-text"
                                      style={{ fontSize: 'var(--fs-4)', lineHeight: 1.7, color: '#e3e0d7', marginTop: 10, cursor: 'pointer', whiteSpace: 'pre-line',
                                               display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                  {(s.script || '').trim()}
+                                  {unwrapScript(s.script || '').trim()}
                                 </div>
                               ) : (
-                              <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
+                              <textarea value={READ_ONLY ? unwrapScript(s.script || '') : (s.script || '')} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
                                         /* Без потолка: с пределом в 70 % экрана длинный текст
                                            оставался окошком со своей прокруткой, и «развернуть»
                                            не разворачивало. Экран сам прокручивается. */
@@ -21490,7 +21590,7 @@
                                          className="relative shrink-0 cursor-pointer group"
                                          style={{ width: 268, borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
                                       <img src={r.url} style={{ width: '100%', height: 152, objectFit: 'cover', display: 'block' }} draggable="false" />
-                                      {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                      {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                       {videoBadge(r, { left: 6, top: 6 })}
                                       <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
                                               title="Убрать из сцены — картинка останется в галерее"
@@ -21522,7 +21622,7 @@
                                          className="relative cursor-pointer"
                                          style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
                                       <img src={r.url} style={{ width: '100%', display: 'block' }} draggable="false" />
-                                      {r.label && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{r.label}</span>}
+                                      {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                       {videoBadge(r)}
                                     </div>
                                   ))}
@@ -23704,7 +23804,7 @@
                                 {selectedWbItems.includes(ref.id) && (
                                   <div className="absolute left-0 right-0 bottom-0 z-[15] px-1.5 pb-1 pt-5"
                                        style={{ background: 'linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,0))' }}>
-                                    {cardField(ref.id, 'label', ref.label,
+                                    {cardField(ref.id, 'label', refCaption(ref),
                                       (v) => { const up = references.map(r => r.id === ref.id ? { ...r, label: v } : r); setReferences(up); syncDoc('references', ref.id, up.find(r => r.id === ref.id)); },
                                       { placeholder: 'Подпись...', className: 'w-full bg-transparent text-[length:var(--fs-1)] text-center font-bold text-zinc-100 focus:outline-none placeholder-zinc-400' })}
                                   </div>
@@ -24400,7 +24500,7 @@
                                       <span className="text-zinc-500">{scriptOpen ? '▲' : '▼'}</span>
                                     </button>
                                     {scriptOpen && (
-                                      <p className="mt-3 text-base text-zinc-300 leading-relaxed cf-quote" style={{ whiteSpace: 'pre-wrap' }}>{s.script}</p>
+                                      <p className="mt-3 text-base text-zinc-300 leading-relaxed cf-quote" style={{ whiteSpace: 'pre-wrap' }}>{unwrapScript(s.script)}</p>
                                     )}
                                   </div>
                                 )}
@@ -25999,7 +26099,7 @@
                   const sc = byId[r.target];
                   if (!sc) return 'new';
                   if (r.p.number && normNum(sc.number) !== normNum(r.p.number)) return 'renum';
-                  return (sc.script || '').trim() === (r.p.script || '').trim() ? 'same' : 'text';
+                  return unwrapScript(sc.script || '').trim() === unwrapScript(r.p.script || '').trim() ? 'same' : 'text';
                 };
                 const rows = scriptPlan.rows.map((r, i) => ({ ...r, i, k: kind(r) }));
                 const cnt = (k) => rows.filter(r => r.k === k).length;
@@ -26440,12 +26540,12 @@
                           {pRefs.map(r => (
                             <div key={r.id} style={{width: '30%', fontSize: '9pt'}}>
                               <img src={r.url} style={{width: '100%', border: '1px solid #ccc'}} />
-                              <div>{r.video ? `▶ видео · ${fmtDur(r.dur)}${r.label ? ' · ' + r.label : ''}` : r.label}</div>
+                              <div>{r.video ? `▶ видео · ${fmtDur(r.dur)}${refCaption(r) ? ' · ' + refCaption(r) : ''}` : refCaption(r)}</div>
                             </div>
                           ))}
                         </div>
                       )}
-                      {s.script && <p style={{fontSize: '10pt', whiteSpace: 'pre-wrap', marginTop: '10pt'}}>{s.script}</p>}
+                      {s.script && <p style={{fontSize: '10pt', whiteSpace: 'pre-wrap', marginTop: '10pt'}}>{unwrapScript(s.script)}</p>}
                     </div>
                   );
                 })()}
