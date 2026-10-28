@@ -358,7 +358,7 @@ const SEED = () => ({
   ok('«Положить на доску»: строка сцены в панели нажимается', picked.hit === true, JSON.stringify(picked));
   ok('сцена легла на доску Excalidraw и в видимую её часть', SC.sc3.boardId === 'bx1' && !!sc3 && inView(sc3.x, sc3.y), sc3 && `${Math.round(sc3.x)},${Math.round(sc3.y)} в ${JSON.stringify(view)}`);
   const nSt = Object.keys(await store(p, 'stickies')).length;
-  await p.evaluate(() => [...document.querySelectorAll('button')].find(x => x.title === 'Стикер').click());
+  await p.evaluate(() => document.querySelector('[data-cf="board-sticky"]').click());
   await settle(p);
   ST = await store(p, 'stickies');
   const fresh = Object.values(ST).find(x => x.id !== 'st1');
@@ -643,8 +643,16 @@ const SEED = () => ({
     const hb = [...document.querySelectorAll('header button')].find(b => b.textContent.trim() === '···');
     if (hb) hb.click(); await new Promise(r => setTimeout(r, 300));
     const pr = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Проект'); if (pr) pr.click();
-    await new Promise(r => setTimeout(r, 500));
-    const cb = document.querySelector('[data-cf="pen-probe-toggle"]'); if (!cb) return null;
+    // Окно «Проект» ЖДЁМ, а не отводим ему полсекунды: оно считает вес
+    // местной копии всего проекта, и к этому шагу в памяти уже лежат
+    // доски с картинками — на стенде окно собиралось дольше, и шаг
+    // падал на null, хотя на свежей странице тот же путь проходит.
+    let cb = null;
+    for (let i = 0; i < 60 && !cb; i++) { await new Promise(r => setTimeout(r, 100)); cb = document.querySelector('[data-cf="pen-probe-toggle"]'); }
+    if (!cb) return { hb: !!hb, pr: !!pr, modal: !!document.querySelector('[role="dialog"]'), hit: false };
+    // Галочка стоит в конце длинного окна — ниже края экрана; человек
+    // до неё долистывает, стенд тоже обязан, иначе нажатие уходит в пустоту.
+    cb.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 200));
     const r = cb.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return { x: r.left + r.width / 2, y: r.top + r.height / 2, hit: !!h && (h === cb || h.closest('label') === cb.closest('label')) };
   });
@@ -667,6 +675,7 @@ const SEED = () => ({
   await p.waitForTimeout(400);
   const probe = await p.evaluate(() => {
     const el = document.querySelector('[data-cf="pen-probe"]'), txt = el ? el.innerText : '';
+    if (!el) return { txt, through: false };
     const r = el.getBoundingClientRect(), mid = document.elementFromPoint(r.left + 40, r.bottom - 12);
     return { txt, through: !!mid && !el.contains(mid) };
   });
