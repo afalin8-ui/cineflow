@@ -10951,6 +10951,18 @@
           const restoreRefs = () => {
             if (!undoBin) return;
             const items = undoBin.items;
+            // Скопированные настройки: прежняя запись сцены встаёт на место,
+            // объектам возвращается прежний список сцен.
+            if (undoBin.kind === 'settings') {
+              const up = scenesRef.current.map(x => items.find(i => i.id === x.id) || x);
+              scenesRef.current = up; setScenes(up);
+              items.forEach(x => syncDoc('scenes', x.id, x));
+              (undoBin.locs || []).forEach(l => updateLocation(l.id, 'sceneIds', l.sceneIds || []));
+              clearTimeout(undoTimer.current);
+              setUndoBin(null);
+              showToast(`Настройки сцены #${items[0].number} возвращены`);
+              return;
+            }
             if (undoBin.kind === 'scenes') {
               const есть = new Set(scenesRef.current.map(x => x.id));
               const up = [...scenesRef.current, ...items.filter(x => !есть.has(x.id))];
@@ -16353,6 +16365,59 @@
             if (note) showToast(note);
           };
 
+          // --- Скопировать настройки из другой сцены ---
+          // Сцены на одном объекте снимают одной техникой и одним светом:
+          // квартира — это пять сцен, и набирать камеру, доборы и схему
+          // заново в каждой значит пять раз одно и то же. Копируется
+          // ЗАМЕНОЙ, а не сложением: «как в сцене #12» значит ровно это,
+          // а сложение давало бы двойной счёт. Что именно едет, решают
+          // галочки в окне (`what`): gear · light · scheme · date · loc.
+          // Свет копируется ВПИСАННОЕ РУКАМИ (у сцены со схемой — lightOwn),
+          // а итог считается заново от схемы, которая останется у сцены.
+          // Прежняя запись ложится в корзину «Вернуть» на 15 секунд:
+          // промах по сцене-источнику стоил бы набранного света.
+          const copySceneSettings = (targetId, srcId, what) => {
+            if (READ_ONLY) return;
+            const src = scenesRef.current.find(x => x.id === srcId);
+            const t = scenesRef.current.find(x => x.id === targetId);
+            if (!src || !t || src.id === t.id) return;
+            const w = what || {};
+            const prev = t;
+            let ns = { ...t };
+            const done = [];
+            if (w.gear) { ns.gear = { ...(src.gear || {}) }; done.push('техника'); }
+            if (w.light || w.scheme) {
+              const ownOf = (x) => ({ ...(x.schemeGear ? (x.lightOwn || {}) : (x.lightGear || {})) });
+              const own = w.light ? ownOf(src) : ownOf(t);
+              const schemeId = w.scheme ? (src.lightSchemeId || null) : (t.lightSchemeId || null);
+              const sch = schemeId ? lightSchemesRef.current.find(x => x.id === schemeId) : null;
+              const counts = (sch && sch.gear) || {};
+              ns = { ...ns, lightSchemeId: schemeId, lightOwn: own, schemeGear: counts, lightGear: gearMax(own, counts) };
+              if (w.light) done.push('свет');
+              if (w.scheme) done.push(sch ? `схема «${sch.title || 'без названия'}»` : 'схема');
+            }
+            if (w.date) { ns.date = src.date || ''; done.push('дата смены'); }
+            // Объект: связь хранится у объекта списком сцен, поэтому
+            // сцена «приписывается» к объектам источника, которых у неё нет.
+            const prevLocs = [];
+            if (w.loc) {
+              const srcLocs = locations.filter(l => (l.sceneIds || []).includes(src.id) && !(l.sceneIds || []).includes(t.id));
+              srcLocs.forEach(l => { prevLocs.push(l); updateLocation(l.id, 'sceneIds', [...(l.sceneIds || []), t.id]); });
+              if (srcLocs.length) done.push(srcLocs.length === 1 ? `объект «${srcLocs[0].name || 'без названия'}»` : 'объекты');
+            }
+            if (!done.length) return;
+            const up = scenesRef.current.map(x => x.id === targetId ? ns : x);
+            scenesRef.current = up; setScenes(up);
+            syncDoc('scenes', targetId, ns);
+            // Что скопировано, пишет САМА полоска «Вернуть» — как у удаления,
+            // без отдельной полоски-уведомления: две полоски внизу ложились
+            // одна на другую (замер на iPad: уведомление в две строки уходило
+            // под «Вернуть»).
+            setUndoBin({ kind: 'settings', items: [prev], locs: prevLocs, from: src.number, what: done.join(', ') });
+            clearTimeout(undoTimer.current);
+            undoTimer.current = setTimeout(() => setUndoBin(null), 15000);
+          };
+
           // Загрузка с проверкой на повтор по имени файла. Имя референса —
           // это и есть имя файла, поэтому сравниваем с ним; регистр и
           // пробелы не считаем, «IMG_01.jpg» и «img_01.JPG» — одно и то же.
@@ -19306,6 +19371,10 @@
           // место в шапке карточки, а нажимают их редко.
           const [sceneMenu, setSceneMenu] = useState(false);
           const sceneMenuRef = useRef(null);
+          // Окно «Скопировать настройки из сцены»: {target, src, what, all}.
+          // `what` — галочки, пока не трогали — null (умолчания считает окно);
+          // `all` — показать и сцены с других объектов.
+          const [copyFrom, setCopyFrom] = useState(null);
           useEffect(() => {
             if (!sceneMenu) return;
             const away = (e) => { if (sceneMenuRef.current && !sceneMenuRef.current.contains(e.target)) setSceneMenu(false); };
@@ -20204,9 +20273,21 @@
               )}
               {undoBin && (
                 <div className="fixed left-1/2 -translate-x-1/2 glass-panel rounded-full z-[401] flex items-center gap-3 pl-5 pr-2 py-2 border-t border-white/10"
-                     style={{ bottom: toast ? 76 : 24, maxWidth: 'calc(100vw - 32px)' }}>
-                  <span className="text-sm text-zinc-300 truncate">
-                    {undoBin.kind === 'scenes'
+                     /* На телефоне полоска стоит ВЫШЕ таб-бара и полосы соседних
+                        сцен: 15 секунд поверх «Сцены» и «‹ › следующая» — это
+                        15 секунд, когда до них не дотянуться. Полоса про
+                        скопированные настройки — во всю ширину: в сжатом по
+                        содержимому контейнере текст в две строки получал
+                        колонку в сто точек (замер на 390). */
+                     style={{ bottom: `calc(${toast ? 76 : isPhone ? 12 : 24}px + var(--sab)${isPhone && !fullScout ? ' + var(--tabbar-h)' + (currentView === 'notion' && phoneSceneOpen ? ' + var(--tap) + 1px' : '') : ''})`,
+                              maxWidth: 'calc(100vw - 32px)', width: undoBin.kind === 'settings' ? 'min(calc(100vw - 32px), 600px)' : undefined }}>
+                  {/* Скопированные настройки перечисляются целиком, в две строки
+                      на узком экране: что поехало, человек должен видеть. */}
+                  <span className={`text-sm text-zinc-300 ${undoBin.kind === 'settings' ? 'line-clamp-2' : 'truncate'}`} style={{ lineHeight: 1.35 }}>
+                    {undoBin.kind === 'settings'
+                      ? (isPhone ? `В сцену #${undoBin.items[0].number} скопировано из #${undoBin.from}`
+                                 : `В сцену #${undoBin.items[0].number} скопировано из #${undoBin.from}: ${undoBin.what}`)
+                      : undoBin.kind === 'scenes'
                       ? (undoBin.items.length === 1
                           ? `Удалена сцена #${undoBin.items[0].number}`
                           : `Удалено ${undoBin.items.length} ${plur(undoBin.items.length, 'сцена', 'сцены', 'сцен')}`)
@@ -21534,9 +21615,14 @@
                                 {/* Редкое и опасное — за «···», а не голой кнопкой в рельсе: промах по соседней иконке не должен стоить сцены. */}
                                 <div className="relative cf-edit-only" ref={sceneMenuRef}>
                                   <button onClick={() => setSceneMenu(v => !v)} className={`cf-tool ${sceneMenu ? 'on' : ''}`}
-                                          title="Ещё: удалить сцену">···</button>
+                                          data-cf="scene-menu" title="Ещё: скопировать настройки, удалить сцену">···</button>
                                   {sceneMenu && (
-                                    <div className="cf-menu" style={{ top: 'auto', bottom: 'calc(100% + 4px)' }}>
+                                    <div className="cf-menu" style={{ top: 'auto', bottom: 'calc(100% + 4px)', minWidth: 250 }}>
+                                      {/* Сцены на одном объекте снимают одним набором: техника,
+                                          свет и схема берутся из уже заполненной сцены разом. */}
+                                      <button onClick={() => { setSceneMenu(false); setCopyFrom({ target: s.id, src: null, what: null, all: false }); }}
+                                              data-cf="scene-copy"><Icons.Paste /> Скопировать настройки из сцены…</button>
+                                      <hr />
                                       <button onClick={() => { setSceneMenu(false); askDeleteScenes([s.id]); }}
                                               style={{ color: 'var(--danger)' }}><Icons.Trash /> Удалить сцену</button>
                                     </div>
@@ -24965,6 +25051,12 @@
                                   return (
                                     <React.Fragment>
                                       <span className="cf-meta block px-3 pt-2 pb-1.5">Сцена «{sc.title || 'без названия'}»</span>
+                                      <button onClick={() => { setPhoneSheet(null); setCopyFrom({ target: sc.id, src: null, what: null, all: false }); }}
+                                              data-cf="more-scene-copy"
+                                              className="w-full flex items-center gap-3 px-3 rounded-lg"
+                                              style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>
+                                        <Icons.Paste /> Скопировать настройки из сцены…
+                                      </button>
                                       <button onClick={() => { setPhoneSheet(null); setPrintScene(sc.id); requestPrint('scene'); }}
                                               className="w-full flex items-center gap-3 px-3 rounded-lg"
                                               style={{ minHeight: 44, fontSize: 'var(--fs-3)', color: 'var(--text-2)' }}>
@@ -25326,6 +25418,99 @@
                 </Modal>
               )}
 
+              {/* ОКНО «СКОПИРОВАТЬ НАСТРОЙКИ ИЗ СЦЕНЫ». Сначала сцены ТОГО ЖЕ
+                  объекта — ради них окно и заведено, — остальные за «Показать
+                  остальные». Выбрал сцену — видно, что из неё поедет, и каждую
+                  вещь можно снять галочкой; пустое не копируется вовсе (это
+                  было бы стирание, а не копия). Дата снята по умолчанию:
+                  одно место не значит одну смену. Объект предлагается только
+                  когда у источника есть объект, которого нет у сцены, и
+                  включён по умолчанию лишь у сцены БЕЗ объекта. */}
+              {copyFrom && (() => {
+                const t = scenes.find(x => x.id === copyFrom.target);
+                if (!t) return null;
+                const locsOf = (sc) => locations.filter(l => (l.sceneIds || []).includes(sc.id));
+                const tLocs = locsOf(t);
+                const tLocIds = new Set(tLocs.map(l => l.id));
+                const others = sortedScenes.filter(x => x.id !== t.id);
+                const same = tLocs.length ? others.filter(x => locsOf(x).some(l => tLocIds.has(l.id))) : [];
+                const rest = others.filter(x => !same.includes(x));
+                const showRest = !same.length || copyFrom.all;
+                const src = copyFrom.src ? scenes.find(x => x.id === copyFrom.src) : null;
+                const ownOf = (sc) => sc.schemeGear ? (sc.lightOwn || {}) : (sc.lightGear || {});
+                const srcScheme = src && src.lightSchemeId ? lightSchemes.find(x => x.id === src.lightSchemeId) : null;
+                const srcLocs = src ? locsOf(src).filter(l => !tLocIds.has(l.id)) : [];
+                const kit = String(lightBase || '').trim();
+                const items = src ? [
+                  { k: 'gear', label: 'Камера и техника', val: gearLine(src.gear, gearTypes), empty: 'пусто' },
+                  { k: 'light', label: kit ? 'Свет — доборы' : 'Свет', val: gearLine(ownOf(src), lightGearTypes), empty: 'пусто' },
+                  { k: 'scheme', label: 'Схема света', val: srcScheme ? (srcScheme.title || 'без названия') : '', empty: 'не выбрана' },
+                  { k: 'date', label: 'Дата смены', val: src.date ? formatDateDisplay(src.date) : '', empty: 'нет', off: true },
+                  ...(srcLocs.length ? [{ k: 'loc', label: 'Объект', val: srcLocs.map(l => l.name || 'без названия').join(', '), empty: '', off: tLocs.length > 0 }] : [])
+                ] : [];
+                const what = copyFrom.what || {};
+                const on = (it) => it.val ? (it.k in what ? !!what[it.k] : !it.off) : false;
+                const any = items.some(on);
+                const summary = (sc) => [gearLine(sc.gear, gearTypes), gearLine(ownOf(sc), lightGearTypes)].filter(Boolean).join(' · ');
+                const row = (sc) => (
+                  <button key={sc.id} onClick={() => setCopyFrom({ ...copyFrom, src: sc.id, what: null })} data-cf="copy-src" data-id={sc.id}
+                          className={`w-full text-left rounded-lg px-3 py-1.5 ${copyFrom.src === sc.id ? 'cf-sel' : ''}`}
+                          style={{ minHeight: 'var(--tap)' }}>
+                    <span className="block truncate" style={{ fontSize: 'var(--fs-2)', color: 'var(--text)' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--muted)' }}>#{sc.number}</span> {sc.title || 'без названия'}
+                    </span>
+                    <span className="block truncate" style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>{summary(sc) || 'техника и свет не заданы'}</span>
+                  </button>
+                );
+                return (
+                  <Modal onClose={() => setCopyFrom(null)} z={210} box="p-6 max-w-md" label="Скопировать настройки сцены">
+                    <h3 className="font-extrabold text-white mb-1" style={{ fontSize: 'var(--fs-4)' }}>Скопировать настройки в сцену #{t.number}</h3>
+                    <p className="mb-4" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', lineHeight: 1.5 }}>
+                      Техника, свет и схема станут такими же, как в выбранной сцене; что было в #{t.number}, заменится. Вернуть можно 15 секунд.
+                    </p>
+                    <span className="cf-eyebrow block mb-1.5" data-cf="copy-head" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)' }}>
+                      {same.length ? `На том же объекте · ${tLocs.map(l => l.name || 'без названия').join(', ')}` : 'Из какой сцены'}
+                    </span>
+                    <div data-cf="copy-list" className="flex flex-col gap-0.5 overflow-y-auto" style={{ maxHeight: 260 }}>
+                      {same.map(row)}
+                      {same.length > 0 && !copyFrom.all && rest.length > 0 && (
+                        <button onClick={() => setCopyFrom({ ...copyFrom, all: true })} data-cf="copy-all"
+                                className="text-left px-3" style={{ minHeight: 'var(--tap-sm)', fontSize: 'var(--fs-2)', color: 'var(--accent)' }}>
+                          Показать остальные сцены · {rest.length}
+                        </button>
+                      )}
+                      {showRest && rest.map(row)}
+                      {!others.length && <p className="px-3 py-2" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)' }}>Других сцен в проекте нет.</p>}
+                    </div>
+                    {src && (
+                      <div className="mt-4" data-cf="copy-what">
+                        <span className="cf-eyebrow block mb-1" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)' }}>Что скопировать из #{src.number}</span>
+                        {items.map(it => (
+                          <label key={it.k} className={`flex items-start gap-2.5 py-1.5 select-none ${it.val ? 'cursor-pointer' : ''}`} style={{ opacity: it.val ? 1 : .5 }}>
+                            <input type="checkbox" checked={on(it)} disabled={!it.val} data-cf={'copy-' + it.k}
+                                   onChange={(e) => setCopyFrom({ ...copyFrom, what: { ...what, [it.k]: e.target.checked } })}
+                                   style={{ marginTop: 3, width: 16, height: 16, accentColor: 'var(--accent)' }} />
+                            <span style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', lineHeight: 1.45 }}>
+                              {it.label}
+                              <span className="block" style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)' }}>{it.val || `${it.empty} — нечего копировать`}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-5">
+                      <button onClick={() => { const w = {}; items.forEach(it => { w[it.k] = on(it); }); copySceneSettings(t.id, src.id, w); setCopyFrom(null); }}
+                              disabled={!src || !any} data-cf="copy-go"
+                              className="flex-1 rounded-lg font-bold disabled:opacity-40"
+                              style={{ minHeight: 'var(--tap)', background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-2)' }}>
+                        {src ? `Скопировать из #${src.number}` : 'Выберите сцену'}
+                      </button>
+                      <button onClick={() => setCopyFrom(null)} className="rounded-lg px-4 font-semibold"
+                              style={{ minHeight: 'var(--tap)', background: 'var(--raised)', color: 'var(--text-2)', fontSize: 'var(--fs-2)' }}>Отмена</button>
+                    </div>
+                  </Modal>
+                );
+              })()}
               {showShareModal && (
                 <Modal onClose={() => setShowShareModal(false)} z={200} box="p-8 max-w-md" label="Совместный доступ">
                   <h3 className="text-xl font-extrabold text-white mb-4 flex items-center gap-2"><Icons.Link/> Совместный доступ</h3>
