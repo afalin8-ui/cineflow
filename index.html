@@ -20715,9 +20715,16 @@
                                 <span className="ml-auto cf-meta">{(s.script || '').trim() ? `${(s.script || '').trim().split(/\s+/).length} слов` : 'пусто'}</span>
                               </div>
                               {phoneTextOpen ? (
+                                /* РАЗВЁРНУТЫЙ ТЕКСТ — ВО ВСЮ ДЛИНУ. Поле было ровно 220 точек
+                                   с уголком «потянуть»: «развернуть» открывало окошко со своей
+                                   прокруткой внутри прокручиваемого экрана, то есть не
+                                   разворачивало. Высота — по scrollHeight, читают, листая экран. */
                                 <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
+                                          data-cf="phone-scene-script"
+                                          ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
+                                          onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
                                           className="w-full bg-transparent focus:outline-none"
-                                          style={{ fontSize: 'var(--fs-4)', lineHeight: 1.6, color: '#e3e0d7', marginTop: 8, resize: 'vertical', minHeight: 220, border: 'none', padding: 0 }}
+                                          style={{ fontSize: 'var(--fs-4)', lineHeight: 1.6, color: '#e3e0d7', marginTop: 8, resize: 'none', minHeight: 96, border: 'none', padding: 0 }}
                                           placeholder="Текст сцены из сценария." />
                               ) : (
                                 <p style={{ fontSize: 'var(--fs-4)', lineHeight: 1.6, color: '#e3e0d7', margin: '8px 0 0', whiteSpace: 'pre-line',
@@ -21313,8 +21320,11 @@
                                 </div>
                               ) : (
                               <textarea value={s.script || ''} onChange={(e) => updateScene(s.id, 'script', e.target.value)}
-                                        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, window.innerHeight * 0.7) + 'px'; } }}
-                                        onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, window.innerHeight * 0.7) + 'px'; }}
+                                        /* Без потолка: с пределом в 70 % экрана длинный текст
+                                           оставался окошком со своей прокруткой, и «развернуть»
+                                           не разворачивало. Экран сам прокручивается. */
+                                        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
+                                        onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
                                         data-cf="scene-script"
                                         className="cf-scene-text w-full bg-transparent focus:outline-none"
                                         style={{ fontSize: 'var(--fs-4)', lineHeight: 1.7, color: '#e3e0d7', marginTop: 10, resize: 'none', minHeight: 96, border: 'none' }}

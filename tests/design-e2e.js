@@ -100,13 +100,13 @@ TITLES.forEach((t, i) => {
 
   const tx = await p.evaluate(() => {
     const t = document.querySelector('[data-cf="scene-script"]'), cs = getComputedStyle(t), box = getComputedStyle(t.parentElement);
-    // Высота — по тексту, но не выше 70% экрана (правило самого поля):
-    // упёршийся в предел текст прокручивается внутри, и это не ошибка.
+    // Высота — по тексту ЦЕЛИКОМ: потолок в 70 % экрана оставлял длинный
+    // текст окошком со своей прокруткой, и «развернуть» не разворачивало.
     return { left: cs.borderLeftWidth, top: cs.borderTopWidth, resize: cs.resize, bg: box.backgroundColor,
-             grow: t.scrollHeight <= t.clientHeight + 2 || t.clientHeight >= innerHeight * 0.7 - 3, sh: t.scrollHeight, ch: Math.round(t.clientHeight) };
+             grow: t.scrollHeight <= t.clientHeight + 2, tall: t.clientHeight > innerHeight * 0.7, sh: t.scrollHeight, ch: Math.round(t.clientHeight) };
   });
   ok('текст сцены отбит линейкой слева, без коробки', tx.left === '2px' && tx.top === '0px' && tx.resize === 'none' && /rgba\(0, 0, 0, 0\)|transparent/.test(tx.bg), JSON.stringify(tx));
-  ok('высота текста — по содержимому (до 70% экрана), без своей прокрутки', tx.grow, `${tx.sh} в поле ${tx.ch}`);
+  ok('высота текста — по содержимому целиком, без своей прокрутки и без потолка в 70 %', tx.grow && tx.tall, `${tx.sh} в поле ${tx.ch}`);
 
   // Лёжа текст развёрнут; кнопкой сворачивается до четырёх строк, выбор помнится.
   const fold = async (pg) => pg.evaluate(async () => {
@@ -264,6 +264,15 @@ TITLES.forEach((t, i) => {
     return { inside: a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom, text: n.textContent };
   });
   ok('телефон: номер кадра поверх картинки', pf && pf.inside && pf.text === '1.1', JSON.stringify(pf));
+  // «развернуть →» на телефоне раскрывает текст целиком, а не окошко в 220 точек
+  const pt = await q.evaluate(async () => {
+    const b = [...document.querySelectorAll('button')].find(x => /развернуть →/.test(x.textContent));
+    if (!b) return null;
+    b.click(); await new Promise(r => setTimeout(r, 300));
+    const t = document.querySelector('[data-cf="phone-scene-script"]');
+    return t ? { sh: t.scrollHeight, ch: Math.round(t.clientHeight), resize: getComputedStyle(t).resize } : null;
+  });
+  ok('телефон: «развернуть» раскрывает текст целиком, без своей прокрутки', pt && pt.sh <= pt.ch + 2 && pt.ch > 300 && pt.resize === 'none', JSON.stringify(pt));
   ok('без ошибок на телефоне', e2.length === 0, e2.join(' | '));
 
   await browser.close(); server.kill();
