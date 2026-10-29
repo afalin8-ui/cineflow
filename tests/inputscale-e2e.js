@@ -6,6 +6,9 @@
 const fs = require('fs'), os = require('os'), path = require('path');
 const { execSync, spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..'), LIBS = process.env.CF_LIBS || path.join(os.tmpdir(), 'cineflow-libs'), PORT = '8163';
+// Цель мышью на компьютере (--tap в :root). Шкала компьютера поднята 29.10.2026 —
+// одно число здесь, а не три копии «34px» по проверкам.
+const DENSE_TAP = '38px';
 let playwright;
 try { playwright = require('playwright'); } catch (e) { playwright = require(execSync('npm root -g').toString().trim() + '/playwright'); }
 const LIB_URLS = {
@@ -72,7 +75,7 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
   {
     const { ctx, page: p, errs } = await mk({ hasTouch: true }, { cf_input_last: 'mouse' });
     let s = await state(p);
-    ok('ноутбук: запуск после мыши — плотная шкала', !s.touch && s.tap === '34px', JSON.stringify(s));
+    ok('ноутбук: запуск после мыши — плотная шкала', !s.touch && s.tap === DENSE_TAP, JSON.stringify(s));
     await tapTouch(p);
     s = await state(p);
     ok('коснулись пальцем — шкала крупная', s.touch && s.tap === '44px' && s.last === 'touch', JSON.stringify(s));
@@ -82,7 +85,7 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     ok('дрожь тачпада в пару точек шкалу не меняет', s.touch, JSON.stringify(s));
     await swipeMouse(p);
     s = await state(p);
-    ok('повели тачпадом — снова плотная', !s.touch && s.tap === '34px' && s.last === 'mouse', JSON.stringify(s));
+    ok('повели тачпадом — снова плотная', !s.touch && s.tap === DENSE_TAP && s.last === 'mouse', JSON.stringify(s));
     await tapTouch(p);
     await p.mouse.wheel(0, 120); await p.waitForTimeout(150);
     s = await state(p);
@@ -160,7 +163,7 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
   {
     const { ctx, page: p } = await mk({ hasTouch: false }, { cf_input_last: 'touch' });
     const s = await state(p);
-    ok('без касания: плотная шкала, что бы ни было записано', !s.touch && s.tap === '34px', JSON.stringify(s));
+    ok('без касания: плотная шкала, что бы ни было записано', !s.touch && s.tap === DENSE_TAP, JSON.stringify(s));
     await ctx.close();
   }
 
