@@ -132,8 +132,19 @@ const REFS = [
     ok('при открытии сцены склеенный текст лёг В ЗАПИСЬ (один раз)', rec && rec.script === FLAT, JSON.stringify(rec && rec.script).slice(0, 120));
     const field = await page.evaluate(() => { const t = document.querySelector('[data-cf="scene-script"]'); return t ? t.value : null; });
     ok('в поле текст склеен в абзацы, реплики и ремарки на своих строках', field === FLAT, JSON.stringify(field).slice(0, 200));
-    const lines = await page.evaluate(() => { const t = document.querySelector('[data-cf="scene-script"]'); return t ? Math.round(t.getBoundingClientRect().height / (parseFloat(getComputedStyle(t).fontSize) * 1.7)) : 0; });
-    ok('лесенки нет: поле стало ниже 13 строк источника', lines > 0 && lines < 13, String(lines));
+    // Сравниваем с ТЕМ ЖЕ источником в ТОМ ЖЕ поле, а не с «13 строк»:
+    // строк у склеенного текста столько, сколько даёт ширина колонки
+    // и кегль, и после подъёма шкалы (29.10.2026) их стало 14 при
+    // прежних 13 у источника — лесенка при этом никуда не вернулась.
+    const lines = await page.evaluate((raw) => {
+      const t = document.querySelector('[data-cf="scene-script"]'); if (!t) return null;
+      const lh = parseFloat(getComputedStyle(t).fontSize) * 1.7;
+      const c = t.cloneNode(false); c.removeAttribute('data-cf'); c.style.height = 'auto'; c.style.position = 'absolute'; c.style.visibility = 'hidden';
+      c.style.width = t.getBoundingClientRect().width + 'px'; c.value = raw; t.parentElement.appendChild(c);
+      const rawLines = Math.round(c.scrollHeight / lh); c.remove();
+      return { now: Math.round(t.getBoundingClientRect().height / lh), raw: rawLines };
+    }, WRAPPED);
+    ok('лесенки нет: склеенный текст в поле ниже, чем тот же источник с переносами листа', !!lines && lines.now > 0 && lines.now < lines.raw, JSON.stringify(lines));
     await tap(page, '[data-cf="scene-text-fold"]', '«свернуть»');
     const shut = await page.evaluate(() => { const d = document.querySelector('[data-cf="scene-script-shut"]'); return d ? d.textContent : null; });
     ok('свёрнутый вид — тот же склеенный текст', shut === FLAT);

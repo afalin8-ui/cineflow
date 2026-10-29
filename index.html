@@ -177,14 +177,14 @@
           --shadow-2: 0 24px 64px rgba(0,0,0,.5);
 
           /* ---------- РАЗМЕР ТЕКСТА ---------- Было двадцать одно значение, и десять из них втиснуты в 4,5 точки: 8,5 · 9 · 9,5 · 10 · 10,5 · 11 · 11,5 · 12 · 12,5 · 13. */
-          --fs-1: 12px;           /* техническое: тайм-код, счётчик, метка на кадре */
-          --fs-2: 13.5px;         /* подписи, чипы, вторичный текст */
-          --fs-3: 15px;           /* основной интерфейс: кнопки, строки списков */
-          --fs-4: 17px;           /* текст, который ЧИТАЮТ: сценарий, гайд */
-          --fs-5: 21px;           /* заголовок раздела */
+          --fs-1: 13px;           /* техническое: тайм-код, счётчик, метка на кадре */
+          --fs-2: 15px;           /* подписи, чипы, вторичный текст */
+          --fs-3: 17px;           /* основной интерфейс: кнопки, строки списков */
+          --fs-4: 19px;           /* текст, который ЧИТАЮТ: сценарий, гайд */
+          --fs-5: 23px;           /* заголовок раздела */
           /* Ступень между 20 и 30. Номер вне ряда намеренно: fs-1…fs-6 размечены по всему файлу, и сдвинуть их номера значило бы править каждую строку, где они стоят. */
-          --fs-5x: 25px;          /* заголовок экрана на телефоне */
-          --fs-6: 31px;           /* заголовок экрана */
+          --fs-5x: 27px;          /* заголовок экрана на телефоне */
+          --fs-6: 33px;           /* заголовок экрана */
 
           /* ---------- ОТСТУПЫ ---------- Шаг 4 точки. Секции разделяет отступ, а не рамка, поэтому отступ здесь несущая конструкция, а не «поля по вкусу». */
           --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
@@ -195,16 +195,16 @@
           --scrim-hi: rgba(0,0,0,.8);    /* то же, но под ней светлый кадр */
           --overlay: rgba(0,0,0,.8);     /* затемнение под всплывающим окном */
 
-          --header-h: 44px;
+          --header-h: 46px;
           --panel-strip: 40px;    /* свёрнутая боковая панель */
-          --tool-rail: 44px;      /* панель инструментов доски */
+          --tool-rail: 48px;      /* панель инструментов доски */
           --tabbar-h: 49px;       /* нижняя навигация телефона (по гайду Apple), без safe-area */
           --sat: env(safe-area-inset-top, 0px);    /* статус-бар установленного приложения */
           --sab: env(safe-area-inset-bottom, 0px); /* полоска «домой» */
-          --tap: 36px;            /* наименьшая цель мышью: поле, кнопка-текст */
-          --tap-sm: 30px;         /* чип-кнопка, ссылка-действие */
-          --tool: 34px;           /* кнопка-иконка в рельсе */
-          --rail-w: 40px;         /* рельс инспектора сцены */
+          --tap: 38px;            /* наименьшая цель мышью: поле, кнопка-текст */
+          --tap-sm: 32px;         /* чип-кнопка, ссылка-действие */
+          --tool: 36px;           /* кнопка-иконка в рельсе */
+          --rail-w: 44px;         /* рельс инспектора сцены */
 
           /* ДВА ШРИФТА, ОБА СИСТЕМНЫЕ. На macOS и iPad -apple-system даёт
              SF Pro — ту самую гельветику, — на остальных падаем в Helvetica
@@ -214,11 +214,21 @@
           --font-ui: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
           --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
         }
-        /* КАСАНИЕ — СВОЙ МАСШТАБ. Планшет и телефон держат в руках, и ноутбучная
-           плотность там читается мелко: текст по шкале iOS (подпись 13, строка 15,
-           чтение 17), цели 44. Класс ставится по TOUCH_DEVICE, токены те же. */
+        /* КАСАНИЕ — СВОИ ЦЕЛИ И СВОЙ, ЧУТЬ МЕНЬШИЙ ТЕКСТ. Раньше было наоборот:
+           у ноутбука «плотная» шкала на ступень мельче планшетной, и на
+           компьютере её дважды назвали мелкой (29.10.2026: «для компьютера
+           перемельчили»). Замер показал, почему: на экране ноутбука 60–80 %
+           знаков набраны fs-1 и fs-2 — список сцен, подписи, чипы, сводки
+           КПП, — то есть ровно теми двумя ступенями, что были мельче всего.
+           А смотрят на экран компьютера дальше, чем на планшет в руках:
+           на тех же 14 точках текст там выходит на глаз меньше. Поэтому
+           в :root теперь шкала КОМПЬЮТЕРА — на ступень крупнее планшетной,
+           а планшет и телефон (этот класс) остаются на шкале iOS, которая
+           на них устраивала; у касания цели 44 — пальцу нужна площадь.
+           Класс ставится по TOUCH_DEVICE, токены те же. */
         html.cf-touch {
           --fs-1: 13px; --fs-2: 14px; --fs-3: 16px; --fs-4: 18px;
+          --fs-5: 21px; --fs-5x: 25px; --fs-6: 31px;
           --tap: 44px; --tap-sm: 36px; --tool: 44px; --rail-w: 52px;
           --header-h: 48px; --tool-rail: 56px; --panel-strip: 44px;
         }
@@ -389,8 +399,8 @@
            буквой, вплотную к остатку слова («[С]цены»), у остальных
            только иконка с подсказкой в title. Так навигация занимает
            одну строку высотой 42 точки вместо целой колонки в 66. */
-        .cf-navtab { display: flex; align-items: center; padding: 5px 7px; border-radius: var(--r-sm); color: var(--muted); flex-shrink: 0; }
-        .cf-navtab svg { width: 14px; height: 14px; }
+        .cf-navtab { display: flex; align-items: center; padding: 6px 8px; border-radius: var(--r-sm); color: var(--muted); flex-shrink: 0; }
+        .cf-navtab svg { width: 16px; height: 16px; }
         /* Цель 44 по высоте, а в ширину узко: на iPad в портрете в шапке
            стоят семь модулей, поиск и четыре режима, и широкие кнопки
            выдавливали чат за край. Бейдж ⌘K на касании не показываем —
@@ -411,7 +421,7 @@
         /* Зазор в 1px: буква обязана читаться как часть слова, иначе
            квадратик выглядит отдельным значком рядом с обрубком. */
         .cf-navtab-key {
-          width: 20px; height: 20px; margin-right: 1px; flex-shrink: 0;
+          width: 22px; height: 22px; margin-right: 1px; flex-shrink: 0;
           background: var(--accent); color: var(--bg); border-radius: var(--r-sm);
           font-weight: 700; letter-spacing: -.02em; font-size: var(--fs-2);
           display: flex; align-items: center; justify-content: center;
@@ -464,7 +474,7 @@
         /* ---------- ПОЛЕ, КОТОРОЕ ПРАВЯТ ПРЯМО В СТРОКЕ ---------- Номер сцены и дата смены в КПП — единственное место, где их правят подряд, не заходя в каждую карточку. */
         .cf-inline-field {
           background: transparent; border: none; border-bottom: 1px dashed var(--border);
-          border-radius: 0; padding: 7px 6px; min-height: 34px;
+          border-radius: 0; padding: 7px 6px; min-height: var(--tap);
           transition: background .12s, border-color .12s, color .12s;
         }
         /* На планшете и телефоне цель крупнее: 26 точек пальцем — промах
@@ -19635,7 +19645,9 @@
           // Колонка номера — по самому длинному номеру в проекте: на 36
           // точках «1-10» ломался на две строки («1–» / «10», скриншот
           // с iPad). Одна ширина на все строки, иначе названия пляшут.
-          const numColW = useMemo(() => 8 + Math.max(1, ...sortedScenes.map(x => String(x.number || '').length)) * 9, [sortedScenes]);
+          // +1 знак — на «#» перед номером в планшетном списке; 10 точек на знак — моно
+          // на 15 px даёт 9, запас на нажим «600» у выбранной строки
+          const numColW = useMemo(() => 8 + (Math.max(1, ...sortedScenes.map(x => String(x.number || '').length)) + 1) * 10, [sortedScenes]);
           const listTitle = (s) => {
             const t = String(s.title || '').trim();
             if (!t) return 'Без названия';
@@ -21066,7 +21078,7 @@
                       // на экран влезало вдвое меньше сцен, а разобрать,
                       // где кончается одна и начинается другая, было трудно.
                       const sceneList = sceneListOpen ? (
-                        <aside className="flex flex-col shrink-0" style={{ width: 252, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
+                        <aside className="flex flex-col shrink-0" style={{ width: 276, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
                           <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
                             <span className="cf-meta flex-1 truncate">{sceneSel ? `Выбрано · ${sceneSel.length}` : `Сцены · ${scenes.length}`}</span>
                             {!READ_ONLY && scenes.length > 0 && (sceneSel ? (
@@ -21829,7 +21841,7 @@
 
                     {/* КОЛОНКА ТЕГОВ */}
                     {galleryTagsOpen ? (
-                      <div className="hidden md:flex flex-col shrink-0" style={{ width: 212, background: 'var(--panel-3)', borderRight: '1px solid var(--border)' }}>
+                      <div className="hidden md:flex flex-col shrink-0" style={{ width: 228, background: 'var(--panel-3)', borderRight: '1px solid var(--border)' }}>
                         <div className="flex items-center justify-between px-4 shrink-0" style={{ minHeight: 44, borderBottom: '1px solid var(--border)' }}>
                           <span className="cf-eyebrow">{galleryScope === 'scout' ? 'Объекты · теги' : 'Папки · теги'}</span>
                           <div className="flex items-center gap-2">
@@ -22346,7 +22358,7 @@
 
                       const phoneList = isPhone && !phoneLocOpen;
                       const locList = (isPhone ? phoneList : locListOpen) ? (
-                        <aside className="flex flex-col shrink-0" style={isPhone ? { width: '100%', background: 'var(--bg)' } : { width: 212, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
+                        <aside className="flex flex-col shrink-0" style={isPhone ? { width: '100%', background: 'var(--bg)' } : { width: 228, background: 'var(--panel-2)', borderRight: '1px solid var(--border)' }}>
                           <div className="flex items-center gap-1.5 px-2.5 pt-2.5 pb-2">
                             <span className="cf-meta flex-1 truncate">Объекты · {locations.length}</span>
                             {!isPhone && <button onClick={() => setLocListOpen(false)} title="Свернуть список объектов"
@@ -22609,7 +22621,7 @@
                                 {/* В ПОКОЕ — СПРАВКА, а не анкета: адрес, координаты, питание и комментарий текстом с подписями слева, как в «Контактах». */}
                                 {(() => {
                                   const ed = !READ_ONLY && locEdit && locEdit.id === l.id;
-                                  const lab = (t) => <span className="shrink-0" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', width: 88 }}>{t}</span>;
+                                  const lab = (t) => <span className="shrink-0" style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', width: 104 }}>{t}</span>;
                                   const fieldStyle = { fontSize: 'var(--fs-3)', color: 'var(--text-2)', lineHeight: 1.5 };
                                   if (ed) {
                                     const inp = (field, extra) => (
