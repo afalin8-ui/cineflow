@@ -2934,6 +2934,48 @@
         const looksLikeFileName = (v) => FILE_NAME_RE.test(String(v || '').trim());
         const refCaption = (r) => { const l = String((r && r.label) || '').trim(); return looksLikeFileName(l) ? '' : l; };
 
+        // ПЕРЕТАЩИТЬ КАРТИНКУ ИЗ CINEFLOW НАРУЖУ — в папку, на рабочий стол,
+        // в Telegram, Word, Photoshop (Windows) или в соседнее приложение
+        // на iPad (Фото, Файлы, Заметки). Во всём приложении у картинок
+        // перетаскивание выключено НАМЕРЕННО — на доске и в лентах оно
+        // перебивало бы перенос карточки и прокрутку. Включаем точечно:
+        // галерея, фото объекта, референсы сцены, полноэкранный просмотр.
+        // Тащим саму <img>: так браузер сам кладёт картинку файлом (Chrome
+        // на Windows, Safari на iPad). Сверху — DownloadURL (Chrome, Edge):
+        // брошенное в папку ложится файлом С ИМЕНЕМ, а не «download.jpg»,
+        // и если есть оригинал в Dropbox — это он (ссылка с dl=1).
+        // Своё перетаскивание помечено CF_DRAG: галерея, объект и доска
+        // сами принимают брошенные картинки, и без метки фото, задевшее
+        // свою же галерею, загрузилось бы повторно (см. dropHasImage).
+        const CF_DRAG = 'application/x-cineflow-ref';
+        let cfDragOut = 0;
+        const refDragName = (ref, mime) => {
+          const ext = EXT_BY_MIME[mime] || 'jpg';
+          const raw = String(ref.file || ref.label || '').trim() || ('cineflow-' + ref.id);
+          const base = raw.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || ('cineflow-' + ref.id);
+          return base + '.' + ext;
+        };
+        const refDrag = (ref, src, off) => {
+          if (!ref || off || ref.video || !(src || ref.url)) return { draggable: false };
+          return {
+            draggable: true,
+            onDragStart: (e) => {
+              const dt = e.dataTransfer; if (!dt) return;
+              cfDragOut = Date.now();
+              try { dt.setData(CF_DRAG, ref.id); } catch (err) {}
+              try { dt.effectAllowed = 'copy'; } catch (err) {}
+              const orig = ((ref.cloud || {}).provider === 'dropbox' && ref.full) ? dropboxDl(ref.full) : '';
+              const url = orig || src || ref.url;
+              const mime = (/^data:([^;,]+)/.exec(url) || [])[1]
+                || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', heic: 'image/heic', webp: 'image/webp' })[(String((ref.cloud || {}).path || '').split('.').pop() || '').toLowerCase()]
+                || 'image/jpeg';
+              // В DownloadURL двоеточие — разделитель, в имени ему не место.
+              try { dt.setData('DownloadURL', mime + ':' + refDragName(ref, mime).replace(/:/g, ' ') + ':' + url); } catch (err) {}
+            },
+            onDragEnd: () => { cfDragOut = 0; },
+          };
+        };
+
         // СЦЕНАРИЙ ИЗ PDF И .TXT ПРИХОДИТ С ПЕРЕНОСАМИ НА ШИРИНЕ ЛИСТА
         // (около 58 знаков): каждая строка листа — своя строка. В колонке
         // другой ширины такой текст идёт «лесенкой» — «…постройки военного /
@@ -4446,7 +4488,7 @@
         const ZOOM_MAX = 6;
         const ZOOM_TAP_MS = 300;
 
-        const ZoomImage = ({ src, onTap, onError }) => {
+        const ZoomImage = ({ src, onTap, onError, drag }) => {
           const boxRef = useRef(null);
           const imgRef = useRef(null);
           const stRef = useRef({ s: 1, x: 0, y: 0 });
@@ -4512,7 +4554,9 @@
           };
 
           const onDown = (e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
+            // Мышью по НЕприближенному кадру указатель не забираем: иначе
+            // не начнётся перетаскивание картинки наружу (drag).
+            if (!(drag && e.pointerType === 'mouse' && stRef.current.s <= 1.01)) e.currentTarget.setPointerCapture(e.pointerId);
             ptrRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             if (ptrRef.current.size === 2) {
               const [a, b] = [...ptrRef.current.values()];
@@ -4557,7 +4601,7 @@
                  onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
                  onWheel={onWheel}
                  style={{ touchAction: 'none', cursor: zoomed ? 'grab' : 'zoom-in' }}>
-              <img ref={imgRef} src={src} draggable="false" onError={onError}
+              <img ref={imgRef} src={src} {...(drag && !zoomed ? drag : { draggable: false })} onError={onError} data-cf="lb-img"
                    className="max-w-full max-h-full object-contain rounded-lg select-none"
                    style={{ transformOrigin: 'center center', willChange: 'transform' }} />
             </div>
@@ -4925,6 +4969,7 @@
                             <PanoView key={currentRef.id} src={panoSrc} maxW={panoMax} onTap={toggleChrome} />
                         ) : (
                             <ZoomImage key={currentRef.id} src={bigReady || currentRef.url} onTap={toggleChrome}
+                                       drag={refDrag(currentRef, bigReady || currentRef.url)}
                                        onError={() => { if (bigReady) { setBigReady(''); setBigUrl(''); } }} />
                         )}
                         {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className={'absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 ' + chromeCls}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
@@ -17223,6 +17268,8 @@
           // поэтому список короткий и набору не мешает.
           const dropHasImage = (dt) => {
             const types = Array.from((dt && dt.types) || []);
+            // Своя же картинка, которую тащат наружу, — не загрузка.
+            if (types.indexOf(CF_DRAG) >= 0 || (cfDragOut && Date.now() - cfDragOut < 120000)) return false;
             return types.indexOf('Files') >= 0 || types.indexOf('text/uri-list') >= 0;
           };
 
@@ -20963,7 +21010,7 @@
                                 <div key={r.id} className="relative shrink-0"
                                      onClick={() => setLightboxData({ scope: strip.map(x => x.id), scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                      style={{ width: 230, height: 130, borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
-                                  <img src={r.url} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                  <img src={r.url} {...refDrag(r)} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                                   {videoBadge(r)}
                                 </div>
                               ))}
@@ -21234,7 +21281,7 @@
                                   {sceneRefs.map(r => (
                                     <div key={r.id} className="relative cursor-pointer"
                                          onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}>
-                                      <img src={r.url} draggable="false" style={{ width: '100%', borderRadius: 'var(--r-md)', display: 'block' }} />
+                                      <img src={r.url} {...refDrag(r)} style={{ width: '100%', borderRadius: 'var(--r-md)', display: 'block' }} />
                                       {videoBadge(r)}
                                     </div>
                                   ))}
@@ -21265,7 +21312,7 @@
                               <div key={r.id} onClick={() => setLightboxData({ scope: locPhotos.map(x => x.id), scopeLabel: loc ? loc.name : 'Объект', currentId: r.id })}
                                    className="relative shrink-0 cursor-pointer"
                                    style={{ width: 340, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                <img src={r.url} style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} draggable="false" />
+                                <img src={r.url} style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} {...refDrag(r)} />
                                 {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                 {videoBadge(r, { right: 6, top: 6 })}
                               </div>
@@ -21622,7 +21669,7 @@
                                     <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                          className="relative shrink-0 cursor-pointer group"
                                          style={{ width: 268, borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
-                                      <img src={r.url} style={{ width: '100%', height: 152, objectFit: 'cover', display: 'block' }} draggable="false" />
+                                      <img src={r.url} style={{ width: '100%', height: 152, objectFit: 'cover', display: 'block' }} {...refDrag(r)} />
                                       {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                       {videoBadge(r, { left: 6, top: 6 })}
                                       <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
@@ -21654,7 +21701,7 @@
                                     <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                          className="relative cursor-pointer"
                                          style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                      <img src={r.url} style={{ width: '100%', display: 'block' }} draggable="false" />
+                                      <img src={r.url} style={{ width: '100%', display: 'block' }} {...refDrag(r)} />
                                       {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                       {videoBadge(r)}
                                     </div>
@@ -22266,7 +22313,7 @@
                                             </button>
                                           );
                                         })()}
-                                        <img src={ref.url} draggable="false"
+                                        <img src={ref.url} {...refDrag(ref, null, selectMode || selectedRefIds.length > 0)} data-cf="ref-img"
                                              style={{ width: '100%', height: 'auto', display: 'block', background: 'var(--bg)', borderRadius: isSel ? 0 : 'var(--r-md)' }} />
                                         {/* Панораму надо отличать от обычного кадра на общем
                                             листе: плоская развёртка сама по себе выглядит
@@ -22563,7 +22610,7 @@
                                 <div key={r.id} className="relative shrink-0 group cursor-pointer"
                                      style={{ width: locPhotosOpen ? 'auto' : 320, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}
                                      onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
-                                  <img src={r.url} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} draggable="false" loading="lazy" />
+                                  <img src={r.url} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} {...refDrag(r)} data-cf="loc-photo" loading="lazy" />
                                   {/* Метка слева сверху: правый верх занят крестиком, низ — подписью */}
                                   {videoBadge(r, { left: 6, top: 6 })}
                                   {/* Отвязываем от объекта, а НЕ удаляем из проекта —
