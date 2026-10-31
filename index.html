@@ -338,6 +338,8 @@
         .cf-ref-card { content-visibility: auto; contain-intrinsic-size: auto 300px; }
         /* чип параметра или тега */
         .cf-chip { font-family: var(--font-mono); font-size: var(--fs-1); letter-spacing: .04em; color: var(--muted); background: var(--panel); border: 1px solid var(--border); padding: 4px 7px; border-radius: var(--r-sm); }
+        /* строка поиска галереи: свой ✕, штатный крестик браузера был бы вторым */
+        .cf-galsearch input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
         .cf-chip-accent { color: var(--accent); background: transparent; border-color: var(--accent-line); }
         /* Чип-КНОПКА — цель, чип-подпись («4 фото») — нет. */
         button.cf-chip { min-height: var(--tap-sm); display: inline-flex; align-items: center; }
@@ -462,6 +464,109 @@
            иначе плашка заняла бы треть картинки. Правило касания выше по весу,
            поэтому селектор повторён и для него. */
         .cf-frame-num-sm, html.cf-touch .cf-frame-num-sm { padding: 1px 6px; border-radius: 4px; }
+        /* ---------- СЦЕНАРИЙ С ПОЛЯМИ (ScriptReader) ----------
+           Сценарий — главное на экране: кегль чтения и машинописная гарнитура
+           (системный Courier, по сети ничего не грузится). Поле справа — на
+           ступень мельче и тише, подписи разделов — мелкими прописными: они
+           называют блок, а не спорят с текстом. Поля соседних сцен приглушены,
+           ярким остаётся поле той, которую читают. */
+        .cf-script { --sr-fs: 17px; --sr-mg: 14px; --sr-w: 320px; font-size: var(--sr-mg);
+                     padding: 0 clamp(20px, 3.4vw, 48px) 140px; }
+        html.cf-touch .cf-script { --sr-fs: 15.5px; --sr-mg: 13.5px; --sr-w: 284px; }
+        .cf-script-bar { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 10px;
+                         min-height: calc(var(--tap) + 12px); background: var(--bg); border-bottom: 1px solid var(--line); }
+        .cf-sr { display: grid; grid-template-columns: minmax(0, 64ch) var(--sr-w); gap: clamp(24px, 3vw, 48px);
+                 padding: 40px 0 44px; border-bottom: 1px solid var(--line); scroll-margin-top: calc(var(--tap) + 14px); }
+        .cf-sr-page { min-width: 0; font-family: 'Courier Prime', 'Courier New', Courier, ui-monospace, monospace;
+                      font-size: var(--sr-fs); line-height: 1.62; color: var(--text); }
+        .cf-sr-head { display: flex; gap: 1.2ch; font-weight: 700; text-transform: uppercase; margin-bottom: 1.1em; cursor: pointer; }
+        .cf-sr-head:hover { color: var(--accent); }
+        .cf-sr-num { color: var(--muted); font-weight: 400; min-width: 3ch; }
+        .cf-sr-empty { font-family: var(--font-ui); font-size: var(--sr-mg); color: var(--muted-2); }
+        .cf-sl > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .cf-sl-g { height: .9em; overflow: hidden; }
+        .cf-sl-c { padding-left: 22ch; margin-top: .45em; }
+        .cf-sl-p { padding-left: 16ch; color: var(--text-2); }
+        .cf-sl-d { padding-left: 10ch; padding-right: 8ch; }
+        .cf-sl-t { text-align: right; color: var(--text-2); }
+        html.cf-touch .cf-sl-c { padding-left: 15ch; } html.cf-touch .cf-sl-p { padding-left: 11ch; }
+        html.cf-touch .cf-sl-d { padding-left: 6ch; padding-right: 3ch; }
+        .cf-sl ::selection { background: rgba(204,122,95,.35); }
+        .cf-sl mark { color: inherit; background: transparent; box-shadow: inset 0 -2px 0 var(--hc); border-radius: 2px; cursor: pointer; transition: background .15s; }
+        .cf-sl mark:hover, .cf-sl mark.lit { background: color-mix(in srgb, var(--hc) 24%, transparent); }
+        .cf-sl mark.tmp { background: rgba(250,204,21,.18); box-shadow: inset 0 -2px 0 rgba(250,204,21,.55); }
+        .cf-script-pen .cf-sl { -webkit-user-select: none; user-select: none; cursor: var(--cf-cross); touch-action: pan-y; }
+        .cf-sr-margin { position: relative; min-width: 0; }
+        .cf-sr:not(.cur) .cf-sr-margin > * { opacity: .45; transition: opacity .2s; }
+        .cf-sr:not(.cur) .cf-sr-margin:hover > *, .cf-sr:not(.cur) .cf-sr-margin:focus-within > * { opacity: 1; }
+        .cf-sr:not(.cur) .cf-sr-adds { visibility: hidden; }
+        .cf-sr:not(.cur) .cf-sr-margin:hover .cf-sr-adds { visibility: visible; }
+        .cf-sr-block { position: relative; z-index: 2; padding-top: 3px; }
+        .cf-sr-meta { font-size: 11px; letter-spacing: .04em; color: var(--muted-2); margin-bottom: 14px; }
+        .cf-script-bar .cf-sr-meta { margin: 0; font-size: var(--fs-1); }
+        .cf-sr-sec { margin-bottom: 18px; }
+        .cf-sr-lb { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); margin-bottom: 7px; }
+        .cf-sr-eksp { color: var(--text-2); line-height: 1.5; cursor: text; white-space: pre-wrap; }
+        .cf-sr-eksp:hover { color: var(--text); }
+        .cf-sr-fld { width: 100%; resize: none; overflow: hidden; background: var(--card); border: 1px solid var(--accent-line);
+                     border-radius: var(--r-md); color: var(--text); font: inherit; line-height: 1.5; padding: 6px 9px; }
+        .cf-sr-note { position: relative; display: flex; gap: 6px; border-left: 2px solid; padding-left: 9px; margin-bottom: 8px; }
+        .cf-sr-note textarea { flex: 1; min-width: 0; background: transparent; border: 0; resize: none; overflow: hidden;
+                               color: var(--text-2); font: inherit; line-height: 1.45; padding: 0; outline: none; }
+        .cf-sr-note textarea:focus { color: var(--text); }
+        .cf-sr-x { flex: none; width: 22px; height: 22px; color: var(--muted-2); opacity: 0; font-size: 12px; }
+        .cf-sr-note:hover .cf-sr-x, .cf-sr-note:focus-within .cf-sr-x { opacity: 1; }
+        html.cf-touch .cf-sr-x { opacity: .5; width: var(--tap-sm); height: var(--tap-sm); }
+        .cf-sr-q { font-family: 'Courier Prime', 'Courier New', Courier, monospace; font-size: 11px; color: var(--muted-2);
+                   margin: 0 0 3px 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cf-sr-anchor { position: absolute; left: 0; right: 0; z-index: 2; transition: top .15s; }
+        .cf-sr-inkcard canvas { display: block; max-width: 100%; }
+        .cf-sr-inkh { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted-2); }
+        .cf-sr-inkh button { color: var(--muted-2); min-height: 28px; } .cf-sr-inkh button:hover { color: var(--accent); }
+        .cf-sr-ink { position: absolute; inset: 0; z-index: 3; touch-action: pan-y; cursor: var(--cf-cross); }
+        .cf-sr-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+        .cf-sr-frame { position: relative; flex: none; width: 92px; border-radius: 4px; overflow: hidden; background: var(--raised); }
+        .cf-sr-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .cf-sr-frame .cf-frame-num-sm { position: absolute; left: 4px; bottom: 3px; font-family: var(--font-mono); font-size: 11px;
+                                        color: var(--text); background: rgba(20,19,18,.72); }
+        .cf-sr-sum { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; width: 100%; text-align: left;
+                     align-items: baseline; min-height: 30px; padding: 3px 0; }
+        .cf-sr-sum b { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); min-width: 64px; }
+        .cf-sr-sum span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cf-sr-sum:hover span { color: var(--text); }
+        .cf-sr-gear { margin-bottom: 10px; }
+        .cf-sr-adds { display: flex; flex-wrap: wrap; gap: 0 14px; }
+        .cf-sr-link { font-size: var(--fs-1); color: var(--muted-2); min-height: var(--tap-sm); display: inline-flex; align-items: center; }
+        .cf-sr-link:hover { color: var(--accent); }
+        .cf-sr-float { position: fixed; z-index: 90; display: flex; align-items: center; gap: 4px; padding: 4px;
+                       background: var(--raised); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 26px rgba(0,0,0,.5); }
+        .cf-sr-dot { width: var(--tap-sm); height: var(--tap-sm); border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
+        .cf-sr-dot i { width: 16px; height: 16px; border-radius: 50%; display: block; }
+        .cf-sr-dot:hover { background: var(--card); }
+        .cf-sr-go { height: var(--tap-sm); padding: 0 12px; border-radius: 8px; font-size: var(--fs-1); font-weight: 600; color: var(--text); white-space: nowrap; }
+        .cf-sr-go:hover { background: var(--card); }
+        .cf-sr-main, .cf-sr-main:hover { background: var(--accent); color: #1a1918; }
+        .cf-sr-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; flex: none; }
+        .cf-sr-penbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + var(--sab)); z-index: 85;
+                        display: flex; align-items: center; gap: 4px; padding: 5px; background: var(--raised); border: 1px solid var(--border);
+                        border-radius: 14px; box-shadow: 0 12px 30px rgba(0,0,0,.5); max-width: calc(100vw - 32px); overflow-x: auto; }
+        .cf-sr-penbar button { height: var(--tap); min-width: var(--tap); padding: 0 12px; border-radius: 10px; font-size: var(--fs-1);
+                               color: var(--text-2); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+        .cf-sr-penbar button.on { background: var(--card); color: var(--text); }
+        .cf-sr-penbar .cf-sr-sw { padding: 0; justify-content: center; }
+        .cf-sr-sw i { width: 18px; height: 18px; border-radius: 50%; display: block; }
+        .cf-sr-sw.on i { box-shadow: 0 0 0 2px var(--raised), 0 0 0 4px var(--muted); }
+        .cf-sr-penbar .cf-sr-done { background: var(--accent); color: #1a1918; font-weight: 600; }
+        /* узко (телефон, iPad стоя со списком сцен): поле под текстом сцены,
+           заметки и рукопись — строками */
+        .cf-script-phone { padding: 0 16px 24px; }
+        .cf-script-stack .cf-sr { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 26px 0 28px; }
+        .cf-script-stack .cf-sr-margin { border-top: 1px solid var(--line); padding-top: 12px; }
+        .cf-script-stack .cf-sr-anchor { position: static; margin-bottom: 12px; }
+        .cf-script-stack .cf-sr:not(.cur) .cf-sr-margin > * { opacity: 1; }
+        .cf-script-stack .cf-sr:not(.cur) .cf-sr-adds { visibility: visible; }
+        html .cf-script-stack .cf-sl-c { padding-left: 8ch; } html .cf-script-stack .cf-sl-p { padding-left: 5ch; }
+        html .cf-script-stack .cf-sl-d { padding-left: 3ch; padding-right: 0; }
         .cf-sel { background: var(--raised) !important; color: var(--text) !important; box-shadow: 0 0 0 1px var(--border); }
         html.cf-touch .cf-seg > * { padding: 7px 10px; font-size: var(--fs-1); }
         /* ---------- инструменты доски ----------
@@ -796,6 +901,7 @@
             Chat: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
             Bot: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="14" x="3" y="7" rx="2" ry="2"/><path d="M12 7V3"/><path d="M9 3h6"/><path d="M9 13v2"/><path d="M15 13v2"/></svg>,
             Print: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>,
+            Search: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>,
             Tag: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>,
             Image: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
             Book: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M9 7h7M9 11h5"/></svg>,
@@ -828,6 +934,7 @@
         // кадров с большими кнопками, на показе — ни одной панели.
         // Режим держится в localStorage: человек работает днями в одном.
         const SCENE_MODES = [
+          { id: 'script',   label: 'Сценарий',    hint: 'Читаем сценарий подряд: на полях — раскадровка, экспликация, заметки, техника и свет' },
           { id: 'creative', label: 'Творческий',  hint: 'Придумываем: референсы, замысел, раскадровка, текст сцены' },
           { id: 'scout',    label: 'Скаутинг',    hint: 'На выезде: фото точек, солнце сейчас, заметки' },
           { id: 'shoot',    label: 'Съёмка',      hint: 'В смену: кадры чек-листом, крупные кнопки' },
@@ -2931,6 +3038,48 @@
         const looksLikeFileName = (v) => FILE_NAME_RE.test(String(v || '').trim());
         const refCaption = (r) => { const l = String((r && r.label) || '').trim(); return looksLikeFileName(l) ? '' : l; };
 
+        // ПЕРЕТАЩИТЬ КАРТИНКУ ИЗ CINEFLOW НАРУЖУ — в папку, на рабочий стол,
+        // в Telegram, Word, Photoshop (Windows) или в соседнее приложение
+        // на iPad (Фото, Файлы, Заметки). Во всём приложении у картинок
+        // перетаскивание выключено НАМЕРЕННО — на доске и в лентах оно
+        // перебивало бы перенос карточки и прокрутку. Включаем точечно:
+        // галерея, фото объекта, референсы сцены, полноэкранный просмотр.
+        // Тащим саму <img>: так браузер сам кладёт картинку файлом (Chrome
+        // на Windows, Safari на iPad). Сверху — DownloadURL (Chrome, Edge):
+        // брошенное в папку ложится файлом С ИМЕНЕМ, а не «download.jpg»,
+        // и если есть оригинал в Dropbox — это он (ссылка с dl=1).
+        // Своё перетаскивание помечено CF_DRAG: галерея, объект и доска
+        // сами принимают брошенные картинки, и без метки фото, задевшее
+        // свою же галерею, загрузилось бы повторно (см. dropHasImage).
+        const CF_DRAG = 'application/x-cineflow-ref';
+        let cfDragOut = 0;
+        const refDragName = (ref, mime) => {
+          const ext = EXT_BY_MIME[mime] || 'jpg';
+          const raw = String(ref.file || ref.label || '').trim() || ('cineflow-' + ref.id);
+          const base = raw.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || ('cineflow-' + ref.id);
+          return base + '.' + ext;
+        };
+        const refDrag = (ref, src, off) => {
+          if (!ref || off || ref.video || !(src || ref.url)) return { draggable: false };
+          return {
+            draggable: true,
+            onDragStart: (e) => {
+              const dt = e.dataTransfer; if (!dt) return;
+              cfDragOut = Date.now();
+              try { dt.setData(CF_DRAG, ref.id); } catch (err) {}
+              try { dt.effectAllowed = 'copy'; } catch (err) {}
+              const orig = ((ref.cloud || {}).provider === 'dropbox' && ref.full) ? dropboxDl(ref.full) : '';
+              const url = orig || src || ref.url;
+              const mime = (/^data:([^;,]+)/.exec(url) || [])[1]
+                || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', heic: 'image/heic', webp: 'image/webp' })[(String((ref.cloud || {}).path || '').split('.').pop() || '').toLowerCase()]
+                || 'image/jpeg';
+              // В DownloadURL двоеточие — разделитель, в имени ему не место.
+              try { dt.setData('DownloadURL', mime + ':' + refDragName(ref, mime).replace(/:/g, ' ') + ':' + url); } catch (err) {}
+            },
+            onDragEnd: () => { cfDragOut = 0; },
+          };
+        };
+
         // СЦЕНАРИЙ ИЗ PDF И .TXT ПРИХОДИТ С ПЕРЕНОСАМИ НА ШИРИНЕ ЛИСТА
         // (около 58 знаков): каждая строка листа — своя строка. В колонке
         // другой ширины такой текст идёт «лесенкой» — «…постройки военного /
@@ -4443,7 +4592,7 @@
         const ZOOM_MAX = 6;
         const ZOOM_TAP_MS = 300;
 
-        const ZoomImage = ({ src, onTap, onError }) => {
+        const ZoomImage = ({ src, onTap, onError, drag }) => {
           const boxRef = useRef(null);
           const imgRef = useRef(null);
           const stRef = useRef({ s: 1, x: 0, y: 0 });
@@ -4509,7 +4658,9 @@
           };
 
           const onDown = (e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
+            // Мышью по НЕприближенному кадру указатель не забираем: иначе
+            // не начнётся перетаскивание картинки наружу (drag).
+            if (!(drag && e.pointerType === 'mouse' && stRef.current.s <= 1.01)) e.currentTarget.setPointerCapture(e.pointerId);
             ptrRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             if (ptrRef.current.size === 2) {
               const [a, b] = [...ptrRef.current.values()];
@@ -4554,7 +4705,7 @@
                  onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
                  onWheel={onWheel}
                  style={{ touchAction: 'none', cursor: zoomed ? 'grab' : 'zoom-in' }}>
-              <img ref={imgRef} src={src} draggable="false" onError={onError}
+              <img ref={imgRef} src={src} {...(drag && !zoomed ? drag : { draggable: false })} onError={onError} data-cf="lb-img"
                    className="max-w-full max-h-full object-contain rounded-lg select-none"
                    style={{ transformOrigin: 'center center', willChange: 'transform' }} />
             </div>
@@ -4922,6 +5073,7 @@
                             <PanoView key={currentRef.id} src={panoSrc} maxW={panoMax} onTap={toggleChrome} />
                         ) : (
                             <ZoomImage key={currentRef.id} src={bigReady || currentRef.url} onTap={toggleChrome}
+                                       drag={refDrag(currentRef, bigReady || currentRef.url)}
                                        onError={() => { if (bigReady) { setBigReady(''); setBigUrl(''); } }} />
                         )}
                         {currentIndex < refs.length - 1 && ( <button onClick={(e) => { e.stopPropagation(); setCurrentId(refs[currentIndex + 1].id); }} className={'absolute right-2 md:right-8 p-4 bg-black/50 rounded-full text-white hover:bg-indigo-600 z-10 ' + chromeCls}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg></button> )}
@@ -10532,6 +10684,635 @@
           );
         };
 
+        // =====================================================================
+        // СЦЕНАРИЙ С ПОЛЯМИ (режим сцен «Сценарий»)
+        // =====================================================================
+        // Сценарий читается ПОДРЯД, как распечатка, а у каждой сцены справа
+        // поле: раскадровка, экспликация, заметки, техника и свет. Это не
+        // новый экран про новый материал — те же записи сцены, повёрнутые
+        // под чтение; правят их здесь те же функции, что на экране сцены
+        // («Форма» — прежний экран — остаётся как был).
+        // Две вещи привязаны к ТЕКСТУ, а не к сцене целиком:
+        //  · выделение фразы (`marks` у сцены: {id, s:[строка, знак],
+        //    e:[строка, знак], q — сама фраза, c — цвет}) и заметка к нему —
+        //    обычная заметка сцены (стикер) с полем `hl`;
+        //  · рукопись пером на полях (`ink` у сцены — строка JSON:
+        //    [{id, li, c, pts:[[x, dy, нажим]]}]), где dy отсчитан от верха
+        //    строки li: след стоит у своей строки и на другой ширине экрана.
+        // Фраза держится за ЦИТАТУ: строки поменялись (склейка переносов,
+        // новая редакция) — фразу ищем заново по `q`; не нашли — заметка
+        // остаётся у сцены с пометкой «фразы в тексте нет».
+        const SCRIPT_TRANS_RE = /^(СКЛЕЙКА|ЗТМ|ИЗ ЗТМ|ЗАТЕМНЕНИЕ|ВЫТЕСНЕНИЕ|НАПЛЫВ|CUT TO|FADE (IN|OUT)|DISSOLVE)\b|:$/;
+        const SCRIPT_MARK_COLORS = ['#facc15', '#7a9d6b', '#6b8fb3', '#a88bc4'];
+        const SCRIPT_INK_COLORS = ['#f0eee6', '#cc7a5f', '#facc15'];
+        const SCRIPT_INK_REF_W = 320;   // ширина поля, в которой хранится рукопись
+        // Вёрстка сценария по самому тексту: Word и PDF отдают нам строки без
+        // отступов, но реплика узнаётся и так — имя прописными на своей
+        // строке, под ним реплика до пустой строки, ремарка в скобках,
+        // «СКЛЕЙКА:» и «ЗТМ.» — переходы. Не узнали — обычное описание
+        // действия: ни одна строка не теряется, меняется только отступ.
+        const scriptKinds = (lines) => {
+          const isUpper = (t) => { const bare = t.replace(/\([^)]*\)/g, ''); return /[A-ZА-ЯЁ]/.test(bare) && !/[a-zа-яё]/.test(bare); };
+          const out = []; let dial = false;
+          for (let i = 0; i < lines.length; i++) {
+            const t = lines[i].trim();
+            if (!t) { out.push('g'); dial = false; continue; }
+            const up = isUpper(t);
+            if (up && t.length <= 32 && SCRIPT_TRANS_RE.test(t)) { out.push('t'); dial = false; continue; }
+            if (dial && /^\(.*\)$/.test(t)) { out.push('p'); continue; }
+            const next = (lines[i + 1] || '').trim();
+            if (up && t.length <= 40 && next && !isUpper(next)) { out.push('c'); dial = true; continue; }
+            out.push(dial ? 'd' : 'a');
+          }
+          return out;
+        };
+        const scriptSpan = (lines, s, e) => {
+          let q = '';
+          for (let i = s[0]; i <= e[0]; i++) { const t = lines[i] || ''; q += (i > s[0] ? '\n' : '') + t.slice(i === s[0] ? s[1] : 0, i === e[0] ? e[1] : t.length); }
+          return q;
+        };
+        const scriptCmp = (a, b) => a[0] - b[0] || a[1] - b[1];
+        const resolveMark = (lines, m) => {
+          if (m.s && m.e && m.e[0] < lines.length && scriptSpan(lines, m.s, m.e) === m.q) return { ...m, ok: true };
+          const at = m.q ? lines.join('\n').indexOf(m.q) : -1;
+          if (at < 0) return { ...m, ok: false };
+          const pos = (off) => { let li = 0, acc = 0; while (li < lines.length - 1 && acc + lines[li].length < off) { acc += lines[li].length + 1; li++; } return [li, off - acc]; };
+          return { ...m, s: pos(at), e: pos(at + m.q.length), ok: true };
+        };
+        const parseInk = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+        const inkStroke = (ctx, k, ox, oy, sc, color) => {
+          const p = k.pts || []; if (!p.length) return;
+          ctx.strokeStyle = color || SCRIPT_INK_COLORS[k.c] || SCRIPT_INK_COLORS[0];
+          ctx.fillStyle = ctx.strokeStyle; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+          if (p.length === 1) { ctx.beginPath(); ctx.arc(ox + p[0][0] * sc, oy + p[0][1] * sc, 1.4, 0, 7); ctx.fill(); return; }
+          for (let i = 1; i < p.length; i++) {
+            ctx.lineWidth = (0.9 + 1.9 * (p[i][2] == null ? .5 : p[i][2])) * Math.max(.8, sc);
+            ctx.beginPath(); ctx.moveTo(ox + p[i - 1][0] * sc, oy + p[i - 1][1] * sc); ctx.lineTo(ox + p[i][0] * sc, oy + p[i][1] * sc); ctx.stroke();
+          }
+        };
+        const prepCanvas = (cv, w, h) => {
+          const d = Math.min(2, window.devicePixelRatio || 1);
+          cv.width = Math.max(1, Math.round(w * d)); cv.height = Math.max(1, Math.round(h * d));
+          cv.style.width = w + 'px'; cv.style.height = h + 'px';
+          const ctx = cv.getContext('2d'); ctx.setTransform(d, 0, 0, d, 0, 0); ctx.clearRect(0, 0, w, h); return ctx;
+        };
+
+        const ScriptReader = ({ scenes, notes, activeSceneId, onCurrent, readOnly, isPhone, renderPart,
+                                onMarks, onInk, onAddNote, onNotePatch, onNoteUnlink, onInkText, onOpenScene, onContent, onNeedRoom, toast }) => {
+          const rootRef = useRef(null);
+          // Поле РЯДОМ с текстом — только когда хватает ширины. На iPad стоя
+          // с открытым списком сцен колонке текста оставалось 190 точек, по
+          // три слова в строке. Уже 720 — поле встаёт под текст сцены, как
+          // на телефоне (меряем саму область, а не экран: список сцен то
+          // открыт, то свёрнут).
+          const [stack, setStack] = useState(false);
+          useEffect(() => {
+            const el = rootRef.current; if (!el || !window.ResizeObserver) return;
+            const ro = new ResizeObserver(() => setStack(el.clientWidth < 720));
+            ro.observe(el); return () => ro.disconnect();
+          }, []);
+          const flow = isPhone || stack;
+          const ruDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) ? `смена ${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}` : (d || '');
+          const [pen, setPen] = useState(false);
+          const [tool, setTool] = useState('pen');
+          const [inkC, setInkC] = useState(0);
+          const [pop, setPop] = useState(null);       // {sid, id, x, top, bottom} — меню у выделения
+          const [sel, setSel] = useState(null);       // {sid, s, e, x, top, bottom} — плашка у выделенного текста
+          const [draft, setDraft] = useState(null);   // {sid, hl} — заметка к фразе, пока не написана
+          const [tmp, setTmp] = useState(null);       // выделение пером, пока его ведут
+          const [open, setOpen] = useState({});       // {sid: 'gear'|'light'} — развёрнутый список
+          const [eksp, setEksp] = useState(null);     // сцена, у которой правят экспликацию
+          const [cur, setCur] = useState(activeSceneId);
+          const undoRef = useRef([]);
+          const [, bump] = useState(0);
+          const P = useRef({}); P.current = { scenes, notes, onMarks, onInk, onAddNote, onCurrent, readOnly, pen, tool, inkC };
+
+          // Строки, их вёрстка и выделения — от текста сцены.
+          // Склейка переносов и вёрстка — по тексту, а текст меняется редко:
+          // считаем один раз на текст, а не на каждую правку соседней сцены.
+          const textCache = useRef({});
+          const data = useMemo(() => {
+            const m = {};
+            scenes.forEach(s => {
+              const src = String(s.script || '');
+              let c = textCache.current[s.id];
+              if (!c || c.src !== src) {
+                const lines = unwrapScript(src).replace(/\r\n?/g, '\n').split('\n');
+                while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+                c = textCache.current[s.id] = { src, lines, kinds: scriptKinds(lines) };
+              }
+              const marks = (s.marks || []).map(x => resolveMark(c.lines, x));
+              m[s.id] = { lines: c.lines, kinds: c.kinds, marks, ink: parseInk(s.ink) };
+            });
+            return m;
+          }, [scenes]);
+          const D = useRef(data); D.current = data;
+
+          const markById = (sid, id) => ((data[sid] || {}).marks || []).find(x => x.id === id);
+          const newId = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+          // --- позиция в тексте по узлу и смещению выделения или по точке экрана
+          const posOf = (node, off, sid) => {
+            if (!node) return null;
+            const el = node.nodeType === 1 ? node : node.parentElement;
+            const box = el && el.closest('[data-sl]');
+            if (!box || (sid && box.dataset.sl !== sid)) return null;
+            const d = D.current[box.dataset.sl]; if (!d) return null;
+            const line = el.closest('[data-li]');
+            if (!line) { const i = Math.min(off, d.lines.length - 1); return off >= d.lines.length ? [i, (d.lines[i] || '').length] : [Math.max(0, i), 0]; }
+            const r = document.createRange(); r.selectNodeContents(line);
+            try { r.setEnd(node, off); } catch (e) { return null; }
+            return [+line.dataset.li, r.toString().length];
+          };
+          const caretPos = (x, y, sid) => {
+            let node, off;
+            if (document.caretPositionFromPoint) { const p = document.caretPositionFromPoint(x, y); if (p) { node = p.offsetNode; off = p.offset; } }
+            else if (document.caretRangeFromPoint) { const r = document.caretRangeFromPoint(x, y); if (r) { node = r.startContainer; off = r.startOffset; } }
+            return posOf(node, off, sid);
+          };
+          const snapWords = (sid, a, b) => {
+            const L = D.current[sid].lines; let [li, o] = a; const t1 = L[li] || '';
+            while (o > 0 && /\S/.test(t1[o - 1])) o--;
+            let [lj, p] = b; const t2 = L[lj] || '';
+            while (p < t2.length && /\S/.test(t2[p])) p++;
+            return [[li, o], [lj, p]];
+          };
+          // Новое выделение, налезающее на прежние, СЛИВАЕТСЯ с ними: их
+          // заметки переезжают на общее. Два выделения на одной фразе
+          // читались бы как одно, а заметки у них были бы разные.
+          const addMark = (sid, s0, e0, c) => {
+            const L = D.current[sid].lines;
+            if (!scriptCmp(s0, e0)) return null;
+            let [s, e] = scriptCmp(s0, e0) < 0 ? [s0, e0] : [e0, s0];
+            [s, e] = snapWords(sid, s, e);
+            const list = D.current[sid].marks.filter(m => m.ok);
+            const over = list.filter(m => scriptCmp(m.s, e) < 0 && scriptCmp(s, m.e) < 0);
+            let keep;
+            if (over.length) {
+              keep = over[0];
+              over.forEach(m => { if (scriptCmp(m.s, s) < 0) s = m.s; if (scriptCmp(m.e, e) > 0) e = m.e; });
+              over.slice(1).forEach(m => P.current.notes.filter(n => n.hl === m.id).forEach(n => onNotePatch(n.id, { hl: keep.id })));
+            } else keep = { id: newId('m'), c: c || 0 };
+            const mark = { id: keep.id, s, e, q: scriptSpan(L, s, e), c: c == null ? keep.c : c };
+            const rest = D.current[sid].marks.filter(m => !over.includes(m)).map(({ ok, ...m }) => m);
+            onMarks(sid, [...rest, mark]);
+            return mark;
+          };
+          const delMark = (sid, id) => {
+            const left = (P.current.notes || []).filter(n => n.hl === id);
+            left.forEach(n => onNotePatch(n.id, { hl: '' }));
+            onMarks(sid, D.current[sid].marks.filter(m => m.id !== id).map(({ ok, ...m }) => m));
+            toast(left.length ? 'Выделение снято, заметка осталась у сцены' : 'Выделение снято');
+          };
+          const recolorMark = (sid, id, c) => onMarks(sid, D.current[sid].marks.map(({ ok, ...m }) => m.id === id ? { ...m, c } : m));
+
+          // --- плашка у выделенного мышью или пальцем
+          useEffect(() => {
+            if (readOnly) return;
+            const coarse = window.matchMedia('(pointer: coarse)').matches;
+            let t;
+            const check = () => {
+              if (P.current.pen) return;
+              const s = window.getSelection();
+              if (!s || !s.rangeCount || s.isCollapsed) { setSel(null); return; }
+              const r = s.getRangeAt(0);
+              const a = posOf(r.startContainer, r.startOffset);
+              const box = a && (r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement).closest('[data-sl]');
+              const b = box && posOf(r.endContainer, r.endOffset, box.dataset.sl);
+              if (!a || !b || !scriptCmp(a, b)) { setSel(null); return; }
+              const rc = r.getBoundingClientRect();
+              setSel({ sid: box.dataset.sl, s: a, e: b, x: rc.left + rc.width / 2, top: rc.top, bottom: rc.bottom, coarse });
+              setPop(null);
+            };
+            const on = () => { clearTimeout(t); t = setTimeout(check, coarse ? 350 : 120); };
+            document.addEventListener('selectionchange', on);
+            return () => { clearTimeout(t); document.removeEventListener('selectionchange', on); };
+          }, [readOnly]);
+
+          // --- какая сцена читается: та, чей верх выше 40 % окна
+          const lastRep = useRef(activeSceneId);
+          useEffect(() => {
+            const root = rootRef.current; if (!root) return;
+            let raf = 0, t = 0;
+            const onScroll = () => {
+              if (pop) setPop(null);
+              if (raf) return;
+              raf = requestAnimationFrame(() => {
+                raf = 0;
+                const lim = root.getBoundingClientRect().top + root.clientHeight * 0.4;
+                let id = null;
+                root.querySelectorAll('[data-sr]').forEach(el => { if (el.getBoundingClientRect().top <= lim) id = el.dataset.sr; });
+                id = id || (P.current.scenes[0] || {}).id;
+                if (id) setCur(id);
+                clearTimeout(t);
+                t = setTimeout(() => { if (id && id !== lastRep.current) { lastRep.current = id; P.current.onCurrent(id); } }, 250);
+              });
+            };
+            root.addEventListener('scroll', onScroll, { passive: true });
+            return () => { root.removeEventListener('scroll', onScroll); clearTimeout(t); if (raf) cancelAnimationFrame(raf); };
+          }, [pop]);
+          // Нажали сцену в списке слева — едем к ней. Свой же отчёт о прокрутке
+          // назад не крутим.
+          useEffect(() => {
+            if (!activeSceneId || activeSceneId === lastRep.current) return;
+            lastRep.current = activeSceneId;
+            const el = rootRef.current && rootRef.current.querySelector(`[data-sr="${activeSceneId}"]`);
+            if (el) { el.scrollIntoView({ block: 'start' }); setCur(activeSceneId); }
+          }, [activeSceneId]);
+          useEffect(() => {
+            const el = rootRef.current && rootRef.current.querySelector(`[data-sr="${activeSceneId}"]`);
+            if (el) el.scrollIntoView({ block: 'start' });
+          }, []);
+
+          // --- раскладка поля: заметки к фразам и рукопись встают у своих
+          // строк, налезая — сдвигаются вниз. Сначала ВСЕ замеры, потом все
+          // записи: вперемешку браузер пересчитывал бы страницу на каждой.
+          const layout = () => {
+            const root = rootRef.current; if (!root) return;
+            if (isPhone) return;
+            if (stack) { root.querySelectorAll('[data-cf="script-margin"]').forEach(a => { a.style.minHeight = ''; }); }
+            const rows = [...root.querySelectorAll('[data-sr]')];
+            const plan = rows.map(row => {
+              const sid = row.dataset.sr, aside = row.querySelector('[data-cf="script-margin"]');
+              if (!aside) return null;
+              const aTop = aside.getBoundingClientRect().top;
+              const lineTop = (li) => { const el = row.querySelector(`[data-sl] [data-li="${li}"]`); return el ? el.getBoundingClientRect().top - aTop : 0; };
+              const k = aside.clientWidth / SCRIPT_INK_REF_W;
+              const block = aside.querySelector('[data-cf="script-block"]');
+              const items = [...aside.querySelectorAll('[data-anchor]')].map(el => {
+                let y = 0;
+                if (el.dataset.anchor === 'hl') { const m = row.querySelector(`mark[data-hl="${el.dataset.for}"]`); y = m ? m.getBoundingClientRect().top - aTop - 18 : 0; }
+                else y = lineTop(+el.dataset.li) + (+el.dataset.dy || 0) * k - 6;
+                return { el, y, h: el.offsetHeight };
+              }).sort((a, b) => a.y - b.y);
+              return { sid, aside, k, lineTop, floor: block ? block.offsetHeight + 14 : 0, items, w: aside.clientWidth };
+            });
+            plan.forEach(p => {
+              if (!p) return;
+              if (stack) return;
+              let floor = p.floor;
+              p.items.forEach(({ el, y, h }) => { const top = Math.max(y, floor); el.style.top = top + 'px'; floor = top + h + 12; });
+              p.aside.style.minHeight = (P.current.pen ? 0 : floor) + 'px';
+            });
+            // Перо: холст во всё поле, рукопись — на своих строках.
+            plan.forEach(p => {
+              if (!p) return;
+              const cv = p.aside.querySelector('canvas[data-ink]');
+              if (!cv) return;
+              const ink = D.current[p.sid].ink, h = p.aside.clientHeight;
+              const key = p.w + 'x' + h + ':' + JSON.stringify(ink).length + ':' + ink.length;
+              if (cv.dataset.k === key) return;
+              cv.dataset.k = key;
+              const ctx = prepCanvas(cv, p.w, h);
+              ink.forEach(s => inkStroke(ctx, s, 0, p.lineTop(s.li), p.k));
+            });
+          };
+          React.useLayoutEffect(layout);
+          useEffect(() => {
+            let t;
+            const on = () => { clearTimeout(t); t = setTimeout(() => { if (rootRef.current) rootRef.current.querySelectorAll('canvas[data-ink]').forEach(c => { c.dataset.k = ''; }); layout(); }, 120); };
+            window.addEventListener('resize', on);
+            if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => layout());
+            return () => { clearTimeout(t); window.removeEventListener('resize', on); };
+          }, []);
+
+          // --- перо: по полям — рукопись, по тексту — выделение фразы.
+          // Палец листает: у холста touch-action: pan-y, а касание Apple
+          // Pencil (touchType === 'stylus') гасим, чтобы Safari не начал
+          // прокрутку вместо штриха.
+          const penRef = useRef(null);
+          useEffect(() => {
+            if (!pen) return;
+            const root = rootRef.current; if (!root) return;
+            const ok = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse';
+            const local = (cv, e) => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top, e.pointerType === 'pen' ? (e.pressure || .5) : .5]; };
+            const asideOf = (cv) => cv.closest('[data-cf="script-margin"]');
+            const lineTopOf = (sid, li, aTop) => { const el = root.querySelector(`[data-sr="${sid}"] [data-sl] [data-li="${li}"]`); return el ? el.getBoundingClientRect().top - aTop : 0; };
+            const eraseAt = (st, x, y) => {
+              const aside = asideOf(st.cv), aTop = aside.getBoundingClientRect().top, k = aside.clientWidth / SCRIPT_INK_REF_W;
+              const list = st.ink;
+              const hit = list.filter(s => { const oy = lineTopOf(st.sid, s.li, aTop); return (s.pts || []).some(p => Math.hypot(p[0] * k - x, oy + p[1] * k - y) < 12); });
+              if (!hit.length) return;
+              st.ink = list.filter(s => !hit.includes(s)); st.del.push(...hit);
+              const ctx = prepCanvas(st.cv, aside.clientWidth, aside.clientHeight);
+              st.ink.forEach(s => inkStroke(ctx, s, 0, lineTopOf(st.sid, s.li, aTop), k));
+            };
+            const down = (e) => {
+              const cv = e.target.closest && e.target.closest('canvas[data-ink]');
+              if (cv && ok(e)) {
+                e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+                const sid = cv.dataset.ink, p = local(cv, e);
+                if (P.current.tool === 'eraser') { penRef.current = { sid, cv, erase: true, ink: D.current[sid].ink.slice(), del: [] }; eraseAt(penRef.current, p[0], p[1]); }
+                else penRef.current = { sid, cv, pts: [p], c: P.current.inkC };
+                return;
+              }
+              const box = e.target.closest && e.target.closest('[data-sl]');
+              if (box && ok(e)) {
+                const pos = caretPos(e.clientX, e.clientY, box.dataset.sl); if (!pos) return;
+                e.preventDefault(); try { box.setPointerCapture(e.pointerId); } catch (err) {}
+                penRef.current = { mark: true, sid: box.dataset.sl, a: pos, b: pos };
+              }
+            };
+            const move = (e) => {
+              const st = penRef.current; if (!st) return;
+              if (st.mark) {
+                const pos = caretPos(e.clientX, e.clientY, st.sid);
+                if (pos && scriptCmp(pos, st.b)) { st.b = pos; setTmp({ sid: st.sid, s: scriptCmp(st.a, pos) < 0 ? st.a : pos, e: scriptCmp(st.a, pos) < 0 ? pos : st.a }); }
+                return;
+              }
+              const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
+              (evs.length ? evs : [e]).forEach(ev => {
+                const p = local(st.cv, ev);
+                if (st.erase) eraseAt(st, p[0], p[1]);
+                else {
+                  const q = st.pts[st.pts.length - 1]; st.pts.push(p);
+                  const ctx = st.cv.getContext('2d'); ctx.strokeStyle = SCRIPT_INK_COLORS[st.c]; ctx.lineCap = 'round';
+                  ctx.lineWidth = 0.9 + 1.9 * p[2]; ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+                }
+              });
+            };
+            const up = () => {
+              const st = penRef.current; if (!st) return;
+              penRef.current = null;
+              if (st.mark) {
+                setTmp(null);
+                if (scriptCmp(st.a, st.b)) addMark(st.sid, st.a, st.b, 0);
+                return;
+              }
+              if (st.erase) {
+                if (st.del.length) { undoRef.current.push({ sid: st.sid, del: st.del }); P.current.onInk(st.sid, JSON.stringify(st.ink)); bump(x => x + 1); }
+                return;
+              }
+              // Штрих привязываем к строке, выше которой он не начинается.
+              const aside = asideOf(st.cv), aTop = aside.getBoundingClientRect().top, k = aside.clientWidth / SCRIPT_INK_REF_W;
+              const minY = Math.min(...st.pts.map(p => p[1]));
+              const n = D.current[st.sid].lines.length; let li = 0;
+              for (let i = 0; i < n; i++) if (lineTopOf(st.sid, i, aTop) <= minY + 10) li = i;
+              const ly = lineTopOf(st.sid, li, aTop);
+              const r1 = (v) => Math.round(v * 10) / 10;
+              const stroke = { id: newId('k'), li, c: st.c, pts: st.pts.map(p => [r1(p[0] / k), r1((p[1] - ly) / k), Math.round(p[2] * 100) / 100]) };
+              const ink = [...D.current[st.sid].ink, stroke];
+              undoRef.current.push({ sid: st.sid, add: stroke.id });
+              P.current.onInk(st.sid, JSON.stringify(ink)); bump(x => x + 1);
+            };
+            const guard = (e) => { if (e.target.closest && e.target.closest('canvas[data-ink], [data-sl]') && [...e.changedTouches].some(t => t.touchType === 'stylus')) e.preventDefault(); };
+            root.addEventListener('pointerdown', down);
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+            root.addEventListener('touchstart', guard, { passive: false });
+            root.addEventListener('touchmove', guard, { passive: false });
+            return () => {
+              root.removeEventListener('pointerdown', down);
+              window.removeEventListener('pointermove', move);
+              window.removeEventListener('pointerup', up);
+              window.removeEventListener('pointercancel', up);
+              root.removeEventListener('touchstart', guard);
+              root.removeEventListener('touchmove', guard);
+            };
+          }, [pen]);
+          const undoInk = () => {
+            const u = undoRef.current.pop(); if (!u) return;
+            const ink = D.current[u.sid].ink;
+            P.current.onInk(u.sid, JSON.stringify(u.add ? ink.filter(s => s.id !== u.add) : [...ink, ...u.del]));
+            bump(x => x + 1);
+          };
+          // Рукопись → текст: чёрным по белому, как в блокноте, тем же ИИ.
+          const inkToText = (sid, li) => {
+            const strokes = D.current[sid].ink.filter(s => li == null || s.li === li);
+            if (!strokes.length) return;
+            const all = strokes.flatMap(s => s.pts.map(p => [p[0], p[1] + s.li * 400]));
+            const x0 = Math.min(...all.map(p => p[0])), y0 = Math.min(...all.map(p => p[1])), x1 = Math.max(...all.map(p => p[0])), y1 = Math.max(...all.map(p => p[1]));
+            const sc = 2.4, cv = document.createElement('canvas');
+            cv.width = Math.ceil((x1 - x0 + 24) * sc); cv.height = Math.ceil((y1 - y0 + 24) * sc);
+            const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+            strokes.forEach(s => inkStroke(ctx, s, (12 - x0) * sc, (12 - y0 + s.li * 400) * sc, sc, '#000'));
+            onInkText(sid, cv.toDataURL('image/png'));
+          };
+
+          useEffect(() => { if (pen) { setSel(null); setPop(null); try { window.getSelection().removeAllRanges(); } catch (e) {} } }, [pen]);
+          useEffect(() => {
+            const onKey = (e) => { if (e.key === 'Escape') { setPop(null); setSel(null); } };
+            window.addEventListener('keydown', onKey, true);
+            return () => window.removeEventListener('keydown', onKey, true);
+          }, []);
+
+          const fit = (el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } };
+          const noteRow = (n, color, opts = {}) => (
+            <div key={n.id} className="cf-sr-note" data-cf="script-note" style={{ borderLeftColor: color }}>
+              <textarea rows={1} defaultValue={n.text || ''} readOnly={readOnly} ref={fit} onInput={(e) => fit(e.currentTarget)}
+                        onChange={(e) => onNotePatch(n.id, { text: e.target.value })} placeholder="Заметка…" />
+              {!readOnly && <button onClick={() => onNoteUnlink(n.id)} className="cf-sr-x" title={opts.hl ? 'Убрать заметку от фразы — останется на доске' : 'Убрать из сцены — заметка останется на доске'}>✕</button>}
+            </div>
+          );
+
+          const linesFor = (s) => {
+            const d = data[s.id];
+            const list = d.marks.filter(m => m.ok);
+            if (tmp && tmp.sid === s.id) list.push({ id: '__tmp', s: tmp.s, e: tmp.e, tmp: true });
+            return d.lines.map((t, i) => {
+              const segs = [];
+              list.forEach(m => {
+                if (m.s[0] > i || m.e[0] < i) return;
+                const a = m.s[0] === i ? m.s[1] : 0, b = m.e[0] === i ? m.e[1] : t.length;
+                if (b > a) segs.push({ a, b, m });
+              });
+              segs.sort((x, y) => x.a - y.a);
+              const out = []; let p = 0;
+              segs.forEach((g, j) => {
+                if (g.a < p) return;
+                if (g.a > p) out.push(t.slice(p, g.a));
+                const col = SCRIPT_MARK_COLORS[g.m.c] || SCRIPT_MARK_COLORS[0];
+                out.push(<mark key={j} data-hl={g.m.id} className={g.m.tmp ? 'tmp' : ''} style={{ '--hc': col }}
+                               onClick={(e) => { if (P.current.pen || g.m.tmp) return; const s0 = window.getSelection(); if (s0 && !s0.isCollapsed) return;
+                                 const r = e.currentTarget.getBoundingClientRect(); setSel(null); setPop({ sid: s.id, id: g.m.id, x: r.left + r.width / 2, top: r.top, bottom: r.bottom }); }}>
+                  {t.slice(g.a, g.b)}</mark>);
+                p = g.b;
+              });
+              if (p < t.length) out.push(t.slice(p));
+              return <div key={i} data-li={i} className={'cf-sl-' + d.kinds[i]}>{out.length ? out : '​'}</div>;
+            });
+          };
+
+          const marginFor = (s) => {
+            const d = data[s.id];
+            const sNotes = notes.filter(n => n.sceneId === s.id);
+            const okIds = new Set(d.marks.filter(m => m.ok).map(m => m.id));
+            const own = sNotes.filter(n => !n.hl || !d.marks.some(m => m.id === n.hl));
+            const lost = sNotes.filter(n => n.hl && d.marks.some(m => m.id === n.hl && !m.ok));
+            const isOpen = (part) => open[s.id] === part;
+            const toggle = (part) => setOpen(o => ({ ...o, [s.id]: o[s.id] === part ? null : part }));
+            if (pen && !isPhone) {
+              return (
+                <React.Fragment>
+                <canvas data-ink={s.id} className="cf-sr-ink" />
+                <div data-cf="script-block" className="cf-sr-block">
+                  <div className="cf-sr-meta">{[ruDay(s.date), (s.content ? 'экспликация' : ''), (sNotes.length ? `${sNotes.length} ${plur(sNotes.length, 'заметка', 'заметки', 'заметок')}` : '')].filter(Boolean).join(' · ') || 'поле'} — свёрнуто, пока пишете пером</div>
+                </div>
+                </React.Fragment>
+              );
+            }
+            const quietAdds = [];
+            if (!readOnly && !s.content && eksp !== s.id) quietAdds.push(<button key="e" className="cf-sr-link" onClick={() => setEksp(s.id)}>+ экспликация</button>);
+            return (
+              <React.Fragment>
+                <div data-cf="script-block" className="cf-sr-block">
+                  {s.date && <div className="cf-sr-meta">{ruDay(s.date)}</div>}
+                  {renderPart(s, 'frames')}
+                  {(s.content || eksp === s.id) && (
+                    <div className="cf-sr-sec">
+                      <div className="cf-sr-lb">Экспликация</div>
+                      {eksp === s.id && !readOnly
+                        ? <textarea className="cf-sr-fld" autoFocus defaultValue={s.content || ''} ref={fit}
+                                    onInput={(e) => fit(e.currentTarget)} onChange={(e) => onContent(s.id, e.target.value)}
+                                    onBlur={(e) => { const el = e.currentTarget; setTimeout(() => { if (document.activeElement !== el) setEksp(x => x === s.id ? null : x); }, 200); }}
+                                    data-cf="script-eksp-input" />
+                        : <div className="cf-sr-eksp" role="button" tabIndex={0} data-cf="script-eksp"
+                               onClick={() => !readOnly && setEksp(s.id)}
+                               onKeyDown={(e) => { if (!readOnly && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setEksp(s.id); } }}>{s.content}</div>}
+                    </div>
+                  )}
+                  {(own.length > 0 || lost.length > 0) && (
+                    <div className="cf-sr-sec">
+                      <div className="cf-sr-lb">Заметки к сцене</div>
+                      {own.map(n => noteRow(n, 'var(--muted-2)'))}
+                      {lost.map(n => (
+                        <div key={n.id}>
+                          <div className="cf-sr-q" title="Этой фразы в тексте сцены больше нет">фразы в тексте нет · «{(d.marks.find(m => m.id === n.hl) || {}).q}»</div>
+                          {noteRow(n, 'var(--muted-2)')}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="cf-sr-sec cf-sr-sums">
+                    {renderPart(s, 'gear', isOpen('gear'), () => toggle('gear'))}
+                    {renderPart(s, 'light', isOpen('light'), () => toggle('light'))}
+                  </div>
+                  {!readOnly && (
+                    <div className="cf-sr-adds">
+                      {quietAdds}
+                      <button className="cf-sr-link" onClick={() => onAddNote(s.id, {})} data-cf="script-note-add">+ заметка</button>
+                      <button className="cf-sr-link" onClick={() => onOpenScene(s.id)} title="Открыть прежний экран сцены">открыть сцену</button>
+                    </div>
+                  )}
+                </div>
+                {d.marks.filter(m => m.ok).sort((a, b) => scriptCmp(a.s, b.s)).map(m => {
+                  const ns = sNotes.filter(n => n.hl === m.id);
+                  const isDraft = draft && draft.sid === s.id && draft.hl === m.id;
+                  if (!ns.length && !isDraft) return null;
+                  const col = SCRIPT_MARK_COLORS[m.c] || SCRIPT_MARK_COLORS[0];
+                  return (
+                    <div key={m.id} className="cf-sr-anchor" data-anchor="hl" data-for={m.id}
+                         onMouseEnter={() => rootRef.current && rootRef.current.querySelectorAll(`mark[data-hl="${m.id}"]`).forEach(x => x.classList.add('lit'))}
+                         onMouseLeave={() => rootRef.current && rootRef.current.querySelectorAll('mark.lit').forEach(x => x.classList.remove('lit'))}>
+                      <div className="cf-sr-q">«{m.q.replace(/\n/g, ' ').slice(0, 70)}{m.q.length > 70 ? '…' : ''}»</div>
+                      {ns.map(n => noteRow(n, col, { hl: true }))}
+                      {isDraft && (
+                        <div className="cf-sr-note" style={{ borderLeftColor: col }}>
+                          <textarea rows={1} autoFocus placeholder="Заметка к фразе…" ref={fit} onInput={(e) => fit(e.currentTarget)} data-cf="script-draft"
+                                    onBlur={(e) => { const el = e.currentTarget; const v = el.value.trim();
+                                      setTimeout(() => { if (document.activeElement === el) return; if (v) onAddNote(s.id, { hl: m.id, text: v }); setDraft(null); }, 200); }} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {!pen && Object.entries(d.ink.reduce((g, k) => { (g[k.li] = g[k.li] || []).push(k); return g; }, {})).map(([li, ks]) => {
+                  const dy = Math.min(...ks.flatMap(k => k.pts.map(p => p[1])));
+                  return (
+                    <div key={'ink' + li} className="cf-sr-anchor cf-sr-inkcard" data-anchor="ink" data-li={li} data-dy={dy}>
+                      <canvas ref={(cv) => {
+                        if (!cv) return;
+                        const all = ks.flatMap(k => k.pts);
+                        const x0 = Math.min(...all.map(p => p[0])), x1 = Math.max(...all.map(p => p[0])), y1 = Math.max(...all.map(p => p[1]));
+                        const sc = flow ? 1 : Math.max(.6, (cv.parentElement ? cv.parentElement.clientWidth : SCRIPT_INK_REF_W) / SCRIPT_INK_REF_W);
+                        const ctx = prepCanvas(cv, Math.min((x1 - x0 + 12) * sc, cv.parentElement ? cv.parentElement.clientWidth : 9999), (y1 - dy + 12) * sc);
+                        ks.forEach(k => inkStroke(ctx, k, (6 - x0) * sc, (6 - dy) * sc, sc));
+                      }} />
+                      <div className="cf-sr-inkh"><span>от руки</span>{!readOnly && <button onClick={() => inkToText(s.id, +li)} data-cf="script-ink-text">в текст заметкой</button>}</div>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            );
+          };
+
+          const markPop = pop && markById(pop.sid, pop.id);
+          const popNote = markPop && notes.find(n => n.sceneId === pop.sid && n.hl === pop.id);
+          const place = (w, h, o) => {
+            let y = o.coarse ? o.bottom + 12 : o.top - h - 10;
+            if (y < 56) y = o.bottom + 12;
+            if (y + h > window.innerHeight - 8) y = o.top - h - 10;
+            return { left: Math.max(8, Math.min(window.innerWidth - w - 8, o.x - w / 2)), top: y };
+          };
+
+          return (
+            <main ref={rootRef} className={`flex-1 min-w-0 overflow-y-auto cf-script ${pen ? 'cf-script-pen' : ''} ${flow ? 'cf-script-stack' : ''} ${isPhone ? 'cf-script-phone' : ''}`} data-cf="script-view">
+              <div className="cf-script-bar">
+                <span className="cf-sr-meta">Сценарий · {scenes.length} {plur(scenes.length, 'сцена', 'сцены', 'сцен')}</span>
+                <span style={{ flex: 1 }} />
+                {!readOnly && !isPhone && (
+                  <button onClick={() => { if (!pen && stack && onNeedRoom) onNeedRoom(); setPen(v => !v); }} className={`cf-chip shrink-0 ${pen ? 'cf-sel' : ''}`} data-cf="script-pen"
+                          title="Писать на полях стилусом. Провести пером по фразе — выделить её">✎ Перо</button>
+                )}
+              </div>
+              {scenes.map(s => {
+                const d = data[s.id];
+                const empty = !d.lines.some(l => l.trim());
+                return (
+                  <section key={s.id} data-sr={s.id} className={`cf-sr ${cur === s.id ? 'cur' : ''}`}>
+                    <div className="cf-sr-page">
+                      <div className="cf-sr-head" onClick={() => onOpenScene(s.id)} title="Открыть сцену">
+                        <span className="cf-sr-num">{s.number}.</span><span>{s.title || 'Без названия'}</span>
+                      </div>
+                      {empty
+                        ? <div className="cf-sr-empty">Текста сцены нет — загрузите сценарий в «Агенте КПП» или впишите текст на экране сцены.</div>
+                        : <div data-sl={s.id} className="cf-sl">{linesFor(s)}</div>}
+                    </div>
+                    <aside data-cf="script-margin" className="cf-sr-margin">{marginFor(s)}</aside>
+                  </section>
+                );
+              })}
+
+              {sel && !readOnly && ReactDOM.createPortal(
+                <div className="cf-sr-float" data-cf="script-selbar" style={place(330, 44, sel)} onMouseDown={(e) => e.preventDefault()}>
+                  {SCRIPT_MARK_COLORS.map((c, i) => (
+                    <button key={c} className="cf-sr-dot" aria-label="Выделить цветом" onClick={() => { addMark(sel.sid, sel.s, sel.e, i); try { window.getSelection().removeAllRanges(); } catch (e) {} setSel(null); }}><i style={{ background: c }} /></button>
+                  ))}
+                  <span className="cf-sr-sep" />
+                  <button className="cf-sr-go cf-sr-main" data-cf="script-note-hl" onClick={() => { const m = addMark(sel.sid, sel.s, sel.e, 0); try { window.getSelection().removeAllRanges(); } catch (e) {} setSel(null); if (m) setDraft({ sid: sel.sid, hl: m.id }); }}>Заметка к фразе</button>
+                </div>, document.body)}
+              {markPop && ReactDOM.createPortal(
+                <div className="cf-sr-float" data-cf="script-markpop" style={place(300, 44, pop)}>
+                  {!readOnly && SCRIPT_MARK_COLORS.map((c, i) => (
+                    <button key={c} className="cf-sr-dot" aria-label="Цвет выделения" onClick={() => { recolorMark(pop.sid, pop.id, i); setPop(null); }}><i style={{ background: c }} /></button>
+                  ))}
+                  {!readOnly && <span className="cf-sr-sep" />}
+                  {(popNote || !readOnly) && (
+                    <button className="cf-sr-go" onClick={() => {
+                      const id = pop.id, sid = pop.sid; setPop(null);
+                      if (popNote) { const t = rootRef.current && rootRef.current.querySelector(`[data-for="${id}"] textarea`); if (t) { t.scrollIntoView({ block: 'nearest' }); t.focus(); } }
+                      else setDraft({ sid, hl: id });
+                    }}>{popNote ? 'К заметке' : '+ Заметка'}</button>
+                  )}
+                  {!readOnly && <button className="cf-sr-go" onClick={() => { const { sid, id } = pop; setPop(null); delMark(sid, id); }}>Снять</button>}
+                </div>, document.body)}
+              {pen && ReactDOM.createPortal(
+                <div className="cf-sr-penbar" role="toolbar" aria-label="Перо" data-cf="script-penbar">
+                  <button className={tool === 'pen' ? 'on' : ''} onClick={() => setTool('pen')}><Icons.Pen /> Перо</button>
+                  <button className={tool === 'eraser' ? 'on' : ''} onClick={() => setTool('eraser')}><Icons.Eraser /> Ластик</button>
+                  <span className="cf-sr-sep" />
+                  {SCRIPT_INK_COLORS.map((c, i) => (
+                    <button key={c} className={`cf-sr-sw ${inkC === i && tool === 'pen' ? 'on' : ''}`} aria-label="Цвет пера" onClick={() => { setInkC(i); setTool('pen'); }}><i style={{ background: c }} /></button>
+                  ))}
+                  <span className="cf-sr-sep" />
+                  <button onClick={undoInk} disabled={!undoRef.current.length} style={{ opacity: undoRef.current.length ? 1 : .4 }}>↶ Отменить</button>
+                  <button className="cf-sr-done" onClick={() => setPen(false)} data-cf="script-pen-done">Готово</button>
+                </div>, document.body)}
+            </main>
+          );
+        };
+
         function AppCore() {
           const [user, setUser] = useState(null);
           const [userName, setUserName] = useState('');
@@ -11094,21 +11875,39 @@
             const inside = list.filter(t => !t.startsWith(q) && t.includes(q));
             return [...starts, ...inside].slice(0, 8);
           };
+          // ПОИСК — СТРОКОЙ, А НЕ ОДНИМ ТЕГОМ. «пыль ночь» или «пыль, ночь»
+          // ищет кадры, где есть ОБА слова (в тегах, подписи или имени файла):
+          // подборку сужают, добавляя слово за словом. Нажатие по тегу в
+          // списке дописывает его в строку через запятую или вычёркивает —
+          // теги с пробелом («контровой свет») живут целым куском между запятыми.
+          const tagTerms = useMemo(() => tagSearch.toLowerCase().split(/[,\s]+/).map(t => t.trim()).filter(Boolean), [tagSearch]);
+          const tagChunks = tagSearch.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+          const tagOn = (tag) => tagChunks.includes(tag) || (!/\s/.test(tag) && tagTerms.includes(tag));
+          const toggleTag = (tag) => {
+            if (tagOn(tag)) setTagSearch(tagChunks.filter(c => c !== tag).map(c => c.split(/\s+/).filter(w => w !== tag).join(' ')).filter(Boolean).join(', '));
+            else setTagSearch([...tagChunks, tag].join(', '));
+          };
+          // Недописанное слово в конце строки: по нему подсказываем теги.
+          // Строка, кончающаяся запятой или пробелом, недописанного не несёт.
+          const tagPartial = /[,\s]$/.test(tagSearch) ? '' : (tagTerms[tagTerms.length - 1] || '');
+          const tagHintsNow = tagPartial && !tagCounts.some(([t]) => t === tagPartial)
+            ? tagCounts.filter(([t]) => t.startsWith(tagPartial) || t.includes(' ' + tagPartial)).slice(0, 8) : [];
+          const pickTagHint = (tag) => {
+            const cut = tagSearch.slice(0, tagSearch.length - tagPartial.length).replace(/[,\s]+$/, '');
+            setTagSearch((cut ? cut + ', ' : '') + tag + ', ');
+          };
           const visibleRefs = useMemo(() => scopeRefs.filter(r => {
             // Ищем и по тегу, и по подписи: человек пишет «пыль» и ждёт,
             // что найдётся всё, где это слово есть, — не важно, в теге оно
-            // или в названии кадра.
-            const q = tagSearch.trim().toLowerCase();
-            const byTag = !q
-              || (r.tags && r.tags.some(t => t.toLowerCase().includes(q)))
-              || String(r.label || '').toLowerCase().includes(q)
-              || String(r.file || '').toLowerCase().includes(q);
+            // или в названии кадра. Слов несколько — нужны ВСЕ.
+            const hay = [...(r.tags || []), r.label || '', r.file || ''].join('\n').toLowerCase();
+            const byTag = tagTerms.every(t => hay.includes(t));
             // У скаута отбор идёт по ОБЪЕКТУ, у референсов — по папке.
             if (galleryScope === 'scout') return byTag && (!scoutLoc || r.locationId === scoutLoc);
             const f = (r.folder || '').trim();
             const byFolder = activeFolder === '' ? true : (activeFolder === '__none__' ? !f : f === activeFolder);
             return byTag && byFolder;
-          }), [scopeRefs, tagSearch, activeFolder, galleryScope, scoutLoc]);
+          }), [scopeRefs, tagTerms, activeFolder, galleryScope, scoutLoc]);
           const allVisibleSelected = visibleRefs.length > 0 && visibleRefs.every(r => selectedRefIds.includes(r.id));
           
           const [activeSchemeId, setActiveSchemeId] = useState(null);
@@ -17202,6 +18001,8 @@
           // поэтому список короткий и набору не мешает.
           const dropHasImage = (dt) => {
             const types = Array.from((dt && dt.types) || []);
+            // Своя же картинка, которую тащат наружу, — не загрузка.
+            if (types.indexOf(CF_DRAG) >= 0 || (cfDragOut && Date.now() - cfDragOut < 120000)) return false;
             return types.indexOf('Files') >= 0 || types.indexOf('text/uri-list') >= 0;
           };
 
@@ -19685,6 +20486,75 @@
           // стикера, а не цветной квадрат (см. «Воздух»). Объявлен ДО
           // phoneSheetBody: та собирается при отрисовке, и ссылка на ещё
           // не созданную функцию дала бы белый экран.
+          // --- СЦЕНАРИЙ С ПОЛЯМИ: двери в записи проекта ---
+          // Своих записей у режима нет: выделения и рукопись — поля сцены
+          // (`marks`, `ink`), заметки — обычные стикеры сцены (с `hl`, если
+          // заметка к фразе), техника и свет — тот же gearPanel, что в
+          // правой панели и в шторке телефона.
+          const patchSticky = (id, patch) => {
+            if (READ_ONLY) return;
+            const cur = stickies.find(x => x.id === id);
+            setStickies(prev => prev.map(x => x.id === id ? { ...x, ...patch } : x));
+            if (cur) syncDoc('stickies', id, { ...cur, ...patch });
+          };
+          const scriptAddNote = (sid, opts = {}) => {
+            if (READ_ONLY) return null;
+            const ns = { id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, boardId: activeBoardId, sceneId: sid,
+                         text: opts.text || '', x: boardAt(300, 300).x, y: boardAt(300, 300).y,
+                         w: STICKY_W, h: STICKY_H, color: '#fef08a', ...(opts.hl ? { hl: opts.hl } : {}) };
+            setStickies(prev => [...prev, ns]); syncDoc('stickies', ns.id, ns);
+            return ns.id;
+          };
+          const scriptInkText = async (sid, png) => {
+            showToast('🔎 Читаю рукопись...');
+            const text = await callGeminiAI(OCR_PROMPT, false, { mime: 'image/png', data: png.split(',')[1] }, OCR_SYSTEM);
+            if (text === null) return;
+            const clean = String(text).trim();
+            if (!clean) { showToast('Ничего не разобрать — пишите крупнее'); return; }
+            scriptAddNote(sid, { text: clean });
+            showToast('Рукопись прочитана · легла заметкой к сцене, сам рисунок остался');
+          };
+          const scriptPart = (s, part, isOpen, toggle) => {
+            const openScene = () => { setActiveSceneId(s.id); setSceneMode('creative'); };
+            if (part === 'frames') {
+              const fr = storyboard.filter(f => f.sceneId === s.id)
+                .sort((a, b) => String(a.frameNum || '').localeCompare(String(b.frameNum || ''), undefined, { numeric: true }));
+              if (!fr.length) return null;
+              return (
+                <div className="cf-sr-sec" data-cf="script-frames">
+                  <div className="cf-sr-lb">Раскадровка · {fr.length}</div>
+                  <div className="cf-sr-strip">
+                    {fr.map(f => (
+                      <button key={f.id} onClick={openScene} title={(f.description || '') + ' — открыть сцену'}
+                              className="cf-sr-frame" style={{ aspectRatio: String(projectRatio) }}>
+                        {f.image ? <img src={f.image} alt="" draggable="false" /> : null}
+                        <span className="cf-frame-num-sm">{f.frameNum}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            const isLight = part === 'light';
+            const types = (isLight ? lightGearTypes : gearTypes) || {};
+            const line = gearLine(s[isLight ? 'lightGear' : 'gear'], types);
+            const label = isLight ? (lightBase ? 'Доборы' : 'Свет') : 'Техника';
+            if (isOpen) return (
+              <div className="cf-sr-gear" data-cf={'script-' + part + '-open'}>
+                <div className="cf-sr-lb flex items-center justify-between">
+                  <span>{isLight ? 'Свет' : 'Камера и техника'}</span>
+                  <button onClick={toggle} className="cf-sr-link" style={{ minHeight: 0 }}>свернуть</button>
+                </div>
+                <div style={{ margin: '0 -16px' }}>{gearPanel(s, isLight)}</div>
+              </div>
+            );
+            if (!line && READ_ONLY) return null;
+            return (
+              <button onClick={toggle} className="cf-sr-sum" data-cf={'script-' + part}>
+                <b>{label}</b><span>{line || (isLight && lightBase ? 'только стандартный комплект' : '+ из каталога')}</span>
+              </button>
+            );
+          };
           const sceneNotesList = (s) => {
             const notes = s ? stickies.filter(st => st.sceneId === s.id) : [];
             if (notes.length === 0) return (
@@ -20724,7 +21594,22 @@
                       // одной рукой и нажимают, не целясь. Поэтому здесь нет
                       // ни трёх колонок, ни панели сбоку, ни наведения —
                       // один вертикальный свиток и цели от 44 точек.
+                      // РЕЖИМ «СЦЕНАРИЙ» — тот же материал всех сцен подряд, см. ScriptReader.
+                      const scriptMain = (
+                        <ScriptReader scenes={sortedScenes} notes={stickies} activeSceneId={activeSceneId}
+                                      onCurrent={(id) => setActiveSceneId(id)} readOnly={READ_ONLY} isPhone={isPhone}
+                                      renderPart={scriptPart}
+                                      onMarks={(sid, list) => updateScene(sid, 'marks', list)}
+                                      onInk={(sid, v) => updateScene(sid, 'ink', v)}
+                                      onContent={(sid, v) => updateScene(sid, 'content', v)}
+                                      onAddNote={scriptAddNote} onNotePatch={patchSticky}
+                                      onNoteUnlink={(id) => { setItemScene(id, 'sticky', ''); showToast('Заметка убрана из сцены · осталась на доске'); }}
+                                      onInkText={scriptInkText} onNeedRoom={() => setSceneListOpen(false)}
+                                      onOpenScene={(id) => { setActiveSceneId(id); setSceneMode('creative'); if (isPhone) setPhoneSceneOpen(true); }}
+                                      toast={showToast} />
+                      );
                       if (isPhone) {
+                        if (sceneMode === 'script' && phoneSceneOpen) return scriptMain;
                         // --- СПИСОК СЦЕН ---
                         if (!phoneSceneOpen) {
                           const shiftNo = nearestShift ? shiftDates.indexOf(nearestShift) + 1 : 0;
@@ -20942,7 +21827,7 @@
                                 <div key={r.id} className="relative shrink-0"
                                      onClick={() => setLightboxData({ scope: strip.map(x => x.id), scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                      style={{ width: 230, height: 130, borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
-                                  <img src={r.url} draggable="false" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                  <img src={r.url} {...refDrag(r)} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                                   {videoBadge(r)}
                                 </div>
                               ))}
@@ -21141,6 +22026,7 @@
                         </div>
                       );
 
+                      if (sceneMode === 'script') return (<React.Fragment>{sceneList}{scriptMain}</React.Fragment>);
                       if (!s) {
                         return (
                           <React.Fragment>
@@ -21213,7 +22099,7 @@
                                   {sceneRefs.map(r => (
                                     <div key={r.id} className="relative cursor-pointer"
                                          onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}>
-                                      <img src={r.url} draggable="false" style={{ width: '100%', borderRadius: 'var(--r-md)', display: 'block' }} />
+                                      <img src={r.url} {...refDrag(r)} style={{ width: '100%', borderRadius: 'var(--r-md)', display: 'block' }} />
                                       {videoBadge(r)}
                                     </div>
                                   ))}
@@ -21244,7 +22130,7 @@
                               <div key={r.id} onClick={() => setLightboxData({ scope: locPhotos.map(x => x.id), scopeLabel: loc ? loc.name : 'Объект', currentId: r.id })}
                                    className="relative shrink-0 cursor-pointer"
                                    style={{ width: 340, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                <img src={r.url} style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} draggable="false" />
+                                <img src={r.url} style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} {...refDrag(r)} />
                                 {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                 {videoBadge(r, { right: 6, top: 6 })}
                               </div>
@@ -21601,7 +22487,7 @@
                                     <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                          className="relative shrink-0 cursor-pointer group"
                                          style={{ width: 268, borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
-                                      <img src={r.url} style={{ width: '100%', height: 152, objectFit: 'cover', display: 'block' }} draggable="false" />
+                                      <img src={r.url} style={{ width: '100%', height: 152, objectFit: 'cover', display: 'block' }} {...refDrag(r)} />
                                       {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                       {videoBadge(r, { left: 6, top: 6 })}
                                       <button onClick={(e) => { e.stopPropagation(); setItemScene(r.id, 'ref', ''); showToast('Референс отвязан · остался в галерее'); }}
@@ -21633,7 +22519,7 @@
                                     <div key={r.id} onClick={() => setLightboxData({ sceneId: s.id, scopeLabel: `Сцена #${s.number}`, currentId: r.id })}
                                          className="relative cursor-pointer"
                                          style={{ display: 'inline-block', boxSizing: 'border-box', width: 'calc(50% - 8px)', margin: '0 8px 10px 0', verticalAlign: 'top', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                      <img src={r.url} style={{ width: '100%', display: 'block' }} draggable="false" />
+                                      <img src={r.url} style={{ width: '100%', display: 'block' }} {...refDrag(r)} />
                                       {refCaption(r) && <span className="cf-overlay absolute" style={{ left: 6, bottom: 6 }}>{refCaption(r)}</span>}
                                       {videoBadge(r)}
                                     </div>
@@ -21904,21 +22790,14 @@
                             )}
                           </div>
 
-                          {/* ПОИСК ПО СЛОВУ-НАСТРОЕНИЮ. Картинку ищут не по
-                              имени файла, а по тому, чем она была: «пыль»,
-                              «воздух», «тревога». Словарь не фиксируем —
-                              подсказки берутся из уже введённых тегов. */}
-                          <div className="px-3 pt-3 pb-1.5">
-                            <input data-ro-ok type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
-                                   placeholder="пыль, воздух, тревога…" list="cf-tag-hints"
-                                   className="glass-input w-full rounded-lg px-2.5" style={{ minHeight: 'var(--tap)', fontSize: 'var(--fs-2)' }} />
-                            <datalist id="cf-tag-hints">{tagCounts.map(([t]) => <option key={t} value={t} />)}</datalist>
-                          </div>
-                          <div className="px-4 pt-1 pb-1"><span className="cf-eyebrow">Все теги</span></div>
-                          {tagCounts.map(([tag, count]) => {
-                            const on = tagSearch.toLowerCase() === tag;
+                          {/* Строка поиска переехала ВВЕРХ сетки (cf-galsearch): здесь
+                              она стояла под папками, за прокруткой, и на телефоне
+                              её не было вовсе. Список тегов — те же слова кнопками. */}
+                          <div className="px-4 pt-3 pb-1"><span className="cf-eyebrow">Все теги</span></div>
+                          {(tagHintsNow.length ? tagHintsNow : tagCounts).map(([tag, count]) => {
+                            const on = tagOn(tag);
                             return (
-                              <button key={tag} onClick={() => setTagSearch(on ? '' : tag)}
+                              <button key={tag} onClick={() => (tagHintsNow.length ? pickTagHint(tag) : toggleTag(tag))}
                                       className="w-full flex items-center justify-between gap-2 px-4 text-left transition-colors"
                                       style={{ minHeight: 44, borderBottom: '1px solid var(--border-soft)', background: on ? 'var(--raised)' : 'transparent', color: on ? 'var(--text)' : 'var(--text-2)' }}>
                                 <span className="truncate" style={{ fontSize: 'var(--fs-3)' }}>{tag}</span>
@@ -22021,8 +22900,8 @@
                                         title="Фото объектов — то, что привезли со скаутинга">Со скаута · {scoutRefsCount}</button>
                               </div>
                               <span className="cf-eyebrow truncate">{(galleryScope === 'scout'
-                                  ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch ? `тег: ${tagSearch}` : null]
-                                  : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null]
+                                  ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch.trim() ? `поиск: ${tagSearch.trim().replace(/,$/, '')}` : null]
+                                  : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch.trim() ? `поиск: ${tagSearch.trim().replace(/,$/, '')}` : null]
                                 ).filter(Boolean).join(' · ') || (galleryScope === 'scout' ? 'Все объекты' : 'Все референсы')}</span>
                               <span className="cf-meta shrink-0">{visibleRefs.length} из {scopeRefs.length}</span>
                             </div>
@@ -22044,6 +22923,33 @@
                               )}
                             </div>
                             )}
+                        </div>
+
+                        {/* СТРОКА ПОИСКА — над сеткой, на любом экране. Под ней
+                            подсказки по недописанному слову: тег дописывается
+                            целиком, и можно набирать следующий. data-ro-ok —
+                            искать в чужом проекте можно, это чтение. */}
+                        <div className="cf-galsearch">
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--muted-2)' }}><Icons.Search /></span>
+                            <input data-ro-ok type="search" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
+                                   data-cf="gallery-search" aria-label="Поиск по тегам и подписям"
+                                   placeholder="Теги и подписи: пыль, ночь, окно…"
+                                   autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                                   className="glass-input w-full rounded-lg" style={{ minHeight: 'var(--tap)', fontSize: 'var(--fs-2)', paddingLeft: 36, paddingRight: tagSearch ? 40 : 12 }} />
+                            {tagSearch && (
+                              <button onClick={() => setTagSearch('')} aria-label="Очистить поиск" data-cf="gallery-search-clear"
+                                      className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center rounded-md"
+                                      style={{ width: 'var(--tap-sm)', height: 'var(--tap-sm)', color: 'var(--muted)' }}>✕</button>
+                            )}
+                          </div>
+                          {tagHintsNow.length > 0 && (
+                            <div className="flex gap-2 overflow-x-auto hide-scrollbar" style={{ marginTop: 8 }} data-cf="gallery-search-hints">
+                              {tagHintsNow.map(([tag, count]) => (
+                                <button key={tag} onClick={() => pickTagHint(tag)} className="cf-chip shrink-0">{tag} · {count}</button>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         {/* Панель массовых действий уехала ВНИЗ и всплывает
@@ -22088,9 +22994,9 @@
                           <div className="md:hidden flex gap-2 overflow-x-auto hide-scrollbar pb-1">
                             {tagSearch && <button onClick={() => setTagSearch('')} className="cf-chip shrink-0" style={{ color: 'var(--accent)', borderColor: 'var(--accent-line)' }}>Сбросить</button>}
                             {tagCounts.map(([tag, count]) => {
-                              const on = tagSearch.toLowerCase() === tag;
+                              const on = tagOn(tag);
                               return (
-                                <button key={tag} onClick={() => setTagSearch(on ? '' : tag)} className={`cf-chip shrink-0 ${on ? 'cf-chip-accent' : ''}`}>
+                                <button key={tag} onClick={() => toggleTag(tag)} className={`cf-chip shrink-0 ${on ? 'cf-chip-accent' : ''}`}>
                                   {tag} · {count}
                                 </button>
                               );
@@ -22155,8 +23061,8 @@
                                         менеджер. Высота теперь по картинке, сетка
                                         заполняется слева направо построчно. */}
                                     <div className="relative cursor-pointer" onClick={() => { if (selectMode || selectedRefIds.length > 0) { toggleRefSelection(ref.id); } else { setLightboxData({ scope: visibleRefs.map(x => x.id), scopeLabel: (galleryScope === 'scout'
-                                          ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch ? `тег: ${tagSearch}` : null]
-                                          : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch ? `тег: ${tagSearch}` : null]
+                                          ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch.trim() ? `поиск: ${tagSearch.trim().replace(/,$/, '')}` : null]
+                                          : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch.trim() ? `поиск: ${tagSearch.trim().replace(/,$/, '')}` : null]
                                         ).filter(Boolean).join(' · ') || (galleryScope === 'scout' ? 'Фото со скаута' : 'Референсы'), currentId: ref.id }); } }}>
                                         {/* Метка «сц 143» / «об 07»: видно, что кадр
                                             уже пристроен, не открывая его. */}
@@ -22225,7 +23131,7 @@
                                             </button>
                                           );
                                         })()}
-                                        <img src={ref.url} draggable="false"
+                                        <img src={ref.url} {...refDrag(ref, null, selectMode || selectedRefIds.length > 0)} data-cf="ref-img"
                                              style={{ width: '100%', height: 'auto', display: 'block', background: 'var(--bg)', borderRadius: isSel ? 0 : 'var(--r-md)' }} />
                                         {/* Панораму надо отличать от обычного кадра на общем
                                             листе: плоская развёртка сама по себе выглядит
@@ -22522,7 +23428,7 @@
                                 <div key={r.id} className="relative shrink-0 group cursor-pointer"
                                      style={{ width: locPhotosOpen ? 'auto' : 320, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}
                                      onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
-                                  <img src={r.url} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} draggable="false" loading="lazy" />
+                                  <img src={r.url} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} {...refDrag(r)} data-cf="loc-photo" loading="lazy" />
                                   {/* Метка слева сверху: правый верх занят крестиком, низ — подписью */}
                                   {videoBadge(r, { left: 6, top: 6 })}
                                   {/* Отвязываем от объекта, а НЕ удаляем из проекта —
