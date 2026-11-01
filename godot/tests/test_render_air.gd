@@ -25,6 +25,8 @@ const Hangar := preload("res://sim/hangar.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const BattleFx := preload("res://view/battle_fx.gd")
 const AirView := preload("res://view/air_view.gd")
+const Picking := preload("res://input/picking.gd")
+const HudHeader := preload("res://ui/hud_header.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
@@ -194,6 +196,25 @@ static func _cross_light(img: Image, a: Vector2, b: Vector2) -> float:
 ## машины. Модель на 2400 — пара тусклых точек, а след и очереди рядом ярки, но не белы:
 ## в воздушном бою «ярче 0,7» нашлось у 35 машин из 37 и БЕЗ точек, «ярче 0,95» — у 0.
 const DOT_AREA := 2
+
+
+## Машина за корпусом корабля: луч камеры через её точку на экране входит в капсулу корпуса (та же,
+## что у выбора, input/picking.gd) БЛИЖЕ самой машины — её точку закрывает нарисованный корабль.
+static func _behind_hull(view: BattleView, cam: Camera3D, sp: Vector2, w: Vector3) -> bool:
+	var o := cam.project_ray_origin(sp)
+	var n := cam.project_ray_normal(sp)
+	var dw := (w - o).dot(n)
+	for s in view.battle.ships:
+		if s.dead:
+			continue
+		var cap: Array = view.capsule(s)
+		var ca: Vector3 = cap[0]
+		var cb: Vector3 = cap[1]
+		var cr: float = cap[2]
+		var t := Picking.ray_capsule(o, n, ca, cb, cr)
+		if t >= 0.0 and t < dw:
+			return true
+	return false
 
 
 static func _has_dot(img: Image, p: Vector2) -> bool:
@@ -722,6 +743,14 @@ func _air_battle(size: Vector2i, no_dots: bool) -> Dictionary:
 	var main := MainScene.instantiate()
 	tree.root.add_child(main)
 	MainScript.boot = &""
+	# пауза ДО первого кадра (пакет «Орудие планеты»): иначе сколько шагов бой успевал сделать за
+	# четыре кадра до паузы, зависело от скорости машины, и снимок на 30-й секунде от прогона к
+	# прогону выходил из двух разных боёв (следов 9356 и 9360, точек 45 из 55 и 42 из 53 — второй
+	# ниже порога 0,8). Тот же урок, что `_open(…, still)` в tests/test_ui_hud.gd (godot/CLAUDE.md, 22)
+	var poly0: Node = main.get("polygon")
+	if poly0 != null and poly0.get("view") != null:
+		var v0: BattleView = poly0.get("view")
+		v0.paused = true
 	await hooks.frames(4)
 	var poly: Node = main.get("polygon")
 	var view: BattleView = poly.get("view")
@@ -762,6 +791,8 @@ func _air_battle(size: Vector2i, no_dots: bool) -> Dictionary:
 	var vr := Rect2(Vector2.ZERO, Vector2(got)).grow(-10.0)
 	var seen := 0
 	var dotted := 0
+	var hidden := 0
+	var hidden_dotted := 0
 	var own_sq := 0
 	var foe_sq := 0
 	for q in b.squads:
@@ -779,11 +810,20 @@ func _air_battle(size: Vector2i, no_dots: bool) -> Dictionary:
 		var sp := cam.unproject_position(w)
 		if not vr.has_point(sp):
 			continue
+		# под шапкой (её градиент темнит верх кадра на HEIGHT + 18) и за корпусом корабля точка
+		# не обязана светиться: такие машины не в счёт, но названы числом (пакет «Орудие планеты»:
+		# прежнее «у остальных — корпус» было неправдой: из 12 машин без точки на 1920 под шапкой или
+		# за корпусом 5, остальные — далёкие у верха кадра и тесная кучка у нижнего края)
+		if sp.y < HudHeader.HEIGHT + 18.0 or _behind_hull(view, cam, sp, w):
+			hidden += 1
+			if _has_dot(img, sp):
+				hidden_dotted += 1
+			continue
 		seen += 1
 		if _has_dot(img, sp):
 			dotted += 1
-	var out := {"seen": seen, "dotted": dotted, "own": own_sq, "foe": foe_sq, "up": b.sides[Ship.ATTACKER].sq_up, "lost": b.sides[Ship.ATTACKER].sq_lost, "t": b.time, "trails": view.air.trails_written}
-	note("%s %s · воздушный бой на 30 с%s: машин в кадре %d, с точкой %d; своих звеньев поднято %d, потеряно %d, в воздухе %d; чужих в воздухе %d; отрезков следа %d" % [renderer(), tag, " (откат «точек нет»)" if no_dots else "", seen, dotted, whole(out["up"]), whole(out["lost"]), own_sq, foe_sq, whole(out["trails"])])
+	var out := {"seen": seen, "dotted": dotted, "hidden": hidden, "hidden_dotted": hidden_dotted, "own": own_sq, "foe": foe_sq, "up": b.sides[Ship.ATTACKER].sq_up, "lost": b.sides[Ship.ATTACKER].sq_lost, "t": b.time, "trails": view.air.trails_written}
+	note("%s %s · воздушный бой на 30 с%s: машин в кадре %d, с точкой %d, ещё под шапкой или за корпусом корабля %d (из них с точкой %d); своих звеньев поднято %d, потеряно %d, в воздухе %d; чужих в воздухе %d; отрезков следа %d" % [renderer(), tag, " (откат «точек нет»)" if no_dots else "", seen, dotted, hidden, hidden_dotted, whole(out["up"]), whole(out["lost"]), own_sq, foe_sq, whole(out["trails"])])
 	main.queue_free()
 	await hooks.frames(3)
 	b.dispose()
@@ -796,6 +836,6 @@ func test_air_battle_snapshots() -> void:
 		var r := await _air_battle(size, false)
 		ok(whole(r["up"]) == 3 and whole(r["foe"]) >= 1, "%s: свои три звена поднялись (%d), чужие в воздухе (%d)" % [renderer(), whole(r["up"]), whole(r["foe"])])
 		ok(whole(r["seen"]) >= 8, "%s: на рабочем виде над серединой машин — %d машин" % [renderer(), whole(r["seen"])])
-		ok(float(whole(r["dotted"])) >= 0.8 * float(whole(r["seen"])), "%s: у машин в кадре точки: %d из %d (у остальных — корпус корабля ближе к камере)" % [renderer(), whole(r["dotted"]), whole(r["seen"])])
+		ok(float(whole(r["dotted"])) >= 0.8 * float(whole(r["seen"])), "%s: у машин в кадре (не под шапкой и не за корпусом) точки: %d из %d" % [renderer(), whole(r["dotted"]), whole(r["seen"])])
 	var o := await _air_battle(Vector2i(1920, 1080), true)
 	ok(float(whole(o["dotted"])) < 0.2 * float(whole(o["seen"])), "%s: откат «точек нет»: %d из %d — проверка краснеет" % [renderer(), whole(o["dotted"]), whole(o["seen"])])
