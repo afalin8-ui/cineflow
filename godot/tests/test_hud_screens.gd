@@ -9,6 +9,7 @@ const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
 const Defs := preload("res://sim/defs.gd")
 const Battle := preload("res://sim/battle.gd")
+const Ship := preload("res://sim/ship.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
 const Markers := preload("res://view/markers.gd")
@@ -23,7 +24,7 @@ var _main: Node
 const OLD_START := 650.0
 
 
-func _open(size: Vector2i, watch: bool = false, mirror: bool = false, start_z: float = OLD_START) -> Polygon:
+func _open(size: Vector2i, watch: bool = false, mirror: bool = false, start_z: float = OLD_START, gun: String = "off") -> Polygon:
 	await hooks.set_window_size(size)
 	Settings.path = tmp("hud_screens_settings.cfg")
 	if FileAccess.file_exists(Settings.path):
@@ -39,6 +40,7 @@ func _open(size: Vector2i, watch: bool = false, mirror: bool = false, start_z: f
 	var cfg := QuickMenu.default_cfg(defs, watch)
 	if mirror:
 		cfg["defender"] = cfg["attacker"]
+	cfg["gun"] = gun
 	_main.call("open_battle", cfg)
 	await hooks.frames(4)
 	var p: Polygon = _main.get("polygon")
@@ -332,8 +334,8 @@ func test_tempo_screens() -> void:
 					foe += 1
 		note("%d×%d, старт: %s; своих %d, чужих %d" % [size.x, size.y, _say(r), own, foe])
 		ok(own >= 8 and whole(r["col"]) == 0 and whole(r["shape"]) == 0, "%d×%d, старт: свой строй на экране знаками своей стороны (%d), чужих %d" % [size.x, size.y, own, foe])
-		# 20-я секунда — снимок для глаз: кольцо орудия планеты (предупреждение на 16,8 с, залп на
-		# 23,8 с — текст выпуска 0.8 зовёт увести корабли из него)
+		# 20-я секунда — снимок для глаз (до capella-v0.10 здесь было кольцо орудия планеты; с 0.10
+		# орудие — галочкой в меню, по умолчанию его нет: снимки орудия — test_gun_screens)
 		p.view.paused = false
 		for i in roundi(20.0 / Battle.STEP):
 			p.view.advance(Battle.STEP)
@@ -351,4 +353,66 @@ func test_tempo_screens() -> void:
 				foe30 += 1
 		note("%d×%d, 30-я секунда: %s; чужих знаков %d, выстрел главного калибра был: %s" % [size.x, size.y, _say(r30), foe30, str(p.battle.metrics.first_gun > 0.0)])
 		ok(foe30 > 0 and whole(r30["col"]) == 0 and whole(r30["shape"]) == 0, "%d×%d, 30-я секунда: противник подошёл и виден (%d знаков), цвет и форма по стороне" % [size.x, size.y, foe30])
+		await _close()
+
+
+## Орудие планеты на экране (решение пользователя 01.11.2026; capella-v0.10): снимки `hud_gun_*` в
+## $CAPELLA_SHOTS на 1920 и 1366, их смотрят глазами. Своё орудие («Моё», ион Тройдена): перезарядка
+## с полоской, «Залп · P» готово, «Куда? · Esc» после P, кольцо и «Удар N с» после щелчка по чужому
+## флагману. Чужое («У противника», ядерная Плэктора): кольцо на своём строю и «Удар N с». Кнопка в окне
+## и не наезжает на соседей по шапке — на каждом снимке.
+func _gun_btn_ok(p: Polygon, tag: String) -> void:
+	var h := p.hud.header
+	var r := h.gun_btn.get_global_rect()
+	var over := PackedStringArray()
+	for o in h.shown_buttons():
+		if o != h.gun_btn and o.get_global_rect().intersects(r):
+			over.append(o.name)
+	var vs := Vector2(p.get_viewport().get_visible_rect().size)
+	ok(h.gun_btn.is_visible_in_tree() and over.is_empty() and Rect2(Vector2.ZERO, vs).encloses(r), "%s: кнопка орудия «%s» в окне и не наезжает на соседей (%s)" % [tag, h.gun_btn.text, ", ".join(over)])
+
+
+func test_gun_screens() -> void:
+	for size: Vector2i in [Vector2i(1920, 1080), Vector2i(1366, 768)]:
+		var p := await _open(size, false, false, -1.0, "mine")
+		var b := p.battle
+		await _shot("hud_gun_reload_%d" % size.x)
+		_gun_btn_ok(p, "%d, перезарядка" % size.x)
+		p.view.paused = false
+		while b.time < b.gun.next + Battle.STEP:
+			p.view.advance(Battle.STEP)
+		p.view.paused = true
+		await hooks.frames(2)
+		await _shot("hud_gun_ready_%d" % size.x)
+		_gun_btn_ok(p, "%d, готово" % size.x)
+		await hooks.key(KEY_P)
+		await hooks.frames(2)
+		await _shot("hud_gun_armed_%d" % size.x)
+		_gun_btn_ok(p, "%d, ждёт места" % size.x)
+		var foe: Ship = null
+		for s in b.side_ships(1 - p.view.my_side):
+			if foe == null or s.def.hp > foe.def.hp:
+				foe = s
+		await hooks.click(p.view.rig.camera.unproject_position(p.view.ship_point(foe)))
+		p.view.paused = false
+		for i in 30:
+			p.view.advance(Battle.STEP)
+		p.view.paused = true
+		await hooks.frames(3)
+		await _shot("hud_gun_flying_%d" % size.x)
+		ok(b.gun.warned and p.hud.header.gun_btn.text.begins_with("Удар "), "%d: после щелчка залп летит — «%s»" % [size.x, p.hud.header.gun_btn.text])
+		_gun_btn_ok(p, "%d, летит" % size.x)
+		await _close()
+		var q := await _open(size, false, false, -1.0, "foe")
+		var qb := q.battle
+		q.view.paused = false
+		while not qb.gun.warned and qb.time < 40.0:
+			q.view.advance(Battle.STEP)
+		for i in 30:
+			q.view.advance(Battle.STEP)
+		q.view.paused = true
+		await hooks.frames(3)
+		await _shot("hud_gun_foe_ring_%d" % size.x)
+		ok(qb.gun.warned and q.hud.header.gun_btn.text.begins_with("Удар "), "%d: орудие противника — кольцо на %.1f с, «%s»" % [size.x, qb.time, q.hud.header.gun_btn.text])
+		_gun_btn_ok(q, "%d, орудие противника" % size.x)
 		await _close()

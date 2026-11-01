@@ -15,6 +15,8 @@ const GroundGun := preload("res://sim/ground_gun.gd")
 const Movement := preload("res://sim/movement.gd")
 const HeavyDoctrine := preload("res://sim/heavy_doctrine.gd")
 const Polygon := preload("res://tools/polygon.gd")
+const Ai := preload("res://sim/ai.gd")
+const QuickMenu := preload("res://ui/quick_menu.gd")
 
 const BIG := 1.0e9
 
@@ -912,35 +914,166 @@ func test_idle_reasons() -> void:
 	b0.dispose()
 
 
-# ───────────────────────── орудие планеты (03, 2.17) ─────────────────────────
+# ───────────────────────── орудие планеты (03, 2.17; 09, 7.8; решение 01.11.2026) ─────────────────────────
+# С пакета «Орудие планеты» (capella-v0.10) оно стреляет НЕ по таймеру: у игрока — приказом «Залп»
+# (команда &"gun"), у ИИ — его решением (Ai.gun_aim). Готово к первому залпу на 0,7 периода
+# (ground_gun_first выгрузки), залп летит warn секунд, перезарядка — period с мига приказа.
 
-func _gun_lab(att: StringName, dfn: StringName) -> Battle:
-	var b := _lab(att, dfn, {"ground_gun": "defender"})
+func _gun_lab(att: StringName, dfn: StringName, own: String = "defender") -> Battle:
+	var b := _lab(att, dfn, {"ground_gun": own})
 	_dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(2000, -2400)))   # у защитника кто-то есть
 	return b
 
 
-func _gun_times(rollback: bool) -> Array:
-	GroundGun.rollback_first_full = rollback
-	var b := _gun_lab(&"troyden", &"plektor")
-	var t := _put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))
-	t.hp = BIG
-	t.max_hp = BIG
-	t.switch_off(&"engines", BIG)
-	var log := _log(b, 40.0)
+## Стоит на месте и не стреляет, но двигатели целы (у _dummy они выключены — ион их «уже выключил»).
+func _still(s: Ship) -> Ship:
+	s.stance = &"hold"
+	s.hp = BIG
+	s.max_hp = BIG
+	s.main_cd = PackedFloat64Array()
+	s.sec_cd = PackedFloat64Array()
+	s.light_cd = PackedFloat64Array()
+	s.mis_cd = PackedFloat64Array()
+	s.pd_cd = PackedFloat64Array()
+	return s
+
+
+## Бой-лаборатория с орудием планеты: put(b) ставит корабли, secs — сколько идти. → первое кольцо
+## (время, место) и первый залп (время, задетые), залпов всего.
+func _gun_run(att: StringName, dfn: StringName, put: Callable, secs: float, own: String = "defender") -> Dictionary:
+	var b := _gun_lab(att, dfn, own)
+	put.call(b)
+	var out := {"warn": -1.0, "aim": Vector2.INF, "fire": -1.0, "hits": PackedInt32Array(), "pre": {}, "salvos": 0}
+	for i in roundi(secs / Battle.STEP):
+		var pre: Dictionary = {}
+		for s in b.ships:
+			pre[s.uid] = [s.pos, s.vel]
+		b.step()
+		for e in b.events:
+			if e[0] == &"gun_warn" and num(out["warn"]) < 0.0:
+				out["warn"] = b.time
+				out["aim"] = e[2]
+				out["pre"] = pre
+			elif e[0] == &"gun_fire" and num(out["fire"]) < 0.0:
+				out["fire"] = b.time
+				out["hits"] = e[3]
+	out["salvos"] = b.gun.salvos if b.gun != null else -1
 	b.dispose()
+	return out
+
+
+## Одинокий тяжёлый стоит — ценная цель: ИИ бьёт, как только орудие готово (0,7 периода), кольцо
+## горит warn = 7 с, центр — на нём. Откат «первый залп через период» — к 30 с кольца нет.
+func test_ground_gun_ready_at_07_heavy_target() -> void:
+	var put := func(b: Battle) -> void: _dummy(_put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0)))
+	var r := _gun_run(&"troyden", &"plektor", put, 40.0)
+	near(num(r["warn"]), 34.0 * 0.7, Battle.STEP + 1e-6, "ядерная Плэктора готова на 0,7 периода (23,8 с) — и ИИ бьёт одинокого крейсера сразу")
+	near(num(r["fire"]), 34.0 * 0.7 + 7.0, Battle.STEP + 1e-6, "залп падает через 7 с после кольца (30,8 с)")
+	var aim: Vector2 = r["aim"]
+	ok(aim.length() < 1e-6, "центр залпа — на стоящем крейсере (%s)" % str(aim))
+	GroundGun.rollback_first_full = true
+	var o := _gun_run(&"troyden", &"plektor", put, 30.0)
 	GroundGun.rollback_first_full = false
-	return [_first(log, &"gun_warn"), _first(log, &"gun_fire")]
+	ok(num(o["warn"]) < 0.0, "откат «готово через полный период»: кольца к 30 с нет — проверка краснеет")
 
 
-func test_ground_gun_first_salvo() -> void:
-	var r := _gun_times(false)
-	near(num(r[1]), 34.0 * 0.7, Battle.STEP + 1e-6, "ядерная Плэктора: первый залп на 0,7 периода (23,8 с)")
-	near(num(r[0]), 34.0 * 0.7 - 7.0, Battle.STEP + 1e-6, "предупреждение — за 7 с до залпа")
-	var o := _gun_times(true)
-	ok(num(o[1]) < 0.0 or num(o[1]) > 30.0, "откат «первый залп через период»: залпа к 23,8 с нет — проверка краснеет")
+## Залп — по РЕШЕНИЮ ИИ, а не по готовности (09, 7.8): одинокий лёгкий — не цель (за 7 с полёта корвет
+## уходит из кольца), ИИ ждёт терпения ai.gun_patience_s (30 с) и только потом бьёт лучшее, что есть.
+## Двое рядом — скопление: бьёт сразу. Откаты: «залп по готовности» (Ai.rollback_gun_first_ready) и
+## прежний таймер (GroundGun.rollback_timer, кольцо за 7 с до 0,7 периода) — оба бьют одинокого раньше.
+func test_ground_gun_ai_decides_not_timer() -> void:
+	var lone := func(b: Battle) -> void: _dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(0, 0)))
+	var pair := func(b: Battle) -> void:
+		_dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(0, 0)))
+		_dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(60, 0)))
+	var a := _gun_run(&"troyden", &"plektor", lone, 60.0)
+	var p := _gun_run(&"troyden", &"plektor", pair, 30.0)
+	var ready := 34.0 * 0.7
+	var pat := ready + _defs().doctrine.ai_gun_patience_s
+	note("одинокий корвет — кольцо на %.2f с (терпение до %.1f), пара корветов — на %.2f с" % [num(a["warn"]), pat, num(p["warn"])])
+	ok(num(a["warn"]) >= pat - 1e-6 and num(a["warn"]) <= pat + _defs().doctrine.ai_gun_every + Battle.STEP, "одинокий корвет: ИИ ждёт хорошей цели и бьёт по терпению — кольцо на %.2f с (готово с %.1f, терпение %.0f с)" % [num(a["warn"]), ready, _defs().doctrine.ai_gun_patience_s])
+	near(num(p["warn"]), ready, Battle.STEP + 1e-6, "двое в 60 — скопление: бьёт, как только готово")
+	Ai.rollback_gun_first_ready = true
+	var r1 := _gun_run(&"troyden", &"plektor", lone, 30.0)
+	Ai.rollback_gun_first_ready = false
+	ok(num(r1["warn"]) > 0.0 and num(r1["warn"]) < pat - 1.0, "откат «залп по готовности»: одинокий корвет накрыт на %.2f с — проверка краснеет" % num(r1["warn"]))
+	GroundGun.rollback_timer = true
+	var r2 := _gun_run(&"troyden", &"plektor", lone, 30.0)
+	GroundGun.rollback_timer = false
+	ok(num(r2["warn"]) > 0.0 and num(r2["warn"]) < ready, "откат «прежний таймер»: кольцо на %.2f с, до готовности — проверка краснеет" % num(r2["warn"]))
 
 
+## ИИ целится туда, где корабль БУДЕТ, когда залп упадёт: положение + скорость × warn (09, 7.8).
+## Пара корветов дрейфует (двигатели выключены — ход не меняется). Откат «бьёт по нынешнему месту».
+func test_ground_gun_ai_leads_movers() -> void:
+	var pair := func(b: Battle) -> void:
+		for x: float in [0.0, 60.0]:
+			var s := _dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(x, 0)))
+			s.vel = Vector2(0.0, 20.0)
+	var r := _gun_run(&"troyden", &"plektor", pair, 30.0)
+	var aim: Vector2 = r["aim"]
+	var pre: Dictionary = r["pre"]
+	var best := INF
+	var now_d := INF
+	for u: Variant in pre:
+		var pv: Array = pre[u]
+		var pos: Vector2 = pv[0]
+		var vel: Vector2 = pv[1]
+		if vel.length() < 1.0:
+			continue
+		best = minf(best, aim.distance_to(pos + vel * 7.0))
+		now_d = minf(now_d, aim.distance_to(pos))
+	ok(best < 1e-6, "центр залпа — на месте корвета через 7 с полёта (расхождение %.6f; от нынешнего места %.1f)" % [best, now_d])
+	Ai.rollback_gun_no_lead = true
+	var o := _gun_run(&"troyden", &"plektor", pair, 30.0)
+	Ai.rollback_gun_no_lead = false
+	var oaim: Vector2 = o["aim"]
+	var opre: Dictionary = o["pre"]
+	var obest := INF
+	for u: Variant in opre:
+		var pv: Array = opre[u]
+		var pos: Vector2 = pv[0]
+		var vel: Vector2 = pv[1]
+		if vel.length() >= 1.0:
+			obest = minf(obest, oaim.distance_to(pos + vel * 7.0))
+	ok(obest > 100.0, "откат «по нынешнему месту»: центр в %.0f от места через 7 с — проверка краснеет" % obest)
+
+
+## Ион — одна цель: ИИ бьёт самого прочного ТЯЖЁЛОГО, у которого двигатели ещё целы (09, 7.8).
+func test_ground_gun_ion_picks_heavy() -> void:
+	var ids: Dictionary = {}
+	var put := func(b: Battle) -> void:
+		ids["corvette"] = _still(_put(b, Ship.ATTACKER, &"corvette", Vector2(-300, 0))).uid
+		ids["cruiser"] = _still(_put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))).uid
+		ids["capital"] = _still(_put(b, Ship.ATTACKER, &"capital", Vector2(300, 0))).uid
+	var r := _gun_run(&"plektor", &"troyden", put, 25.0)
+	var hits: PackedInt32Array = r["hits"]
+	ok(hits.size() == 1 and hits[0] == whole(ids["capital"]), "ион бьёт флагмана — самого прочного тяжёлого (задет %s)" % str(hits))
+	var put2 := func(b: Battle) -> void:
+		ids["cruiser2"] = _still(_put(b, Ship.ATTACKER, &"cruiser", Vector2(0, 0))).uid
+		var c := _still(_put(b, Ship.ATTACKER, &"capital", Vector2(300, 0)))
+		c.switch_off(&"engines", BIG)              # уже обездвижен прошлым лучом
+	var r2 := _gun_run(&"plektor", &"troyden", put2, 25.0)
+	var h2: PackedInt32Array = r2["hits"]
+	ok(h2.size() == 1 and h2[0] == whole(ids["cruiser2"]), "обездвиженного флагмана ион не бьёт второй раз — бьёт крейсер (задет %s)" % str(h2))
+
+
+## Ослепление (Девиан) — весь флот разом: ИИ бьёт, когда флоты сошлись ближе ai.gun_engage; врозь —
+## только по терпению (контроль — тот же бой со своим кораблём рядом с чужим).
+func test_ground_gun_blind_when_engaged() -> void:
+	var far := func(b: Battle) -> void: _dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(0, 0)))
+	var close := func(b: Battle) -> void:
+		_dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(0, 0)))
+		_dummy(_put(b, Ship.DEFENDER, &"corvette", Vector2(0, -800)))
+	var a := _gun_run(&"troyden", &"devian", far, 40.0)
+	var c := _gun_run(&"troyden", &"devian", close, 40.0)
+	var ready := 30.0 * 0.7
+	ok(num(a["warn"]) < 0.0, "флоты врозь (3100) — ослепление к 40 с не тратится (кольцо %.2f)" % num(a["warn"]))
+	near(num(c["warn"]), ready, Battle.STEP + 1e-6, "флоты в 800 — ослепление, как только готово (21 с)")
+
+
+## Площадь ядерного залпа: в центре полный урон, к краю — до нуля (03, 2.17). Залп кладёт проверка
+## сама (GroundGun.order — та же дверь, что у приказа игрока и решения ИИ).
 func test_ground_gun_nuke_area() -> void:
 	var b := _gun_lab(&"troyden", &"plektor")
 	var list: Array[Ship] = []
@@ -951,12 +1084,13 @@ func test_ground_gun_nuke_area() -> void:
 		s.hp = BIG
 		s.max_hp = BIG
 		list.append(s)
-	while b.gun.next - b.time > 0.5:
+	b.gun.human = true                         # ИИ не решает — залп кладёт проверка
+	ok(not GroundGun.order(b, Vector2.ZERO), "до готовности (0,7 периода) залп не кладётся")
+	while b.time < b.gun.next:
 		b.step()
-	b.gun.warned = true
-	b.gun.has_aim = true
-	b.gun.aim = Vector2.ZERO                  # наводка — точно в первый крейсер
-	_steps(b, 1.0)
+	ok(GroundGun.order(b, Vector2.ZERO), "готово — залп в точку")      # наводка — точно в первый крейсер
+	near(b.gun.next, b.time + 34.0, 1e-9, "перезарядка — период с мига приказа")
+	_steps(b, 7.2)
 	var full := 1500.0 * 1.0 * (1.0 - list[0].def.armor)
 	near(BIG - list[0].hp, full, 1e-3, "в центре — полный урон 1500 × (1 − броня)")
 	near(BIG - list[1].hp, full * 0.5, 1e-3, "в 95 — половина")
@@ -978,7 +1112,7 @@ func test_ground_gun_ion() -> void:
 				fire_t = b.time
 		if fire_t > 0.0:
 			break
-	near(fire_t, 26.0 * 0.7, Battle.STEP + 1e-6, "ионный луч: первый залп на 18,2 с")
+	near(fire_t, 26.0 * 0.7 + 4.0, Battle.STEP + 1e-6, "ионный луч: готов на 18,2 с, ИИ бьёт тяжёлого сразу — луч на 22,2 с (кольцо за 4 с)")
 	near(BIG - pc.hp, 900.0 * (1.0 - pc.def.armor), 1e-3, "урон луча 900 × (1 − броня)")
 	ok(pc.is_off(&"engines", fire_t + 9.9) and not pc.is_off(&"engines", fire_t + 10.05), "двигатели выключены ровно на 10 с")
 	var yaw0 := pc.yaw
@@ -989,6 +1123,155 @@ func test_ground_gun_ion() -> void:
 	_steps(b, 6.0)
 	ok(pc.vel.length() > 1.0, "через 10 с полетел")
 	b.dispose()
+
+
+## Орудие ИГРОКА (ground_gun = "attacker", игрок — атакующий): само не стреляет никогда; «Залп»
+## (команда &"gun") — только готовое: до готовности, в полёте и на перезарядке — отказ полоской, бой
+## не меняется; готово — кольцо в точке приказа, удар через warn, перезарядка — period с мига приказа.
+## Откат «прежний таймер» — орудие стреляет само.
+func _player_gun(rollback_timer: bool) -> Dictionary:
+	GroundGun.rollback_timer = rollback_timer
+	var b := _gun_lab(&"troyden", &"plektor", "attacker")     # ион Тройдена — у игрока
+	GroundGun.rollback_timer = false
+	_dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(0, 600)))
+	var foe := _still(_put(b, Ship.DEFENDER, &"cruiser", Vector2(0, -600)))
+	var warn_at: Array = []
+	var fire_hits: Array = []
+	var out := {"human": b.gun.human, "owner": b.gun.owner, "auto": 0, "warn_at": warn_at, "fire_hits": fire_hits, "toasts": PackedStringArray(),
+		"next": [], "salvos": 0, "foe": foe.uid}
+	var log := func(secs: float) -> void:
+		for i in roundi(secs / Battle.STEP):
+			b.step()
+			for e in b.events:
+				if e[0] == &"gun_warn":
+					warn_at.append([b.time, e[2]])
+				elif e[0] == &"gun_fire":
+					fire_hits.append([b.time, e[3]])
+	log.call(60.0)
+	out["auto"] = warn_at.size()
+	if rollback_timer:
+		b.dispose()
+		return out
+	b.queue({"op": &"gun", "x": foe.pos.x, "z": foe.pos.y})      # готово ещё с 18,2 с — залп
+	log.call(1.0)
+	var t0: float = b.time
+	b.queue({"op": &"gun", "x": 0.0, "z": 0.0})                  # летит — отказ
+	log.call(5.0)
+	b.queue({"op": &"gun", "x": 0.0, "z": 0.0})                  # перезаряжается — отказ
+	log.call(1.0)
+	out["next"] = [t0, b.gun.next]
+	out["salvos"] = b.gun.salvos
+	var ts := PackedStringArray()
+	for t: Dictionary in b.toast_log:
+		ts.append(str(t["text"]))
+	out["toasts"] = ts
+	b.dispose()
+	return out
+
+
+func test_player_gun_salvo_only_by_order() -> void:
+	var r := _player_gun(false)
+	ok(flag(r["human"]) and whole(r["owner"]) == Ship.ATTACKER, "орудие «Моё» — у атакующего (игрока), стреляет человек")
+	eq(whole(r["auto"]), 0, "60 с без приказа — ни одного залпа: само орудие игрока не стреляет")
+	var w: Array = r["warn_at"]
+	var f: Array = r["fire_hits"]
+	ok(w.size() == 1, "приказ «Залп» — ровно одно кольцо (второй и третий приказ — отказ): колец %d" % w.size())
+	if w.size() == 1 and f.size() == 1:
+		var wa: Array = w[0]
+		var fa: Array = f[0]
+		var at: Vector2 = wa[1]
+		ok(at.distance_to(Vector2(0, -600)) < 1e-6, "кольцо — в точке приказа (%s)" % str(at))
+		near(num(fa[0]) - num(wa[0]), 4.0, Battle.STEP + 1e-6, "луч через 4 с после приказа (warn иона)")
+		var hits: PackedInt32Array = fa[1]
+		ok(hits.size() == 1 and hits[0] == whole(r["foe"]), "луч бьёт ближайший к точке корабль — чужой крейсер")
+	var nx: Array = r["next"]
+	var w0 := 0.0
+	if not w.is_empty():
+		var wa0: Array = w[0]
+		w0 = num(wa0[0])
+	near(num(nx[1]) - w0, 26.0, Battle.STEP + 1e-6, "перезарядка — 26 с с мига приказа")
+	eq(whole(r["salvos"]), 1, "залпов приказано — один")
+	var ts: PackedStringArray = r["toasts"]
+	ok("\n".join(ts).contains("Залп уже летит") and "\n".join(ts).contains("перезаряжается"), "отказы сказаны словами: «уже летит», «перезаряжается»")
+	var o := _player_gun(true)
+	ok(whole(o["auto"]) > 0, "откат «прежний таймер»: орудие стреляет само (%d колец за 60 с) — проверка краснеет" % whole(o["auto"]))
+
+
+## Чужое орудие (у ИИ) приказ игрока не принимает; приказ раньше готовности — отказ, и бой тот же.
+func test_player_gun_order_refused() -> void:
+	var b := _gun_lab(&"troyden", &"plektor", "defender")
+	_dummy(_put(b, Ship.ATTACKER, &"corvette", Vector2(0, 0)))
+	_steps(b, 1.0)
+	b.queue({"op": &"gun", "x": 0.0, "z": 0.0})
+	_steps(b, 1.0)
+	ok(not b.gun.warned and b.gun.salvos == 0, "чужое орудие приказ «Залп» не принимает")
+	ok(str(b.toast_log.back()["text"]) == "Орудия планеты у тебя нет", "и говорит почему: «%s»" % str(b.toast_log.back()["text"]))
+	b.dispose()
+	var m := _gun_lab(&"troyden", &"plektor", "attacker")
+	_dummy(_put(m, Ship.ATTACKER, &"corvette", Vector2(0, 0)))
+	m.queue({"op": &"gun", "x": 0.0, "z": 0.0})
+	_steps(m, 1.0)
+	ok(not m.gun.warned and m.gun.salvos == 0 and str(m.toast_log.back()["text"]).begins_with("Орудие планеты перезаряжается"), "до готовности своё орудие — отказ «перезаряжается»")
+	m.dispose()
+
+
+## Приказ «Залп» — в журнале, повтор записи даёт тот же бой, а отпечаток видит залп ещё до удара
+## (решение 01.11.2026; godot/CLAUDE.md, 6). Бой — Polygon.salvo_record (тот же, что гоняет
+## `--selftest`): быстрый бой с орудием «Моё», три приказа «Залп» (ранний — отказ, два — залпы).
+## Откат «отпечаток видит одни положения» (Battle.rollback_fp_positions): на шаге после приказа, пока
+## луч не упал, бой без приказа даёт тот же отпечаток — проверка краснеет.
+func _replay_to(rec: Dictionary, steps_n: int, drop_step: int) -> Dictionary:
+	var r2 := rec.duplicate(true)
+	if drop_step >= 0:
+		var keep: Array = []
+		for c: Dictionary in r2["cmds"]:
+			if not (str(c.get("op", "")) == "gun" and whole(c.get("step", -1.0)) == drop_step):
+				keep.append(c)
+		r2["cmds"] = keep
+	var why := PackedStringArray()
+	var b := Battle.from_record(_defs(), r2, "capella-проверка", why) as Battle
+	if b == null:
+		return {"fp": "нет: %s" % "; ".join(why), "hp": 0.0}
+	while b.steps < steps_n:
+		b.step()
+	var hp := 0.0
+	for s in b.ships:
+		hp += s.hp
+	var out := {"fp": b.fingerprint(), "hp": hp}
+	b.dispose()
+	return out
+
+
+func test_player_gun_in_record_and_fingerprint() -> void:
+	var rec := Polygon.salvo_record(_defs(), "capella-проверка")
+	var text := JSON.stringify(rec)
+	var parsed: Dictionary = JSON.parse_string(text)
+	var guns: Array[int] = []
+	for c: Dictionary in parsed["cmds"]:
+		if str(c.get("op", "")) == "gun":
+			guns.append(whole(c.get("step", -1.0)))
+	ok(guns.size() == 3 and whole(rec["salvos"]) == 2, "в журнале три приказа «Залп» (%s), залпов вышло два (%d): ранний — отказ" % [str(guns), whole(rec["salvos"])])
+	var full := _replay_to(parsed, whole(rec["steps"]), -1)
+	eq(str(full["fp"]), str(rec["fp"]), "запись (через JSON, как файл) проигрывается тем же боем")
+	var no_all := rec.duplicate(true)
+	var keep: Array = []
+	for c: Dictionary in no_all["cmds"]:
+		if str(c.get("op", "")) != "gun":
+			keep.append(c)
+	no_all["cmds"] = keep
+	var lost := _replay_to(no_all, whole(rec["steps"]), -1)
+	ok(str(lost["fp"]) != str(rec["fp"]), "запись без приказов «Залп» — другой бой (%s против %s)" % [str(lost["fp"]), str(rec["fp"])])
+	if guns.size() >= 2:
+		var at := guns[1] + 1                   # шаг после принятого приказа: кольцо горит, удара ещё нет
+		var with_cmd := _replay_to(rec, at, -1)
+		var without := _replay_to(rec, at, guns[1])
+		near(num(with_cmd["hp"]), num(without["hp"]), 0.0, "на шаге после приказа удара ещё нет — прочность у всех та же")
+		ok(str(with_cmd["fp"]) != str(without["fp"]), "но отпечаток уже видит летящий залп (%s против %s)" % [str(with_cmd["fp"]), str(without["fp"])])
+		Battle.rollback_fp_positions = true
+		var rw := _replay_to(rec, at, -1)
+		var rn := _replay_to(rec, at, guns[1])
+		Battle.rollback_fp_positions = false
+		ok(str(rw["fp"]) == str(rn["fp"]), "откат «отпечаток — одни положения»: залп до удара не виден — проверка краснеет")
 
 
 # ───────────────────────── учёт урона без остатка (М7; 09, 9.5 п. 11) ─────────────────────────

@@ -16,11 +16,16 @@ const ResultCard := preload("res://ui/result_card.gd")
 const BattleView := preload("res://view/battle_view.gd")
 const PolygonHud := preload("res://ui/polygon_hud.gd")
 const State := preload("res://sim/state.gd")
+const Settings := preload("res://view/settings.gd")
+const GroundGun := preload("res://sim/ground_gun.gd")
 
 
 ## Главная сцена с меню (по умолчанию с G5): отчёты — в свою папку, зерно — своё.
-func _main(dir_name: String) -> Node:
+func _main(dir_name: String, keep_settings: bool = false) -> Node:
 	await hooks.set_window_size(Vector2i(1366, 768))
+	Settings.path = tmp("quick_settings.cfg")       # меню читает и пишет выбор орудия планеты
+	if not keep_settings and FileAccess.file_exists(Settings.path):
+		DirAccess.remove_absolute(Settings.path)
 	MainScript.out_override = tmp(dir_name)
 	MainScript.seed_override = 4242
 	var main := MainScene.instantiate()
@@ -30,6 +35,7 @@ func _main(dir_name: String) -> Node:
 
 
 func _done(main: Node) -> void:
+	Settings.path = Settings.DEFAULT_PATH
 	MainScript.out_override = ""
 	MainScript.seed_override = -1
 	main.queue_free()
@@ -107,6 +113,71 @@ func test_menu_is_default_and_chooses() -> void:
 	await _done(main)
 
 
+## Орудие планеты в меню (решение пользователя 01.11.2026: «опция у игрока», «оба варианта») —
+## настоящими щелчками: по умолчанию галочка снята и орудия в бою нет, «Моё» и «У противника» выключены;
+## галочка — орудие «Моё» (ион Тройдена, стреляешь сам), «У противника» — ядерная Плэктора у ИИ. Выбор
+## помнится между запусками (файл настроек): новая главная сцена открывает меню с тем же выбором — откат
+## «меню не читает файл» (QuickMenu.rollback_gun_forget) открывает его без орудия. «В бой» с «Моё» —
+## орудие у игрока, «Смотреть: ИИ против ИИ» с «Моё» — у атакующего, но стреляет его ИИ.
+func _gun_menu_reopen(rollback: bool) -> String:
+	QuickMenu.rollback_gun_forget = rollback
+	var main := await _main("quick_gun2", true)
+	var m: QuickMenu = main.get("menu")
+	var g := str(m.cfg.get("gun", "?")) if m != null else "нет меню"
+	var on: bool = m != null and m.buttons["gun:on"].button_pressed
+	QuickMenu.rollback_gun_forget = false
+	await _done(main)
+	return "%s/%s" % [g, "on" if on else "off"]
+
+
+func test_menu_planet_gun() -> void:
+	var main := await _main("quick_gun")
+	var m: QuickMenu = main.get("menu")
+	if not ok(m != null and m.buttons.has("gun:on"), "в меню есть галочка «Орудие планеты»"):
+		await _done(main)
+		return
+	var cb: Button = m.buttons["gun:on"]
+	ok(cb is CheckBox and cb.text == "Орудие планеты", "это галочка с надписью «%s»" % cb.text)
+	eq(str(m.cfg["gun"]), "off", "по умолчанию орудия нет")
+	ok(not cb.button_pressed and m.buttons["owner:mine"].disabled and m.buttons["owner:foe"].disabled, "галочка снята, «Моё» и «У противника» выключены")
+	ok(m.gun_label.text.contains("нет"), "подпись: «%s»" % m.gun_label.text)
+	ok(await _press(cb), "галочка нажимается настоящим щелчком (под серединой — она сама)")
+	ok(str(m.cfg["gun"]) == "mine" and cb.button_pressed and m.buttons["owner:mine"].button_pressed and not m.buttons["owner:mine"].disabled, "галочка — орудие «Моё»")
+	ok(m.gun_label.text.contains("Ионный луч") and m.gun_label.text.contains("Залп") and m.gun_label.text.contains("P"), "подпись про своё: «%s»" % m.gun_label.text)
+	ok(await _press(m.buttons["owner:foe"]), "«У противника» нажимается")
+	ok(str(m.cfg["gun"]) == "foe" and m.gun_label.text.contains("Ядерная ракета") and m.gun_label.text.contains("ИИ"), "орудие у противника: «%s»" % m.gun_label.text)
+	ok(await _press(cb), "галочка снимается тем же щелчком")
+	ok(str(m.cfg["gun"]) == "off" and not cb.button_pressed and m.buttons["owner:foe"].disabled, "снята — орудия нет, «чьё» выключено")
+	ok(await _press(cb), "и ставится снова")
+	eq(str(m.cfg["gun"]), "foe", "снова поставленная галочка помнит «У противника»")
+	# на 1366 вся панель меню в окне, кнопки и галочка под своими серединами
+	var vs := Vector2(main.get_viewport().get_visible_rect().size)
+	ok(Rect2(Vector2.ZERO, vs).encloses(m.panel.get_global_rect()), "меню целиком в окне 1366×768 (%s)" % str(m.panel.get_global_rect()))
+	await _done(main)
+	# помнится между запусками
+	var again := await _gun_menu_reopen(false)
+	eq(again, "foe/on", "новый запуск — тот же выбор: орудие у противника, галочка стоит")
+	var lost := await _gun_menu_reopen(true)
+	eq(lost, "off/off", "откат «меню не читает файл настроек»: выбор забыт — проверка краснеет")
+	# «В бой» и «ИИ против ИИ» с орудием «Моё»
+	var mm := await _main("quick_gun3", true)
+	var m2: QuickMenu = mm.get("menu")
+	ok(await _press(m2.buttons["owner:mine"]), "«Моё» нажимается")
+	ok(await _press(_menu_btn(mm, "go")), "«В бой»")
+	await hooks.frames(3)
+	var p: Polygon = mm.get("polygon")
+	var g: State.GunState = p.battle.gun if p != null and p.battle != null else null
+	ok(g != null and g.human and g.owner == Ship.ATTACKER and g.clan == &"troyden", "«В бой» с «Моё»: орудие у тебя (Тройден, ион), стреляешь ты")
+	await _done(mm)
+	var mw := await _main("quick_gun4", true)
+	ok(await _press(_menu_btn(mw, "watch")), "«Смотреть: ИИ против ИИ»")
+	await hooks.frames(3)
+	var pw: Polygon = mw.get("polygon")
+	var gw: State.GunState = pw.battle.gun if pw != null and pw.battle != null else null
+	ok(gw != null and not gw.human and gw.owner == Ship.ATTACKER, "«ИИ против ИИ» с «Моё»: орудие у атакующего, стреляет его ИИ")
+	await _done(mw)
+
+
 func test_go_and_watch() -> void:
 	var main := await _main("quick_go")
 	ok(await _press(_menu_btn(main, "go")), "кнопка «В бой» нажимается")
@@ -119,7 +190,7 @@ func test_go_and_watch() -> void:
 	var b := p.battle
 	ok(not b.watch and b.ai.size() == 1 and b.ai[0].side == Ship.DEFENDER and b.ai[0].full, "противника ведёт ИИ целиком, тебя — ты")
 	eq(str(b.setup.get("attacker")), "troyden", "ты — атакующий, как в JS")
-	ok(b.sides[Ship.ATTACKER].reserve.size() > 0 and b.gun != null, "резерв у тебя, орудие — у планеты противника")
+	ok(b.sides[Ship.ATTACKER].reserve.size() > 0 and b.gun == null, "резерв у тебя; орудия планеты по умолчанию нет — это опция в меню (решение 01.11.2026)")
 	ok(p.input.orders_enabled, "приказы принимаются")
 	var fps: Node = main.get("fps")
 	var hl: Label = fps.get("hint")

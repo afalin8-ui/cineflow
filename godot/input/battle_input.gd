@@ -30,6 +30,10 @@
 #   и зовёт command(id), кнопка экрана (ui/polygon_hud.gd) зовёт тот же command(id).
 #   Своей ветки у кнопки нет: проверка сверяет журнал команд кнопки и клавиши.
 #   J / K / L — режимы РЭБ (07, 2.10), N — выбрать прибывших, F2 — весь флот, I — знаки.
+# - P или кнопка «Залп» в шапке — залп СВОЕГО орудия планеты (решение пользователя 01.11.2026):
+#   следующий щелчок ЛКМ — место залпа (ион бьёт ближайший к нему корабль, ядерная — площадь);
+#   Esc или ПКМ — отмена. Ослепление и ЭМИ бьют весь флот — щелчка не ждут. Не готово (летит,
+#   перезаряжается) или орудия у тебя нет — полоска словами.
 extends Node
 
 const Ship := preload("res://sim/ship.gd")
@@ -46,6 +50,7 @@ const KEY_CMD := {
 	KEY_C: &"launch_bomber", KEY_V: &"recall", KEY_J: &"ecm_jam", KEY_K: &"ecm_shield",
 	KEY_L: &"ecm_off", KEY_B: &"reinforce", KEY_N: &"arrived", KEY_SPACE: &"pause",
 	KEY_1: &"speed1", KEY_2: &"speed2", KEY_4: &"speed4", KEY_F2: &"all", KEY_I: &"markers",
+	KEY_P: &"gun_salvo",
 }
 ## Роль звена по команде пуска (04, 2.3).
 const LAUNCH_ROLE := {&"launch_interceptor": &"interceptor", &"launch_fighter": &"fighter", &"launch_bomber": &"bomber"}
@@ -114,6 +119,8 @@ var _rmb_from := Vector2.ZERO
 var _rmb_moved := false
 ## A нажата — ждём щелчка: точка — атака с ходу, враг — фокус (03, 2.15).
 var amove_armed := false
+## «Залп» нажат — ждём щелчка ЛКМ по месту залпа своего орудия планеты.
+var gun_armed := false
 
 
 func _ready() -> void:
@@ -254,7 +261,9 @@ func release(mb: InputEventMouseButton) -> void:
 			if r.size.x > BOX_MIN and r.size.y > BOX_MIN:
 				_box(r, _lmb_shift or mb.shift_pressed)
 		elif Time.get_ticks_msec() - _lmb_t0 < CLICK_MS:
-			if amove_armed:
+			if gun_armed:
+				gun_at(mb.position)
+			elif amove_armed:
 				amove_at(mb.position)
 			else:
 				_click(mb.position, _lmb_shift or mb.shift_pressed)
@@ -262,6 +271,7 @@ func release(mb: InputEventMouseButton) -> void:
 		_rmb = false
 		if not _rmb_moved:
 			amove_armed = false             # ПКМ во время ожидания — обычный приказ
+			gun_armed = false
 			order_at(mb.position)
 
 
@@ -429,7 +439,9 @@ func _key(k: InputEventKey) -> bool:
 	if k.ctrl_pressed or k.meta_pressed or k.alt_pressed:
 		return false                    # Ctrl / ⌘ / Alt с буквой — не нам (06, 1.5)
 	if k.physical_keycode == KEY_ESCAPE:
-		if amove_armed and not rollback_esc_clears:
+		if gun_armed:
+			gun_armed = false           # сначала — отмена ожидания залпа, выбор цел
+		elif amove_armed and not rollback_esc_clears:
 			amove_armed = false         # сначала — отмена ожидания A, выбор цел
 		else:
 			amove_armed = false
@@ -458,7 +470,10 @@ func command(id: StringName) -> bool:
 			if own_orders().is_empty():
 				_say("Атака с ходу: сначала выбери свои корабли")
 			else:
+				gun_armed = false
 				amove_armed = true            # подсказку держит экран, пока A ждёт щелчка
+		&"gun_salvo":
+			gun_pressed()
 		&"launch_interceptor", &"launch_fighter", &"launch_bomber":
 			var cs := own_carriers() if not rollback_launch_any else own_selected()
 			if cs.is_empty():
@@ -516,6 +531,65 @@ func command(id: StringName) -> bool:
 			_say(Texts.MARKERS_ON if on else Texts.MARKERS_OFF)
 		_:
 			return false
+	return true
+
+
+## Что сейчас с орудием планеты игрока: &"none" — его нет или оно не твоё, &"flying" — залп
+## летит, &"reload" — перезаряжается, &"ready" — готово. Шапка и ввод спрашивают ОДНУ функцию.
+func gun_state() -> StringName:
+	var b := _battle()
+	if b == null:
+		return &"none"
+	var g: Object = b.get("gun")
+	if g == null or not g.get("human"):
+		return &"none"
+	if g.get("warned"):
+		return &"flying"
+	var t: float = b.get("time")
+	var nxt: float = g.get("next")
+	return &"reload" if t < nxt else &"ready"
+
+
+## «Залп» (кнопка шапки или P): готово — ждём щелчка по месту (ослепление и ЭМИ — сразу по всему
+## флоту); ещё раз — отмена ожидания. Не готово — полоска словами, команда в бой не уходит.
+func gun_pressed() -> void:
+	if not orders_enabled:
+		_say(orders_off_text)
+		return
+	if gun_armed:
+		gun_armed = false
+		return
+	match gun_state():
+		&"none":
+			_say("Орудия планеты у тебя нет: его включают в меню «Быстрый бой»")
+		&"flying":
+			_say("Залп уже летит")
+		&"reload":
+			var b := _battle()
+			var g: Object = b.get("gun")
+			var nxt: float = g.get("next")
+			var t: float = b.get("time")
+			_say("Орудие перезаряжается: %d с" % ceili(nxt - t))
+		_:
+			var g2: Object = _battle().get("gun")
+			var gd: Object = g2.get("def")
+			var kind: StringName = gd.get("kind")
+			if kind == &"blind" or kind == &"emp":
+				_queue({"op": &"gun", "x": 0.0, "z": 0.0})
+			else:
+				amove_armed = false
+				gun_armed = true             # подсказку держит экран, пока «Залп» ждёт щелчка
+
+
+## Щелчок после «Залпа»: место залпа на поле.
+func gun_at(at: Vector2) -> bool:
+	gun_armed = false
+	var rig: CameraRig = view.get("rig")
+	var hit: Variant = rig.ground_at(at, false)
+	if hit == null:
+		return false
+	var p: Vector3 = hit
+	_queue({"op": &"gun", "x": p.x, "z": p.z})
 	return true
 
 

@@ -54,7 +54,7 @@ const OLD_START := 650.0
 ## экрана. Знаки — по умолчанию (включены): настройки — в своём файле прогона. still — пауза
 ## ДО первого кадра: бой стоит на расстановке старта при любой скорости машины (иначе до паузы
 ## успевает пройти разное число шагов — раздел 22 godot/CLAUDE.md).
-func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: String = "hud", still: bool = false, seed_v: int = 4242) -> Polygon:
+func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: String = "hud", still: bool = false, seed_v: int = 4242, gun: String = "off") -> Polygon:
 	await hooks.set_window_size(size)
 	Settings.path = tmp(dir + "_settings.cfg")
 	if FileAccess.file_exists(Settings.path):
@@ -70,6 +70,7 @@ func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: Strin
 	var cfg := QuickMenu.default_cfg(defs, watch)
 	if mirror:
 		cfg["defender"] = cfg["attacker"]
+	cfg["gun"] = gun
 	_main.call("open_battle", cfg)
 	if still:
 		var p0: Polygon = _main.get("polygon")
@@ -85,7 +86,7 @@ func _open(size: Vector2i, watch: bool = false, mirror: bool = false, dir: Strin
 ## Как у игрока: главная сцена открывает меню «Быстрый бой», бой выбирается кнопкой меню
 ## НАСТОЯЩИМ щелчком («go» — «В бой», «watch» — «Смотреть: ИИ против ИИ»). null — кнопка
 ## не нажалась или бой не открылся.
-func _open_by_menu(size: Vector2i, key: String) -> Polygon:
+func _open_by_menu(size: Vector2i, key: String, pre: Array[String] = []) -> Polygon:
 	await hooks.set_window_size(size)
 	Settings.path = tmp("hud_menu_settings.cfg")
 	if FileAccess.file_exists(Settings.path):
@@ -99,6 +100,10 @@ func _open_by_menu(size: Vector2i, key: String) -> Polygon:
 		var dd: Defs = _main.get("defs")
 		dd.doctrine.deploy_heavy_z = _start_z
 	var m: QuickMenu = _main.get("menu")
+	for k in pre:                                   # сперва — выбор в меню (галочка орудия и т. п.)
+		var pb: Button = m.buttons.get(k) if m != null else null
+		if not await _press(pb):
+			return null
 	var mb: Button = m.buttons.get(key) if m != null else null
 	if not await _press(mb):
 		return null
@@ -724,14 +729,16 @@ func test_hyper_with_carrier_says_fleet() -> void:
 	ok(str(o["car"]) == "обычная «В гипер» [уйти]" and not str(o["car_tip"]).contains(Texts.HYPER_FLEET_TIP), "откат «как в 0.7.1» — кнопка с носителем молчит про флот (%s) — проверка краснеет" % o["car"])
 
 
-## Часы орудия планеты в шапке (план GИ, п. 2; 07, 2.4): «<орудие> N с» по игровым часам, за секунду
-## до залпа — «залп», в окне предупреждения кнопка горит, подсказка называет орудие; орудия нет —
-## нет и плашки (07, ловушка 52). Откат — порчей кода (godot/CLAUDE.md, 22).
+## Орудие планеты в шапке (план GИ, п. 2; 07, 2.4; решение пользователя 01.11.2026). Орудие ПРОТИВНИКА —
+## часы плашкой: «<орудие> N с» до готовности (с полоской перезарядки), «<орудие> готово» и «Удар N с»,
+## пока залп летит, — горят; подсказка называет орудие и говорит, что им стреляет ИИ. Орудие ИГРОКА —
+## кнопка: «Залп · P» горит и нажимается; на перезарядке и в полёте — выключена. Орудия нет (по
+## умолчанию) — нет и плашки. Откат — порчей кода (godot/CLAUDE.md, 22).
 func test_header_gun_clock() -> void:
-	var p := await _open(Vector2i(1366, 768))
+	var p := await _open(Vector2i(1366, 768), false, false, "hud", false, 4242, "foe")
 	var h := p.hud.header
 	var gun := p.battle.gun
-	if not ok(gun != null, "в быстром бою у защитника есть орудие планеты"):
+	if not ok(gun != null and not gun.human, "орудие «У противника» — у его планеты, стреляет ИИ"):
 		await _close()
 		return
 	await hooks.frames(2)
@@ -739,28 +746,116 @@ func test_header_gun_clock() -> void:
 	var t1 := h.gun_btn.text
 	var lk1: int = h.gun_btn.get_meta(&"cf_look", -1)
 	var tip: String = h.gun_btn.get_meta(&"cf_tip", "")
-	ok(h.gun_btn.is_visible_in_tree() and t1 == "%s %d с" % [gun.def.short, ceili(left)] and lk1 == Builder.Look.NORMAL and tip.contains(gun.def.name),
-		"часы орудия: «%s» (до залпа %.1f с), подсказка называет «%s»" % [t1, left, gun.def.name])
-	# к залпу: остаётся меньше секунды — «залп», кнопка горит (окно предупреждения)
-	_steps(p, maxi(0, ceili((left - 0.5) / Battle.STEP)))
+	ok(h.gun_btn.is_visible_in_tree() and t1 == "%s %d с" % [gun.def.short, ceili(left)] and lk1 == Builder.Look.NORMAL and tip.contains(gun.def.name) and tip.contains("ИИ"),
+		"часы орудия противника: «%s» (до готовности %.1f с), подсказка называет «%s» и ИИ" % [t1, left, gun.def.name])
+	ok(h.gun_bar.visible and num(h.gun_bar.get_meta(&"frac", -1.0)) < 0.5, "под словом — полоска перезарядки (готово на %.0f%%)" % (100.0 * num(h.gun_bar.get_meta(&"frac", 0.0))))
+	# ИИ бьёт, как только готово (стоящий строй — скопление): кольцо — «Удар N с», горит
+	_steps(p, maxi(0, ceili(left / Battle.STEP)) + 1)
 	await hooks.frames(2)
-	var left2 := gun.next - p.battle.time
 	var t2 := h.gun_btn.text
 	var lk2: int = h.gun_btn.get_meta(&"cf_look", -1)
-	ok(left2 > 0.0 and left2 < 1.0 and t2 == "%s залп" % gun.def.short and lk2 == Builder.Look.ON,
-		"за %.2f с до залпа — «%s», кнопка горит" % [left2, t2])
+	ok(gun.warned and t2.begins_with("Удар ") and lk2 == Builder.Look.ON and not h.gun_bar.visible, "залп летит — «%s», плашка горит" % t2)
+	# ИИ ждёт хорошей цели (орудие готово, а залпа нет) — «<орудие> готово», горит
+	gun.warned = false
+	gun.has_aim = false
+	gun.next = p.battle.time - 1.0
+	await hooks.frames(2)
+	ok(h.gun_btn.text == "%s готово" % gun.def.short and whole(h.gun_btn.get_meta(&"cf_look", -1)) == Builder.Look.ON and not h.gun_bar.visible, "орудие противника готово и ждёт — «%s», горит" % h.gun_btn.text)
 	# орудия нет — плашки нет, шапка без пустого места
 	p.battle.gun = null
 	await hooks.frames(2)
-	ok(not h.gun_btn.is_visible_in_tree() and not h.shown_buttons().has(h.gun_btn), "орудия нет — плашки часов нет")
+	ok(not h.gun_btn.is_visible_in_tree() and not h.shown_buttons().has(h.gun_btn), "орудия нет — плашки нет")
 	await _close()
+	var q := await _open(Vector2i(1366, 768))
+	ok(q.battle.gun == null and not q.hud.header.gun_btn.is_visible_in_tree(), "быстрый бой по умолчанию — орудия нет, плашки нет")
+	await _close()
+
+
+## Орудие ИГРОКА («Моё», ион Тройдена) кнопкой «Залп» в шапке и клавишей P — ОДНОЙ дверью (журнал
+## команд), настоящими событиями ввода: до готовности кнопка выключена, P — полоска «перезаряжается»
+## и команды нет; готово — «Залп · P» горит; нажатие — «Куда? · Esc», щелчок ЛКМ по чужому флагману —
+## команда &"gun" с местом щелчка, кольцо там же, кнопка «Удар N с» выключена; Esc снимает ожидание,
+## выбор цел; ПКМ — обычный приказ, ожидание снято. 1366 и 1920: кнопка не наезжает на соседей.
+func test_player_salvo_button_and_key() -> void:
+	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
+		var tag := "%d×%d" % [size.x, size.y]
+		var p := await _open(size, false, false, "hud_salvo", false, 4242, "mine")
+		var b := p.battle
+		var h := p.hud.header
+		if not ok(b.gun != null and b.gun.human and b.gun.owner == Ship.ATTACKER, "%s: орудие «Моё» — у тебя" % tag):
+			await _close()
+			continue
+		await hooks.frames(2)
+		ok(h.gun_btn.disabled and h.gun_btn.text.begins_with(b.gun.def.short) and h.gun_bar.visible, "%s: до готовности — «%s», выключена, полоска перезарядки" % [tag, h.gun_btn.text])
+		var j0 := b.cmds.journal.size()
+		await hooks.key(KEY_P)
+		await hooks.frames(2)
+		ok(b.cmds.journal.size() == j0 and not p.input.gun_armed and p.hud.toasts.text.contains("перезаряжается"), "%s: P до готовности — команды нет, полоска «%s»" % [tag, p.hud.toasts.text])
+		# готово
+		_steps(p, ceili((b.gun.next - b.time) / Battle.STEP) + 1)
+		await hooks.frames(2)
+		ok(not h.gun_btn.disabled and h.gun_btn.text == "Залп · P" and whole(h.gun_btn.get_meta(&"cf_look", -1)) == Builder.Look.ON, "%s: готово — «%s», горит и нажимается" % [tag, h.gun_btn.text])
+		# соседи в шапке не перекрываются, кнопка в окне
+		var r := h.gun_btn.get_global_rect()
+		var over := PackedStringArray()
+		for o in h.shown_buttons():
+			if o != h.gun_btn and o.get_global_rect().intersects(r):
+				over.append(o.name)
+		ok(over.is_empty() and Rect2(Vector2.ZERO, Vector2(size)).encloses(r), "%s: «Залп» %s не наезжает на соседей (%s)" % [tag, str(r), ", ".join(over)])
+		ok(await _press(h.gun_btn), "%s: «Залп» нажимается настоящим щелчком" % tag)
+		await hooks.frames(2)
+		ok(p.input.gun_armed and h.gun_btn.text == "Куда? · Esc" and p.hud.input_hint().begins_with("Залп"), "%s: ждёт места — «%s», подсказка «%s»" % [tag, h.gun_btn.text, p.hud.input_hint()])
+		# Esc — ожидание снято, выбор цел
+		p.view.selection = [b.side_ships(Ship.ATTACKER)[0].uid]
+		await hooks.key(KEY_ESCAPE)
+		await hooks.frames(2)
+		ok(not p.input.gun_armed and p.view.selection.size() == 1, "%s: Esc снимает ожидание залпа, выбор цел" % tag)
+		# P — снова ждёт; щелчок ЛКМ по чужому флагману
+		await hooks.key(KEY_P)
+		await hooks.frames(1)
+		var foe: Ship = null
+		for s in b.side_ships(Ship.DEFENDER):
+			if s.def.id == &"capital":
+				foe = s
+				break
+		var sp := p.view.rig.camera.unproject_position(p.view.ship_point(foe))
+		var j1 := b.cmds.journal.size()
+		await hooks.click(sp)
+		await hooks.frames(1)
+		var cmds := _tail(p, j1)
+		var got: Dictionary = cmds[0] if cmds.size() == 1 else {}
+		var at := Vector2(num(got.get("x", 1e9)), num(got.get("z", 1e9)))
+		ok(cmds.size() == 1 and str(got.get("op", "")) == "gun" and at.distance_to(foe.pos) < 40.0, "%s: щелчок по флагману — команда «gun» в журнале у него (%s, до флагмана %.1f)" % [tag, str(at), at.distance_to(foe.pos)])
+		ok(not p.input.gun_armed, "%s: после щелчка ожидание снято" % tag)
+		_steps(p, 1)
+		await hooks.frames(2)
+		ok(b.gun.warned and b.gun.aim.distance_to(at) < 1e-6 and h.gun_btn.disabled and h.gun_btn.text.begins_with("Удар "), "%s: кольцо в точке щелчка, кнопка «%s» выключена" % [tag, h.gun_btn.text])
+		var j2 := b.cmds.journal.size()
+		await hooks.key(KEY_P)
+		await hooks.frames(1)
+		ok(b.cmds.journal.size() == j2 and p.hud.toasts.text.contains("летит"), "%s: P в полёте — команды нет, «%s»" % [tag, p.hud.toasts.text])
+		# через 4 с — луч из планеты: флагман задет и на 10 с без двигателей; на кнопке перезарядка
+		var hp0 := foe.hp
+		var fired := false
+		p.view.paused = false
+		while not fired and b.time < 60.0:
+			p.view.advance(Battle.STEP)
+			for e: Array in b.events:
+				if e[0] == &"gun_fire":
+					var hu: PackedInt32Array = e[3]
+					fired = hu.has(foe.uid)
+		p.view.paused = true
+		await hooks.frames(2)
+		ok(fired and foe.hp < hp0 and foe.is_off(&"engines", b.time + 9.5), "%s: луч ударил по флагману (%.0f → %.0f), двигатели выключены на 10 с" % [tag, hp0, foe.hp])
+		ok(h.gun_btn.disabled and h.gun_btn.text == "%s %d с" % [b.gun.def.short, ceili(b.gun.next - b.time)] and h.gun_bar.visible, "%s: на кнопке перезарядка — «%s» и полоска" % [tag, h.gun_btn.text])
+		await _close()
 
 
 ## Ни одна клавиша не потеряна: у каждой команды клавиш (KEY_CMD) есть кнопка — в сетке при
 ## полном выборе, в шапке или в столбике.
 func _lost_keys(drop: StringName) -> PackedStringArray:
 	PolygonHud.rollback_drop_cmd = drop
-	var p := await _open(Vector2i(1366, 768))
+	var p := await _open(Vector2i(1366, 768), false, false, "hud", false, 4242, "mine")   # с орудием игрока — у P есть кнопка «Залп»
 	p.view.selection = _rich_selection(p)
 	await hooks.frames(4)
 	var have: Dictionary[StringName, bool] = {}
@@ -774,6 +869,8 @@ func _lost_keys(drop: StringName) -> PackedStringArray:
 		if p.hud.quick_buttons[id].is_visible_in_tree():
 			have[id] = true
 	have[&"arrived"] = have.has(&"reinforce")          # та же кнопка в режиме «Прибывшие (N)»
+	if p.hud.header.gun_btn.is_visible_in_tree() and p.hud.header.gun_human:
+		have[&"gun_salvo"] = true                       # «Залп» — кнопка орудия игрока в шапке
 	var lost := PackedStringArray()
 	for k: Key in BattleInput.KEY_CMD:
 		var id: StringName = BattleInput.KEY_CMD[k]
@@ -2716,7 +2813,7 @@ func _dodge_salvo(q: Polygon) -> Dictionary:
 	q.view.rig.edge_enabled = false
 	var qb := q.battle
 	q.view.paused = false
-	while not qb.gun.warned and qb.time < 30.0:
+	while not qb.gun.warned and qb.time < 40.0:
 		q.view.advance(Battle.STEP)
 	# человек заметил кольцо — через секунду
 	for i in roundi(1.0 / Battle.STEP):
@@ -2770,7 +2867,7 @@ func _dodge_salvo(q: Polygon) -> Dictionary:
 			got.sort()
 			out["ordered"] = flag(out["ordered"]) or got == sel_sorted
 	q.view.paused = false
-	while not flag(out["fired"]) and qb.time < 30.0:
+	while not flag(out["fired"]) and qb.time < 45.0:
 		q.view.advance(Battle.STEP)
 		for e: Array in qb.events:
 			if e[0] == &"gun_fire":
@@ -2789,9 +2886,11 @@ func _dodge_salvo(q: Polygon) -> Dictionary:
 	return out
 
 
-## «Что попробовать» capella-v0.8.1 (хвост проверки GТ, пакет GЭ) событиями ввода, на 1366 и 1920:
-## 1) «В бой», ничего не нажимая: около 17-й секунды загорается кольцо (часы «ЯДР» в шапке), залп — на
-##    24-й (через 7 с после кольца);
+## «Что попробовать» capella-v0.8.1 (хвост проверки GТ, пакет GЭ) событиями ввода, на 1366 и 1920.
+## С capella-v0.10 орудие — галочкой в меню (решение 01.11.2026), и стреляет им ИИ, когда решит: путь
+## тот же, но сперва в меню «Орудие планеты» и «У противника», а кольцо — как только орудие готово:
+## 1) галочка «Орудие планеты», «У противника», «В бой», ничего не нажимая: на 23,8-й секунде загорается
+##    кольцо (часы «ЯДР» в шапке), залп — через 7 с после кольца;
 ## 2) «В меню» вверху справа, подтвердить, снова «В бой»; как только загорелось кольцо — рамкой своих
 ##    в кольце и правой кнопкой подальше за краем кольца: рамка выбрала ровно своих в кольце, у них
 ##    в журнале приказ «идти», залп никого из них не убил и задел разве что краем (не ближе половины
@@ -2799,31 +2898,36 @@ func _dodge_salvo(q: Polygon) -> Dictionary:
 ##    что путь ввода, описанный в тексте, работает как написано. Откат — «кольцо ведёт корабль»
 ##    (`GroundGun.rollback_aim_at_fire`): залп ложится серединой на уведённого — проверка краснеет.
 ## (С выпуска 0.9 — прежний текст; «Что попробовать» 0.9 — tests/test_fx_effects.gd → test_release_walkthrough.)
+## Галочка «Орудие планеты» и «У противника» в меню — по порядку, настоящими щелчками.
+const GUN_FOE: Array[String] = ["gun:on", "owner:foe"]
+## Уведённый из кольца — дальше этой доли радиуса от середины залпа (откат «кольцо ведёт корабль» — 0).
+const DODGE_NEAR := 0.25
+
 func test_walkthrough_081() -> void:
 	for size: Vector2i in [Vector2i(1366, 768), Vector2i(1920, 1080)]:
 		var tag := "%d×%d" % [size.x, size.y]
-		var p := await _open_by_menu(size, "go")
-		if not ok(p != null, "%s, шаг 1: «В бой» нажимается" % tag):
+		var p := await _open_by_menu(size, "go", GUN_FOE)
+		if not ok(p != null, "%s, шаг 1: галочка «Орудие планеты», «У противника» и «В бой» нажимаются" % tag):
 			await _close()
 			continue
 		var b := p.battle
 		p.view.paused = false
-		while not b.gun.warned and b.time < 30.0:
+		while not b.gun.warned and b.time < 40.0:
 			p.view.advance(Battle.STEP)
 		var warn_t := b.time
 		p.view.paused = true
 		await hooks.frames(2)
 		var gun_text := p.hud.header.gun_btn.text
-		ok(warn_t >= 16.0 and warn_t <= 18.0 and gun_text.begins_with(b.gun.def.short), "%s, шаг 1: кольцо загорелось на %.1f с (около 17-й), часы в шапке «%s»" % [tag, warn_t, gun_text])
+		ok(warn_t >= 23.0 and warn_t <= 25.0 and gun_text.begins_with("Удар "), "%s, шаг 1: кольцо загорелось на %.1f с (орудие готово на 23,8-й), в шапке «%s»" % [tag, warn_t, gun_text])
 		var fire_t := -1.0
 		p.view.paused = false
-		while fire_t < 0.0 and b.time < 30.0:
+		while fire_t < 0.0 and b.time < 40.0:
 			p.view.advance(Battle.STEP)
 			for e: Array in b.events:
 				if e[0] == &"gun_fire":
 					fire_t = b.time
 		p.view.paused = true
-		ok(fire_t >= 23.0 and fire_t <= 25.0 and absf(fire_t - warn_t - 7.0) < 0.5, "%s, шаг 1: залп на %.1f с — через 7 с после кольца" % [tag, fire_t])
+		ok(fire_t >= 30.0 and fire_t <= 32.0 and absf(fire_t - warn_t - 7.0) < 0.5, "%s, шаг 1: залп на %.1f с — через 7 с после кольца" % [tag, fire_t])
 		# шаг 2: «В меню» вверху справа, подтвердить, снова «В бой»
 		var main: Node = _main
 		ok(await _press(p.leave_btn), "%s, шаг 2: «В меню» вверху справа нажимается" % tag)
@@ -2842,14 +2946,16 @@ func test_walkthrough_081() -> void:
 			tag, warn_t, fire_t, whole(r["inside"]), whole(r["hit"]), num(r["near"]), whole(r["lost"])])
 		ok(whole(r["inside"]) > 0 and flag(r["same"]), "%s, шаг 2: рамка выбрала ровно своих в кольце (%d)" % [tag, whole(r["inside"])])
 		ok(flag(r["ordered"]), "%s, шаг 2: ПКМ за краем кольца — приказ «идти» выбранным в журнале боя" % tag)
-		ok(flag(r["fired"]) and whole(r["lost"]) == 0 and num(r["near"]) >= 0.5, "%s, шаг 2: уведённых залп не убил и задел разве что краем (задело %d, ближе всего %.2f радиуса, погибло %d)" % [tag, whole(r["hit"]), num(r["near"]), whole(r["lost"])])
+		# с capella-v0.10 ИИ целит в ТЯЖЁЛОГО — в стоящем строю это носитель (самый медленный): за 6 с
+		# он уходит от середины на треть радиуса (0,34), а не на половину, как случайная цель 0.8.1
+		ok(flag(r["fired"]) and whole(r["lost"]) == 0 and num(r["near"]) >= DODGE_NEAR, "%s, шаг 2: уведённых залп не убил и середина ушла с них — дальше %.2f радиуса (задело %d, ближе всего %.2f радиуса, погибло %d)" % [tag, DODGE_NEAR, whole(r["hit"]), num(r["near"]), whole(r["lost"])])
 		await _close()
 	# откат: залп ложится туда, где корабль В МИГ ЗАЛПА («кольцо ведёт корабль»)
 	GroundGun.rollback_aim_at_fire = true
-	var o := await _open_by_menu(Vector2i(1366, 768), "go")
+	var o := await _open_by_menu(Vector2i(1366, 768), "go", GUN_FOE)
 	if ok(o != null, "откат: «В бой» нажимается"):
 		var ro := await _dodge_salvo(o)
 		note("откат «кольцо ведёт корабль»: задело %d, ближе всего %.2f радиуса, погибло %d" % [whole(ro["hit"]), num(ro["near"]), whole(ro["lost"])])
-		ok(whole(ro["lost"]) > 0 or num(ro["near"]) < 0.5, "откат «кольцо ведёт корабль»: залп накрыл уведённого серединой — проверка краснеет")
+		ok(whole(ro["lost"]) > 0 or num(ro["near"]) < DODGE_NEAR, "откат «кольцо ведёт корабль»: залп накрыл уведённого серединой — проверка краснеет")
 	GroundGun.rollback_aim_at_fire = false
 	await _close()

@@ -87,21 +87,24 @@ func test_first_main_gun_window() -> void:
 
 # ───────────────────────── орудие планеты на старте (доработка GТ) ─────────────────────────
 
-## Первый залп орудия планеты в быстром бою по умолчанию (ядерная ракета Плэктора, 0,7 периода —
-## выгрузка JS, GТ его не трогал): кольцо загорается за 7 с, флоты к залпу ещё не сошлись. Игрок не
+## Первый залп орудия планеты в быстром бою с орудием «У противника» (ядерная ракета Плэктора; с
+## capella-v0.10 — по решению ИИ, 09, 7.8: готово на 0,7 периода, стоящий строй — скопление и тяжёлые,
+## ИИ бьёт сразу): кольцо загорается на 23,8 с, залп — через 7 с, флоты ещё не сошлись. Игрок не
 ## отдаёт приказов (dodge = false) — наводка на свой корабль, и он там и стоит; dodge — на
 ## предупреждении все свои в кольце (+30) идут «идти» на 250 за его край, как человек мышью.
 ## → время кольца и залпа, первый главный калибр, ближайший свой к центру залпа, задето своих,
 ## наибольшая доля прочности, снятая залпом с одного своего, погибших.
 func _gun_first(d: Defs, seed_n: int, dodge: bool) -> Dictionary:
-	var b := Battle.create(d, Polygon.quick_setup(QuickMenu.default_cfg(d, false), seed_n), "capella-проверка") as Battle
+	var cfg := QuickMenu.default_cfg(d, false)
+	cfg["gun"] = "foe"                       # с capella-v0.10 орудие — галочкой в меню (решение 01.11.2026)
+	var b := Battle.create(d, Polygon.quick_setup(cfg, seed_n), "capella-проверка") as Battle
 	var warn_t := -1.0
 	var fire_t := -1.0
 	var hit := 0
 	var lost := 0
 	var worst := 0.0
 	var near := INF
-	while b.time < 40.0 and not b.over and fire_t < 0.0:
+	while b.time < 45.0 and not b.over and fire_t < 0.0:
 		var pre: Dictionary[int, float] = {}
 		for s in b.ships:
 			pre[s.uid] = s.hp
@@ -143,7 +146,8 @@ func _gun_first(d: Defs, seed_n: int, dodge: bool) -> Dictionary:
 
 
 ## Что обещает текст выпуска 0.8.1 о первом залпе — проверено пробой на 200 зёрнах (godot/CLAUDE.md,
-## 23), здесь — правило на трёх: (1) залп на 0,7 периода, кольцо — за `warn` до него, и флоты к залпу
+## 23), здесь — правило на трёх (с capella-v0.10 — при орудии «У противника»: кольцо загорается, как
+## только орудие готово, на 0,7 периода, и залп — через `warn` после него): (1) кольцо на 0,7 периода, и флоты к залпу
 ## ещё не сошлись (главный калибр не стрелял); (2) никто не уводит — центр залпа на своём корабле
 ## (ближе 30), задет хотя бы один; (3) уводят в миг, когда кольцо загорелось, — никто не гибнет и центр
 ## залпа не на корабле (ближайший свой дальше FREE_OF_CENTER). Краем задевает часто: крупный корабль за
@@ -170,15 +174,15 @@ func test_planet_gun_first_salvo_dodge() -> void:
 			num(st["near"]), whole(st["hit"]), 100.0 * num(st["worst"]), whole(st["lost"]),
 			num(dg["near"]), whole(dg["hit"]), 100.0 * num(dg["worst"]), whole(dg["lost"]), num(rb["near"]), whole(rb["lost"])])
 		var p := num(st["period"])
-		if absf(num(st["fire"]) - 0.7 * p) > Battle.STEP + 1e-6 or absf(num(st["fire"]) - num(st["warn"]) - num(st["lead"])) > Battle.STEP + 1e-6:
-			bad.append("зерно %d: залп %.2f с (ждали %.2f), кольцо за %.2f с (ждали %.0f)" % [sn, num(st["fire"]), 0.7 * p, num(st["fire"]) - num(st["warn"]), num(st["lead"])])
+		if absf(num(st["warn"]) - 0.7 * p) > Battle.STEP + 1e-6 or absf(num(st["fire"]) - num(st["warn"]) - num(st["lead"])) > Battle.STEP + 1e-6:
+			bad.append("зерно %d: кольцо %.2f с (ждали %.2f — орудие готово), залп через %.2f с (ждали %.0f)" % [sn, num(st["warn"]), 0.7 * p, num(st["fire"]) - num(st["warn"]), num(st["lead"])])
 		if num(st["gun"]) > 0.0:
 			bad.append("зерно %d: главный калибр выстрелил раньше залпа (%.1f с)" % [sn, num(st["gun"])])
 		if num(st["near"]) > 30.0 or whole(st["hit"]) == 0:
 			bad.append("зерно %d: стоящих залп не накрыл (ближайший %.0f, задето %d)" % [sn, num(st["near"]), whole(st["hit"])])
 		if whole(dg["lost"]) > 0 or num(dg["near"]) < FREE_OF_CENTER:
 			bad.append("зерно %d: уведённые — ближайший к центру %.0f, погибло %d" % [sn, num(dg["near"]), whole(dg["lost"])])
-	ok(bad.is_empty(), "первый залп орудия планеты: на 0,7 периода, кольцо — за 7 с, до схода флотов; стоящих накрывает центром, уведённых из кольца — в худшем краем, никто не гибнет%s" % ((": " + "; ".join(bad)) if not bad.is_empty() else ""))
+	ok(bad.is_empty(), "первый залп орудия планеты противника: кольцо, как только готово (0,7 периода), залп — через 7 с, до схода флотов; стоящих накрывает центром, уведённых из кольца — в худшем краем, никто не гибнет%s" % ((": " + "; ".join(bad)) if not bad.is_empty() else ""))
 	ok(rb_near < FREE_OF_CENTER, "откат «кольцо ведёт корабль»: центр залпа на корабле (ближайший %.0f) — проверка краснеет" % rb_near)
 
 
@@ -260,9 +264,16 @@ func test_brake_path_same_door() -> void:
 
 # ───────────────────────── прежний темп — тот же бой (все правки GТ — числа) ─────────────────────────
 
-func _fps(d: Defs) -> PackedStringArray:
+## old_gun — орудие планеты, как до capella-v0.10: у защитника в быстром бою всегда и по таймеру
+## (GroundGun.rollback_timer); иначе — нынешнее (в «ИИ против ИИ» по умолчанию его нет).
+func _fps(d: Defs, old_gun: bool = false) -> PackedStringArray:
+	GroundGun.rollback_timer = old_gun
 	var rec := Polygon.make_record(d, "capella-проверка")
-	var ab := Battle.create(d, Polygon.quick_setup(QuickMenu.default_cfg(d, true), Polygon.SEED), "capella-проверка") as Battle
+	var cfg := QuickMenu.default_cfg(d, true)
+	if old_gun:
+		cfg["gun"] = "foe"
+	var ab := Battle.create(d, Polygon.quick_setup(cfg, Polygon.SEED), "capella-проверка") as Battle
+	GroundGun.rollback_timer = false
 	for i in MainScript.AI_SELFTEST_STEPS:
 		ab.step()
 	var out := PackedStringArray([str(rec["fp"]), ab.fingerprint()])
@@ -275,16 +286,21 @@ func _fps(d: Defs) -> PackedStringArray:
 ## doctrine.json и свой счёт углов (sim/fmath.gd: у Windows-сборки библиотечные sin, cos и atan2
 ## другие, и бой на двух системах расходился). Замер М16 в отпечаток не входит. Откат — прежние
 ## числа без одного (heavy.thrust_k оставлен новым): отпечатки другие.
+## С пакета «Орудие планеты» (capella-v0.10) бой 0.7.1 — это ещё и прежнее орудие: у защитника всегда
+## и по таймеру (GroundGun.rollback_timer + «У противника» в выборе меню). С ним — те же отпечатки до
+## бита: решение 01.11.2026 добавило в бой только орудие по приказу и по решению ИИ.
 func test_old_tempo_same_battle() -> void:
 	Fmath.rollback_libm = true
-	var f := _fps(Defs.load_default(OLD_TEMPO) as Defs)
+	var f := _fps(Defs.load_default(OLD_TEMPO) as Defs, true)
 	var part := OLD_TEMPO.duplicate()
 	part.erase("heavy.thrust_k")
-	var o := _fps(Defs.load_default(part) as Defs)
+	var o := _fps(Defs.load_default(part) as Defs, true)
+	var ng := _fps(Defs.load_default(OLD_TEMPO) as Defs)
 	Fmath.rollback_libm = false
 	note("прежний темп, углы библиотеки C: показательный бой %s, «ИИ против ИИ» %s (0.7.1: %s, %s)" % [f[0], f[1], FP_DEMO_071, FP_AI_071])
 	ok(f[0] == FP_DEMO_071 and f[1] == FP_AI_071, "прежние числа доктрины и углы библиотеки C — бой 0.7.1 до бита: показательный %s, «ИИ» %s" % [f[0], f[1]])
 	ok(o[0] != FP_DEMO_071 and o[1] != FP_AI_071, "откат «прежние числа без heavy.thrust_k»: отпечатки %s, %s — проверка краснеет" % [o[0], o[1]])
+	ok(ng[0] != FP_DEMO_071 and ng[1] != FP_AI_071, "откат «орудие нынешнее» (по решению ИИ, в «ИИ против ИИ» его нет): отпечатки %s, %s — проверка краснеет" % [ng[0], ng[1]])
 	var own := _fps(Defs.load_default(OLD_TEMPO) as Defs)
 	note("прежний темп, свои углы: показательный бой %s, «ИИ против ИИ» %s — другие в последнем бите, как и бой Windows" % [own[0], own[1]])
 	var now := _fps(_defs())

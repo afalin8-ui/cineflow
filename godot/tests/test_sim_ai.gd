@@ -921,7 +921,9 @@ static func _starts_with_any(line: String, heads: PackedStringArray) -> bool:
 ## до итога или until с: что модель написала человеку — лента (текст и вид) и полоски.
 func _voice(watch: bool, until: float, rollback: bool) -> Dictionary:
 	State.rollback_watch_voice = rollback
-	var b := Battle.create(_defs(), Polygon.quick_setup(QuickMenu.default_cfg(_defs(), watch), VOICE_SEED)) as Battle
+	var cfg := QuickMenu.default_cfg(_defs(), watch)
+	cfg["gun"] = "foe"           # с capella-v0.10 орудие — галочкой в меню; его полоски здесь тоже ловим
+	var b := Battle.create(_defs(), Polygon.quick_setup(cfg, VOICE_SEED)) as Battle
 	while not b.over and b.time < until:
 		b.step()
 	var feed := PackedStringArray()
@@ -990,9 +992,9 @@ func test_watch_feed_names_clans() -> void:
 			loud += 1
 	eq(loud, 0, "у зрителя нет «своего» успеха: строки ленты — нейтрального вида, ни зелёных, ни красных")
 	# контроль: бой с игроком — «наш» и «вражеский» на месте (правило не стёрло их везде)
-	var c := _voice(false, 60.0, false)
+	var c := _voice(false, 120.0, false)
 	var cfeed: PackedStringArray = c["feed"]
-	note("контроль, бой с игроком 60 с: «Потерян наш» — %d, «вражеск» — %d из %d строк" % [_count(cfeed, "Потерян наш"), _count(cfeed, "вражеск"), cfeed.size()])
+	note("контроль, бой с игроком 120 с: «Потерян наш» — %d, «вражеск» — %d из %d строк" % [_count(cfeed, "Потерян наш"), _count(cfeed, "вражеск"), cfeed.size()])
 	ok(_count(cfeed, "Потерян наш") > 0 and _count(cfeed, "вражеск") > 0, "контроль: в бою с игроком лента говорит «наш» и «вражеский» (%d строк)" % cfeed.size())
 	# откат: прежняя лента — с места атакующего
 	var o := _voice(true, 60.0, true)
