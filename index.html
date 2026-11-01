@@ -519,7 +519,7 @@
         html.cf-touch .cf-sr-x { opacity: .5; width: var(--tap-sm); height: var(--tap-sm); }
         .cf-sr-q { font-family: 'Courier Prime', 'Courier New', Courier, monospace; font-size: 11px; color: var(--muted-2);
                    margin: 0 0 3px 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .cf-sr-anchor { position: absolute; left: 0; right: 0; z-index: 2; transition: top .15s; }
+        .cf-sr-anchor { position: absolute; left: 0; right: 0; z-index: 2; }
         .cf-sr-inkcard canvas { display: block; max-width: 100%; }
         .cf-sr-inkh { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted-2); }
         .cf-sr-inkh button { color: var(--muted-2); min-height: 28px; } .cf-sr-inkh button:hover { color: var(--accent); }
@@ -10899,6 +10899,7 @@
               if (raf) return;
               raf = requestAnimationFrame(() => {
                 raf = 0;
+                if (slideRef.current) slideRef.current();
                 const lim = root.getBoundingClientRect().top + root.clientHeight * 0.4;
                 let id = null;
                 root.querySelectorAll('[data-sr]').forEach(el => { if (el.getBoundingClientRect().top <= lim) id = el.dataset.sr; });
@@ -10945,15 +10946,29 @@
                 else y = lineTop(+el.dataset.li) + (+el.dataset.dy || 0) * k - 6;
                 return { el, y, h: el.offsetHeight };
               }).sort((a, b) => a.y - b.y);
-              return { sid, aside, k, lineTop, floor: block ? block.offsetHeight + 14 : 0, items, w: aside.clientWidth };
+              return { sid, aside, k, lineTop, block, floor: block ? block.offsetHeight + 14 : 0, items, w: aside.clientWidth };
             });
             plan.forEach(p => {
               if (!p) return;
+              p.aside._sr = null;
+              if (p.block) p.block.style.transform = '';
               if (stack) return;
               let floor = p.floor;
-              p.items.forEach(({ el, y, h }) => { const top = Math.max(y, floor); el.style.top = top + 'px'; floor = top + h + 12; });
+              const placed = [];
+              p.items.forEach(({ el, y, h }) => { const top = Math.max(y, floor); el.style.top = top + 'px'; placed.push({ el, y: top, h }); floor = top + h + 12; });
               p.aside.style.minHeight = (P.current.pen ? 0 : floor) + 'px';
+              if (!P.current.pen && p.block) p.aside._sr = { block: p.block, blockH: p.floor - 14, items: placed };
             });
+            // Где каждое поле стоит в свитке и какой оно высоты — замер ОДИН
+            // раз здесь, а не на каждом шаге прокрутки: при ней остаётся
+            // только арифметика от scrollTop (140 сцен — 140 замеров на кадр
+            // удваивали время кадра).
+            const rr0 = root.getBoundingClientRect(), st0 = root.scrollTop;
+            slideList.current = plan.filter(p => p && p.aside._sr).map(p => {
+              const r = p.aside.getBoundingClientRect();
+              return Object.assign(p.aside._sr, { y0: r.top - rr0.top + st0, h: p.aside.clientHeight });
+            });
+            slide();
             // Перо: холст во всё поле, рукопись — на своих строках.
             plan.forEach(p => {
               if (!p) return;
@@ -10967,6 +10982,46 @@
               ink.forEach(s => inkStroke(ctx, s, 0, p.lineTop(s.li), p.k));
             });
           };
+          // --- БЛОК ПОЛЯ СПОЛЗАЕТ ВДОЛЬ СЦЕНЫ. Жалоба: «на длинных сценах
+          // заметки должны сползать вдоль сцены при прокрутке» — блок
+          // (раскадровка, экспликация, заметки, техника) стоял у заголовка
+          // и уезжал вверх вместе с ним, а сцену читают ещё два экрана.
+          // CSS-ного sticky тут мало: заметки к фразам стоят у своих строк,
+          // и прилипший блок наехал бы на них. Поэтому блок и заметки
+          // ведёт один счёт: блок идёт за верхом окна (высокий — за низом,
+          // чтобы его конец был виден), не уходит ниже конца поля, а
+          // заметки, которые он догнал, едут под ним стопкой. Те, чьи
+          // строки уже выше блока, стоят у своих строк.
+          const slideList = useRef([]);
+          const barH = useRef(0);
+          const slide = () => {
+            const root = rootRef.current; if (!root || flow) return;
+            const rr = root.getBoundingClientRect(), st = root.scrollTop;
+            if (!barH.current) { const bar = root.querySelector('.cf-script-bar'); barH.current = bar ? bar.offsetHeight : 0; }
+            const vTop = rr.top + barH.current + 10, vBot = rr.bottom - 10;
+            slideList.current.forEach(d => {
+              const top = rr.top + d.y0 - st, h = d.h;
+              if (top + h < rr.top - 200 || top > rr.bottom + 200) {
+                if (d.t) { d.t = 0; d.block.style.transform = ''; d.items.forEach(it => { it.el.style.top = it.y + 'px'; }); }
+                return;
+              }
+              const want = Math.max(0, d.blockH <= vBot - vTop ? vTop - top : vBot - d.blockH - top);
+              let t = want;
+              for (let k = 0; k < 3; k++) {
+                const need = d.items.filter(it => it.y + it.h > t - 8).reduce((sum, it) => sum + it.h + 12, 0);
+                t = Math.max(0, Math.min(want, h - d.blockH - 14 - need));
+              }
+              d.t = t;
+              d.block.style.transform = t ? `translateY(${Math.round(t)}px)` : '';
+              let floor = t + d.blockH + 14;
+              d.items.forEach(it => {
+                let y = it.y;
+                if (it.y + it.h > t - 8) { y = Math.max(it.y, floor); floor = y + it.h + 12; }
+                it.el.style.top = Math.round(y) + 'px';
+              });
+            });
+          };
+          const slideRef = useRef(null); slideRef.current = slide;
           React.useLayoutEffect(layout);
           useEffect(() => {
             let t;
