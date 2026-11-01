@@ -4,6 +4,10 @@
 # умолчанию «Офицер». Игрок — атакующий, как в JS. Две двери: «В бой» и «Смотреть: ИИ против
 # ИИ» (человек только смотрит). Выбор — кнопками в ряд, а не выпадающими списками: щёлкнуть
 # проще, и проверка нажимает ровно то, что увидит человек.
+# Орудие планеты (решение пользователя 01.11.2026: «опция у игрока», «оба варианта») — галочка
+# «Орудие планеты» (по умолчанию выключена: орудия в бою нет) и чьё оно: «Моё» (стреляешь сам
+# кнопкой «Залп» или P) или «У противника» (стреляет ИИ). Выбор помнится между запусками
+# (view/settings.gd, раздел [menu]), остальной выбор меню — до выхода из игры (main.gd → last_cfg).
 # Правила интерфейса (00, 6.2–6.4): раскладочные узлы — IGNORE, кнопки — FOCUS_NONE, окно —
 # STOP целиком.
 extends CanvasLayer
@@ -14,6 +18,7 @@ const Defs := preload("res://sim/defs.gd")
 const Battle := preload("res://sim/battle.gd")
 const FrameBench := preload("res://ui/frame_bench.gd")
 const Ai := preload("res://sim/ai.gd")
+const Settings := preload("res://view/settings.gd")
 
 ## Кланы, которые срез уже умеет (модели, проверки): остальные видны, но выключены.
 const READY: Array[StringName] = [&"troyden", &"plektor"]
@@ -26,6 +31,13 @@ var panel: PanelContainer
 var desc_label: Label
 var lineup_label: Label
 var later_label: Label
+## Орудие планеты: подпись под выбором (что оно делает и кто стреляет).
+var gun_label: Label
+## Чьё орудие выбрано последним («mine» / «foe») — помнится и при выключенной галочке.
+var gun_owner := "mine"
+## ТОЛЬКО для проверки отката: меню не читает выбор орудия планеты из файла настроек — каждый запуск
+## начинается без орудия, как будто выбора не было. В игре false.
+static var rollback_gun_forget := false
 ## Кнопки по ключу «ряд:значение» (mine:troyden, foe:plektor, size:mid, dif:normal) и «go», «watch».
 var buttons: Dictionary[String, Button] = {}
 ## Сколько раз нажата каждая кнопка — проверки.
@@ -36,13 +48,19 @@ func setup(p_defs: Defs, p_build: String) -> void:
 	defs = p_defs
 	build = p_build
 	cfg = default_cfg(defs)
+	if not rollback_gun_forget:
+		gun_owner = "mine" if Settings.get_bool("menu", "gun_mine", true) else "foe"
+		cfg["gun"] = gun_owner if Settings.get_bool("menu", "gun_on", false) else "off"
 
 
-## Выбор по умолчанию (данные быстрого боя: Тройден × Плэктор, «Сражение», «Офицер»).
+## Выбор по умолчанию (данные быстрого боя: Тройден × Плэктор, «Сражение», «Офицер»; орудия
+## планеты нет — решение 01.11.2026, это опция). Файл настроек сюда НЕ подмешивается: этот выбор
+## берут `--quick`, `--watch` и `--selftest`, и их бой не должен зависеть от того, что игрок
+## нажимал в меню прошлый раз. Запомненное орудие кладёт в меню setup().
 static func default_cfg(p_defs: Defs, watch: bool = false) -> Dictionary:
 	var q := p_defs.quick
 	return {"attacker": str(q.default_mine), "defender": str(q.default_foe), "size": str(q.default_size),
-		"difficulty": str(q.default_difficulty), "watch": watch}
+		"difficulty": str(q.default_difficulty), "watch": watch, "gun": "off"}
 
 
 ## Что сложность меняет В ЭТОМ бою — из её чисел (03, 2.18; 05, 2.8): как часто думает ИИ,
@@ -86,10 +104,13 @@ func _ready() -> void:
 	add_child(panel)
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_theme_constant_override("separation", 10)
+	# промежуток 5, а не 10: с рядом «Орудие планеты» (решение 01.11.2026) меню с промежутком 10
+	# выходило выше окна 1366×768 — 821 точка (test_ui_quick → test_menu_planet_gun), а с 7 (707
+	# точек) верх панели ложился на подсказку клавиш слева сверху (test_render_quick)
+	box.add_theme_constant_override("separation", 5)
 	panel.add_child(box)
 	box.add_child(_text("Капелла · быстрый бой на орбите", 26, Color(1.0, 0.92, 0.7)))
-	box.add_child(_text("Ты — атакующий. У планеты противника орудие, оно бьёт по твоему флоту.", 16, Color(0.75, 0.82, 0.9)))
+	box.add_child(_text("Ты — атакующий: твой флот пришёл отбить орбиту у противника.", 16, Color(0.75, 0.82, 0.9)))
 	box.add_child(_gap())
 	box.add_child(_text("Твой клан", 17, Color(0.85, 0.92, 1.0)))
 	box.add_child(_clan_row("mine"))
@@ -119,6 +140,29 @@ func _ready() -> void:
 	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc_label.custom_minimum_size = Vector2(560.0, 0.0)
 	box.add_child(desc_label)
+	box.add_child(_gap())
+	var grow := _row()
+	var cb := CheckBox.new()
+	cb.name = "gun_on"
+	cb.text = "Орудие планеты"
+	cb.focus_mode = Control.FOCUS_NONE
+	cb.custom_minimum_size = Vector2(0.0, 34.0)
+	cb.add_theme_font_size_override("font_size", 17)
+	cb.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
+	cb.add_theme_color_override("font_pressed_color", Color(1.0, 0.95, 0.8))
+	cb.add_theme_color_override("font_hover_pressed_color", Color(1.0, 0.95, 0.8))
+	cb.pressed.connect(_pick.bind("gun:on"))
+	buttons["gun:on"] = cb
+	grow.add_child(cb)
+	var og := ButtonGroup.new()
+	og.allow_unpress = false
+	grow.add_child(_choice("owner:mine", "Моё", og))
+	grow.add_child(_choice("owner:foe", "У противника", og))
+	box.add_child(grow)
+	gun_label = _text("", 15, Color(0.75, 0.82, 0.9))
+	gun_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	gun_label.custom_minimum_size = Vector2(560.0, 0.0)
+	box.add_child(gun_label)
 	box.add_child(_gap())
 	var act := _row()
 	act.add_child(_action("go", "В бой"))
@@ -215,7 +259,21 @@ func _pick(key: String) -> void:
 		"foe": cfg["defender"] = val
 		"size": cfg["size"] = val
 		"dif": cfg["difficulty"] = val
+		"gun":
+			cfg["gun"] = "off" if str(cfg.get("gun", "off")) != "off" else gun_owner
+			_save_gun()
+		"owner":
+			gun_owner = val
+			if str(cfg.get("gun", "off")) != "off":
+				cfg["gun"] = val
+			_save_gun()
 	_sync()
+
+
+## Орудие планеты помнится между запусками (view/settings.gd).
+func _save_gun() -> void:
+	Settings.set_bool("menu", "gun_on", str(cfg.get("gun", "off")) != "off")
+	Settings.set_bool("menu", "gun_mine", gun_owner == "mine")
 
 
 func _go(watch: bool) -> void:
@@ -244,6 +302,10 @@ func _sync() -> void:
 			"foe": want = str(cfg["defender"])
 			"size": want = str(cfg["size"])
 			"dif": want = str(cfg["difficulty"])
+			"gun": want = "on" if str(cfg.get("gun", "off")) != "off" else ""
+			"owner":
+				want = gun_owner
+				b.disabled = str(cfg.get("gun", "off")) == "off"
 		b.set_pressed_no_signal(val == want)
 	var later := PackedStringArray()
 	for id in defs.faction_ids:
@@ -254,7 +316,25 @@ func _sync() -> void:
 	var dd: Defs.DifficultyDef = defs.difficulty.get(StringName(str(cfg["difficulty"])))
 	desc_label.text = difficulty_text(dd) if dd != null else ""
 	lineup_label.text = lineup_text(defs, cfg)
+	gun_label.text = gun_text(defs, cfg)
 	_center()
+
+
+## Подпись под выбором орудия планеты: есть ли оно, чьё, какое и кто им стреляет.
+static func gun_text(p_defs: Defs, c: Dictionary) -> String:
+	var g := str(c.get("gun", "off"))
+	if g == "off":
+		return "Орудия планеты в бою нет. Включи галочку и выбери, чьё оно."
+	var clan := StringName(str(c["attacker"] if g == "mine" else c["defender"]))
+	var f: Defs.FactionDef = p_defs.factions.get(clan)
+	if f == null or f.ground_gun == null:
+		return ""
+	var gd := f.ground_gun
+	if g == "mine":
+		return "Твоё: «%s». Стреляешь сам — «Залп» вверху или P, затем щелчок по полю; перезарядка %d с. В «ИИ против ИИ» стреляет ИИ." % [
+			gd.name, roundi(gd.period)]
+	return "У противника: «%s». Стреляет ИИ — по скоплению или тяжёлому кораблю; кольцо горит %d с, уводи корабли." % [
+		gd.name, roundi(gd.warn)]
 
 
 ## «У тебя 8 кораблей и резерв из 5, у противника 22 и станция» — что будет в бою.

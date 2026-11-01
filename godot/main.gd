@@ -61,6 +61,8 @@ const HINT_POLYGON := "F3 — счётчик кадров · F5 — замер �
 ## --selftest: столько шагов «ИИ против ИИ» (60 с) — успевают первые тики обоих ИИ, общая цель,
 ## пуски звеньев и первые попадания.
 const AI_SELFTEST_STEPS := 1800
+## Орудие планеты ИИ в `--selftest`: 90 с — ядерная Плэктора готова на 23,8-й секунде.
+const GUN_SELFTEST_STEPS := 2700
 
 ## Только для проверок: с чего начать, если аргументов нет (&"table" — «Стол», &"polygon» —
 ## лаборатория «Бой линий»; пусто — меню «Быстрый бой»).
@@ -627,8 +629,37 @@ func _selftest() -> void:
 			fails.append("«ИИ против ИИ»: бой не под двумя ИИ")
 		ai_fp = ab.fingerprint()
 		ab.dispose()
-	var line := "SELFTEST %s: данные %s, бой %s, ИИ %s, правок %d, отрисовщик %s, ОС %s, сборка %s" % [
-		"ok" if fails.is_empty() else "ПРОВАЛ", defs.fingerprint, battle_fp, ai_fp, defs.overrides_applied.size(),
+	# орудие планеты (решение пользователя 01.11.2026): «ИИ против ИИ» с орудием у планеты противника —
+	# залп по РЕШЕНИЮ ИИ (09, 7.8) — и быстрый бой с орудием игрока: приказ «Залп» в записи, повтор
+	# сверяет отпечаток. Оба отпечатка CI сверяет между Linux и Windows (предупреждением)
+	var gun_fp := "—"
+	var salvo_fp := "—"
+	if defs.ok:
+		var gc := QuickMenu.default_cfg(defs, true)
+		gc["gun"] = "foe"
+		var gb := Battle.create(defs, Polygon.quick_setup(gc, Polygon.SEED), release_name()) as Battle
+		for i in GUN_SELFTEST_STEPS:
+			gb.step()
+		if gb.gun == null or gb.gun.human or gb.gun.salvos < 1:
+			fails.append("орудие планеты ИИ: за %d с ни одного залпа" % roundi(GUN_SELFTEST_STEPS * Battle.STEP))
+		gun_fp = gb.fingerprint()
+		gb.dispose()
+		var sr := Polygon.salvo_record(defs, release_name())
+		salvo_fp = str(sr["fp"])
+		if whole(sr["salvos"]) < 2:
+			fails.append("залп игрока: приказано %d залпов из двух" % whole(sr["salvos"]))
+		var why2 := PackedStringArray()
+		var sb := Battle.from_record(defs, sr, release_name(), why2) as Battle
+		if sb == null:
+			fails.append("запись боя с залпом не проигрывается: %s" % "; ".join(why2))
+		else:
+			while sb.steps < whole(sr["steps"]):
+				sb.step()
+			if sb.fingerprint() != salvo_fp:
+				fails.append("повтор боя с залпом разошёлся: %s против %s" % [sb.fingerprint(), salvo_fp])
+			sb.dispose()
+	var line := "SELFTEST %s: данные %s, бой %s, ИИ %s, орудие %s, залп %s, правок %d, отрисовщик %s, ОС %s, сборка %s" % [
+		"ok" if fails.is_empty() else "ПРОВАЛ", defs.fingerprint, battle_fp, ai_fp, gun_fp, salvo_fp, defs.overrides_applied.size(),
 		RenderingServer.get_current_rendering_method(), OS.get_name(), "выгружена" if OS.has_feature("template") else "редактор"]
 	print(line)
 	printerr(line)

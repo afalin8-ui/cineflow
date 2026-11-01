@@ -3,8 +3,11 @@
 # ИИ» — имя клана: у зрителя нет «своих»), метка клана, полоса цвета СТОРОНЫ (доля стороны
 # в общей прочности обеих сторон сейчас) и число живых кораблей. Первая строка — атакующий.
 # По середине — название боя и часы (только текст: щелчок по нему уходит в поле, C135).
-# Справа — часы орудия планеты (только если оно есть: пустой плашки нет), пауза и скорость,
-# кнопка подкрепления в трёх режимах, «Отход» (с вопросом) и «В меню».
+# Справа — орудие планеты (только если оно есть: пустой плашки нет), пауза и скорость,
+# кнопка подкрепления в трёх режимах, «Отход» (с вопросом) и «В меню». Орудие игрока — кнопка
+# «Залп · P» (решение пользователя 01.11.2026): готово — горит и нажимается, залп летит —
+# «Удар N с», перезарядка — «<орудие> N с» и полоска под словом; орудие противника — те же часы
+# плашкой («готово», «удар», перезарядка), стреляет им ИИ.
 # Фон шапки — градиент, а не плашка: ловят мышь только кнопки (ui/builder.gd → finish).
 extends Control
 
@@ -34,8 +37,13 @@ var count: Array[Label] = []
 ## Название боя и часы — та же строка, что раньше стояла справа сверху (имя «status» оставлено:
 ## его меряют проверки снимков).
 var status: Label
-## Часы орудия планеты (кнопка ради подсказки с описанием орудия; нажатие ничего не делает).
+## Орудие планеты: у игрока — кнопка «Залп» (id gun_salvo, одна дверь с клавишей P), у противника —
+## часы плашкой (кнопка ради подсказки с описанием орудия; нажатие ничего не делает).
 var gun_btn: Button
+## Полоска перезарядки под словом кнопки орудия: доля готовности 0…1.
+var gun_bar: ColorRect
+## Орудие на кнопке — игрока (нажатие — «Залп»).
+var gun_human := false
 ## «ИИ против ИИ»: резерв атакующего словами с кланом (кнопки подкрепления у зрителя нет).
 var reserve_label: Label
 var watch := false
@@ -101,7 +109,14 @@ func _ready() -> void:
 	status.name = "Status"
 	add_child(status)
 	gun_btn = Builder.button("gun", "", Vector2(110.0, BTN_H), 14)
+	gun_btn.pressed.connect(func() -> void:
+		if gun_human and on_press.is_valid():
+			on_press.call(&"gun_salvo"))
 	add_child(gun_btn)
+	gun_bar = ColorRect.new()
+	gun_bar.name = "GunReload"
+	gun_bar.color = Color(Builder.ACCENT.r, Builder.ACCENT.g, Builder.ACCENT.b, 0.75)
+	gun_btn.add_child(gun_bar)
 	reserve_label = Builder.label(14, Color(1.0, 0.86, 0.45))
 	add_child(reserve_label)
 	for id: StringName in [&"pause", &"speed1", &"speed2", &"speed4", &"reinforce", &"retreat", &"menu"]:
@@ -113,6 +128,7 @@ func _ready() -> void:
 		add_child(b)
 		buttons[id] = b
 	Builder.finish(self)
+	gun_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if tooltip != null:
 		for id: StringName in buttons:
 			tooltip.call("attach", buttons[id])
@@ -168,20 +184,48 @@ func refresh(b: Object, view: Node3D, input: Node, title: String) -> void:
 	var paused: bool = view.get("paused")
 	status.set_meta(&"full", "%s · %s" % [title, clock])
 	status.set_meta(&"clock", clock)
-	# часы орудия планеты (03, 2.17; 07, 2.4): «залп» — меньше секунды
+	# орудие планеты (03, 2.17; 07, 2.4; решение 01.11.2026): игроку — «Залп», противнику — часы
 	var gun: Object = b.get("gun")
 	gun_btn.visible = gun != null
+	gun_human = false
 	if gun != null:
 		var gd: Defs.GroundGunDef = gun.get("def")
 		var gclan: StringName = gun.get("clan")
 		var nxt: float = gun.get("next")
+		var flying: bool = gun.get("warned")
+		var fire_at: float = gun.get("fire_at")
+		gun_human = gun.get("human") and not watch
+		var armed := false
+		if input != null and gun_human:
+			armed = input.get("gun_armed")
 		var left := nxt - t
-		var gt := "%s %s" % [gd.short, "залп" if left < 1.0 else "%d с" % ceili(left)]
+		var gt := ""
+		var how := Builder.Look.NORMAL
+		if flying:
+			gt = "Удар %d с" % maxi(0, ceili(fire_at - t))
+			how = Builder.Look.OFF if gun_human else Builder.Look.ON
+		elif left > 0.0:
+			gt = "%s %d с" % [gd.short, ceili(left)]
+			how = Builder.Look.OFF if gun_human else Builder.Look.NORMAL
+		elif gun_human:
+			gt = "Куда? · Esc" if armed else "%s · %s" % [Texts.cmd(&"gun_salvo", "word"), Texts.cmd(&"gun_salvo", "key")]
+			how = Builder.Look.ON
+		else:
+			gt = "%s готово" % gd.short
+			how = Builder.Look.ON
 		_set_btn(gun_btn, gt)
+		_look(gun_btn, how)
+		gun_btn.disabled = gun_human and how == Builder.Look.OFF
+		gun_bar.visible = left > 0.0 and not flying
+		gun_bar.set_meta(&"frac", clampf(1.0 - left / maxf(gd.period, 1.0), 0.0, 1.0))
 		var gfd: Defs.FactionDef = defs.factions.get(gclan)
-		gun_btn.set_meta(&"cf_tip", "Орудие планеты%s: %s\n%s" % [(" (%s)" % gfd.short) if gfd != null and voice else "", gd.name, gd.desc])
-		var warn := left <= gd.warn
-		_look(gun_btn, Builder.Look.ON if warn else Builder.Look.NORMAL)
+		var who := (" (%s)" % gfd.short) if gfd != null and voice else ""
+		var tip := "Орудие планеты%s: %s\n%s" % [who, gd.name, gd.desc]
+		if gun_human:
+			tip = "%s\n%s%s" % [Texts.tip(&"gun_salvo", Texts.cmd(&"gun_salvo", "word"), gun_btn.disabled), gd.name, (": перезарядка %d с" % roundi(gd.period))]
+		elif not voice:
+			tip += "\nОрудие противника: им стреляет ИИ, когда под удар попадает скопление или тяжёлый корабль"
+		gun_btn.set_meta(&"cf_tip", tip)
 	# скорость и пауза: горит выбранная (07, 2.4)
 	var speed: int = view.get("speed")
 	for id: StringName in [&"pause", &"speed1", &"speed2", &"speed4"]:
@@ -322,6 +366,10 @@ func place(vs: Vector2) -> void:
 			gap = 12.0
 		x -= w + (gap if i > 0 else 0.0)
 		c.position = Vector2(x, BTN_Y if c is Button else BTN_Y + 6.0)
+	if gun_btn.visible:
+		var gf: float = gun_bar.get_meta(&"frac", 0.0)
+		gun_bar.position = Vector2(4.0, gun_btn.size.y - 5.0)
+		gun_bar.size = Vector2(maxf((gun_btn.size.x - 8.0) * gf, 1.0), 3.0)
 	# название — в промежутке между полосами силы и кнопками; не влезает — только часы
 	var room := x - 16.0 - left_end
 	var full: String = status.get_meta(&"full", status.text)

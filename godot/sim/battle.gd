@@ -253,13 +253,16 @@ func _setup(p_defs: Defs, p_setup: Dictionary, p_build: String) -> void:
 	var with_reserve: bool = p_setup.get("reserve", true)
 	if with_reserve:
 		b.sides[Ship.ATTACKER].reserve = compose(p_defs, &"small", att)
-	# орудие планеты — ПОСЛЕ состояния боя (03, ловушка 29; 05, ловушка 40). В быстром
-	# бою — у планеты защитника, всегда (01, ловушка 16); в пробах без него — "".
+	# орудие планеты — ПОСЛЕ состояния боя (03, ловушка 29; 05, ловушка 40). Решение 01.11.2026:
+	# в быстром бою его нет, пока не выбрано в меню. "defender" — орудие защитника (его клана),
+	# "attacker" — атакующего; клан словом — орудие этого клана у защитника (пробы G2); "" — нет.
 	var gg := str(p_setup.get("ground_gun", ""))
 	if gg == "defender":
-		gg = str(dfn)
-	if gg != "":
-		GroundGun.create(b, StringName(gg))
+		GroundGun.create(b, dfn, Ship.DEFENDER)
+	elif gg == "attacker":
+		GroundGun.create(b, att, Ship.ATTACKER)
+	elif gg != "":
+		GroundGun.create(b, StringName(gg), Ship.DEFENDER)
 	b.events.clear()
 
 
@@ -1090,6 +1093,25 @@ func _apply(c: Dictionary) -> void:
 			_cmd_launch(_mine(c, true), role)
 		&"recall":
 			_cmd_recall(_mine_squads(c))
+		&"gun":
+			var gx: float = c.get("x", 0.0)
+			var gz: float = c.get("z", 0.0)
+			_cmd_gun(Vector2(gx, gz))
+
+
+## Залп орудия планеты по приказу игрока (кнопка «Залп», P; решение 01.11.2026): только своё
+## орудие и только готовое — иначе полоска словами, а не молча.
+func _cmd_gun(at: Vector2) -> void:
+	if gun == null or not gun.human or gun.owner != player_side:
+		toast("Орудия планеты у тебя нет")
+		return
+	if gun.warned:
+		toast("Залп уже летит: упадёт через %d с" % ceili(gun.fire_at - time))
+		return
+	if time < gun.next:
+		toast("Орудие планеты перезаряжается: %d с" % ceili(gun.next - time))
+		return
+	GroundGun.order(self, at)
 
 
 ## Корабли команды: живые, СВОИ (сторона игрока; space.js:3092 mineSelected), не станции.
@@ -1520,6 +1542,11 @@ func fingerprint() -> String:
 		a.append_array([1.0 if over else 0.0, float(winner)])
 		if gun != null:
 			a.append_array([gun.next, 1.0 if gun.warned else 0.0, gun.aim.x, gun.aim.y])
+			if not gun.timer:
+				# с пакета «Орудие планеты»: чьё, кто стреляет, когда упадёт летящий, когда ИИ
+				# посмотрит снова, сколько залпов (прежний режим — те же поля, что в 0.7.1–0.9)
+				a.append_array([float(gun.owner), float(gun.side), 1.0 if gun.human else 0.0, gun.fire_at,
+					gun.ai_next, float(gun.salvos), 1.0 if gun.has_aim else 0.0])
 		# авиация (G3): машины, звенья, ангары, пуски сценария
 		for c in crafts:
 			a.append_array([float(c.uid), c.pos.x, c.pos.y, c.vel.x, c.vel.y, c.yaw, c.hp, c.cd, float(c.ammo),

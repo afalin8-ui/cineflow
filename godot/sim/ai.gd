@@ -1181,6 +1181,114 @@ func _old_ax(b: State, c: Vector2) -> Vector2:
 	return v.normalized() if v.length_squared() >= 1.0 else Vector2(0.0, -b.sides[side].sign_z)
 
 
+# ───────────────────────── орудие планеты (09, 7.8; решение 01.11.2026) ─────────────────────────
+
+## ТОЛЬКО для проверки отката (09, 7.8): ИИ бьёт орудием сразу, как оно готово, по первому чужому
+## кораблю — без поиска скопления и ценной цели (то есть залп «по готовности», а не по решению).
+## В игре false.
+static var rollback_gun_first_ready := false
+## ТОЛЬКО для проверки отката (09, 7.8): ИИ бьёт по НЫНЕШНЕМУ месту корабля, а не туда, где он будет,
+## когда залп упадёт. В игре false.
+static var rollback_gun_no_lead := false
+
+
+## Тяжёлый для орудия планеты — по КЛАССУ (флагман, крейсер, «Синхо», носитель): ценная цель,
+## медленная, и носитель в том числе — у него нет главного калибра, но он ценен.
+static func _gun_big(s: Ship) -> bool:
+	return s.def.cls == &"capital" or s.def.cls == &"carrier"
+
+
+## Решение ИИ о залпе орудия планеты g, которое готово (09, 7.8): {"fire": bool, "at": Vector2}.
+## Чистая функция снимка: ни генератора, ни углов — сумма, произведение, корень расстояния.
+## Место корабля — где он будет, когда залп упадёт (положение + скорость × warn).
+static func gun_aim(b: State, g: State.GunState) -> Dictionary:
+	var d := b.defs.doctrine
+	var out := {"fire": false, "at": Vector2.ZERO}
+	var list: Array[Ship] = []
+	for s in b.ships:
+		if not s.dead and not s.charging() and s.side == g.side:
+			list.append(s)
+	if list.is_empty():
+		return out
+	if rollback_gun_first_ready:
+		out["fire"] = true
+		out["at"] = list[0].pos
+		return out
+	var patient := b.time - g.next >= d.ai_gun_patience_s
+	var lead := 0.0 if rollback_gun_no_lead else g.def.warn
+	var pts := PackedVector2Array()
+	for s in list:
+		pts.append(s.pos + s.vel * lead)
+	match g.def.kind:
+		&"nuke":
+			var r := g.def.radius
+			var core := r * d.ai_gun_nuke_core
+			var best_v := -1.0
+			var best_good := false
+			var best_at := Vector2.ZERO
+			for i in list.size():
+				var at := pts[i]
+				var v := 0.0
+				var n := 0
+				var big := false
+				for j in list.size():
+					var dist := pts[j].distance_to(at)
+					if dist > r:
+						continue
+					var t := list[j]
+					var e := g.def.dmg * (1.0 - dist / r) * b.defs.dmg_mult(&"heavy", t.cls_i) * (1.0 - t.armor_toward(Vector2.ZERO))
+					v += minf(e, t.hp)
+					if dist <= core:
+						n += 1
+						big = big or _gun_big(t)
+				var good := n >= roundi(d.ai_gun_nuke_group) or big
+				if (good and not best_good) or (good == best_good and v > best_v):
+					best_good = good
+					best_v = v
+					best_at = at
+			out["fire"] = best_good or patient
+			out["at"] = best_at
+		&"beam":
+			var best: Ship = null
+			var bi := -1
+			for i in list.size():
+				var t := list[i]
+				if not _gun_big(t) or t.is_off(&"engines", b.time):
+					continue
+				if best == null or t.def.hp > best.def.hp:
+					best = t
+					bi = i
+			if best == null and patient:
+				for i in list.size():
+					if best == null or list[i].def.hp > best.def.hp:
+						best = list[i]
+						bi = i
+			if best != null:
+				out["fire"] = true
+				out["at"] = pts[bi]
+		_:
+			# ослепление и ЭМИ — весь флот разом: бьют, когда флоты сошлись
+			var near: Ship = null
+			var nd := d.ai_gun_engage
+			for s in b.ships:
+				if s.dead or s.side != g.owner:
+					continue
+				for t in list:
+					var dd := s.pos.distance_to(t.pos)
+					if dd < nd:
+						nd = dd
+						near = t
+			var worth := true
+			if g.def.kind == &"emp":
+				worth = false
+				for t in list:
+					worth = worth or t.def.hangar > 0 or t.def.cls == &"capital"
+			if (near != null and worth) or patient:
+				out["fire"] = true
+				out["at"] = near.pos if near != null else list[0].pos
+	return out
+
+
 ## Разорвать ссылки (архитектура, 2.12).
 func unlink() -> void:
 	focus = null

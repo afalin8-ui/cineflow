@@ -359,6 +359,29 @@ for case in "fp|РАЗОШЛОСЬ|подменённый отпечаток" "n
     say "   откат «$what» краснеет: код 1, $(LC_ALL=C.UTF-8 grep -m1 -o "$want.\{0,60\}" "$LOGS/replay_$f.log")"
   fi
 done
+# повтор быстрого боя с приказами «Залп» орудия планеты игрока (решение 01.11.2026, capella-v0.10):
+# приказ обязан доезжать в запись и в повтор С ВИДОМ; откат — та же запись без приказов «Залп»
+# (tests/probe_salvo.gd пишет обе) — «РАЗОШЛОСЬ», код 1
+say "── повтор боя с залпом орудия планеты: с видом на 60 кадрах"
+timeout 120 "$GODOT" --headless --path "$PROJ" -s res://tests/probe_salvo.gd -- "$rep/salvo.json" "$rep/salvo_lost.json" >"$LOGS/salvo_make.log" 2>&1
+code=$?
+grep -m1 '^SALVO' "$LOGS/salvo_make.log"
+if [[ $code -ne 0 ]] || [[ ! -s "$rep/salvo.json" ]] || ! grep -q '^SALVO записана: приказов «Залп» 3, залпов 2' "$LOGS/salvo_make.log" || grep -q 'SCRIPT ERROR' "$LOGS/salvo_make.log"; then
+  fail "запись боя с залпом (код $code)"; show_tail "$LOGS/salvo_make.log"
+else
+  replay_run 60 "$rep/salvo.json" "$LOGS/replay_salvo.log"; code=$?
+  if [[ $code -ne 0 ]] || ! grep -q '^REPLAY совпало' "$LOGS/replay_salvo.log" || grep -q 'SCRIPT ERROR' "$LOGS/replay_salvo.log"; then
+    fail "повтор боя с залпом с видом (код $code)"; show_tail "$LOGS/replay_salvo.log"
+  else
+    say "   с залпом: $(grep -m1 '^REPLAY' "$LOGS/replay_salvo.log")"
+  fi
+  replay_run 60 "$rep/salvo_lost.json" "$LOGS/replay_salvo_lost.log"; code=$?
+  if [[ $code -ne 1 ]] || ! grep -q 'РАЗОШЛОСЬ' "$LOGS/replay_salvo_lost.log"; then
+    fail "откат «запись без приказов «Залп»»: повтор не отказал (код $code)"; show_tail "$LOGS/replay_salvo_lost.log"
+  else
+    say "   откат «без приказов «Залп»» краснеет: код 1, $(LC_ALL=C.UTF-8 grep -m1 -o "РАЗОШЛОСЬ.\{0,60\}" "$LOGS/replay_salvo_lost.log")"
+  fi
+fi
 rm -rf "$rep"
 
 # ── номер выпуска (tools/release_tag.sh): каждый случай двери выпуска ──

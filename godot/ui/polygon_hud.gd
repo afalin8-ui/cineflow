@@ -685,6 +685,8 @@ func _place_toasts(vs: Vector2) -> void:
 func input_hint() -> String:
 	if input == null:
 		return ""
+	if input.get("gun_armed"):
+		return "Залп — щёлкните место на поле · Esc — отмена"
 	var armed: bool = input.get("amove_armed")
 	return "A — щёлкните точку или врага · Esc — отмена" if armed else ""
 

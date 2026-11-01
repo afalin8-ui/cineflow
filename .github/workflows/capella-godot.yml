@@ -318,6 +318,14 @@ jobs:
           $aL = [regex]::Match($env:LINUX_SELFTEST, 'ИИ (\w+)').Groups[1].Value
           Write-Host "отпечаток «ИИ против ИИ»: Linux $aL, Windows $aW"
           if ($aL -eq '' -or $aL -ne $aW) { Write-Host "::warning::отпечаток «ИИ против ИИ» Linux и Windows разный: $aL / $aW" } else { Write-Host "«ИИ против ИИ» Linux и Windows совпал до бита" }
+          # орудие планеты (capella-v0.10): «ИИ против ИИ» с орудием у противника (залп — решение ИИ)
+          # и бой с приказами «Залп» игрока — ещё две сверки, предупреждением
+          foreach ($k in @('орудие', 'залп')) {
+            $gW = [regex]::Match($out, "$k (\w+)").Groups[1].Value
+            $gL = [regex]::Match($env:LINUX_SELFTEST, "$k (\w+)").Groups[1].Value
+            Write-Host "отпечаток «$k»: Linux $gL, Windows $gW"
+            if ($gL -eq '' -or $gL -ne $gW) { Write-Host "::warning::отпечаток «$k» Linux и Windows разный: $gL / $gW" } else { Write-Host "«$k» Linux и Windows совпал до бита" }
+          }
           exit 0
       # путь, который увидит игрок: вид и счётчик (--selftest выходит раньше них)
       - name: Запуск выгруженной Windows-сборки с окном (--quit-after 60)
@@ -376,6 +384,14 @@ jobs:
           $aL = [regex]::Match($env:LINUX_TUNE, 'ИИ (\w+)').Groups[1].Value
           Write-Host "отпечаток «ИИ против ИИ» с правкой: Linux $aL, Windows $aW"
           if ($aL -eq '' -or $aL -ne $aW) { Write-Host "::warning::отпечаток «ИИ против ИИ» с правкой Linux и Windows разный: $aL / $aW" } else { Write-Host "«ИИ против ИИ» с правкой Linux и Windows совпал до бита" }
+          # орудие планеты (capella-v0.10): «ИИ против ИИ» с орудием у противника (залп — решение ИИ)
+          # и бой с приказами «Залп» игрока — ещё две сверки, предупреждением
+          foreach ($k in @('орудие', 'залп')) {
+            $gW = [regex]::Match($out, "$k (\w+)").Groups[1].Value
+            $gL = [regex]::Match($env:LINUX_TUNE, "$k (\w+)").Groups[1].Value
+            Write-Host "отпечаток «$k» с правкой: Linux $gL, Windows $gW"
+            if ($gL -eq '' -or $gL -ne $gW) { Write-Host "::warning::отпечаток «$k» с правкой Linux и Windows разный: $gL / $gW" } else { Write-Host "«$k» с правкой Linux и Windows совпал до бита" }
+          }
           exit 0
 
   # Стенд «ИИ против ИИ» целиком (план G5, п. 4; 09, 8.1–8.4): ярус bench (флажки отката под ИИ —

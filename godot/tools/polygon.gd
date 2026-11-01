@@ -112,16 +112,29 @@ static func setup_dict(seed_n: int) -> Dictionary:
 	return d
 
 
-## «Быстрый бой» (01, 1.1; план, раздел 1): игрок — атакующий, резерв — «Стычка» своего клана,
-## у планеты защитника — орудие его клана; противника ведёт ИИ целиком, в «ИИ против ИИ» —
-## обе стороны (сложность — у обоих ИИ).
+## «Быстрый бой» (01, 1.1; план, раздел 1): игрок — атакующий, резерв — «Стычка» своего клана;
+## орудие планеты — как выбрано в меню (решение пользователя 01.11.2026): "off" — нет (по
+## умолчанию), "mine" — у тебя (у атакующего, его клана; стреляешь сам), "foe" — у планеты
+## противника (его клана, стреляет ИИ). Противника ведёт ИИ целиком, в «ИИ против ИИ» — обе
+## стороны (сложность — у обоих ИИ; «моё» там — у клана «Твой клан», стреляет его ИИ).
 static func quick_setup(c: Dictionary, seed_n: int) -> Dictionary:
 	var watch: bool = c.get("watch", false)
 	var d := {"attacker": StringName(str(c.get("attacker", "troyden"))), "defender": StringName(str(c.get("defender", "plektor"))),
-		"size": StringName(str(c.get("size", "mid"))), "seed": seed_n, "reserve": true, "ground_gun": "defender",
+		"size": StringName(str(c.get("size", "mid"))), "seed": seed_n, "reserve": true, "ground_gun": gun_key(str(c.get("gun", "off"))),
 		"difficulty": str(c.get("difficulty", "normal")), "ai": [Ship.ATTACKER, Ship.DEFENDER] if watch else [Ship.DEFENDER]}
 	d.merge(flags, true)
 	return d
+
+
+## Выбор меню «Орудие планеты» → ключ состава боя ground_gun (sim/battle.gd): "mine" — орудие
+## атакующего (игрока), "foe" — защитника, остальное — нет.
+static func gun_key(choice: String) -> String:
+	match choice:
+		"mine":
+			return "attacker"
+		"foe":
+			return "defender"
+	return ""
 
 
 ## Флажки отката из командной строки (main.gd → apply_flags; tools/bench_core.gd → FLAGS):
@@ -422,6 +435,37 @@ static func make_record(p_defs: Defs, p_build: String, steps_n: int = DEMO_STEPS
 	var b := demo_battle(p_defs, p_build, steps_n)
 	var rec := b.record()
 	rec["fp"] = b.fingerprint()
+	b.dispose()
+	return rec
+
+
+## Бой «залп игрока» (решение пользователя 01.11.2026): быстрый бой по умолчанию с орудием
+## «Моё» (атакующий Тройден — ионный луч), 60 с; приказы «Залп» — по самому прочному кораблю
+## противника: раньше готовности (на 10-й секунде — отказ полоской, бой не меняется), как только
+## готово и после перезарядки. Запись этого боя `--selftest` проигрывает и сверяет отпечаток (CI —
+## ещё и Linux против Windows): приказ «Залп» обязан доезжать в журнал, повтор и отпечаток.
+const SALVO_STEPS := 1800
+
+static func salvo_record(p_defs: Defs, p_build: String, steps_n: int = SALVO_STEPS) -> Dictionary:
+	var c := {"attacker": "troyden", "defender": "plektor", "size": "mid", "difficulty": "normal", "watch": false, "gun": "mine"}
+	var b := Battle.create(p_defs, quick_setup(c, SEED), p_build) as Battle
+	var asked := 0
+	for i in steps_n:
+		var want := b.steps == 300
+		if b.gun != null and not b.gun.warned and b.time >= b.gun.next and asked < 3:
+			want = true
+		if want:
+			var best: Ship = null
+			for s in b.side_ships(Ship.DEFENDER):
+				if not s.charging() and (best == null or s.def.hp > best.def.hp):
+					best = s
+			if best != null:
+				b.queue({"op": &"gun", "x": best.pos.x, "z": best.pos.y})
+				asked += 1
+		b.step()
+	var rec := b.record()
+	rec["fp"] = b.fingerprint()
+	rec["salvos"] = b.gun.salvos if b.gun != null else 0
 	b.dispose()
 	return rec
 

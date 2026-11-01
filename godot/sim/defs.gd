@@ -416,6 +416,11 @@ class Doctrine:
 	var ai_threat_dome_power: float    # купол «развёрнут» при мощности больше
 	var ai_teeth_player_s: float       # «нечем бить»: игроку — столько на вызов резерва (7.7)
 	var ai_teeth_ai_s: float           # «нечем бить»: ИИ уходит через столько
+	var ai_gun_every: float            # орудие планеты ИИ: как часто смотрит, готово ли бить (7.8)
+	var ai_gun_nuke_core: float        # ядерная: «под ударом» — ближе этой доли радиуса к центру
+	var ai_gun_nuke_group: float       # ядерная: столько кораблей под ударом — скопление
+	var ai_gun_patience_s: float       # готовое орудие ИИ ждёт хорошей цели не дольше
+	var ai_gun_engage: float           # ослепление и ЭМИ: флоты сошлись ближе этого
 	var air_patrol_k: float
 	var air_patrol_escort_take: float
 	var air_patrol_escort_drop: float
