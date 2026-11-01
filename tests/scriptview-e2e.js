@@ -48,9 +48,17 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
       const scenes = [];
       for (let i = 1; i <= 8; i++) scenes.push({ id: 'sc' + i, number: String(i), title: 'ИНТ. КУХНЯ — НОЧЬ ' + i, content: i === 2 ? 'Свет делает лампа, всё остальное — тень.' : '',
         script: body(i), date: '2026-11-0' + (i % 9), gear: i === 2 ? { steadicam: 1 } : {}, lightGear: {}, boardId: '' });
+      // восьмая — длинная, на несколько экранов, с заметкой к фразе в середине
+      const long = [];
+      for (let k = 0; k < 45; k++) long.push('Абзац ' + k + '. Вера идёт по полосе, туман редеет, за ним проступают ангары и ржавая бочка у края.', '');
+      scenes[7].script = long.join('\n');
+      scenes[7].content = 'Длинная сцена: блок поля обязан идти вдоль неё.';
+      scenes[7].marks = [{ id: 'mlong', s: [60, 0], e: [60, 9], q: 'Абзац 30.', c: 0 }];
       localStorage.setItem('cf_scenes', JSON.stringify(scenes));
       localStorage.setItem('cf_storyboard', JSON.stringify([{ id: 'f1', sceneId: 'sc2', frameNum: '2.1', description: 'Общий', image: '' }, { id: 'f2', sceneId: 'sc2', frameNum: '2.2', description: 'Крупно', image: '' }]));
-      localStorage.setItem('cf_stickies', JSON.stringify([{ id: 'n1', sceneId: 'sc2', boardId: 'board-main', text: 'Проверить вывеску', x: 0, y: 0, color: '#fef08a' }]));
+      localStorage.setItem('cf_stickies', JSON.stringify([{ id: 'n1', sceneId: 'sc2', boardId: 'board-main', text: 'Проверить вывеску', x: 0, y: 0, color: '#fef08a' },
+        { id: 'n8', sceneId: 'sc8', hl: 'mlong', boardId: 'board-main', text: 'Здесь кран уходит вверх', x: 0, y: 0, color: '#fef08a' },
+        { id: 'n9', sceneId: 'sc8', boardId: 'board-main', text: 'Туман до 8:30', x: 0, y: 0, color: '#fef08a' }]));
     });
     const page = await ctx.newPage();
     const errs = [];
@@ -83,6 +91,34 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
   await p.waitForTimeout(600);
   const near = await p.evaluate(() => { const r = document.querySelector('[data-sr="sc6"]').getBoundingClientRect(), m = document.querySelector('[data-cf="script-view"]').getBoundingClientRect(); return Math.round(r.top - m.top); });
   ok('нажатие по сцене в списке прокручивает сценарий к ней', near >= -5 && near < 120, String(near));
+
+  // длинная сцена: блок поля идёт вдоль неё и не наезжает на заметку к фразе
+  const geo = async () => p.evaluate(() => {
+    const row = document.querySelector('[data-sr="sc8"]'), blk = row.querySelector('[data-cf="script-block"]'),
+          an = row.querySelector('[data-for="mlong"]'), m = document.querySelector('[data-cf="script-view"]').getBoundingClientRect(),
+          mg = row.querySelector('[data-cf="script-margin"]').getBoundingClientRect();
+    const b = blk.getBoundingClientRect(), a = an.getBoundingClientRect();
+    return { mTop: m.top, mBot: m.bottom, bTop: b.top, bBot: b.bottom, aTop: a.top, aBot: a.bottom, mgBot: mg.bottom };
+  });
+  for (const frac of [0.25, 0.5]) {
+    await p.evaluate((f) => { const row = document.querySelector('[data-sr="sc8"]'), m = document.querySelector('[data-cf="script-view"]');
+      m.scrollTop = row.offsetTop + row.offsetHeight * f - 60; }, frac);
+    await p.waitForTimeout(300);
+    const g = await geo();
+    ok(`длинная сцена (${frac * 100}%): блок поля виден у верха окна`, g.bTop >= g.mTop && g.bTop < g.mTop + 120, JSON.stringify(g));
+    ok(`длинная сцена (${frac * 100}%): заметка к фразе не под блоком`, g.aTop >= g.bBot - 1 || g.aBot <= g.bTop + 1, JSON.stringify(g));
+  }
+  // строка с фразой у самого верха окна — блок её догнал, заметка едет под ним
+  await p.evaluate(() => { const mk = document.querySelector('[data-sr="sc8"] mark[data-hl="mlong"]'), m = document.querySelector('[data-cf="script-view"]');
+    m.scrollTop += mk.getBoundingClientRect().top - m.getBoundingClientRect().top - 80; });
+  await p.waitForTimeout(300);
+  const gc = await geo();
+  ok('блок догнал заметку к фразе — она едет под ним, а не под блоком', gc.aTop >= gc.bBot - 1 && gc.aTop < gc.bBot + 40, JSON.stringify(gc));
+  await p.evaluate(() => { const row = document.querySelector('[data-sr="sc8"]'), m = document.querySelector('[data-cf="script-view"]');
+    m.scrollTop = row.offsetTop + row.offsetHeight - 200; });
+  await p.waitForTimeout(300);
+  const ge = await geo();
+  ok('конец длинной сцены: блок и заметка не уехали за поле сцены', ge.bBot <= ge.mgBot + 1 && ge.aBot <= ge.mgBot + 1, JSON.stringify(ge));
 
   // выделение фразы → заметка к фразе
   await p.evaluate(() => document.querySelector('[data-sr="sc2"]').scrollIntoView());
