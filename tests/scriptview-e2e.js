@@ -120,6 +120,9 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
   const ge = await geo();
   ok('конец длинной сцены: блок и заметка не уехали за поле сцены', ge.bBot <= ge.mgBot + 1 && ge.aBot <= ge.mgBot + 1, JSON.stringify(ge));
 
+  ok('поле сцены не выше текста и своих заметок (отступ под блоком его не раздувает)', await p.evaluate(() =>
+    [...document.querySelectorAll('[data-sr]')].every(row => { const a = row.querySelector('[data-cf="script-margin"]'), pg = row.querySelector('.cf-sr-page');
+      return row.offsetHeight <= Math.max(pg.offsetHeight, parseFloat(a.style.minHeight) || 0) + 90; })));
   // выделение фразы → заметка к фразе
   await p.evaluate(() => document.querySelector('[data-sr="sc2"]').scrollIntoView());
   await p.waitForTimeout(400);
