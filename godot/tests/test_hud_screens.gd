@@ -393,7 +393,9 @@ func test_gun_screens() -> void:
 		for s in b.side_ships(1 - p.view.my_side):
 			if foe == null or s.def.hp > foe.def.hp:
 				foe = s
-		await hooks.click(p.view.rig.camera.unproject_position(p.view.ship_point(foe)))
+		# щелчок по полю — в одном кадре: поле не считает щелчком нажатие дольше 900 мс настоящих часов
+		# (tests/hooks.gd, click с quick)
+		await hooks.click(p.view.rig.camera.unproject_position(p.view.ship_point(foe)), MOUSE_BUTTON_LEFT, true)
 		p.view.paused = false
 		for i in 30:
 			p.view.advance(Battle.STEP)

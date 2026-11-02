@@ -48,7 +48,10 @@ TIERS=(sim tempo ui)
 # render, чтобы тот держался под пределом 900 с (Forward+ в CI доходил до 659 с)
 # ярус fx (пакет GЭ) — эффекты: факелы, взрывы, огонь по источникам, купол, гипер, прогрев. Свой
 # ярус по той же причине: render Forward+ в CI доходил до 711 с из 900
-if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility hud:forward_plus hud:gl_compatibility fx:forward_plus fx:gl_compatibility); fi
+# ярус air (02.11.2026) — снимки авиации (tests/test_air_render.gd, прежний test_render_air): свой ярус
+# по той же причине. В CI (прогон 41443473535, раннер медленнее обычного: sim 623 с против 369) render
+# Forward+ упёрся в 900 с, и один test_render_air шёл в нём 346 с из 900
+if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility air:forward_plus air:gl_compatibility hud:forward_plus hud:gl_compatibility fx:forward_plus fx:gl_compatibility); fi
 # `run_tests.sh bench` — тяжёлые проверки стенда (флажки 09, 8.4 под ИИ — десятки боёв целиком,
 # план G5, п. 4): отдельный ярус, чтобы ярус sim держался под пределом 900 с. Его гоняет
 # задание CI «стенд» (по метке [стенд] в сообщении коммита или кнопкой)
@@ -115,7 +118,7 @@ if [[ -n "$stray" ]]; then fail "тесты пишут в общий user:// м�
 run_tier() {
   local tier="$1" log="$LOGS/tier_${1/:/_}.log" code
   local cmd=("$GODOT" --headless --path "$PROJ" -s res://tests/run.gd -- "$tier")
-  if [[ "$tier" == render:* || "$tier" == hud:* || "$tier" == fx:* ]]; then
+  if [[ "$tier" == render:* || "$tier" == air:* || "$tier" == hud:* || "$tier" == fx:* ]]; then
     # картинка — с окном под xvfb, в заданном отрисовщике; снимки — в $LOGS/shots
     mkdir -p "$LOGS/shots"
     cmd=(env CAPELLA_SHOTS="$LOGS/shots" xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$PROJ" --rendering-method "${tier#*:}" -s res://tests/run.gd -- "${tier%%:*}")

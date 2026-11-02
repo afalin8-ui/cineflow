@@ -1,4 +1,4 @@
-# Авиация и хвосты G2 под xvfb (ярус картинки; план G3, п. 5 и «Игровые проверки») — в
+# Авиация и хвосты G2 под xvfb (ярус air, до 02.11.2026 — в ярусе render; план G3, п. 5 и «Игровые проверки») — в
 # ОБОИХ отрисовщиках. Каждая проверка — замером снимка и с откатом:
 # - машины на рабочем виде (2400) — точками цвета стороны, со следом (04, 2.21): точка
 #   есть у каждой машины, след виден вдоль пути; откаты — «точек нет» (модель на 2400 —
@@ -192,10 +192,19 @@ static func _cross_light(img: Image, a: Vector2, b: Vector2) -> float:
 
 # ───────────────────────── машины: точки и след на 2400 ─────────────────────────
 
-## Точка машины — середина её пятна белая: не меньше двух точек ярче 0,95 в 5 × 5 вокруг
-## машины. Модель на 2400 — пара тусклых точек, а след и очереди рядом ярки, но не белы:
-## в воздушном бою «ярче 0,7» нашлось у 35 машин из 37 и БЕЗ точек, «ярче 0,95» — у 0.
+## Точка машины — яркое пятно с БЕЛОЙ серединой: не меньше двух точек ярче 0,95 в 5 × 5 вокруг
+## машины и среди них хоть одна белая (все три канала выше DOT_WHITE). Модель на 2400 — пара точек,
+## а след и очереди рядом ярки, но не белы: в воздушном бою «ярче 0,7» нашлось у 35 машин из 37
+## и БЕЗ точек, «ярче 0,95» — у 0.
+## Белизна добавлена с нейтральным светом (02.11.2026, раздел 24): освещённые корпуса машин сами
+## стали ярче 0,95 — жёлто-белые (1; 0,97; 0,67) у Плэктора и голубые (0,83; 1; 1) у Тройдена, —
+## и откат «точек нет» на 1920 Forward+ давал 36 из 49 «с точкой» (при прежнем свете — 6). Белыми
+## корпуса не бывают: синий или красный канал у них ниже. Замер на том же бою (49 машин в кадре):
+## с точками 46 (Forward+) и 45 (Compatibility), в откате 8 и 6. Одной белизной («две белые») мерить
+## нельзя: у машин, только что вышедших из ангара (test_crafts_dots_and_trails_at_2400), белая
+## середина точки — одна-две точки экрана, и «две белые» нашлось у 3 из 5.
 const DOT_AREA := 2
+const DOT_WHITE := 0.92
 
 
 ## Машина за корпусом корабля: луч камеры через её точку на экране входит в капсулу корпуса (та же,
@@ -218,7 +227,7 @@ static func _behind_hull(view: BattleView, cam: Camera3D, sp: Vector2, w: Vector
 
 
 static func _has_dot(img: Image, p: Vector2) -> bool:
-	return _bright_area(img, p, 2, 0.95) >= DOT_AREA
+	return _bright_area(img, p, 2, 0.95) >= DOT_AREA and _white_area(img, p, 2, DOT_WHITE) >= 1
 
 
 static func _bright_area(img: Image, p: Vector2, r: int, thr: float) -> int:
@@ -229,6 +238,20 @@ static func _bright_area(img: Image, p: Vector2, r: int, thr: float) -> int:
 			var y := roundi(p.y) + dy
 			if x >= 0 and y >= 0 and x < img.get_width() and y < img.get_height() and lum(img.get_pixel(x, y)) > thr:
 				n += 1
+	return n
+
+
+## Сколько БЕЛЫХ точек (все три канала выше thr) в квадрате (2r+1)² вокруг p.
+static func _white_area(img: Image, p: Vector2, r: int, thr: float) -> int:
+	var n := 0
+	for dx in range(-r, r + 1):
+		for dy in range(-r, r + 1):
+			var x := roundi(p.x) + dx
+			var y := roundi(p.y) + dy
+			if x >= 0 and y >= 0 and x < img.get_width() and y < img.get_height():
+				var c := img.get_pixel(x, y)
+				if minf(c.r, minf(c.g, c.b)) > thr:
+					n += 1
 	return n
 
 
@@ -264,7 +287,7 @@ func _crafts(mode: StringName) -> Dictionary:
 	var img := await _snap("air_dots_%s" % mode)
 	var now := b.time - Battle.STEP * 0.5
 	var dots := 0
-	var areas: Array[int] = []
+	var areas: Array[Vector2i] = []
 	var trail_sum := 0.0
 	var n := 0
 	for c in q.craft:
@@ -272,7 +295,7 @@ func _crafts(mode: StringName) -> Dictionary:
 			continue
 		n += 1
 		var sp := cam.unproject_position(v.craft_point(c))
-		areas.append(_bright_area(img, sp, 2, 0.95))
+		areas.append(Vector2i(_bright_area(img, sp, 2, 0.95), _white_area(img, sp, 2, DOT_WHITE)))
 		if _has_dot(img, sp):
 			dots += 1
 		# хорда пути от 0,48 до 0,24 с назад: след там уже лёг и ещё не погас
@@ -289,7 +312,7 @@ func _crafts(mode: StringName) -> Dictionary:
 		if pa != Vector3.INF and pb != Vector3.INF:
 			trail_sum += _lit_share(img, cam.unproject_position(pa), cam.unproject_position(pb), 0.05)
 	out = {"n": n, "dots": dots, "trail": trail_sum / maxf(float(n), 1.0), "written": v.air.trails_written}
-	note("%s · машины %s: %d из %d с точкой (ярких точек у машин: %s), след виден на %.0f%% хорды, отрезков следа %d" % [renderer(), mode, dots, n, str(areas), num(out["trail"]) * 100.0, whole(out["written"])])
+	note("%s · машины %s: %d из %d с точкой (ярких и белых точек у машин: %s), след виден на %.0f%% хорды, отрезков следа %d" % [renderer(), mode, dots, n, str(areas), num(out["trail"]) * 100.0, whole(out["written"])])
 	await _drop(v)
 	AirView.rollback_no_dots = false
 	AirView.rollback_no_trails = false

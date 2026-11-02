@@ -500,7 +500,7 @@ func test_bomber_move_line() -> void:
 ## Лаборатория с видом без неба: свой носитель и фрегат против чужого носителя и крейсера.
 ## Корабли неподвижны и бессмертны, чужие молчат; вид шагает постоянным шагом и рисует
 ## каждый шаг. (Пулы эффектов без окна пусты — RenderingServer заглушка; что нарисовано
-## пулом, проверяет ярус картинки: test_render_air.)
+## пулом, проверяет ярус air: test_air_render.)
 func _air_lab(defs: Defs, foe_at: Vector2) -> BattleView:
 	await hooks.set_window_size(Vector2i(1366, 768))
 	var b := Battle.create(defs, {"attacker": &"troyden", "defender": &"plektor", "size": &"small", "seed": 5, "reserve": false}) as Battle

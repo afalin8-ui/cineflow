@@ -527,7 +527,7 @@ func _fire(a: Ship, at: Vector3, hr: float, role: StringName, mount: int) -> voi
 			var from3 := _node_pt(a, "muzzle_", mount)
 			var c3 := LIGHT_OWN if own else LIGHT_FOE
 			# яркость — с поправкой на сиреневый (он темнее прежнего голубого): луч на старте тоньше
-			# главного калибра вдвое, но виден (test_render_air, «на 3990»)
+			# главного калибра вдвое, но виден (test_air_render, «на 3990»)
 			gfx.beam(from3, to, c3, 0.9, 0.18, 2.4)
 			gfx.flash(from3, c3, a.def.radius * 0.6, 0.12, 1.6, 0.0, 0.4)
 			gfx.flash(to, c3, hr * 1.2, 0.3, 1.5, 0.0, 0.3)

@@ -42,7 +42,12 @@ func move(pos: Vector2) -> void:
 	await tree.process_frame
 
 
-func click(pos: Vector2, button: MouseButton = MOUSE_BUTTON_LEFT) -> void:
+## quick — нажать и отпустить В ОДНОМ кадре (Input.flush_buffered_events после каждого события).
+## Нужно щелчку ПО ПОЛЮ: поле считает щелчком только нажатие короче CLICK_MS (900 мс НАСТОЯЩИХ
+## часов, input/battle_input.gd), а обычный click держит кнопку кадр — в Forward+ на llvmpipe под
+## нагрузкой кадр 1920 бывает дольше 900 мс, и щелчок «залпа» молча не засчитывался (02.11.2026:
+## test_gun_screens то проходил, то нет, а в Compatibility проходил всегда).
+func click(pos: Vector2, button: MouseButton = MOUSE_BUTTON_LEFT, quick: bool = false) -> void:
 	await move(pos)
 	var ev := InputEventMouseButton.new()
 	ev.button_index = button
@@ -51,11 +56,16 @@ func click(pos: Vector2, button: MouseButton = MOUSE_BUTTON_LEFT) -> void:
 	ev.global_position = pos
 	ev.button_mask = MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_RIGHT
 	Input.parse_input_event(ev)
-	await tree.process_frame                 # события разбираются в следующем кадре
+	if quick:
+		Input.flush_buffered_events()
+	else:
+		await tree.process_frame                 # события разбираются в следующем кадре
 	var up := ev.duplicate() as InputEventMouseButton
 	up.pressed = false
 	up.button_mask = 0
 	Input.parse_input_event(up)
+	if quick:
+		Input.flush_buffered_events()
 	await tree.process_frame
 	await tree.process_frame
 

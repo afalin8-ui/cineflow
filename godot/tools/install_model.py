@@ -195,6 +195,49 @@ def install_import(dst):
             f.write(IMPORT_PARAMS)
 
 
+# лист флота: без сжатия (тон, как у автора), но С МИП-УРОВНЯМИ и без «detect 3D». Импорт по умолчанию
+# (картинка для 2D) мипов не делает — тогда на рабочем виде 2400, где лист 2048² ложится на сотню
+# точек экрана, огни и швы листа мерцают россыпью; а «detect 3D» в редакторе сам перевёл бы лист
+# в сжатие VRAM и молча сменил тон (CLAUDE.md, раздел 15)
+SHEET_PARAMS = {'compress/mode': '0', 'mipmaps/generate': 'true', 'detect_3d/compress_to': '0'}
+
+
+def sheet_import(png):
+    """.import листа с SHEET_PARAMS: свой — правится построчно, нет — пишется (uid и путь допишет Godot)."""
+    imp = png + '.import'
+    if os.path.exists(imp):
+        lines = open(imp, encoding='utf-8').read().split('\n')
+        seen = set()
+        for i, ln in enumerate(lines):
+            k = ln.split('=', 1)[0]
+            if k in SHEET_PARAMS:
+                lines[i] = f'{k}={SHEET_PARAMS[k]}'
+                seen.add(k)
+        miss = [f'{k}={v}' for k, v in SHEET_PARAMS.items() if k not in seen]
+        text = '\n'.join(lines).rstrip('\n') + '\n' + ''.join(m + '\n' for m in miss)
+    else:
+        text = '[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\n\n[params]\n\n' + \
+            ''.join(f'{k}={v}\n' for k, v in SHEET_PARAMS.items())
+    with open(imp, 'w', encoding='utf-8') as f:
+        f.write(text)
+
+
+def sheet_import_problems():
+    bad = []
+    for name in SHEET:
+        imp = os.path.join(HERO, 'tex', name + '.import')
+        got = {}
+        if os.path.exists(imp):
+            for ln in open(imp, encoding='utf-8'):
+                k, _, v = ln.strip().partition('=')
+                if k in SHEET_PARAMS:
+                    got[k] = v
+        for k, v in SHEET_PARAMS.items():
+            if got.get(k) != v:
+                bad.append(f'лист {name}: {k}={got.get(k, "нет")}, ждали {v}')
+    return bad
+
+
 def drop_stale_images(folder=None):
     """Картинки, которые Godot извлёк из .glb, которых больше нет (переименовали, поставили
     другой файл): «<имя .glb>_<картинка>.png». Сиротам — прочь, иначе путают (как
@@ -272,6 +315,19 @@ def selftest():
                 'узла bay нет в .glb')
         spoiled('лишняя башня', lambda r, g: r['nodes'].update(turret_7={'pos': [0, 0, 0]}), 'не в doctrine.json')
         spoiled('материалы разные', lambda r, g: g['materials'].pop(), 'материалы записи')
+    checks += 1
+    bad = sheet_import_problems()
+    if bad:
+        fails.append('импорт листа: ' + '; '.join(bad))
+    with tempfile.TemporaryDirectory() as d:
+        # порча: .import листа по умолчанию (2D: без мипов, «detect 3D») — sheet_import чинит
+        p = os.path.join(d, 'trim_x.png')
+        open(p + '.import', 'w').write('[params]\n\ncompress/mode=0\nmipmaps/generate=false\ndetect_3d/compress_to=1\n')
+        sheet_import(p)
+        checks += 1
+        txt = open(p + '.import').read()
+        if 'mipmaps/generate=true' not in txt or 'detect_3d/compress_to=0' not in txt or 'mipmaps/generate=false' in txt:
+            fails.append(f'sheet_import не поправил .import листа: {txt!r}')
     with tempfile.TemporaryDirectory() as d:
         for f in ('a_ship.glb', 'a_ship_cruiser_ao.png', 'cruiser_cruiser_ao.png', 'cruiser_cruiser_ao.png.import'):
             open(os.path.join(d, f), 'w').close()
@@ -335,7 +391,8 @@ def main(argv):
                 die(f'--sheet: нет {src}')
             if not dry:
                 shutil.copyfile(src, os.path.join(HERO, 'tex', name))
-        print(f'лист флота → godot/view/hero/tex/ ({len(SHEET)} картинки)')
+                sheet_import(os.path.join(HERO, 'tex', name))
+        print(f'лист флота → godot/view/hero/tex/ ({len(SHEET)} картинки, мип-уровни, без сжатия)')
     for name in SHEET:
         if not os.path.exists(os.path.join(HERO, 'tex', name)) and not dry:
             die(f'нет общего листа godot/view/hero/tex/{name} — поставь его ключом --sheet')
