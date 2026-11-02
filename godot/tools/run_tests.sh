@@ -567,6 +567,10 @@ if command -v node >/dev/null; then
   tail -1 "$LOGS/ships.log"
   (cd "$ROOT" && node godot/tools/export_ships.mjs --selftest >"$LOGS/ships_self.log" 2>&1) || { fail "export_ships.mjs --selftest"; cat "$LOGS/ships_self.log" >&2; }
   tail -1 "$LOGS/ships_self.log"
+  # ручные модели (раздел 15): путь установки цел — запись разбирается обратно и ставится в ту же,
+  # порча каждой проверки установки краснеет своим словом, сироты-картинки убираются
+  (cd "$ROOT" && python3 godot/tools/install_model.py --selftest >"$LOGS/install_self.log" 2>&1) || { fail "install_model.py --selftest"; cat "$LOGS/install_self.log" >&2; }
+  tail -1 "$LOGS/install_self.log"
 else
   fail "нет node — проверки данных не прошли"
 fi

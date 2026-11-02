@@ -34,7 +34,15 @@
 
    Определение «где что» (какой меш — двигатель, какой — ПВО) завязано на то, как
    buildShip строит корабль. Поменяли models.js — выгрузка обязана упасть со словами,
-   а не разложить молча: каждое правило считает, сколько нашло, и сверяет с ожидаемым. */
+   а не разложить молча: каждое правило считает, сколько нашло, и сверяет с ожидаемым.
+
+   РУЧНЫЕ МОДЕЛИ (CLAUDE.md, раздел 15): корабль, сделанный в Blender, ставит
+   godot/tools/install_model.py — запись с полем `hand` и файл в view/hero/. Выгрузка такие
+   записи НЕ перезаписывает (keepHand: берёт их из прежнего ship_models.json как есть; свою
+   .glb из three.js по-прежнему пишет — она остаётся запасной), а --check проверяет их по своим
+   правилам (handProblems): файл есть и его sha256 тот же, что при установке (подменили .glb
+   без установки — беда), узлы из doctrine.json → nodes на месте, узлы оружия модели есть в
+   данных, plume — словарь, длина в ±20% от model_len и равна «длине до масштаба × scale». */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -65,6 +73,38 @@ function hasModelNode(names, model) {
   return names.includes(model);
 }
 
+// ручная модель (поле hand): свои правила вместо «длина как у игры» и «исходники игры»
+function handProblems(tag, m, spec, want, { files = true } = {}) {
+  const bad = [];
+  const f = path.join(ROOT, 'godot', String(m.file || '').replace('res://', ''));
+  if (!m.file || !m.file.startsWith('res://view/hero/')) bad.push(`${tag}: ручная модель не в view/hero/ (${m.file})`);
+  else if (files && !existsSync(f)) bad.push(`${tag}: нет файла ${m.file}`);
+  else if (files && sha256(f) !== m.hand.sha256) bad.push(`${tag}: ручная модель ${m.file} подменена после установки — поставь её godot/tools/install_model.py`);
+  if (!(m.scale > 0)) bad.push(`${tag}: у ручной модели нет scale`);
+  else if (!(Math.abs(m.hand.raw_len * m.scale - m.len) <= 0.01 * m.len)) bad.push(`${tag}: длина ${m.len} не равна длине до масштаба ${m.hand.raw_len} × scale ${m.scale}`);
+  const names = Object.keys(m.nodes || {});
+  const specModels = Object.values(spec || {}).map(n => n.model);
+  for (const nm of names) {
+    if (/^(turret|aux|launcher)_\d+$/.test(nm) && !specModels.includes(nm)) bad.push(`${tag}: узел ${nm} есть в модели, но не в doctrine.json`);
+    const pl = m.nodes[nm].plume;
+    if (pl !== undefined && (typeof pl !== 'object' || pl === null || !(pl.size > 0))) bad.push(`${tag}.${nm}: plume не словарь с размером (строкой он лежит в extras .glb — запись собирает make_record.py)`);
+  }
+  return bad;
+}
+
+const sha256 = f => createHash('sha256').update(readFileSync(f)).digest('hex');
+
+// выгрузка не трогает ручные модели: их записи берутся из прежнего обмера как есть
+function keepHand(out, old) {
+  const kept = [];
+  for (const [fac, ships] of Object.entries((old && old.ships) || {})) {
+    for (const [id, rec] of Object.entries(ships)) {
+      if (rec && rec.hand && out.ships[fac]) { out.ships[fac][id] = rec; kept.push(`${fac}.${id}`); }
+    }
+  }
+  return kept;
+}
+
 function check(models, doctrine, space, { files = true, sources = true } = {}) {
   const bad = [];
   const nodes = doctrine.nodes && doctrine.nodes.v;
@@ -74,8 +114,9 @@ function check(models, doctrine, space, { files = true, sources = true } = {}) {
     for (const id of ids) {
       const m = models.ships && models.ships[fac] && models.ships[fac][id];
       if (!m) { bad.push(`${fac}.${id}: модели нет в ship_models.json`); continue; }
-      if (files && !existsSync(path.join(ROOT, 'godot', m.file.replace('res://', '')))) bad.push(`${fac}.${id}: нет файла ${m.file}`);
       const want = id === 'station' ? space.model_len.station : space.model_len.ship[id];
+      if (m.hand) bad.push(...handProblems(`${fac}.${id}`, m, nodes[id], want, { files }));
+      else if (files && !existsSync(path.join(ROOT, 'godot', m.file.replace('res://', '')))) bad.push(`${fac}.${id}: нет файла ${m.file}`);
       if (!(Math.abs(m.len - want) <= want * LEN_TOL)) bad.push(`${fac}.${id}: длина модели ${m.len} вне ±20% от model_len ${want}`);
       if (!(m.width > 0 && m.height > 0)) bad.push(`${fac}.${id}: нет ширины или высоты`);
       const names = Object.keys(m.nodes || {});
@@ -115,8 +156,9 @@ if (args.has('--check') || args.has('--selftest')) {
     const bad = check(models, doctrine, space);
     if (bad.length) { for (const b of bad) console.error('  ' + b); fail(`беды: ${bad.length}`); }
     let n = 0;
-    for (const fac of FACTIONS_OUT) n += Object.keys(models.ships[fac]).length;
-    console.log(`export_ships --check: моделей кораблей ${n}, узлы закрывают doctrine.json → nodes, длины в ±20%`);
+    const hand = [];
+    for (const fac of FACTIONS_OUT) for (const [id, m] of Object.entries(models.ships[fac])) { n++; if (m.hand) hand.push(`${fac}.${id}`); }
+    console.log(`export_ships --check: моделей кораблей ${n} (ручных ${hand.length}${hand.length ? ': ' + hand.join(', ') : ''}), узлы закрывают doctrine.json → nodes, длины в ±20%`);
   }
   if (args.has('--selftest')) {
     // каждая порча обязана дать беду; иначе проверка ничего не охраняет
@@ -128,14 +170,40 @@ if (args.has('--check') || args.has('--selftest')) {
       ['исходник поменялся', m => { m._meta.sources['game/js/models.js'] = '0000'; }, 'models.js'],
       ['РЭБ без излучателя', m => { delete m.ships.troyden.ecm.nodes.emitter; }, 'emitter'],
     ];
+    // ручные модели (раздел 15): порча — своё слово; нужна хоть одна ручная модель в обмере
+    const handIds = [];
+    for (const fac of FACTIONS_OUT) for (const [id, m] of Object.entries(models.ships[fac] || {})) if (m.hand) handIds.push([fac, id]);
+    if (!handIds.length) fail('selftest: в обмере нет ни одной ручной модели — проверять нечем');
+    const [hf, hi] = handIds[0];
+    const H = m => m.ships[hf][hi];
+    const firstPlume = m => Object.values(H(m).nodes).find(n => n.plume !== undefined);
+    const handSpoil = [
+      ['ручная подменена', m => { H(m).hand.sha256 = '0'.repeat(64); }, 'подменена', true],
+      ['ручная без файла', m => { H(m).file = H(m).file.replace('.glb', '_нет.glb'); }, 'нет файла', true],
+      ['ручная без узла из doctrine', m => { delete H(m).nodes.hull; }, '«hull»', false],
+      ['ручная длиннее ±20%', m => { H(m).len *= 1.5; H(m).hand.raw_len *= 1.5; }, 'длина модели', false],
+      ['ручная: длина не от масштаба', m => { H(m).scale *= 1.1; }, 'длине до масштаба', false],
+    ];
+    if (firstPlume(models)) handSpoil.push(['plume строкой', m => { const n = firstPlume(m); n.plume = JSON.stringify(n.plume); }, 'plume не словарь', false]);
+    spoil.push(...handSpoil.map(([w, f, mk, fl]) => [w, f, mk, fl]));
     let red = 0;
-    for (const [what, f, mark] of spoil) {
+    for (const [what, f, mark, withFiles] of spoil) {
       const copy = JSON.parse(JSON.stringify(models));
       f(copy);
-      const bad = check(copy, doctrine, space, { files: false });
+      const bad = check(copy, doctrine, space, { files: !!withFiles, sources: !withFiles });
       if (bad.some(b => b.includes(mark))) red++;
       else console.error(`  откат «${what}» НЕ покраснел (ждали «${mark}»): ${bad.join('; ') || 'бед нет'}`);
     }
+    // выгрузка не перезаписывает ручную: свежая запись из three.js против прежней ручной
+    // (до keepHand запись — из three.js: без него ручная модель пропала бы молча)
+    const fresh = JSON.parse(JSON.stringify(models));
+    fresh.ships[hf][hi] = { file: `res://view/ships/${hf}_${hi}.glb`, len: 1, nodes: {} };
+    const before = !fresh.ships[hf][hi].hand;
+    const kept = keepHand(fresh, models);
+    const keptOk = before && kept.includes(`${hf}.${hi}`) && fresh.ships[hf][hi].hand && fresh.ships[hf][hi].file === H(models).file;
+    if (keptOk) red++;
+    else console.error(`  выгрузка перезаписала ручную ${hf}.${hi}`);
+    spoil.push(['выгрузка сохраняет ручную']);
     if (red !== spoil.length) fail(`selftest: покраснело ${red} из ${spoil.length}`);
     console.log(`export_ships --selftest: испорченных копий ${spoil.length}, покраснели все`);
   }
@@ -566,6 +634,9 @@ await browser.close();
 
 let commit = null;
 try { commit = execSync('git rev-parse --short HEAD', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch (e) { /* без git — без номера */ }
+// ручные модели (install_model.py) выгрузка не перезаписывает — их записи из прежнего обмера
+const kept = existsSync(OUT_JSON) ? keepHand(out, readJson(OUT_JSON)) : [];
+for (const k of kept) table.push(`${k}: ручная модель — запись не тронута (godot/tools/install_model.py)`);
 const json = {
   _meta: {
     what: 'Модели кораблей «Капеллы» для Godot: файлы .glb, обмер и узлы. Выгрузка, руками не править.',

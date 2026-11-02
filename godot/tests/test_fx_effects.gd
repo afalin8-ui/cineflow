@@ -1,6 +1,7 @@
 # Эффекты боя (пакет GЭ; ярус fx — под xvfb в ОБОИХ отрисовщиках, run_tests.sh render). Каждая
 # проверка — с откатом, и откат краснит СВОЮ проверку:
-# - пятящийся тяжёлый без маршевого факела, у реверса свой знак (08, 7.2 п. 7); откат —
+# - пятящийся тяжёлый без маршевого факела, у реверса свой знак (08, 7.2 п. 7), у крейсера Тройдена
+#   (ручная модель, раструбы rev_*) — свой факел вперёд, виден на снимке; откат —
 #   «факел по скорости», как thrustNow в JS: факел горит у пятящегося; факел тянется с тягой
 #   (тот же откат: у стоящего с полной тягой факела нет);
 # - источник выстрела различим НА СНИМКЕ (08, 7.4): у главного калибра, батареи, лёгкого, ПВО,
@@ -106,6 +107,7 @@ func _backing(by_speed: bool) -> Dictionary:
 	var rev_on := 0
 	var thr_rev := 0
 	var lit := -1
+	var rev_lit := -1
 	for i in 150:
 		_step_draw(v)
 		var along := s.vel.dot(s.dir)
@@ -137,11 +139,27 @@ func _backing(by_speed: bool) -> Dictionary:
 				for x in range(0, with.get_width(), 2):
 					if lum(_over(without, with, x, y)) > 0.03:
 						lit += 1
+			# факел реверса (раструбы rev_* ручной модели крейсера Тройдена): свет на снимке — кадр как
+			# есть минус кадр с погашенными факелами реверса
+			var revs: Array = v._rev_plume.get(s.uid, [])
+			var rwas: Array[bool] = []
+			for p3: MeshInstance3D in revs:
+				rwas.append(p3.visible)
+				p3.visible = false
+			var no_rev := await _shot()
+			for k in revs.size():
+				var p4: MeshInstance3D = revs[k]
+				p4.visible = rwas[k]
+			rev_lit = 0
+			for y in range(0, with.get_height(), 2):
+				for x in range(0, with.get_width(), 2):
+					if lum(_over(no_rev, with, x, y)) > 0.03:
+						rev_lit += 1
 			break
 	BattleView.rollback_plume_by_speed = false
-	note("%s · пятится%s: шагов %d, тяга назад на %d, маршевый факел на %d, знак реверса на %d, света факелов на снимке %d точек" % [renderer(), " (откат «по скорости»)" if by_speed else "", backing, thr_rev, main_on, rev_on, lit])
+	note("%s · пятится%s: шагов %d, тяга назад на %d, маршевый факел на %d, знак реверса на %d, света факелов на снимке %d точек, факела реверса — %d" % [renderer(), " (откат «по скорости»)" if by_speed else "", backing, thr_rev, main_on, rev_on, lit, rev_lit])
 	await sk._drop(v)
-	return {"back": backing, "rev_thrust": thr_rev, "main": main_on, "rev": rev_on, "lit": lit}
+	return {"back": backing, "rev_thrust": thr_rev, "main": main_on, "rev": rev_on, "lit": lit, "rev_lit": rev_lit}
 
 
 func test_backing_heavy_no_main_plume() -> void:
@@ -154,6 +172,10 @@ func test_backing_heavy_no_main_plume() -> void:
 	ok(whole(r["lit"]) == 0, "%s: на снимке пятящегося маршевые факелы не светят (%d точек)" % [renderer(), whole(r["lit"])])
 	var o := await _backing(true)
 	ok(whole(o["main"]) >= whole(o["back"]) * 0.8 and whole(o["lit"]) > 20, "%s: откат «факел по скорости»: пятящийся «газует вперёд» — факел на %d шагах из %d, %d точек света — проверка краснеет" % [renderer(), whole(o["main"]), whole(o["back"]), whole(o["lit"])])
+	# крейсер Тройдена — ручная модель с раструбами реверса: у пятящегося горит СВОЙ факел вперёд
+	# (вместо знака у носа); в откате «по скорости» тяги назад нет — и факела реверса нет
+	ok(whole(r["rev_lit"]) > 20, "%s: факел реверса виден на снимке пятящегося (%d точек)" % [renderer(), whole(r["rev_lit"])])
+	ok(whole(o["rev_lit"]) == 0, "%s: откат «факел по скорости»: факела реверса нет (%d точек) — проверка краснеет" % [renderer(), whole(o["rev_lit"])])
 
 
 ## Факел тянется с тягой: стоящий крейсер, тяга по носу 0 / 0,25 / 1 (сглаживание сброшено) →

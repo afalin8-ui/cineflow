@@ -16,6 +16,10 @@
 #   вспышки и росчерки вперёд у носа. Тяжёлый по доктрине пятится носом к врагу, и маршевый
 #   факел от реверса рисовал бы «газует вперёд, уезжая назад». Доля тяги сглаживается по
 #   ИГРОВОМУ времени (на паузе факел стоит), в последние 2 с гипера факел тянется в разы.
+# - Факел реверса — у моделей с раструбами реверса (узлы rev_*, данные `plume` в записи: ручные
+#   модели, CLAUDE.md, раздел 15) вместо знака у носа: свой список, длина от тяги ПРОТИВ носа,
+#   прячется при малой обратной тяге, в откате «факел по скорости», на разгоне гипера и до
+#   прогрева — по тем же правилам, что маршевый.
 # Вид модель только ЧИТАЕТ: приказы идут дверью battle.queue (input/battle_input.gd).
 extends Node3D
 
@@ -117,6 +121,10 @@ static var rollback_torus_ring := false
 ## ТОЛЬКО для проверки отката (план GЭ, п. 1; 08, 7.2 п. 7): маршевый факел — от СКОРОСТИ, как
 ## thrustNow в JS (без направления тяги): пятящийся тяжёлый «газует вперёд», знака реверса нет.
 static var rollback_plume_by_speed := false
+## ТОЛЬКО для проверки отката (tests/test_ui_hero.gd), в игре false: факел реверса (rev_*) горит
+## всегда — без тяги назад, в откате «по скорости» и на разгоне гипера (как в заметках автора
+## модели без правил маршевого факела), а знак у носа рисуется и у кораблей с rev_*.
+static var rollback_rev_plume_always := false
 ## ТОЛЬКО для проверок отката (план GИ), в игре false: выбор не чистится от погибших — панель
 ## пишет о мёртвом корабле, пока его не снимут руками (06, 2.5);
 static var rollback_keep_dead := false
@@ -133,12 +141,19 @@ var _ring: Dictionary[int, MeshInstance3D] = {}
 var _plume: Dictionary[int, Array] = {}      # [маршевые MeshInstance3D…], реверс — последним
 var _plume_len: Dictionary[int, PackedFloat64Array] = {}
 var _nose: Dictionary[int, Vector2] = {}     # (z носа, y середины) в осях модели
+## Факелы реверса у раструбов rev_* (ручные модели): свои списки, а не хвост маршевых —
+## у маршевых центр на +l/2 по z, у реверса — по своей оси из `plume.rot_deg`.
+var _rev_plume: Dictionary[int, Array] = {}
+var _rev_len: Dictionary[int, PackedFloat64Array] = {}
+var _rev_axis: Dictionary[int, PackedVector3Array] = {}
 ## Сглаженная доля тяги (по носу, против носа) и когда были вспышки реверса — по игровому времени.
 var _plume_k: Dictionary[int, Vector2] = {}
 var _rev_t: Dictionary[int, float] = {}
 var _last_game_t := -1.0
 ## Нарисованный факел на этом кадре (проверки): uid → (длина маршевого, доля реверса).
 var drawn_plumes: Dictionary[int, Vector2] = {}
+## Нарисованный факел реверса на этом кадре (проверки): uid → длина самого длинного (0 — спрятан).
+var drawn_rev: Dictionary[int, float] = {}
 ## Гипер: воронки, кольца накачки, росчерки ухода и выхода (view/hyper_fx.gd, пакет GЭ).
 var hyper: HyperFx
 ## Кадров, пока держится прогрев: узлы с редкими материалами видны (схлопнуты), потом прячутся.
@@ -358,6 +373,35 @@ func _add_plumes(s: Ship, v: ShipVisual) -> void:
 		at.add_child(mi)
 		list.append(mi)
 		lens.append(size)
+	# раструбы реверса (rev_*): свой факел, ось — из записи (plume.rot_deg)
+	var rlist: Array = []
+	var rlens := PackedFloat64Array()
+	var raxis := PackedVector3Array()
+	for key: String in nodes:
+		if not key.begins_with("rev_"):
+			continue
+		var rec: Dictionary = nodes[key]
+		var at := v.part(StringName(key))
+		if at == null or typeof(rec.get("plume")) != TYPE_DICTIONARY:
+			continue
+		var pl: Dictionary = rec["plume"]
+		var size: float = pl.get("size", rec.get("size", 10.0))
+		var rot: Array = pl.get("rot_deg", [-90.0, 0.0, 0.0])
+		var rx: float = rot[0]
+		var ry: float = rot[1]
+		var rz: float = rot[2]
+		var mi := _plume_instance(mat)
+		mi.name = "plume_rev"
+		mi.rotation_degrees = Vector3(rx, ry, rz)
+		at.add_child(mi)
+		rlist.append(mi)
+		rlens.append(size)
+		# ось факела (y сетки) после поворота: на ней лежит центр факела
+		raxis.append(mi.basis.y.normalized())
+	if not rlist.is_empty():
+		_rev_plume[s.uid] = rlist
+		_rev_len[s.uid] = rlens
+		_rev_axis[s.uid] = raxis
 	# реверс — свой знак у носа (08, 7.2 п. 7): вспышки и росчерки вперёд, а не маршевый факел
 	var aabb: Array = v.record.get("aabb", [])
 	var nose_z := -v.length() * 0.5
@@ -502,6 +546,7 @@ func draw_state() -> void:
 	_plume_mat.set_shader_parameter("now", game_t)
 	_plume_mat_foe.set_shader_parameter("now", game_t)
 	drawn_plumes.clear()
+	drawn_rev.clear()
 	for s in battle.ships:
 		var v: ShipVisual = _vis.get(s.uid)
 		if v == null:
@@ -513,6 +558,7 @@ func draw_state() -> void:
 		var b := _blend(s, a)
 		v.position = Vector3(b.x, _y(s.uid), b.y)
 		v.rotation = Vector3(0.0, b.z, 0.0)
+		v.spin(game_t, clock)
 		var ring: MeshInstance3D = _ring.get(s.uid)
 		if ring != null:
 			ring.visible = rollback_torus_ring and s.uid in selection
@@ -556,6 +602,9 @@ func _draw_plumes(s: Ship, gdt: float, game_t: float) -> void:
 	_plume_k[s.uid] = k
 	# последние 2 с гипера — разгон по носу, факел вытягивается в разы (08, 2.9)
 	var run := s.hyper_left > 0.0 and s.hyper_left < Movement.HYPER_RUN
+	# факел висит внутри модели: у ручной модели она уменьшена (scale), а длины — в единицах боя
+	var vis: ShipVisual = _vis.get(s.uid)
+	var inv := 1.0 / vis.model_scale() if vis != null else 1.0
 	var longest := 0.0
 	for i in list.size():
 		var mi: MeshInstance3D = list[i]
@@ -571,11 +620,14 @@ func _draw_plumes(s: Ship, gdt: float, game_t: float) -> void:
 		if run:
 			l = lens[i] * (1.6 + (Movement.HYPER_RUN - s.hyper_left) * 3.2)
 			w *= 1.3
-		mi.scale = Vector3(w, l, w)
+		mi.scale = Vector3(w, l, w) * inv
 		# факел стоит основанием у сопла: центр — на половине длины по оси
-		mi.position = Vector3(0.0, 0.0, l * 0.5)
+		mi.position = Vector3(0.0, 0.0, l * 0.5 * inv)
 		longest = maxf(longest, l)
 	drawn_plumes[s.uid] = Vector2(longest, k.y)
+	var has_rev := _rev_plume.has(s.uid)
+	if has_rev:
+		_draw_rev_plumes(s, k.y, run, inv)
 	# знак реверса: короткие вспышки и росчерки ВПЕРЁД у носа (08, 7.2 п. 7)
 	if k.y < REV_MIN or rollback_plume_by_speed or run:
 		return
@@ -585,6 +637,13 @@ func _draw_plumes(s: Ship, gdt: float, game_t: float) -> void:
 	_rev_t[s.uid] = game_t
 	var v: ShipVisual = _vis.get(s.uid)
 	if v == null:
+		return
+	if has_rev and not rollback_rev_plume_always:
+		# у раструбов реверса свой факел — знак у носа показал бы реверс дважды и не там.
+		# Генератор вида при этом расходуется ровно как со знаком: из него же берутся высоты
+		# кораблей, вышедших позже, и снимки не должны сдвигаться от того, чья модель (раздел 24)
+		_fx_rng.randf_range(0.7, 1.1)
+		_fx_rng.randf_range(0.7, 1.1)
 		return
 	var nz: Vector2 = _nose.get(s.uid, Vector2.ZERO)
 	var xf := v.global_transform
@@ -598,6 +657,33 @@ func _draw_plumes(s: Ship, gdt: float, game_t: float) -> void:
 		var at := xf * Vector3(sgn * w2, nz.y, nz.x)
 		g.flash(at, col, v.width() * (0.14 + 0.16 * k.y) * _fx_rng.randf_range(0.7, 1.1), 0.07, 1.5, 3.0, 0.4)
 		g.particle(at, fwd * (40.0 + 60.0 * k.y) + side * sgn * 10.0, col, 1.6, 0.6, 0.22, FxPool.SPARK, 2.0, 1.4)
+
+
+## Факел реверса у раструбов rev_*: длина 0,6…2 размера по тяге ПРОТИВ носа (как маршевый — по
+## тяге по носу), центр — на половине длины по оси факела. Прячется при малой обратной тяге, в откате
+## «факел по скорости» (там тяги назад нет вовсе) и на разгоне гипера; до прогрева — как маршевый:
+## первые кадры крошечный и видимый (конвейер собирается сразу), потом спрятан.
+func _draw_rev_plumes(s: Ship, rev: float, run: bool, inv: float) -> void:
+	var list: Array = _rev_plume[s.uid]
+	var lens: PackedFloat64Array = _rev_len[s.uid]
+	var axes: PackedVector3Array = _rev_axis[s.uid]
+	var on := rev >= REV_MIN and not rollback_plume_by_speed and not run
+	if rollback_rev_plume_always:
+		on = true
+	var longest := 0.0
+	for i in list.size():
+		var mi: MeshInstance3D = list[i]
+		if not on:
+			mi.visible = warm_frames > 0 and not BattleFx.rollback_no_warm
+			mi.scale = Vector3(0.01, 0.01, 0.01)
+			continue
+		mi.visible = true
+		var l := lens[i] * (0.6 + 1.4 * clampf(rev, 0.0, 1.0))
+		var w := lens[i] * 0.32
+		mi.scale = Vector3(w, l, w) * inv
+		mi.position = axes[i] * (l * 0.5 * inv)
+		longest = maxf(longest, l)
+	drawn_rev[s.uid] = longest
 
 
 ## Прогрев (07, ловушка 29; 08, ловушка 15): первые кадры боя показывают — схлопнутыми или

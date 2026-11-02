@@ -326,6 +326,7 @@ func _process(delta: float) -> void:
 	for i in ships.size():
 		var p := base_pos[i]
 		ships[i].position = Vector3(p.x, p.y + sin(clock * 0.6 + bob_phase[i]) * bob, p.z)
+		ships[i].spin(clock, clock)      # реактор ручной модели (у выгрузки three.js вращать нечего)
 	_update_crafts()
 	fx.set_time(clock)
 	_fire(delta)

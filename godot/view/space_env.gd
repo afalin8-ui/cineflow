@@ -13,6 +13,10 @@
 #   венец ярче на дневной стороне и светится против звезды; холодный ОБЪЁМ — встречный
 #   свет снизу и окружающий цветом; «ФАРА» — слабый свет из камеры вдоль взгляда (ловит
 #   борта, повёрнутые к нам от звезды; на планету не светит — слой 2, иначе ночи бы не было).
+# - Цвет света НЕЙТРАЛЬНЫЙ (утверждён пользователем 02.11.2026 вместе с моделью крейсера
+#   Тройдена): тёплый ключ GЭ (1; 0,86; 0,68) и синий объём (заливка 0,4/0,46/0,9, окружающий
+#   0,32/0,4/0,66) красили металл кораблей в рыжее и синее — цвет клана и тон обшивки на ручных
+#   моделях читались не теми. Направления и силы — прежние, сменился только цвет.
 extends Node3D
 
 const SKY_SHADER := preload("res://view/shaders/stars_sky.gdshader")
@@ -26,6 +30,16 @@ const PLANET_RADIUS := 760.0
 const CORONA_K := 1.07
 ## Слой планеты и венца: фара на них не светит (`cull_mask`).
 const PLANET_LAYER := 2
+## Нейтральный свет (CLAUDE.md, раздел 24): ключ от звезды, встречный, окружающий и «фара».
+const SUN := Color(1.0, 0.95, 0.88)
+const FILL := Color(0.6, 0.62, 0.72)
+const AMBIENT := Color(0.42, 0.43, 0.48)
+const HEAD := Color(0.9, 0.92, 1.0)
+## Свет GЭ (до 02.11.2026) — только для отката проверки и замера «было».
+const OLD_SUN := Color(1.0, 0.86, 0.68)
+const OLD_FILL := Color(0.4, 0.46, 0.9)
+const OLD_AMBIENT := Color(0.32, 0.4, 0.66)
+const OLD_HEAD := Color(0.78, 0.84, 1.0)
 
 var env: Environment
 var sky_mat: ShaderMaterial
@@ -40,6 +54,9 @@ var corona_mat: ShaderMaterial
 ## ТОЛЬКО для проверки отката (план GЭ, п. 6): дымка у края планеты и венец о звезде не знают —
 ## светятся ровно по кругу, как до GЭ. В игре false.
 static var rollback_flat_haze := false
+## ТОЛЬКО для проверки отката и замера «было» (tests/test_ui_hero.gd): свет GЭ — тёплый ключ,
+## синий объём. В игре false.
+static var rollback_old_light := false
 
 
 func _ready() -> void:
@@ -52,7 +69,7 @@ func _ready() -> void:
 	sky.radiance_size = Sky.RADIANCE_SIZE_256
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.32, 0.4, 0.66)
+	env.ambient_light_color = OLD_AMBIENT if rollback_old_light else AMBIENT
 	env.ambient_light_energy = 0.42
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
@@ -68,18 +85,18 @@ func _ready() -> void:
 
 	# тёплый ключ сбоку и сверху, холодный встречный снизу (часть 08, ловушка 22)
 	sun = DirectionalLight3D.new()
-	sun.light_color = Color(1.0, 0.86, 0.68)
+	sun.light_color = OLD_SUN if rollback_old_light else SUN
 	sun.light_energy = 1.8
 	sun.rotation_degrees = Vector3(-38.0, -125.0, 0.0)
 	add_child(sun)
 	fill = DirectionalLight3D.new()
-	fill.light_color = Color(0.4, 0.46, 0.9)
+	fill.light_color = OLD_FILL if rollback_old_light else FILL
 	fill.light_energy = 0.5
 	fill.rotation_degrees = Vector3(25.0, 50.0, 0.0)
 	fill.light_cull_mask = 1
 	add_child(fill)
 	headlight = DirectionalLight3D.new()
-	headlight.light_color = Color(0.78, 0.84, 1.0)
+	headlight.light_color = OLD_HEAD if rollback_old_light else HEAD
 	headlight.light_energy = 0.32
 	headlight.light_specular = 0.25
 	headlight.light_cull_mask = 1

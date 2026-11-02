@@ -4,11 +4,26 @@
 # Обшивка: скан и нормали ОДНИ на все корабли (view/ships/tex/), в .glb их нет.
 # Материалы с именем skin_* получают их здесь — один раз на файл модели: сцена
 # из кэша ресурсов общая, и её материалы общие у всех кораблей этого вида.
+#
+# Ручные модели флота (view/hero/, ставит tools/install_model.py — CLAUDE.md, раздел 15):
+# материалы trim_* — ОБЩИЙ трим-лист флота (view/hero/tex/trim_*.png), тоже один на все
+# корабли; своё у корабля — карта AO во второй развёртке и цвет вершин (маска грязи и тона),
+# цвет клана — baseColorFactor материала. Лист в .glb не кладётся (там заглушка 4×4).
 extends RefCounted
 
 const DATA_PATH := "res://data/ship_models.json"
 const SKIN_ALBEDO := preload("res://view/ships/tex/hull_diff.jpg")
 const SKIN_NORMAL := preload("res://view/ships/tex/hull_nor.jpg")
+const TRIM_ALBEDO := preload("res://view/hero/tex/trim_basecolor.png")
+const TRIM_NORMAL := preload("res://view/hero/tex/trim_normal.png")
+const TRIM_ORM := preload("res://view/hero/tex/trim_orm.png")
+const TRIM_EMIT := preload("res://view/hero/tex/trim_emission.png")
+## Сила огней трим-листа (окна, щели): та, при которой модель проверял критик (круги 4–6).
+const TRIM_EMIT_ENERGY := 3.0
+
+## ТОЛЬКО для проверки отката (tests/test_ui_hero.gd), в игре false: материалы trim_* остаются
+## как их дал импорт — без цвета вершин, без AO на прямом свете и без общего листа.
+static var rollback_plain_trim := false
 
 static var _path := DATA_PATH
 static var _data: Dictionary = {}
@@ -127,6 +142,8 @@ static func _dress(n: Node) -> void:
 				continue
 			# вдали обшивка рябит без анизотропии (08, 7.2 п. 12 — уровни выключены при импорте)
 			m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+			if m.resource_name.begins_with("trim_") and not rollback_plain_trim:
+				_dress_trim(m)
 			if m.resource_name.begins_with("skin_") and m.albedo_texture == null:
 				m.albedo_texture = SKIN_ALBEDO
 				m.normal_enabled = true
@@ -135,3 +152,26 @@ static func _dress(n: Node) -> void:
 				m.uv1_scale = Vector3(3.0, 3.0, 1.0)
 	for c in n.get_children():
 		_dress(c)
+
+
+## Материал trim_* ручной модели: цвет вершин — в цвет (импорт его читает, но в альбедо не
+## включает), карта AO гасит и прямой свет (в ней не только AO, но и грязь, потёки, «верх светлее
+## бортов»), лист — общий флота. Цвет материала (цвет клана) не трогаем.
+static func _dress_trim(m: StandardMaterial3D) -> void:
+	m.vertex_color_use_as_albedo = true
+	if m.ao_enabled and m.ao_texture != null:
+		m.ao_light_affect = 1.0
+	if m.albedo_texture == null or m.albedo_texture.get_width() <= 4:
+		m.albedo_texture = TRIM_ALBEDO
+		m.normal_enabled = true
+		m.normal_texture = TRIM_NORMAL
+		m.roughness = 1.0
+		m.roughness_texture = TRIM_ORM
+		m.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+		m.metallic_texture = TRIM_ORM
+		m.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
+		m.emission_enabled = true
+		m.emission = Color.WHITE
+		m.emission_texture = TRIM_EMIT
+		m.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
+		m.emission_energy_multiplier = TRIM_EMIT_ENERGY
