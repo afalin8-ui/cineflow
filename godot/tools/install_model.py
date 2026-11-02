@@ -240,7 +240,9 @@ def selftest():
         bad = problems(fac, sid, raw, gj, doctrine, space)
         if bad:
             fails.append(f'{tag}: запись не проходит своих проверок: {bad}')
-        again = scale_record(raw, space['model_len']['ship'][sid] / raw['len'])
+        # повторная установка тем же --fit, каким ставили: model_len — в длину корабля в бою, none — как есть
+        fit_k = space['model_len']['ship'][sid] / raw['len'] if rec['hand'].get('fit') == 'model_len' else 1.0
+        again = scale_record(raw, fit_k)
         checks += 1
         diff = [x for x in ('len', 'width', 'height') if abs(again[x] - rec[x]) > 1e-3]
         diff += [n for n in rec['nodes'] if 'pos' in rec['nodes'][n]

@@ -2,8 +2,9 @@
 # без окна: всё здесь меряется по узлам, материалам и числам, а не по точкам снимка (снимок факела
 # реверса — ярус fx, test_fx_effects → test_backing_heavy_no_main_plume). Каждая проверка —
 # с откатом, и откат краснит СВОЮ проверку:
-# - модель встаёт в длину корабля в бою (scale записи), узлы на месте, башня-спинал не вращается
-#   (откат — запись без `fixed`);
+# - модель стоит в своём размере (--fit none), узлы на месте, башня-спинал не вращается
+#   (откат — запись без `fixed`); масштаб записи (--fit model_len, для следующих моделей) — на той же
+#   модели, уменьшенной как поставила бы установка: длина, дуло, факелы;
 # - материалы trim_*: цвет вершин, AO на прямом свете, общий лист; свечения glow_engine_lo
 #   и glow_throat (откат `ShipModels.rollback_plain_trim`);
 # - реактор вращается от ИГРОВОГО времени: на паузе стоит (откат — от настоящих часов), остальные
@@ -54,14 +55,23 @@ func test_hero_cruiser_record_size_nodes() -> void:
 	var file: String = rec.get("file", "")
 	ok(file.begins_with("res://view/hero/"), "файл ручной модели в view/hero/: %s" % file)
 	ok(ShipModels.ship(&"plektor", &"cruiser").get("hand") == null, "крейсер Плэктора — прежний, из выгрузки three.js")
-	var want := defs.ship(&"troyden", &"cruiser").model_len
-	near(num(rec.get("len")), want, 0.01, "длина в обмере = model_len корабля в бою (расталкивание и строй не тронуты)")
+	# размер — тем --fit, каким ставили (раздел 15): крейсер Тройдена стоит КАК ЕСТЬ (none, 129,82 при
+	# model_len 112,86 — в ±20%); model_len — уменьшен до длины корабля в бою. Масштаб как механизм
+	# проверяет test_hero_model_scale_mechanism
+	var model_len := defs.ship(&"troyden", &"cruiser").model_len
+	var fit: String = hand.get("fit", "")
+	var raw := num(hand.get("raw_len"))
+	var k_want := model_len / raw if fit == "model_len" else 1.0
+	eq(fit, "none", "крейсер Тройдена поставлен --fit none — в размере, который проверял критик")
+	ok(absf(raw - model_len) <= model_len * 0.2, "длина модели %.2f в ±20%% от model_len %.2f" % [raw, model_len])
+	var want := raw * k_want
+	near(num(rec.get("len")), want, 0.01, "длина в обмере = длина модели × масштаб (--fit %s)" % fit)
 	var v := _visual(&"troyden", &"cruiser")
-	near(v.model_scale(), want / num(hand.get("raw_len")), 1e-4, "масштаб вида = model_len / длина модели")
+	near(v.model_scale(), k_want, 1e-4, "масштаб вида — по --fit (%s)" % fit)
 	# длина того, что на экране: рамка геометрии модели с масштабом вида
 	var box := ModelsTest.model_aabb(v)
 	var got := maxf(box.size.x, box.size.z)
-	ok(absf(got - want) <= want * 0.01, "длина нарисованной модели %.2f при model_len %.2f" % [got, want])
+	ok(absf(got - want) <= want * 0.01, "длина нарисованной модели %.2f при длине в обмере %.2f" % [got, want])
 	near(box.size.x, v.width(), 0.05, "ширина в обмере = ширина нарисованной (капсула выбора)")
 	for nm: StringName in [&"hull", &"turret_0", &"muzzle_0", &"engines", &"engine_0", &"engine_1", &"engine_2",
 			&"pd_0", &"pd_1", &"pd_2", &"aux_0", &"aux_1", &"bay", &"reactor", &"rev_0", &"rev_1"]:
@@ -86,6 +96,74 @@ func test_hero_cruiser_record_size_nodes() -> void:
 	v.queue_free()
 	p.queue_free()
 	await hooks.frames(1)
+
+
+## Запись крейсера Тройдена, уменьшенная в k раз так, как её поставил бы `install_model.py --fit
+## model_len` (обмер в единицах боя, `scale` — во сколько вид уменьшает модель), — на время проверки
+## в общем обмере. Отдаёт прежнюю запись: вернуть её — _put_record.
+func _scale_record(k: float) -> Dictionary:
+	var keep := ShipModels.ship(&"troyden", &"cruiser")
+	var r := keep.duplicate(true)
+	for key: String in ["len", "len_z", "width", "height"]:
+		if r.has(key):
+			r[key] = num(r[key]) * k
+	var box: Array = []
+	for corner: Variant in arr(r.get("aabb")):
+		var c: Array = []
+		for x: Variant in arr(corner):
+			c.append(num(x) * k)
+		box.append(c)
+	r["aabb"] = box
+	for n: String in dict(r.get("nodes")):
+		var nd := dict(dict(r["nodes"])[n])
+		if nd.has("pos"):
+			var p: Array = []
+			for x: Variant in arr(nd["pos"]):
+				p.append(num(x) * k)
+			nd["pos"] = p
+		if nd.has("size"):
+			nd["size"] = num(nd["size"]) * k
+		if typeof(nd.get("plume")) == TYPE_DICTIONARY and dict(nd["plume"]).has("size"):
+			dict(nd["plume"])["size"] = num(dict(nd["plume"])["size"]) * k
+	r["scale"] = num(keep.get("scale", 1.0)) * k
+	_put_record(r)
+	return keep
+
+
+func _put_record(r: Dictionary) -> void:
+	dict(dict(ShipModels.data().get("ships")).get("troyden"))["cruiser"] = r
+
+
+func test_hero_model_scale_mechanism() -> void:
+	const K := 0.8
+	var keep := _scale_record(K)
+	var rec := ShipModels.ship(&"troyden", &"cruiser")
+	var v := _visual(&"troyden", &"cruiser")
+	near(v.model_scale(), K, 1e-6, "масштаб записи 0,8 — вид уменьшает модель")
+	var box := ModelsTest.model_aabb(v)
+	var want := num(rec.get("len"))
+	var got := maxf(box.size.x, box.size.z)
+	ok(absf(got - want) <= want * 0.01, "масштаб 0,8: длина нарисованной %.2f = длине в обмере %.2f" % [got, want])
+	var mz := arr(dict(dict(rec.get("nodes")).get("muzzle_0")).get("pos"))
+	var mp := v.to_local(v.part_point(&"muzzle_0"))
+	ok(mp.distance_to(Vector3(num(mz[0]), num(mz[1]), num(mz[2]))) < 0.05, "масштаб 0,8: дуло там, где в записи (%s)" % mp)
+	# откат «вид масштаб не ставит»: модель в своём размере — длина расходится с записью
+	v.model.scale = Vector3.ONE
+	var raw := ModelsTest.model_aabb(v)
+	ok(absf(maxf(raw.size.x, raw.size.z) - want) > want * 0.1, "откат «без масштаба модели»: длина %.2f при записи %.2f — проверка краснеет" % [maxf(raw.size.x, raw.size.z), want])
+	v.queue_free()
+	# факелы висят ВНУТРИ уменьшенной модели — длина в мире обязана совпасть со счётом
+	var lab := await _lab()
+	for i in 5:
+		lab.draw_state()
+	var back := _rev_draw(lab, 0.0, 1.0)
+	var size := num(dict(dict(dict(rec.get("nodes")).get("rev_0")).get("plume")).get("size"))
+	near(num(back["len"]), size * 2.0, 0.01, "масштаб 0,8: факел реверса — 2 размера раструба (в единицах боя)")
+	near(num(back["world"]), num(back["len"]), 0.01, "масштаб 0,8: факел реверса в мире той же длины, что в счёте")
+	var fwd := _rev_draw(lab, 1.0, 0.0)
+	near(num(fwd["main_world"]), num(fwd["main"]), 0.01, "масштаб 0,8: маршевый факел в мире той же длины, что в счёте")
+	await _drop(lab)
+	_put_record(keep)
 
 
 # ───────────────────────── материалы ─────────────────────────
