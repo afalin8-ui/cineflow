@@ -33,7 +33,7 @@ const ROLE_OF_TYPE: Dictionary[String, StringName] = {"heavy": &"main", "missile
 ## Ключ строки таблицы урона по роли.
 const KEY_OF_ROLE: Dictionary[StringName, StringName] = {&"main": &"heavy", &"sec": &"sec", &"missile": &"missile", &"light": &"light", &"pd": &"pd"}
 ## Записи доктрины, которые раскладываются не в поле Doctrine, а по своим местам.
-const DOCTRINE_SPECIAL: Array[String] = ["sec.mounts", "space_dmg.sec", "ecm.main_slow", "clan", "nodes"]
+const DOCTRINE_SPECIAL: Array[String] = ["sec.mounts", "space_dmg.sec", "ecm.main_slow", "clan", "nodes", "view.plume"]
 
 
 # ───────────────────────────── классы определений ─────────────────────────────
@@ -445,6 +445,8 @@ class Doctrine:
 	var view_height_spread: float      # только картинка (09, 11.6)
 	var view_bob: float
 	var view_craft_arc: float          # дуги машин по высоте (09, 11.6), только картинка
+	## Цвет пламени двигателей по клану (view.plume, 09, 11.8) — только картинка: по клану, не по стороне.
+	var plume: Dictionary[StringName, Color] = {}
 	# раскладываются по местам (DOCTRINE_SPECIAL), здесь — для справки и стенда
 	var sec_mounts: Dictionary[StringName, int] = {}
 	var ecm_main_slow_default: float
@@ -891,6 +893,12 @@ func _build(space: Dictionary, doc: Dictionary) -> void:
 	var len_strike := _dict(_need(model_len, "strike", "model_len"), "model_len.strike")
 
 	faction_ids = _names(_need(space, "faction_ids", "space_data"), "space_data.faction_ids")
+	for fid in faction_ids:
+		if not doctrine.plume.has(fid):
+			_err("doctrine.view.plume", "нет цвета пламени клана %s" % fid)
+	for pid: StringName in doctrine.plume:
+		if not faction_ids.has(pid):
+			_err("doctrine.view.plume." + String(pid), "такого клана нет в space_data.faction_ids")
 	var fac := _dict(_need(space, "factions", "space_data"), "space_data.factions")
 	var ships := _dict(_need(space, "ships", "space_data"), "space_data.ships")
 	var strike := _dict(_need(space, "strike", "space_data"), "space_data.strike")
@@ -1232,7 +1240,7 @@ func _build_doctrine(doc: Dictionary) -> void:
 		if not (usage & PROPERTY_USAGE_SCRIPT_VARIABLE):
 			continue
 		var pname: String = p["name"]
-		if pname in ["sec_mounts", "ecm_main_slow_default", "was"]:
+		if pname in ["sec_mounts", "ecm_main_slow_default", "was", "plume"]:
 			continue
 		if not by_field.has(pname):
 			_err("doctrine", "нет записи для поля %s (ждали «%s»)" % [pname, pname.replace("_", ".")])
@@ -1261,6 +1269,17 @@ func _build_doctrine(doc: Dictionary) -> void:
 			doctrine.sec_mounts[StringName(str(id))] = ni
 	var ms := _dict(_v_of(entries, "ecm.main_slow"), "doctrine.ecm.main_slow")
 	doctrine.ecm_main_slow_default = _num(ms, "default", "doctrine.ecm.main_slow")
+	var pl := _dict(_v_of(entries, "view.plume"), "doctrine.view.plume")
+	for id: Variant in pl:
+		var path := "doctrine.view.plume." + str(id)
+		var rgb: Variant = _conv(pl[id], TYPE_PACKED_FLOAT64_ARRAY, path)
+		if rgb == null:
+			continue
+		var a: PackedFloat64Array = rgb
+		if a.size() != 3 or a[0] < 0.0 or a[1] < 0.0 or a[2] < 0.0 or a[0] > 1.0 or a[1] > 1.0 or a[2] > 1.0:
+			_err(path, "ждали три числа 0…1 (r, g, b)")
+			continue
+		doctrine.plume[StringName(str(id))] = Color(a[0], a[1], a[2])
 	for sp: String in DOCTRINE_SPECIAL:
 		if not entries.has(sp):
 			_err("doctrine", "нет записи %s" % sp)

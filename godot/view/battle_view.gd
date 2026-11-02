@@ -51,8 +51,8 @@ const SideColors := preload("res://view/side_colors.gd")
 const OWN_RING := SideColors.OWN
 const FOE_RING := SideColors.FOE
 const ORDER_FLASH := SideColors.OWN
-const PLUME := Color(0.55, 0.8, 1.0)
-const PLUME_FOE := Color(1.0, 0.68, 0.38)
+## Цвет пламени — по КЛАНУ корабля, а не по стороне (решение пользователя 02.11.2026): doctrine.json
+## → view.plume (`Doctrine.plume`). Свой и чужой различают знаки и кольца (C43), не пламя.
 ## Доля тяги на факеле догоняет модель со скоростью PLUME_FOLLOW в игровую секунду (08, 2.9:
 ## «сглаживание долей clamp(dt·6)»): тяга шага скачет, а факел не мигает.
 const PLUME_FOLLOW := 6.0
@@ -125,6 +125,9 @@ static var rollback_plume_by_speed := false
 ## всегда — без тяги назад, в откате «по скорости» и на разгоне гипера (как в заметках автора
 ## модели без правил маршевого факела), а знак у носа рисуется и у кораблей с rev_*.
 static var rollback_rev_plume_always := false
+## ТОЛЬКО для проверки отката (tests/test_fx_effects.gd), в игре false: пламя по СТОРОНЕ, как до
+## 02.11.2026 — у своих цветом Тройдена (голубое), у чужих цветом Плэктора (оранжевое), чей бы ни был корабль.
+static var rollback_plume_by_side := false
 ## ТОЛЬКО для проверок отката (план GИ), в игре false: выбор не чистится от погибших — панель
 ## пишет о мёртвом корабле, пока его не снимут руками (06, 2.5);
 static var rollback_keep_dead := false
@@ -162,8 +165,8 @@ var _lines: MeshInstance3D
 var _lines_mesh: ImmediateMesh
 var _lines_mat: StandardMaterial3D
 var _plume_mesh: ArrayMesh
-var _plume_mat: ShaderMaterial
-var _plume_mat_foe: ShaderMaterial
+## Материалы пламени — по одному на цвет (то есть на клан), заводятся по первому кораблю клана.
+var _plume_mats: Dictionary[String, ShaderMaterial] = {}
 var _ring_mat_own: StandardMaterial3D
 var _ring_mat_foe: StandardMaterial3D
 var _fx_rng := RandomNumberGenerator.new()
@@ -252,8 +255,6 @@ func _make_materials() -> void:
 	_lines_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_lines_mat.no_depth_test = true
 	_plume_mesh = plume_mesh()
-	_plume_mat = plume_material(PLUME)
-	_plume_mat_foe = plume_material(PLUME_FOE)
 	_ring_mat_own = _flat(OWN_RING)
 	_ring_mat_foe = _flat(FOE_RING)
 
@@ -279,6 +280,24 @@ static func plume_mesh() -> ArrayMesh:
 	arr[Mesh.ARRAY_INDEX] = idx
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
+
+
+## Цвет пламени корабля: цвет его клана из doctrine.json → view.plume (в откате — по стороне).
+func plume_color(s: Ship) -> Color:
+	var p := defs.doctrine.plume
+	if rollback_plume_by_side:
+		return p.get(&"troyden" if s.side == my_side else &"plektor", Color.WHITE)
+	return p.get(clan_of(s), Color.WHITE)
+
+
+## Материал пламени этого цвета — один на цвет на весь вид («now» ставит draw_state всем).
+func _plume_mat_for(c: Color) -> ShaderMaterial:
+	var key := c.to_html(false)
+	var m: ShaderMaterial = _plume_mats.get(key)
+	if m == null:
+		m = plume_material(c)
+		_plume_mats[key] = m
 	return m
 
 
@@ -358,7 +377,7 @@ func _add_plumes(s: Ship, v: ShipVisual) -> void:
 	var list: Array = []
 	var lens := PackedFloat64Array()
 	var nodes: Dictionary = v.record.get("nodes", {})
-	var mat := _plume_mat if s.side == my_side else _plume_mat_foe
+	var mat := _plume_mat_for(plume_color(s))
 	for key: String in nodes:
 		if not key.begins_with("engine_"):
 			continue
@@ -543,8 +562,8 @@ func draw_state() -> void:
 	var game_t := battle.time - Battle.STEP + a * Battle.STEP
 	var gdt := clampf(game_t - _last_game_t, 0.0, 0.25) if _last_game_t >= 0.0 else 1.0
 	_last_game_t = game_t
-	_plume_mat.set_shader_parameter("now", game_t)
-	_plume_mat_foe.set_shader_parameter("now", game_t)
+	for pm: ShaderMaterial in _plume_mats.values():
+		pm.set_shader_parameter("now", game_t)
 	drawn_plumes.clear()
 	drawn_rev.clear()
 	for s in battle.ships:
@@ -649,7 +668,7 @@ func _draw_plumes(s: Ship, gdt: float, game_t: float) -> void:
 	var xf := v.global_transform
 	var fwd := -xf.basis.z.normalized()
 	var side := xf.basis.x.normalized()
-	var col := PLUME if s.side == my_side else PLUME_FOE
+	var col := plume_color(s)
 	var g := bfx.gfx
 	g.now = game_t
 	var w2 := v.width() * 0.3

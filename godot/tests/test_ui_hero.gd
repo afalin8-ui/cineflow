@@ -12,6 +12,8 @@
 # - факел реверса у rev_* — только при тяге назад, прячется в откате «по скорости», на разгоне
 #   гипера и до прогрева; знак у носа у такого корабля не рисуется, а генератор вида расходуется
 #   как со знаком (откат `BattleView.rollback_rev_plume_always`);
+# - пламя двигателей по КЛАНУ, а не по стороне: зеркальный бой — один цвет, Тройден × Плэктор и
+#   Плэктор × Тройден — по клану (откат `BattleView.rollback_plume_by_side`);
 # - нейтральный свет — числами (откат `SpaceEnv.rollback_old_light`).
 extends "res://tests/case.gd"
 
@@ -430,6 +432,75 @@ func test_hero_reverse_plume_rules() -> void:
 	var pr := _rev_draw(p, 0.0, 1.0)
 	ok(whole(pr["n"]) == 0 and flag(pr["nose"]), "у крейсера без раструбов реверса — прежний знак у носа")
 	await _drop(p)
+
+
+# ───────────────────────── пламя по клану ─────────────────────────
+
+## Бой attacker × defender (без резерва), вид без окна, два кадра → {сторона: [цвета пламени
+## её кораблей]} — из материала маршевых факелов и из plume_color (им же красится знак у носа).
+func _plume_colors(attacker: StringName, defender: StringName) -> Dictionary:
+	var defs := _get_defs()
+	var b := Battle.create(defs, {"attacker": attacker, "defender": defender, "size": &"small", "seed": 5, "reserve": false}) as Battle
+	var v := BattleView.new()
+	tree.root.add_child(v)
+	v.setup(defs, b, false)
+	v.paused = true
+	v.set_process(false)
+	for i in 12:
+		_step(v)
+	# «now» ставится ВСЕМ материалам пламени (по одному на клан), а не двум, как было
+	var nows: Array[float] = []
+	for pm: ShaderMaterial in v._plume_mats.values():
+		nows.append(num(pm.get_shader_parameter("now")))
+	var lo := BIG
+	var hi := -BIG
+	for x in nows:
+		lo = minf(lo, x)
+		hi = maxf(hi, x)
+	ok(BattleView.rollback_plume_by_side or nows.size() == (1 if attacker == defender else 2) and lo > 0.1 and lo == hi, "%s × %s: материалов пламени %d (по клану), у всех игровое время %s" % [attacker, defender, nows.size(), str(nows)])
+	var out := {0: [], 1: []}
+	for s in b.ships:
+		var list: Array = v._plume.get(s.uid, [])
+		var c := v.plume_color(s)
+		if not list.is_empty():
+			var mi: MeshInstance3D = list[0]
+			var m := mi.material_override as ShaderMaterial
+			var cv: Vector3 = m.get_shader_parameter("color")
+			c = Color(cv.x, cv.y, cv.z)
+		arr(out[s.side]).append(c)
+	v.queue_free()
+	await hooks.frames(2)
+	b.dispose()
+	return out
+
+
+static func _all(cols: Array, c: Color) -> bool:
+	for x: Color in cols:
+		if not x.is_equal_approx(c):
+			return false
+	return not cols.is_empty()
+
+
+func test_plume_color_by_clan() -> void:
+	var p := _get_defs().doctrine.plume
+	for clan: StringName in _get_defs().faction_ids:
+		ok(p.has(clan), "цвет пламени клана %s — в doctrine.json → view.plume" % clan)
+	var tr: Color = p[&"troyden"]
+	var pk: Color = p[&"plektor"]
+	ok(not tr.is_equal_approx(pk), "пламя Тройдена и Плэктора разного цвета")
+	var mir := await _plume_colors(&"troyden", &"troyden")
+	ok(_all(arr(mir[0]), tr) and _all(arr(mir[1]), tr), "зеркальный бой Тройден × Тройден: пламя обеих сторон — цвет Тройдена")
+	var tp := await _plume_colors(&"troyden", &"plektor")
+	ok(_all(arr(tp[0]), tr) and _all(arr(tp[1]), pk), "Тройден × Плэктор: у Тройдена — его цвет, у Плэктора — его")
+	var pt := await _plume_colors(&"plektor", &"troyden")
+	ok(_all(arr(pt[0]), pk) and _all(arr(pt[1]), tr), "Плэктор × Тройден (Плэктор — свои): пламя по клану, не по стороне")
+	# откат «по стороне» (как до 02.11.2026): в зеркальном бою стороны разного цвета, у своего
+	# Плэктора — голубое
+	BattleView.rollback_plume_by_side = true
+	var omir := await _plume_colors(&"troyden", &"troyden")
+	var opt := await _plume_colors(&"plektor", &"troyden")
+	BattleView.rollback_plume_by_side = false
+	ok(not _all(arr(omir[1]), tr) and _all(arr(opt[0]), tr), "откат «пламя по стороне»: в зеркальном бою у чужих не цвет клана, у своего Плэктора — голубое — проверка краснеет")
 
 
 # ───────────────────────── нейтральный свет ─────────────────────────
