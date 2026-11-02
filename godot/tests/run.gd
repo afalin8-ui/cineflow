@@ -3,7 +3,7 @@
 #   godot --headless --path godot -s res://tests/run.gd -- ui      ввод и интерфейс без окна
 #   xvfb-run … -s res://tests/run.gd -- render                     картинка (G0b)
 # Вторым словом можно дать часть имени файла, третьим — часть имени функции:
-# `-- sim defs`, `-- render table bench_progress` (для отладки одной проверки).
+# `-- sim defs`, `-- table render bench_progress` (для отладки одной проверки).
 # Последняя строка вывода — RESULT checks=N fails=M; её нет — прогон провален
 # (tools/run_tests.sh). Ни одной проверки — тоже провал: тест, который ничего
 # не проверил, ничего и не охраняет.

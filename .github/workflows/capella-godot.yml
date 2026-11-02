@@ -39,10 +39,12 @@ env:
 jobs:
   test-build:
     runs-on: ubuntu-latest
-    # с GИ ещё ярус hud в двух отрисовщиках (снимки экрана боя): прежних 40 минут впритык;
-    # с GТ ещё ярус tempo (~160 с) и ярус sim дольше (бои дольше на ~25 с, проверки в прежнем темпе);
-    # с GЭ ещё ярус fx в двух отрисовщиках (эффекты и свет): прогон 0.8.1 шёл 48 минут из 70
-    timeout-minutes: 90
+    # С 02.11.2026 ярусы тестов разнесены по параллельным заданиям: здесь — всё, КРОМЕ ярусов
+    # (разбор, --selftest, окно, повторы, математика Windows, выпуск, данные), плюс ярус ui;
+    # остальные ярусы — задание-матрица tiers ниже. Прежде всё шло здесь подряд: прогон 41475770043 —
+    # 80 минут шага тестов из 90 (godot/CLAUDE.md, раздел 9, «Ярусы по заданиям CI»).
+    # Здесь около 15 минут на медленном раннере — предел 40 даёт запас больше 60%
+    timeout-minutes: 40
     outputs:
       release: ${{ steps.rel.outputs.tag }}
       publish: ${{ steps.rel.outputs.publish }}
@@ -98,17 +100,10 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends mesa-vulkan-drivers libgl1-mesa-dri xvfb xauth > /dev/null
           vulkaninfo --summary 2>/dev/null | grep -i -m2 -e deviceName -e driverName || true
 
-      - name: Тесты — импорт, разбор, модель, ввод, картинка, данные
-        run: LOGS="$RUNNER_TEMP/logs" godot/tools/run_tests.sh render
-
-      # снимки «Стола» на 1920 и 1366 в обоих отрисовщиках — смотреть глазами
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: capella-shots
-          path: ${{ runner.temp }}/logs/shots
-          retention-days: 7
-          if-no-files-found: warn
+      # ярусы — в задании tiers; что каждый ярус гоняет ровно одно место CI, сверяет здесь
+      # tools/ci_tiers.py (шаг «ярусы по заданиям CI» обёртки)
+      - name: Тесты — импорт, разбор, ввод (ярус ui), данные; без остальных ярусов
+        run: LOGS="$RUNNER_TEMP/logs" godot/tools/run_tests.sh rest ui
 
       - name: Выгрузка Linux и Windows
         run: |
@@ -278,6 +273,79 @@ jobs:
           INPUT_RELEASE: ${{ github.event.inputs.release }}
           INPUT_PUBLISH: ${{ github.event.inputs.publish }}
         run: godot/tools/release_tag.sh godot/RELEASE >> "$GITHUB_OUTPUT"
+
+  # Ярусы тестов — параллельными ветками (по ветке на машину; каждая — run_tests.sh tiers …, тот же
+  # прогон, что локально `run_tests.sh render`, только по частям). Разбиение — по временам ярусов на
+  # МЕДЛЕННОМ раннере (прогон 41475770043, с): sim 622, tempo 404, render Forward+ 357 и «Стол» 448
+  # (были одним ярусом render — 806 из 900), render Compatibility 238 и «Стол» 252, air 305 и 196,
+  # hud 298 и 191, fx 532 и 312. Ветка — до ~14 минут ярусов; предел ветки 30 — запас больше 45%.
+  # Список ветвей сверяет с ALL_TIERS run_tests.sh tools/ci_tiers.py: ярус, забытый здесь, — провал.
+  tiers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sim
+            tiers: 'sim'
+          - name: tempo-air-gl
+            tiers: 'tempo air:gl_compatibility'
+          - name: render-table-fplus
+            tiers: 'render:forward_plus table:forward_plus'
+          - name: fx-air-fplus
+            tiers: 'fx:forward_plus air:forward_plus'
+          - name: hud-render-gl
+            tiers: 'hud:forward_plus hud:gl_compatibility render:gl_compatibility'
+          - name: table-fx-gl
+            tiers: 'table:gl_compatibility fx:gl_compatibility'
+    name: ярусы ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Кэш Godot 4.7.2
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-4.7.2-stable-lin-win-v1
+
+      - name: Скачать Godot 4.7.2 (с проверкой SHA512)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/godot-dl && cd ~/godot-dl
+          base=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          curl -sSfL --retry 3 -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "$GODOT_ZIP_SHA512  godot.zip" | sha512sum -c -
+
+      - name: Установить Godot
+        run: |
+          set -euo pipefail
+          mkdir -p ~/godot-bin
+          unzip -o -q ~/godot-dl/godot.zip -d ~/godot-bin
+          mv ~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot-bin/godot-${GODOT_VERSION}
+          echo "GODOT=$HOME/godot-bin/godot-${GODOT_VERSION}" >> "$GITHUB_ENV"
+          ~/godot-bin/godot-${GODOT_VERSION} --version
+
+      - name: Программный Vulkan и xvfb для яруса картинки
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mesa-vulkan-drivers libgl1-mesa-dri xvfb xauth > /dev/null
+          vulkaninfo --summary 2>/dev/null | grep -i -m2 -e deviceName -e driverName || true
+
+      - name: Ярусы ${{ matrix.tiers }}
+        run: LOGS="$RUNNER_TEMP/logs" godot/tools/run_tests.sh tiers ${{ matrix.tiers }}
+
+      # снимки «Стола», боя, авиации, эффектов в своём отрисовщике — смотреть глазами
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capella-shots-${{ matrix.name }}
+          path: ${{ runner.temp }}/logs/shots
+          retention-days: 7
+          if-no-files-found: ignore
 
   windows-run:
     needs: test-build
@@ -461,7 +529,8 @@ jobs:
           if-no-files-found: warn
 
   release:
-    needs: [test-build, windows-run]
+    # и матрица ярусов: упавший ярус обязан остановить выпуск (сверяет tools/ci_tiers.py)
+    needs: [test-build, tiers, windows-run]
     if: needs.test-build.outputs.release != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10

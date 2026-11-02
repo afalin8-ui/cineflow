@@ -79,7 +79,7 @@ void fragment() {
 #if CURRENT_RENDERER == RENDERER_COMPATIBILITY
 	// В Compatibility бледное сложение пропадает (godot/CLAUDE.md, 24 — тот же урок, что у стенки
 	// купола): дымка ночной стороны там выходила чёрной, и край диска сливался с небом — проверка
-	// ореола (tests/test_render_table.gd → test_halo_nine_shots) нашла «чёрное кольцо венца» в 7
+	// ореола (tests/test_table_render.gd → test_halo_nine_shots) нашла «чёрное кольцо венца» в 7
 	// точках. Ту же дымку поднимаем к экранным цветам, как это делает Forward+.
 	glow = pow(glow, vec3(0.4545));
 #endif

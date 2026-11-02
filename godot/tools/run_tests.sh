@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Прогон всех проверок среза — здесь и в CI одинаково (архитектура, 8.2).
 #   godot/tools/run_tests.sh            ярусы sim, tempo и ui, проверки данных, --selftest
-#   godot/tools/run_tests.sh render     плюс ярус картинки под xvfb В ОБОИХ отрисовщиках
+#   godot/tools/run_tests.sh render     ВСЁ: плюс ярусы картинки под xvfb В ОБОИХ отрисовщиках
 #                                       (Forward+ и Compatibility); снимки «Стола» —
 #                                       в $LOGS/shots (смотреть глазами)
+#   godot/tools/run_tests.sh bench      ярус стенда (задание CI «стенд»)
+# В CI ярусы разнесены по параллельным заданиям (CLAUDE.md, раздел 9, «Ярусы по заданиям CI»):
+#   godot/tools/run_tests.sh tiers Я…   импорт и ТОЛЬКО эти ярусы (плюс сторож user://)
+#   godot/tools/run_tests.sh rest Я…    всё, КРОМЕ ярусов, плюс эти ярусы
+# Что все ярусы ALL_TIERS гоняет ровно одно место CI, сверяет tools/ci_tiers.py (в rest и полном).
 # Godot берётся из $GODOT (по умолчанию `godot` из PATH).
 #
 # Каждое правило обёртки проверено пробами (архитектура, 8.2):
@@ -43,19 +48,26 @@ mkdir -p "$XDG_DATA_HOME"
 # ярус tempo (пакет GТ) — темп боя: окно первого выстрела, тот же бой в прежнем темпе, М16 «было —
 # стало» (бои «Стычки» до итога), и правила, которых новый темп не проявляет, — в прежнем темпе
 # (test_tempo_old). Отдельно от sim: с ним sim доходил до 893 с из 900
-TIERS=(sim tempo ui)
-# ярус hud (план GИ) — снимки экрана боя: цвет и форма знаков по точкам экрана. Отдельно от
-# render, чтобы тот держался под пределом 900 с (Forward+ в CI доходил до 659 с)
-# ярус fx (пакет GЭ) — эффекты: факелы, взрывы, огонь по источникам, купол, гипер, прогрев. Свой
-# ярус по той же причине: render Forward+ в CI доходил до 711 с из 900
-# ярус air (02.11.2026) — снимки авиации (tests/test_air_render.gd, прежний test_render_air): свой ярус
-# по той же причине. В CI (прогон 41443473535, раннер медленнее обычного: sim 623 с против 369) render
-# Forward+ упёрся в 900 с, и один test_render_air шёл в нём 346 с из 900
-if [[ "${1:-}" == "render" ]]; then TIERS+=(render:forward_plus render:gl_compatibility air:forward_plus air:gl_compatibility hud:forward_plus hud:gl_compatibility fx:forward_plus fx:gl_compatibility); fi
-# `run_tests.sh bench` — тяжёлые проверки стенда (флажки 09, 8.4 под ИИ — десятки боёв целиком,
-# план G5, п. 4): отдельный ярус, чтобы ярус sim держался под пределом 900 с. Его гоняет
-# задание CI «стенд» (по метке [стенд] в сообщении коммита или кнопкой)
-if [[ "${1:-}" == "bench" ]]; then TIERS=(bench); fi
+# ярус table (02.11.2026) — «Стол» (tests/test_table_render.gd, прежний test_render_table): свой ярус
+# по той же причине. В CI (прогон 41475770043) render Forward+ шёл 806 с из 900, из них «Стол» 448
+ALL_TIERS=(sim tempo ui render:forward_plus render:gl_compatibility table:forward_plus table:gl_compatibility air:forward_plus air:gl_compatibility hud:forward_plus hud:gl_compatibility fx:forward_plus fx:gl_compatibility)
+MODE="${1:-}"
+case "$MODE" in
+  "") TIERS=(sim tempo ui) ;;
+  render) TIERS=("${ALL_TIERS[@]}") ;;
+  # `run_tests.sh bench` — тяжёлые проверки стенда (флажки 09, 8.4 под ИИ — десятки боёв целиком,
+  # план G5, п. 4): отдельный ярус, чтобы ярус sim держался под пределом 900 с. Его гоняет
+  # задание CI «стенд» (по метке [стенд] в сообщении коммита или кнопкой)
+  bench) TIERS=(bench) ;;
+  tiers|rest)
+    TIERS=("${@:2}")
+    for t in "${TIERS[@]}"; do
+      if [[ " ${ALL_TIERS[*]} " != *" $t "* ]]; then echo "ПРОВАЛ: ярус «$t» неизвестен (ALL_TIERS в run_tests.sh)" >&2; exit 1; fi
+    done
+    if [[ "$MODE" == tiers && ${#TIERS[@]} -eq 0 ]]; then echo "ПРОВАЛ: run_tests.sh tiers — не названо ни одного яруса" >&2; exit 1; fi
+    ;;
+  *) echo "ПРОВАЛ: непонятный режим «$MODE» (пусто, render, bench, tiers Я…, rest Я…)" >&2; exit 1 ;;
+esac
 FAILED=0
 
 say() { printf '%s\n' "$*"; }
@@ -73,6 +85,9 @@ if grep -q -e 'SCRIPT ERROR' -e 'Parse Error' "$LOGS/import.log"; then
   fail "импорт: ошибки в скриптах"; grep -A1 -e 'SCRIPT ERROR' -e 'Parse Error' "$LOGS/import.log" | head -20 >&2
 fi
 
+# в режиме tiers (ветка матрицы CI) — только импорт и ярусы: разбор, .uid и «свою папку
+# прогона» проверяет задание test-build (rest) того же коммита
+if [[ "$MODE" != tiers ]]; then
 # ── 2. --check-only по всем скриптам ──
 say "── разбор скриптов (--check-only)"
 n=0
@@ -113,12 +128,13 @@ got="$(tmp_pair shared)"
 if [[ "$got" == "0 0" ]]; then fail "откат «общая папка»: оба прогона увидели только своё — проверка ничего не ловит"; else say "   откат «общая папка» краснеет: коды $got, $(grep -h '^PROBE_TMP clash' "$LOGS"/probe_tmp_*.log | head -1)"; fi
 stray="$(grep -n 'user://' "$PROJ"/tests/*.gd | grep -v -e '/tests/case.gd:' -e 'get_process_id' -e '# путь, не файл' -e '# откат сторожа' -e '^[^:]*:[0-9]*:\s*#' || true)"
 if [[ -n "$stray" ]]; then fail "тесты пишут в общий user:// мимо tests/case.gd → tmp: $stray"; fi
+fi  # MODE != tiers
 
 # ── 3–5. ярусы тестов ──
 run_tier() {
   local tier="$1" log="$LOGS/tier_${1/:/_}.log" code
   local cmd=("$GODOT" --headless --path "$PROJ" -s res://tests/run.gd -- "$tier")
-  if [[ "$tier" == render:* || "$tier" == air:* || "$tier" == hud:* || "$tier" == fx:* ]]; then
+  if [[ "$tier" == *:* ]]; then
     # картинка — с окном под xvfb, в заданном отрисовщике; снимки — в $LOGS/shots
     mkdir -p "$LOGS/shots"
     cmd=(env CAPELLA_SHOTS="$LOGS/shots" xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$PROJ" --rendering-method "${tier#*:}" -s res://tests/run.gd -- "${tier%%:*}")
@@ -144,7 +160,9 @@ for t in "${TIERS[@]}"; do run_tier "$t"; done
 
 # ── стенд целиком (план G5, п. 4): процессы по 25 боёв (tools/bench_run.sh) и сводка
 # (tools/summarize.py). В режиме bench — ещё и короткий прогон «зеркала»; остальное обёртки
-# в этом режиме не нужно (его гоняет обычный прогон того же коммита)
+# в этом режиме не нужно (его гоняет обычный прогон того же коммита). В режиме tiers — нет:
+# это гоняет задание test-build (rest)
+if [[ "$MODE" != tiers ]]; then
 say "── сводка стенда: summarize.py --selftest"
 if ! python3 "$PROJ/tools/summarize.py" --selftest >"$LOGS/summarize_self.log" 2>&1; then
   fail "summarize.py --selftest"; cat "$LOGS/summarize_self.log" >&2
@@ -162,7 +180,8 @@ else
   say "   боёв $nb, сводка: $(grep -m1 '^== «Стычка»' "$LOGS/bench_run.log")"
 fi
 rm -rf "$bdir"
-if [[ "${1:-}" == "bench" ]]; then
+fi  # MODE != tiers
+if [[ "$MODE" == "bench" ]]; then
   if [[ $FAILED -eq 0 ]]; then say "ИТОГ (стенд): всё зелёное"; else say "ИТОГ (стенд): есть провалы" >&2; fi
   exit $FAILED
 fi
@@ -184,6 +203,10 @@ XDG_DATA_HOME="$sx" timeout 60 "$GODOT" --headless --path "$PROJ" -s res://tests
 sleft="$(stray_in "$(user_dir "$LOGS/userdir_stray.log")")"
 if [[ -z "$sleft" ]]; then fail "откат сторожа user://: файл пробы не найден — сторож ничего не ловит"; else say "   откат «файл в user://» ловится: $(basename "$sleft")"; fi
 rm -rf "$sx"
+if [[ "$MODE" == tiers ]]; then
+  if [[ $FAILED -eq 0 ]]; then say "ИТОГ (ярусы ${TIERS[*]}): всё зелёное"; else say "ИТОГ (ярусы ${TIERS[*]}): ПРОВАЛ (журналы: $LOGS)" >&2; fi
+  exit $FAILED
+fi
 
 # ── главная сцена сама: режим --selftest (тот же, что запускает выгруженные сборки) ──
 say "── главная сцена -- --selftest"
@@ -422,6 +445,23 @@ if ! grep -q 'PUBLISH: \${{ needs.test-build.outputs.publish }}' "$ROOT/.github/
   fail "задание release решает «публиковать» не по release_tag.sh"
 fi
 rm -f "$relf" "$relf.old"
+
+# ── ярусы по заданиям CI (02.11.2026): ярусы разнесены по параллельным заданиям, и забытый
+# в workflow ярус не шёл бы вовсе, а прогон был бы зелёным. tools/ci_tiers.py сверяет: каждый
+# ярус ALL_TIERS гоняет ровно одно место (rest у test-build или ветка матрицы tiers), у каждого
+# файла tests/test_<ярус>_* ярус есть, release ждёт и матрицу. Откаты — в --selftest
+say "── ярусы по заданиям CI"
+wf="$ROOT/.github/workflows/capella-godot.yml"
+if ! python3 "$PROJ/tools/ci_tiers.py" "$wf" "$PROJ/tests" -- "${ALL_TIERS[@]}" >"$LOGS/ci_tiers.log" 2>&1; then
+  fail "ярусы по заданиям CI"; cat "$LOGS/ci_tiers.log" >&2
+else
+  say "   $(tail -1 "$LOGS/ci_tiers.log")"
+fi
+if ! python3 "$PROJ/tools/ci_tiers.py" --selftest "$wf" "$PROJ/tests" -- "${ALL_TIERS[@]}" >"$LOGS/ci_tiers_self.log" 2>&1; then
+  fail "ci_tiers.py --selftest"; cat "$LOGS/ci_tiers_self.log" >&2
+else
+  say "   $(tail -1 "$LOGS/ci_tiers_self.log")"
+fi
 
 # ── есть ли выпуск (tools/release_exists.sh): заглушка gh вместо GitHub ──
 # Номер стоит ПЕРВЫМ, за ним ещё строки (настоящий gh пишет строка за строкой). Хвост —

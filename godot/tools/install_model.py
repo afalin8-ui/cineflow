@@ -21,7 +21,8 @@
 1. проверяет запись: узлы из doctrine.json → nodes корабля на месте, узлы оружия модели есть
    в данных, `plume` — словарь (не строка), узлы записи есть в .glb, материалы совпадают;
 2. МАСШТАБ: модель встаёт ровно в длину корабля в бою (`--fit model_len`, по умолчанию) —
-   `space_data.json → model_len.ship[id]`; от неё модель считает корпус для расталкивания
+   `space_data.json → model_len.ship[id]`, у СТАНЦИИ — `model_len.station` (она не корабль, и её
+   длина лежит отдельным числом, а не в `ship`; ключ установки тот же — `troyden.station`); от неё модель считает корпус для расталкивания
    и строя (hull = max(radius × 1,6, len × 0,36)), и трогать её нельзя: она одна на все
    кланы и в модели боя. Запись хранит обмер УЖЕ В ЕДИНИЦАХ БОЯ (len, aabb, pos, size…),
    поле `scale` — во сколько вид уменьшает модель (ShipVisual). `--fit none` — как есть
@@ -82,6 +83,20 @@ gltf/naming_version=2
 gltf/embedded_image_handling=1
 gltf/texture_map_mode=1
 """
+# ТОЛЬКО для проверки отката (--selftest): длина станции ищется, как до 02.11.2026, в
+# model_len.ship.station — а её там нет, и станцию было не поставить
+ROLLBACK_STATION_AS_SHIP = False
+
+
+def want_len(space, sid):
+    """Длина корабля в бою (model_len) по id; None — такого нет. Станция — не корабль: её
+    длина лежит в model_len.station, а не в model_len.ship (так её берёт и export_ships.mjs)."""
+    ml = space['model_len']
+    if sid == 'station' and not ROLLBACK_STATION_AS_SHIP:
+        return ml.get('station')
+    return ml['ship'].get(sid)
+
+
 # числа, которые меняет масштаб: обмер и у узлов — положение, размер сопла, размер факела
 SCALED_TOP = ('len', 'len_z', 'width', 'height')
 
@@ -183,8 +198,9 @@ def problems(fac, sid, rec, gj, doctrine, space):
         bad.append(f'материалы записи и .glb разные: {rec["materials"]} против {mats}')
     if not (rec.get('len', 0) > 0 and rec.get('width', 0) > 0 and rec.get('height', 0) > 0):
         bad.append('нет длины, ширины или высоты')
-    if sid not in space['model_len']['ship']:
-        bad.append(f'нет model_len.ship.{sid} в space_data.json')
+    if want_len(space, sid) is None:
+        where = 'model_len.station' if sid == 'station' and not ROLLBACK_STATION_AS_SHIP else f'model_len.ship.{sid}'
+        bad.append(f'нет {where} в space_data.json')
     return bad
 
 
@@ -257,6 +273,104 @@ def drop_stale_images(folder=None):
     return gone
 
 
+def install_one(fac, sid, folder, fit, doctrine, space, models, hero, dry):
+    """Один корабль (или станция) из папки сборки: (запись | None, беды, строка отчёта). Без `dry`
+    кладёт .glb с .import в `hero` и запись в `models` (в файл её пишет main). Тот же путь
+    зовёт --selftest на временной папке — второй копии установки нет."""
+    rec = json.load(open(os.path.join(folder, 'ship_models_record.json'), encoding='utf-8'))
+    src = pick_glb(folder)
+    gj = glb_json(src)
+    bad = problems(fac, sid, rec, gj, doctrine, space)
+    if fac not in models['ships']:
+        bad.append(f'клана {fac} нет в ship_models.json')
+    if bad:
+        return None, [f'{fac}.{sid}: {b}' for b in bad], ''
+    want = want_len(space, sid)
+    raw = rec['len']
+    k = want / raw if fit == 'model_len' else 1.0
+    if fit == 'none' and abs(raw - want) > want * LEN_TOL:
+        return None, [f'{fac}.{sid}: длина {raw} вне ±20% от model_len {want} — ставь с --fit model_len'], ''
+    out = scale_record(rec, k)
+    name = f'{fac}_{sid}.glb'
+    out['file'] = 'res://view/hero/' + name
+    out['bytes'] = os.path.getsize(src)
+    out['materials'] = [m.get('name') for m in gj.get('materials', [])]
+    out['scale'] = r6(k)
+    out['hand'] = {
+        'by': 'godot/tools/install_model.py',
+        'sha256': sha256(src),
+        'raw_len': raw,
+        'fit': fit,
+        'source': os.path.basename(src),
+        'note': 'ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, '
+                'scale — во сколько вид уменьшает модель',
+    }
+    dst = os.path.join(hero, name)
+    if not dry:
+        shutil.copyfile(src, dst)
+        install_import(dst)
+        models['ships'][fac][sid] = out
+    msg = (f'{fac}.{sid}: {os.path.basename(src)} → godot/view/hero/{name}; длина {raw} → {out["len"]} '
+           f'(model_len {want}, масштаб {out["scale"]}), ширина {out["width"]}, узлов {len(out["nodes"])}, '
+           f'треугольников {out.get("tris")}')
+    return out, [], msg
+
+
+def write_glb(path, gj):
+    """.glb из одного куска JSON (без геометрии) — для проверок: установке нужны только узлы и материалы."""
+    data = json.dumps(gj).encode()
+    data += b' ' * (-len(data) % 4)
+    with open(path, 'wb') as f:
+        f.write(b'glTF' + struct.pack('<II', 2, 12 + 8 + len(data)) + struct.pack('<I', len(data)) + b'JSON' + data)
+
+
+def station_case(doctrine, space, models):
+    """Станция ставится той же командой, что корабль (`troyden.station=ПАПКА`), а длину берёт из
+    model_len.station (до 02.11.2026 её искали в model_len.ship.station, где её нет, — станцию было
+    не поставить). Запись автора — обмер станции из выгрузки, растянутый в 1,3 раза; ставится во
+    временную папку тем же install_one. → список бед (пусто — всё как надо)."""
+    import tempfile
+    errs = []
+    want = space['model_len'].get('station')
+    base = models['ships']['troyden']['station']
+    with tempfile.TemporaryDirectory() as d:
+        def build(name, k):
+            folder = os.path.join(d, name)
+            os.makedirs(folder)
+            rec = scale_record({x: y for x, y in base.items() if x not in ('file', 'hand', 'scale', 'bytes')}, k)
+            rec['materials'] = ['trim_hull', 'trim_paint', 'glow_clan']
+            with open(os.path.join(folder, 'ship_models_record.json'), 'w', encoding='utf-8') as f:
+                json.dump(rec, f)
+            write_glb(os.path.join(folder, 'station_shared.glb'),
+                      {'asset': {'version': '2.0'}, 'nodes': [{'name': n} for n in rec['nodes']],
+                       'materials': [{'name': m} for m in rec['materials']]})
+            return folder, rec
+        hero = os.path.join(d, 'hero')
+        os.makedirs(hero)
+        big, rec = build('big', 1.3)
+        ms = {'ships': {'troyden': {}}}
+        out, bad, _ = install_one('troyden', 'station', big, 'model_len', doctrine, space, ms, hero, False)
+        if bad or out is None:
+            return [f'станция не ставится (--fit model_len): {bad}']
+        if abs(out['len'] - want) > 1e-3:
+            errs.append(f'станция: длина {out["len"]}, а model_len.station {want}')
+        if abs(out['scale'] - r6(want / rec['len'])) > 1e-6 or out['hand'].get('raw_len') != rec['len']:
+            errs.append(f'станция: масштаб {out["scale"]} или длина до масштаба {out["hand"].get("raw_len")} не те')
+        if ms['ships']['troyden'].get('station') is not out or out['file'] != 'res://view/hero/troyden_station.glb':
+            errs.append('станция: запись не легла в ships.troyden.station с файлом view/hero/troyden_station.glb')
+        if not (os.path.exists(os.path.join(hero, 'troyden_station.glb'))
+                and os.path.exists(os.path.join(hero, 'troyden_station.glb.import'))):
+            errs.append('станция: .glb с .import не скопирован')
+        out, bad, _ = install_one('troyden', 'station', big, 'none', doctrine, space, ms, hero, True)
+        if out is not None or not any(f'model_len {want}' in b for b in bad):
+            errs.append(f'станция в 1,3 раза длиннее с --fit none не отказала словами про model_len {want}: {bad}')
+        near, rec2 = build('near', 1.05)
+        out, bad, _ = install_one('troyden', 'station', near, 'none', doctrine, space, ms, hero, True)
+        if bad or out is None or out['scale'] != 1.0 or abs(out['len'] - rec2['len']) > 1e-3:
+            errs.append(f'станция в ±20% с --fit none не встала в своём размере: {bad}')
+    return errs
+
+
 def selftest():
     """Путь установки цел (гоняет run_tests.sh): у каждой ручной модели в обмере запись, разобранная
     обратно в «запись автора» (до масштаба), проходит проверки и ставится в ту же запись; sha256
@@ -284,7 +398,7 @@ def selftest():
         if bad:
             fails.append(f'{tag}: запись не проходит своих проверок: {bad}')
         # повторная установка тем же --fit, каким ставили: model_len — в длину корабля в бою, none — как есть
-        fit_k = space['model_len']['ship'][sid] / raw['len'] if rec['hand'].get('fit') == 'model_len' else 1.0
+        fit_k = want_len(space, sid) / raw['len'] if rec['hand'].get('fit') == 'model_len' else 1.0
         again = scale_record(raw, fit_k)
         checks += 1
         diff = [x for x in ('len', 'width', 'height') if abs(again[x] - rec[x]) > 1e-3]
@@ -293,7 +407,7 @@ def selftest():
         if diff:
             fails.append(f'{tag}: повторная установка дала другой обмер: {diff}')
         checks += 1
-        if abs(rec['len'] - space['model_len']['ship'][sid]) > 1e-3 and rec['hand'].get('fit') == 'model_len':
+        if abs(rec['len'] - want_len(space, sid)) > 1e-3 and rec['hand'].get('fit') == 'model_len':
             fails.append(f'{tag}: длина {rec["len"]} не равна model_len')
 
         def spoiled(what, f, mark, use_glb=gj):
@@ -315,6 +429,20 @@ def selftest():
                 'узла bay нет в .glb')
         spoiled('лишняя башня', lambda r, g: r['nodes'].update(turret_7={'pos': [0, 0, 0]}), 'не в doctrine.json')
         spoiled('материалы разные', lambda r, g: g['materials'].pop(), 'материалы записи')
+    # станция: своя длина (model_len.station), а не model_len.ship; откат «как до правки» обязан краснеть
+    global ROLLBACK_STATION_AS_SHIP
+    checks += 1
+    bad = station_case(doctrine, space, models)
+    if bad:
+        fails += bad
+    checks += 1
+    ROLLBACK_STATION_AS_SHIP = True
+    try:
+        bad = station_case(doctrine, space, models)
+    finally:
+        ROLLBACK_STATION_AS_SHIP = False
+    if not any('нет model_len.ship.station' in b for b in bad):
+        fails.append(f'откат «длина станции из model_len.ship» не покраснел: {bad}')
     checks += 1
     bad = sheet_import_problems()
     if bad:
@@ -401,44 +529,10 @@ def main(argv):
         rec_path = os.path.join(folder, 'ship_models_record.json')
         if not os.path.exists(rec_path):
             die(f'{folder}: нет ship_models_record.json (его собирает make_record.py)')
-        rec = json.load(open(rec_path, encoding='utf-8'))
-        src = pick_glb(folder)
-        gj = glb_json(src)
-        bad = problems(fac, sid, rec, gj, doctrine, space)
-        if fac not in models['ships']:
-            bad.append(f'клана {fac} нет в ship_models.json')
-        if bad:
-            all_bad += [f'{fac}.{sid}: {b}' for b in bad]
-            continue
-        want = space['model_len']['ship'][sid]
-        raw = rec['len']
-        k = want / raw if fit == 'model_len' else 1.0
-        if fit == 'none' and abs(raw - want) > want * LEN_TOL:
-            all_bad.append(f'{fac}.{sid}: длина {raw} вне ±20% от model_len {want} — ставь с --fit model_len')
-            continue
-        out = scale_record(rec, k)
-        name = f'{fac}_{sid}.glb'
-        out['file'] = 'res://view/hero/' + name
-        out['bytes'] = os.path.getsize(src)
-        out['materials'] = [m.get('name') for m in gj.get('materials', [])]
-        out['scale'] = r6(k)
-        out['hand'] = {
-            'by': 'godot/tools/install_model.py',
-            'sha256': sha256(src),
-            'raw_len': raw,
-            'fit': fit,
-            'source': os.path.basename(src),
-            'note': 'ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, '
-                    'scale — во сколько вид уменьшает модель',
-        }
-        dst = os.path.join(HERO, name)
-        if not dry:
-            shutil.copyfile(src, dst)
-            install_import(dst)
-            models['ships'][fac][sid] = out
-        print(f'{fac}.{sid}: {os.path.basename(src)} → godot/view/hero/{name}; длина {raw} → {out["len"]} '
-              f'(model_len {want}, масштаб {out["scale"]}), ширина {out["width"]}, узлов {len(out["nodes"])}, '
-              f'треугольников {out.get("tris")}')
+        out, bad, msg = install_one(fac, sid, folder, fit, doctrine, space, models, HERO, dry)
+        all_bad += bad
+        if msg:
+            print(msg)
     if all_bad:
         for b in all_bad:
             print('  ' + b, file=sys.stderr)
