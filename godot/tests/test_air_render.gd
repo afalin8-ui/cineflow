@@ -127,23 +127,27 @@ func _snap(name: String) -> Image:
 	return img
 
 
-static func _max_lum(img: Image, p: Vector2, r: int) -> float:
+static func _max_lum(img: Image, p: Vector2, r: int, base: Image = null) -> float:
 	var best := 0.0
 	for dx in range(-r, r + 1):
 		for dy in range(-r, r + 1):
 			var x := roundi(p.x) + dx
 			var y := roundi(p.y) + dy
 			if x >= 0 and y >= 0 and x < img.get_width() and y < img.get_height():
-				best = maxf(best, lum(img.get_pixel(x, y)))
+				var l := lum(img.get_pixel(x, y))
+				if base != null:
+					l -= lum(base.get_pixel(x, y))
+				best = maxf(best, l)
 	return best
 
 
-## Доля точек СЕРЕДИНЫ отрезка (30…70 %), у которых рядом (3 × 3) свет ярче порога.
-static func _lit_share(img: Image, a: Vector2, b: Vector2, thr: float, n: int = 40) -> float:
+## Доля точек СЕРЕДИНЫ отрезка (30…70 %), у которых рядом (3 × 3) свет ярче порога; с base —
+## свет сверх того же места на кадре base (без трасс).
+static func _lit_share(img: Image, a: Vector2, b: Vector2, thr: float, n: int = 40, base: Image = null) -> float:
 	var lit := 0
 	for k in n:
 		var p := a.lerp(b, 0.3 + 0.4 * float(k) / float(n - 1))
-		if _max_lum(img, p, 1) > thr:
+		if _max_lum(img, p, 1, base) > thr:
 			lit += 1
 	return float(lit) / float(n)
 
@@ -401,11 +405,21 @@ func _missiles_pd(mode: StringName) -> Dictionary:
 		var img := tree.root.get_texture().get_image()
 		for k in mm.visible_instance_count:
 			miss_area.append(float(_orange_area(img, cam.unproject_position(mm.get_instance_transform(k).origin), 6)))
+		# трасса ПВО — СВЕРХ кадра без трасс (тот же миг: часы вида стоят): у фрегата Тройдена с 0.11
+		# стволы ПВО на корме, и короткая очередь вперёд лежит поверх своего корпуса — без вычета
+		# мерился бы корпус, а не трасса
+		var img0: Image = null
+		if not segs.is_empty():
+			var tri := v.bfx.gfx.tracers
+			tri.visible = false
+			await hooks.frames(3)
+			img0 = tree.root.get_texture().get_image()
+			tri.visible = true
 		for sg: Array in segs:
 			var a2: Vector2 = sg[0]
 			var b2: Vector2 = sg[1]
-			pd_lit.append(_lit_share(img, a2, b2, 0.12))
-			pd_light.append(_cross_light(img, a2, b2))
+			pd_lit.append(_lit_share(img, a2, b2, 0.12, 40, img0))
+			pd_light.append(_cross_light(img, a2, b2) - _cross_light(img0, a2, b2))
 		if not saved and not segs.is_empty() and mm.visible_instance_count > 0:
 			img.save_png(_shots_dir().path_join("missiles_pd_%s_%s.png" % [mode, renderer()]))
 			saved = true
@@ -436,8 +450,17 @@ func _missiles_pd(mode: StringName) -> Dictionary:
 ##   PD_PX = 0                 100% · 1,83         100% · 1,33
 ##   один предел (G2)    15 · 100% · 1,83     9 · 100% · 1,33
 ##   ПВО без предела           57% · 0,28          38% · 0,07
+## С 0.11 свет трассы — СВЕРХ кадра без трасс (стволы ПВО фрегата Тройдена на корме, очередь
+## вперёд лежит поверх своего корпуса, и прежняя мера считала корпус: с ручной моделью «как в
+## игре» вышло 1,62 / 1,14 при пороге 2,1 / 1,65 — трасса та же, другой фон). Замер с вычетом:
+##                       Forward+            Compatibility
+##   как в игре          47 · 100% · 1,52    28 · 100% · 1,09
+##   PD_PX = 0                 100% · 1,00         100% · 0,56
+##   один предел (G2)    16 · 100% · 1,00     9 · 100% · 0,56
+##   ПВО без предела           32% · 0,00           0% · 0,00
+## (копия до флота с этой же мерой: 1,54 / 1,15 и откат 1,00 / 0,67 — трасса та же)
 const MISS_AREA := {"forward_plus": 35.0, "gl_compatibility": 20.0}
-const PD_LIGHT := {"forward_plus": 2.1, "gl_compatibility": 1.65}
+const PD_LIGHT := {"forward_plus": 1.25, "gl_compatibility": 0.8}
 
 
 func test_missiles_and_pd_visible_at_2400() -> void:

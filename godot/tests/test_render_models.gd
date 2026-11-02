@@ -151,3 +151,104 @@ func test_models_rollback() -> void:
 	ok(merged.size() >= s.nodes.size() - 1, "откат «весь корабль одним мешем» краснеет на узлах: %d бед" % merged.size())
 	flat.free()
 	root.free()
+
+
+# ───────────────── ручные модели флота Тройдена (раздел 15) ─────────────────
+
+## Ручные модели клана Тройден: весь флот и станция (с 0.11). Каждая стоит своей записью
+## установщика (`hand`) и файлом в view/hero/.
+const HERO_IDS: Array[StringName] = [&"corvette", &"frigate", &"ecm", &"cruiser", &"carrier", &"capital", &"station"]
+
+
+## Беды ручной модели против СВОЕЙ записи — то, что Godot импортировал, а не то, что обещает
+## обмер: каждый узел записи есть в .glb (не только узлы doctrine.json — ещё reactor, rev_*,
+## engine_*), длина нарисованной с масштабом записи = длине в записи (1%), масштаб — тот, что
+## даёт --fit (none — 1, model_len — длина в бою / длина автора), у раструбов реверса `plume`
+## словарём (строкой из extras факел реверса молча не встал бы), у корабля — хоть одно сопло.
+static func hero_problems(root: Node3D, rec: Dictionary, model_len: float) -> PackedStringArray:
+	var bad := PackedStringArray()
+	var hand: Dictionary = rec.get("hand", {})
+	if hand.is_empty():
+		bad.append("не ручная модель (нет hand)")
+		return bad
+	var nodes: Dictionary = rec.get("nodes", {})
+	var engines := 0
+	for key: String in nodes:
+		if root.find_child(key, true, false) == null:
+			bad.append("нет узла записи %s" % key)
+		if key.begins_with("engine_"):
+			engines += 1
+		if key.begins_with("rev_"):
+			var nd: Dictionary = nodes[key]
+			if typeof(nd.get("plume")) != TYPE_DICTIONARY:
+				bad.append("plume у %s не словарь" % key)
+	var fit: String = hand.get("fit", "")
+	var raw: float = hand.get("raw_len", 0.0)
+	var k: float = rec.get("scale", 1.0)
+	var k_want := model_len / raw if fit == "model_len" and raw > 0.0 else 1.0
+	if absf(k - k_want) > 1e-4:
+		bad.append("масштаб %.4f, а --fit %s даёт %.4f" % [k, fit, k_want])
+	var keep := root.scale
+	root.scale = Vector3(k, k, k)
+	var box := model_aabb(root)
+	root.scale = keep
+	var got := maxf(box.size.x, box.size.z)
+	var want: float = rec.get("len", 0.0)
+	if absf(got - want) > want * 0.01:
+		bad.append("длина нарисованной %.2f при записи %.2f" % [got, want])
+	return bad
+
+
+func test_hero_fleet_models() -> void:
+	var defs := Defs.load_default({}) as Defs
+	var hand_ids: Array[StringName] = []
+	for id: StringName in dict(dict(ShipModels.data().get("ships")).get("troyden")):
+		if ShipModels.ship(&"troyden", id).get("hand") != null:
+			hand_ids.append(id)
+	hand_ids.sort()
+	var want_ids := HERO_IDS.duplicate()
+	want_ids.sort()
+	eq(hand_ids, want_ids, "ручные модели Тройдена — весь флот и станция")
+	for id in HERO_IDS:
+		var rec := ShipModels.ship(&"troyden", id)
+		var s: Defs.ShipDef = defs.station if id == &"station" else defs.ship(&"troyden", id)
+		var file: String = rec.get("file", "")
+		eq(file, "res://view/hero/troyden_%s.glb" % id, "troyden.%s: файл ручной модели" % id)
+		var ps := ShipModels.scene(file)
+		if not ok(ps != null, "troyden.%s: %s импортирован" % [id, file]):
+			continue
+		var root := ps.instantiate() as Node3D
+		var bad := hero_problems(root, rec, s.model_len)
+		ok(bad.is_empty(), "troyden.%s: узлы записи, масштаб, длина %.2f: %s" % [id, num(rec.get("len")), "; ".join(bad)])
+		var revs := 0
+		for key: String in dict(rec.get("nodes")):
+			if key.begins_with("rev_"):
+				revs += 1
+		# раструбы реверса — у всех кораблей флота (по два), у станции их нет
+		eq(revs, 0 if id == &"station" else 2, "troyden.%s: раструбов реверса rev_*" % id)
+		root.free()
+	# откаты — на флагмане: каждый бьёт в свою строку
+	var rec0 := ShipModels.ship(&"troyden", &"capital")
+	var ml := defs.ship(&"troyden", &"capital").model_len
+	var file0: String = rec0.get("file", "")
+	var root0 := ShipModels.scene(file0).instantiate() as Node3D
+	ok(hero_problems(root0, rec0, ml).is_empty(), "флагман Тройдена годится как есть")
+	var r0 := root0.find_child("rev_0", true, false)
+	r0.name = "rev_9"
+	var lost := hero_problems(root0, rec0, ml)
+	ok(lost.size() == 1 and lost[0].contains("rev_0"), "откат «в .glb нет rev_0» краснеет на узле: %s" % "; ".join(lost))
+	r0.name = "rev_0"
+	var big := rec0.duplicate(true)
+	big["len"] = num(rec0.get("len")) * 1.3
+	var long_bad := hero_problems(root0, big, ml)
+	ok(long_bad.size() == 1 and long_bad[0].begins_with("длина"), "откат «обмер длиннее модели в 1,3» краснеет на длине: %s" % "; ".join(long_bad))
+	var small := rec0.duplicate(true)
+	small["scale"] = 0.8
+	var sc_bad := hero_problems(root0, small, ml)
+	ok(sc_bad.size() >= 1 and sc_bad[0].begins_with("масштаб"), "откат «масштаб 0,8 при --fit none» краснеет на масштабе: %s" % "; ".join(sc_bad))
+	var str_plume := rec0.duplicate(true)
+	var rv := dict(dict(str_plume["nodes"])["rev_1"])
+	rv["plume"] = JSON.stringify(rv["plume"])
+	var pl_bad := hero_problems(root0, str_plume, ml)
+	ok(pl_bad.size() == 1 and pl_bad[0].contains("plume у rev_1"), "откат «plume строкой, как в extras» краснеет: %s" % "; ".join(pl_bad))
+	root0.free()

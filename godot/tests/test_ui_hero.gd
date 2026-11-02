@@ -14,7 +14,12 @@
 #   как со знаком (откат `BattleView.rollback_rev_plume_always`);
 # - пламя двигателей по КЛАНУ, а не по стороне: зеркальный бой — один цвет, Тройден × Плэктор и
 #   Плэктор × Тройден — по клану (откат `BattleView.rollback_plume_by_side`);
-# - нейтральный свет — числами (откат `SpaceEnv.rollback_old_light`).
+# - нейтральный свет — числами (откат `SpaceEnv.rollback_old_light`);
+# - флот Тройдена целиком (с 0.11: корвет, фрегат, РЭБ, носитель, флагман «Ланселот», станция) —
+#   своим размером (--fit none, длина в 1% от model_len), узлы и масштаб, реактор вращается у всех,
+#   спинал флагмана не вращается (а вторая башня — да); факелы — от узлов engine_*/rev_*, сколько
+#   обещает модель, цветом клана, и ни одна линия ядра факела не упирается в корпус (у флагмана
+#   задняя пара гондол маршевая, передняя — реверс). У каждой — свой откат.
 extends "res://tests/case.gd"
 
 const Defs := preload("res://sim/defs.gd")
@@ -132,8 +137,8 @@ func _scale_record(k: float) -> Dictionary:
 	return keep
 
 
-func _put_record(r: Dictionary) -> void:
-	dict(dict(ShipModels.data().get("ships")).get("troyden"))["cruiser"] = r
+func _put_record(r: Dictionary, id: StringName = &"cruiser") -> void:
+	dict(dict(ShipModels.data().get("ships")).get("troyden"))[id] = r
 
 
 func test_hero_model_scale_mechanism() -> void:
@@ -528,3 +533,287 @@ func test_neutral_light_values() -> void:
 			same += 1
 	ok(same == 0, "откат «свет GЭ»: ни один цвет не совпал (%d) — проверка краснеет" % same)
 	await hooks.frames(1)
+
+
+# ───────────────────────── флот Тройдена (с 0.11) ─────────────────────────
+
+const FLEET: Array[StringName] = [&"corvette", &"frigate", &"ecm", &"carrier", &"capital"]
+## Сколько маршевых сопел и раструбов реверса у модели (записка автора моделей, круг 2.1): у флагмана
+## восемь было в круге 2, стало четыре — задняя пара гондол только маршевая, передняя только реверс.
+const FLEET_JETS := {&"corvette": [2, 2], &"frigate": [2, 2], &"ecm": [3, 2], &"cruiser": [3, 2], &"carrier": [2, 2], &"capital": [2, 2]}
+## Спинальные орудия (не вращаются): у флагмана turret_0, вторая башня (turret_1) — поворотная.
+const FLEET_FIXED := {&"capital": [&"turret_0"]}
+
+
+func _fleet_def(id: StringName) -> Defs.ShipDef:
+	return _get_defs().station if id == &"station" else _get_defs().ship(&"troyden", id)
+
+
+## Беды записи и модели корабля флота. Пусто — всё как обещано.
+func _fleet_problems(id: StringName) -> PackedStringArray:
+	var bad := PackedStringArray()
+	var rec := ShipModels.ship(&"troyden", id)
+	var hand := dict(rec.get("hand", {}))
+	if hand.is_empty():
+		bad.append("не ручная модель")
+		return bad
+	var s := _fleet_def(id)
+	var fit: String = hand.get("fit", "")
+	if fit != "none":
+		bad.append("--fit %s, а не none" % fit)
+	var raw := num(hand.get("raw_len"))
+	if absf(raw - s.model_len) > s.model_len * 0.01:
+		bad.append("длина модели %.2f дальше 1%% от model_len %.2f" % [raw, s.model_len])
+	var v := ShipVisualScene.instantiate() as ShipVisual
+	if not v.setup(&"troyden", id):
+		v.free()
+		bad.append("модель не встала")
+		return bad
+	tree.root.add_child(v)
+	if absf(v.model_scale() - 1.0) > 1e-6:
+		bad.append("масштаб вида %.3f, а не 1" % v.model_scale())
+	var box := ModelsTest.model_aabb(v)
+	var want := num(rec.get("len"))
+	var got := maxf(box.size.x, box.size.z)
+	if absf(got - want) > want * 0.01:
+		bad.append("длина нарисованной %.2f при записи %.2f" % [got, want])
+	for p in s.nodes:
+		if not ModelsTest.has_node_named(v.model, p.model):
+			bad.append("нет узла %s (%s)" % [p.model, p.name])
+	var nodes := dict(rec.get("nodes"))
+	for key: String in nodes:
+		if v.part(StringName(key)) == null:
+			bad.append("узла записи %s нет в модели" % key)
+	var sp := v.spinning()
+	if sp.size() != 1 or sp[0] != v.part(&"reactor"):
+		bad.append("вращается узлов %d, а не один reactor" % sp.size())
+	var fixed: Array = FLEET_FIXED.get(id, [])
+	for key: String in nodes:
+		if key.begins_with("turret_"):
+			var turns := v.turret_can_turn(StringName(key))
+			if turns == fixed.has(StringName(key)):
+				bad.append("%s %s" % [key, "вращался бы (спинал)" if turns else "не вращается"])
+	v.queue_free()
+	return bad
+
+
+func test_hero_fleet_records() -> void:
+	for id: StringName in FLEET + [&"station"]:
+		var bad := _fleet_problems(id)
+		ok(bad.is_empty(), "troyden.%s: своим размером %.2f (model_len %.2f), узлы, реактор, башни: %s" % [
+			id, num(ShipModels.ship(&"troyden", id).get("len")), _fleet_def(id).model_len, "; ".join(bad)])
+	await hooks.frames(1)
+	# откаты — каждый на своей записи и краснит СВОЮ строку
+	var cases := [
+		[&"capital", "fixed", "turret_0 вращался бы"],
+		[&"carrier", "spin", "вращается узлов 0"],
+		[&"ecm", "node", "узла записи aux_9 нет"],
+		[&"frigate", "len", "длина нарисованной"],
+		[&"corvette", "fit", "--fit model_len"],
+	]
+	for c: Array in cases:
+		var id: StringName = c[0]
+		var what: String = c[1]
+		var tail: String = c[2]
+		var keep := ShipModels.ship(&"troyden", id)
+		var r := keep.duplicate(true)
+		match what:
+			"fixed":
+				dict(dict(r["nodes"])["turret_0"]).erase("fixed")
+			"spin":
+				dict(dict(r["nodes"])["reactor"]).erase("spin_axis")
+			"node":
+				dict(r["nodes"])["aux_9"] = {"pos": [0.0, 0.0, 0.0]}
+			"len":
+				r["len"] = num(r["len"]) * 1.3
+			"fit":
+				dict(r["hand"])["fit"] = "model_len"
+		_put_record(r, id)
+		var bad := _fleet_problems(id)
+		_put_record(keep, id)
+		ok(bad.size() == 1 and bad[0].contains(tail), "откат «%s» у %s краснеет своей строкой: %s" % [what, id, "; ".join(bad)])
+	await hooks.frames(1)
+
+
+func _lab_ship(id: StringName, side: int = Ship.ATTACKER) -> BattleView:
+	var defs := _get_defs()
+	var att := &"troyden" if side == Ship.ATTACKER else &"plektor"
+	var dfn := &"plektor" if side == Ship.ATTACKER else &"troyden"
+	var b := Battle.create(defs, {"attacker": att, "defender": dfn, "size": &"small", "seed": 7, "reserve": false}) as Battle
+	b.ships.clear()
+	var c := b.spawn(side, defs.ship(&"troyden", id), Vector2(0, 0))
+	c.stance = &"hold"
+	c.hp = BIG
+	c.max_hp = BIG
+	var foe := b.spawn(1 - side, defs.ship(&"plektor", &"corvette"), Vector2(2400, -2400))
+	foe.stance = &"hold"
+	var v := BattleView.new()
+	v.name = "FleetLab"
+	tree.root.add_child(v)
+	v.setup(defs, b, false)
+	v.paused = true
+	v.set_process(false)
+	await hooks.frames(1)
+	for i in 5:
+		v.draw_state()                                   # прогрев кончился
+	return v
+
+
+## Треугольники всего нарисованного у модели, кроме самих факелов, — в мире.
+static func _hull_tris(v: BattleView, vis: ShipVisual) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var stack: Array[Node] = [vis.model]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		var mi := n as MeshInstance3D
+		if mi != null and mi.mesh != null and mi.mesh != v._plume_mesh:
+			out.append_array(mi.global_transform * mi.mesh.get_faces())
+		for ch in n.get_children():
+			stack.append(ch)
+	return out
+
+
+## Сколько линий ЯДРА факела упирается в корпус: ось и четыре линии на полширины видимого языка
+## (обе плоскости), от 5% длины (у самого сопла ось касается раструба) до кончика с дрожью
+## (×1,11 — plume.gdshader). Ширина языка сходит к кончику так же, как в шейдере.
+static func _plume_hits(mi: MeshInstance3D, tris: PackedVector3Array) -> int:
+	var xf := mi.global_transform
+	var lines: Array[PackedVector3Array] = []
+	for off: Vector3 in [Vector3.ZERO, Vector3(0.5, 0, 0), Vector3(-0.5, 0, 0), Vector3(0, 0, 0.5), Vector3(0, 0, -0.5)]:
+		var pts := PackedVector3Array()
+		for i in 9:
+			var t := 0.05 + (1.11 - 0.05) * float(i) / 8.0
+			var hw := 2.0 * (0.5 - 0.40 * pow(minf(t, 1.0), 0.6))
+			pts.append(xf * Vector3(off.x * hw, -0.5 + t, off.z * hw))
+		lines.append(pts)
+	var box := AABB(lines[0][0], Vector3.ZERO)
+	for pts in lines:
+		for p in pts:
+			box = box.expand(p)
+	box = box.grow(0.5)
+	var near_tris := PackedVector3Array()
+	for i in range(0, tris.size(), 3):
+		var tb := AABB(tris[i], Vector3.ZERO).expand(tris[i + 1]).expand(tris[i + 2])
+		if tb.intersects(box):
+			near_tris.append(tris[i])
+			near_tris.append(tris[i + 1])
+			near_tris.append(tris[i + 2])
+	var hits := 0
+	for pts in lines:
+		var hit := false
+		for j in pts.size() - 1:
+			for i in range(0, near_tris.size(), 3):
+				if Geometry3D.segment_intersects_triangle(pts[j], pts[j + 1], near_tris[i], near_tris[i + 1], near_tris[i + 2]) != null:
+					hit = true
+					break
+			if hit:
+				break
+		if hit:
+			hits += 1
+	return hits
+
+
+## Видимые факелы корабля лаборатории: маршевые и реверса, у каждого — имя узла-родителя.
+static func _shown(list: Array) -> Array[MeshInstance3D]:
+	var out: Array[MeshInstance3D] = []
+	for mi: MeshInstance3D in list:
+		if mi.visible and mi.scale.y > 0.05:
+			out.append(mi)
+	return out
+
+
+func test_hero_fleet_plumes() -> void:
+	var tr: Color = _get_defs().doctrine.plume[&"troyden"]
+	for id: StringName in FLEET + [&"cruiser"]:
+		var v := await _lab_ship(id)
+		var s := v.battle.ships[0]
+		var vis: ShipVisual = v._vis[s.uid]
+		var jets: Array = FLEET_JETS[id]
+		var fwd := _rev_draw(v, 1.0, 0.0)
+		var mains := _shown(arr(v._plume.get(s.uid, [])))
+		var revs_off := _shown(arr(v._rev_plume.get(s.uid, [])))
+		ok(mains.size() == whole(jets[0]) and revs_off.is_empty(), "%s: тяга по носу — маршевых факелов %d (ждали %d), реверса %d" % [id, mains.size(), whole(jets[0]), revs_off.size()])
+		var tris := _hull_tris(v, vis)
+		var hit_m := 0
+		var from_nodes := true
+		var col_ok := true
+		for mi in mains:
+			hit_m += _plume_hits(mi, tris)
+			from_nodes = from_nodes and String(mi.get_parent().name).begins_with("engine_")
+			var cv: Vector3 = (mi.material_override as ShaderMaterial).get_shader_parameter("color")
+			col_ok = col_ok and Color(cv.x, cv.y, cv.z).is_equal_approx(tr)
+		eq(hit_m, 0, "%s: маршевые факелы (%.1f ед.) в корпус не упираются — линий ядра в корпусе" % [id, num(fwd["main"])])
+		var back := _rev_draw(v, 0.0, 1.0)
+		var revs := _shown(arr(v._rev_plume.get(s.uid, [])))
+		ok(revs.size() == whole(jets[1]) and flag(back["ahead"]), "%s: тяга назад — факелов реверса %d (ждали %d), вперёд к носу" % [id, revs.size(), whole(jets[1])])
+		var hit_r := 0
+		for mi in revs:
+			hit_r += _plume_hits(mi, tris)
+			from_nodes = from_nodes and String(mi.get_parent().name).begins_with("rev_")
+			var cv: Vector3 = (mi.material_override as ShaderMaterial).get_shader_parameter("color")
+			col_ok = col_ok and Color(cv.x, cv.y, cv.z).is_equal_approx(tr)
+		eq(hit_r, 0, "%s: факелы реверса (%.1f ед.) в корпус не упираются — линий ядра в корпусе" % [id, num(back["len"])])
+		note("%s: маршевых %d по %.1f ед., реверса %d по %.1f ед., треугольников корпуса %d, линий ядра в корпусе %d и %d" % [
+			id, mains.size(), num(fwd["main"]), revs.size(), num(back["len"]), tris.size() / 3, hit_m, hit_r])
+		ok(from_nodes, "%s: маршевые висят на узлах engine_*, реверс — на rev_*" % id)
+		ok(col_ok, "%s: пламя цвета клана Тройден %s" % [id, tr])
+		if id == &"capital":
+			# тандем «Ланселота»: передняя пара гондол тормозит, задняя гонит — сопла реверса ближе
+			# к носу (−z), чем любое маршевое
+			var rear := _rear_front(vis.record)
+			ok(rear, "флагман: маршевые сопла — задняя пара гондол, раструбы реверса — передняя")
+			var swapped := vis.record.duplicate(true)
+			var nd := dict(swapped["nodes"])
+			var e0: Variant = nd["engine_0"]
+			nd["engine_0"] = nd["rev_0"]
+			nd["rev_0"] = e0
+			ok(not _rear_front(swapped), "откат «пары гондол перепутаны» — проверка краснеет")
+			# откат: факелы реверса развёрнуты назад, как маршевые (так светила бы передняя пара,
+			# будь у неё маршевые сопла, как в круге 2) — ядро уходит в свою же гондолу
+			for mi in revs:
+				mi.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+				mi.position = Vector3(0.0, 0.0, mi.scale.y * 0.5)
+			var hit_o := 0
+			for mi in revs:
+				hit_o += _plume_hits(mi, tris)
+			note("флагман, откат «реверс бьёт назад»: линий ядра в корпусе %d из %d" % [hit_o, revs.size() * 5])
+			ok(hit_o > 0, "откат «реверс бьёт назад»: линий ядра в корпусе %d — проверка краснеет" % hit_o)
+		await _drop(v)
+	# откаты числа и цвета: `plume` строкой (как в extras) — реверса нет; пламя по стороне —
+	# Тройден на стороне защитника горит чужим цветом
+	var keep := ShipModels.ship(&"troyden", &"frigate")
+	var r := keep.duplicate(true)
+	for key: String in ["rev_0", "rev_1"]:
+		var nd := dict(dict(r["nodes"])[key])
+		nd["plume"] = JSON.stringify(nd["plume"])
+	_put_record(r, &"frigate")
+	var w := await _lab_ship(&"frigate")
+	_rev_draw(w, 0.0, 1.0)
+	var lost := _shown(arr(w._rev_plume.get(w.battle.ships[0].uid, [])))
+	_put_record(keep, &"frigate")
+	ok(lost.size() != whole(FLEET_JETS[&"frigate"][1]), "откат «plume строкой»: факелов реверса %d — проверка краснеет" % lost.size())
+	await _drop(w)
+	BattleView.rollback_plume_by_side = true
+	var d := await _lab_ship(&"carrier", Ship.DEFENDER)
+	_rev_draw(d, 1.0, 0.0)
+	var dm := _shown(arr(d._plume.get(d.battle.ships[0].uid, [])))
+	BattleView.rollback_plume_by_side = false
+	var cv0: Vector3 = (dm[0].material_override as ShaderMaterial).get_shader_parameter("color") if not dm.is_empty() else Vector3.ZERO
+	ok(not Color(cv0.x, cv0.y, cv0.z).is_equal_approx(tr), "откат «пламя по стороне»: носитель Тройдена у защитника — не цвет клана — проверка краснеет")
+	await _drop(d)
+
+
+## Маршевые сопла дальше от носа (больше z), чем все раструбы реверса.
+static func _rear_front(rec: Dictionary) -> bool:
+	var nodes: Dictionary = rec.get("nodes", {})
+	var eng_min := 1.0e9
+	var rev_max := -1.0e9
+	for key: String in nodes:
+		var nd: Dictionary = nodes[key]
+		var pos: Array = nd.get("pos", [0.0, 0.0, 0.0])
+		var z: float = pos[2]
+		if key.begins_with("engine_"):
+			eng_min = minf(eng_min, z)
+		elif key.begins_with("rev_"):
+			rev_max = maxf(rev_max, z)
+	return eng_min > rev_max

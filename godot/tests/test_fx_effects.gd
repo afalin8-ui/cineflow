@@ -36,6 +36,7 @@ const BattleFx := preload("res://view/battle_fx.gd")
 const HyperFx := preload("res://view/hyper_fx.gd")
 const SpaceEnv := preload("res://view/space_env.gd")
 const CameraRig := preload("res://view/camera_rig.gd")
+const ShipVisual := preload("res://view/ship_visual.gd")
 const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
 const Polygon := preload("res://tools/polygon.gd")
@@ -289,6 +290,11 @@ func _source_shot(kind: StringName) -> Dictionary:
 	var fr := b.ships[1]
 	var t := b.ships[2]
 	var car := b.ships[3]
+	# реакторы стоят: мера — разница кадра без выстрела и с ним, а с 0.11 реактор вращается у всех
+	# кораблей Тройдена (фрегат и носитель стоят у самых линий ПВО и батареи), и за 0,08 с его поворот
+	# ложился в «свет выстрела»: батарея и ПВО переставали различаться
+	for vis: ShipVisual in v._vis.values():
+		vis._spin.clear()
 	v.rig.set_view(Vector3(0, 0, -200), 0.0, 1400.0, true)
 	var cam := v.rig.camera
 	var a3 := v.ship_point(cr)
@@ -298,7 +304,10 @@ func _source_shot(kind: StringName) -> Dictionary:
 	if kind == &"pd":
 		pr = Weapons.spawn_proj(b, t, fr, 10.0, &"missile", 20.0, BIG, Vector2(0, 1))
 		var pp: Proj = pr
-		pp.pos = Vector2(160, -200)
+		# ракета сбоку, ствол правого борта (pd_1): у ручного фрегата Тройдена (0.11) стволы ПВО на
+		# корме, и очередь по ракете прямо перед носом шла поверх своего корпуса — корпус закрывал её
+		# начало, и мерился огрызок трассы (насыщенность на самом пороге 0,15, «ПВО ~ батарея»)
+		pp.pos = Vector2(420, -60)
 	elif kind == &"craft":
 		sq = Hangar.launch(b, car, &"interceptor")
 	_step_draw(v)
@@ -313,8 +322,8 @@ func _source_shot(kind: StringName) -> Dictionary:
 		&"pd":
 			var pp2: Proj = pr
 			var to3: Vector3 = v.bfx._proj_at.get(pp2.uid, Vector3(pp2.pos.x, 0.0, pp2.pos.y))
-			v.bfx.consume([&"pd", fr.uid, 0, pp2.pos, pp2.uid])
-			a3 = v.bfx._node_pt(fr, "pd_", 0)
+			v.bfx.consume([&"pd", fr.uid, 1, pp2.pos, pp2.uid])
+			a3 = v.bfx._node_pt(fr, "pd_", 1)
 			b3 = to3
 		&"craft":
 			var c: Craft = null
@@ -995,7 +1004,10 @@ func _walk_corvette(h: HUD, size: Vector2i) -> Dictionary:
 		await h._close()
 		return out
 	await hooks.move(at)
-	await hooks.click(at)
+	# щелчок в одном кадре (hooks.click, quick): поле считает щелчком нажатие короче CLICK_MS настоящих
+	# часов, а кадр 1920 в Forward+ на llvmpipe под нагрузкой бывает дольше — 1920 Forward+ при нагрузке
+	# 16 не выбирал корвет (1366 и Compatibility выбирали)
+	await hooks.click(at, MOUSE_BUTTON_LEFT, true)
 	await hooks.frames(2)
 	out["selected"] = v.selection == [corv.uid]
 	await hooks.key(KEY_G)

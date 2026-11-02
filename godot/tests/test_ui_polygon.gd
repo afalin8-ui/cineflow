@@ -382,14 +382,20 @@ func test_picking_hull_then_nearest() -> void:
 	var nose_px := p.view.rig.camera.unproject_position(nose)
 	ok(nose_px.distance_to(center) > Picking.NEAR_PX, "нос флагмана дальше 30 точек от центра (%.0f)" % nose_px.distance_to(center))
 	ok(Picking.pick(p.view, nose_px) == cap, "по носу корпуса — флагман (капсула корпуса)")
-	# мимо корпуса, но в 25 точках от центра малого — ближайший
+	# мимо корпуса, но ближе NEAR_PX (30) к центру малого — ближайший. Точку ищем по кругу в 25 и 28
+	# точках: у ручного корвета Тройдена (0.11) капсула шире прежней (ширина 28,75 против 27,2), и
+	# четырёх направлений по осям экрана в 25 точках на этом виде уже не хватало — все легли в капсулу
 	var cor: Ship = null
 	for s in _own(p):
 		if s.def.id == &"corvette":
 			cor = s
 	var cc := _screen(p, cor)
 	var side := Vector2(0.0, 0.0)
-	for dpx: Vector2 in [Vector2(25, 0), Vector2(-25, 0), Vector2(0, 25), Vector2(0, -25)]:
+	var tries: Array[Vector2] = []
+	for rad: float in [25.0, 28.0]:
+		for k in 24:
+			tries.append(Vector2.from_angle(TAU * k / 24.0) * rad)
+	for dpx: Vector2 in tries:
 		var q: Vector2 = cc + dpx
 		var o := p.view.rig.camera.project_ray_origin(q)
 		var n := p.view.rig.camera.project_ray_normal(q)
@@ -400,8 +406,9 @@ func test_picking_hull_then_nearest() -> void:
 		if Picking.ray_capsule(o, n, ca, cb, cr) < 0.0:
 			side = dpx
 			break
-	if ok(side != Vector2.ZERO, "нашлась точка в 25 точках от корвета мимо его корпуса"):
-		ok(Picking.pick(p.view, cc + side) == cor, "мимо корпуса в 25 точках — ближайший корвет")
+	if ok(side != Vector2.ZERO, "нашлась точка в 25–28 точках от корвета мимо его корпуса"):
+		ok(side.length() < Picking.NEAR_PX, "точка ближе NEAR_PX (%.0f < %.0f)" % [side.length(), Picking.NEAR_PX])
+		ok(Picking.pick(p.view, cc + side) == cor, "мимо корпуса в %.0f точках — ближайший корвет" % side.length())
 		var far := cc + side.normalized() * 40.0
 		var who := Picking.pick(p.view, far)
 		ok(who != cor, "в 40 точках от корвета он уже не выбирается (%s)" % [who.name if who != null else "никто"])
