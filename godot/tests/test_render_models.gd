@@ -95,6 +95,9 @@ func test_models_length_and_nodes() -> void:
 			if not ok(ps != null, "%s.%s: %s импортирован" % [fac, s.id, file]):
 				continue
 			var root := ps.instantiate() as Node3D
+			# ручная модель (раздел 15) встаёт в бой с масштабом записи — мерим то, что на экране
+			var k: float = rec.get("scale", 1.0)
+			root.scale = Vector3(k, k, k)
 			var bad := problems(root, s.model_len, s.nodes)
 			ok(bad.is_empty(), "%s.%s: %s" % [fac, s.id, "; ".join(bad)])
 			# башни главного калибра — с геометрией и дулом внутри (её можно повернуть)
