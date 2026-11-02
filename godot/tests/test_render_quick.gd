@@ -10,6 +10,7 @@ extends "res://tests/case.gd"
 const MainScene := preload("res://main.tscn")
 const MainScript := preload("res://main.gd")
 const Ship := preload("res://sim/ship.gd")
+const Battle := preload("res://sim/battle.gd")
 const Polygon := preload("res://tools/polygon.gd")
 const QuickMenu := preload("res://ui/quick_menu.gd")
 const ResultCard := preload("res://ui/result_card.gd")
@@ -107,9 +108,14 @@ func test_menu_and_card_layout() -> void:
 		await hooks.frames(3)
 		var p: Polygon = main.get("polygon")
 		p.view.speed = 4
-		var t0 := Time.get_ticks_msec()
-		while p.battle.feed_log.is_empty() and Time.get_ticks_msec() - t0 < 60000:
-			await hooks.frames(10)
+		# бой до первых строк ленты — шагами вида, а не ожиданием по НАСТОЯЩИМ часам: прежние
+		# «60 секунд кадров» на 4× в Forward+ под нагрузкой (кадр 1920 — 1,5–2,5 с на llvmpipe) не
+		# доходили до первой строки (CI-прогон 41443473535 и здесь 02.11.2026: «лента видна (0 строк)»)
+		p.view.paused = false
+		var guard := 0
+		while p.battle.feed_log.is_empty() and p.battle.time < 120.0 and not p.battle.over and guard < 20000:
+			p.view.advance(Battle.STEP)
+			guard += 1
 		await hooks.frames(4)
 		var fb := p.hud.feed_box.get_global_rect()
 		ok(not p.battle.feed_log.is_empty() and p.hud.feed_box.visible, "%d: в «ИИ против ИИ» видна лента (%d строк)" % [size.x, p.battle.feed_log.size()])
