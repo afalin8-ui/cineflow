@@ -759,6 +759,9 @@
         .cf-oldboard { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 44; display: flex; align-items: center; gap: 14px; max-width: calc(100% - 32px);
                        padding: 8px 8px 8px 16px; border-radius: 14px; background: var(--raised); border: 1px solid var(--border); box-shadow: var(--shadow-2); font-size: var(--fs-2); color: var(--text-2); }
         .cf-oldboard button { flex-shrink: 0; min-height: 36px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--bg); font-weight: 600; }
+        .cf-intent { margin-bottom: 18px; }
+        .cf-intent-k { display: block; font-size: var(--fs-1); font-weight: 600; color: var(--accent); letter-spacing: .02em; margin-bottom: 4px; }
+        .cf-intent textarea::placeholder { color: var(--muted); font-style: italic; }
         .cf-tabbar { display: flex; flex-shrink: 0; background: var(--panel-2); border-top: 1px solid var(--border);
                      padding: 4px 6px env(safe-area-inset-bottom, 0px); }
         .cf-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -23039,6 +23042,20 @@
                             <div className="flex items-center gap-2.5">
                               <span style={eyebrow}>Заметки сцены</span>
                               <button onClick={addSceneNote} className="cf-edit-only" style={linkish}>+ заметка</button>
+                            </div>
+                            {/* ЗАМЫСЕЛ — та же заметка по виду, но про творчество:
+                                пустая, она ЗОВЁТ написать. Это поле экспликации
+                                сцены (`content`) — то же, что во вкладке панели;
+                                большой гайд живёт отдельным документом. */}
+                            <div className="cf-note cf-intent" data-cf="scene-intent" style={{ borderLeftColor: 'var(--accent)', marginTop: 12 }}>
+                              <span className="cf-intent-k">Замысел</span>
+                              <textarea rows={1} value={s.content || ''} readOnly={READ_ONLY}
+                                        onChange={(e) => updateScene(s.id, 'content', e.target.value)}
+                                        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
+                                        onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
+                                        placeholder="Что эта сцена должна сделать со зрителем? Свет, движение камеры, ритм — пара фраз."
+                                        className="w-full bg-transparent border-none focus:outline-none resize-none block"
+                                        style={{ fontSize: 'var(--fs-4)', lineHeight: 1.55, color: 'var(--text)', minHeight: 30, padding: 0 }} />
                             </div>
                             {/* Сам список — sceneNotesList: он же в шторке
                                 «Заметки» на телефоне, второго вида нет. */}
