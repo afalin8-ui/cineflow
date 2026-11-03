@@ -290,10 +290,13 @@ func _warm_probe(mode: String) -> Dictionary:
 	var t0 := Time.get_ticks_msec()
 	while OS.is_process_running(pid) and Time.get_ticks_msec() - t0 < PROBE_WAIT_MS:
 		await hooks.frames(1)
+	var steps := FileAccess.get_file_as_string(out + ".log").strip_edges().replace("\n", "; ")
+	DirAccess.remove_absolute(out + ".log")
 	if OS.is_process_running(pid):
 		OS.kill(pid)                      # только свой PID, никакого pkill
-		ok(false, "проба прогрева %s зависла" % mode)
+		ok(false, "проба прогрева %s зависла; её ход: %s" % [mode, steps])
 		return {}
+	note("проба прогрева %s: %s" % [mode, steps.get_slice("; ", steps.get_slice_count("; ") - 1)])
 	var j := JSON.new()
 	var text := FileAccess.get_file_as_string(out)
 	DirAccess.remove_absolute(out)
