@@ -19,7 +19,7 @@
 // Нужны: node 18+, playwright, Chromium (CF_CHROME), python3, curl.
 const path = require('path'), fs = require('fs'), os = require('os');
 const { execSync, spawn } = require('child_process');
-const ROOT = '/home/user/cineflow';
+const ROOT = require('path').resolve(__dirname, '..');
 const LIBS = process.env.CF_LIBS || path.join(os.tmpdir(), 'cineflow-libs');
 const PORT = process.env.CF_PORT || '8105';
 let playwright;
