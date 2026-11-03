@@ -649,6 +649,35 @@
            навигация уезжает вниз, в таб-бар: большой палец достаёт до него,
            не перехватывая телефон. Наведения на телефоне не существует —
            все состояния только нажатием. */
+        /* ---------- полоса у края (планшет и компьютер) ----------
+           Как у iPhone Duo: шапки нет, органы управления — узкой полосой
+           у края, контенту вся высота. Слева или справа — под свободную
+           руку (перо в правой — полоса слева), стоя — внизу. */
+        .cf-dock { display: flex; flex-shrink: 0; align-items: center; gap: 6px; background: var(--panel-2); z-index: 40; position: relative; }
+        .cf-dock-v { flex-direction: column; width: 64px; padding: 12px 0 calc(12px + env(safe-area-inset-bottom, 0px)); border-right: 1px solid var(--border); }
+        .cf-dock-v.cf-dock-right { order: 99; border-right: 0; border-left: 1px solid var(--border); padding-right: env(safe-area-inset-right, 0px); }
+        .cf-dock-v.cf-dock-left { padding-left: env(safe-area-inset-left, 0px); }
+        .cf-dock-h { flex-direction: row; height: calc(64px + env(safe-area-inset-bottom, 0px)); padding: 0 16px env(safe-area-inset-bottom, 0px); border-top: 1px solid var(--border); }
+        .cf-dock-grp { display: flex; flex-direction: inherit; align-items: center; gap: 4px; }
+        .cf-dock-v .cf-dock-mods { margin-block: auto; }
+        .cf-dock-h .cf-dock-mods { margin-inline: auto; }
+        .cf-dock-btn { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--muted); flex-shrink: 0; }
+        .cf-dock-btn svg { width: 21px; height: 21px; }
+        .cf-dock-btn:hover { color: var(--text-2); background: var(--raised); }
+        .cf-dock-btn.on { color: var(--text); background: var(--raised); }
+        .cf-dock-badge { position: absolute; top: 4px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; font-size: var(--fs-1); font-weight: 700; line-height: 16px; background: var(--accent); color: var(--bg); }
+        .cf-dock-prim { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: var(--fs-1); color: var(--text-2); }
+        .cf-dock-h .cf-dock-prim { flex-direction: row; gap: 10px; font-size: var(--fs-3); }
+        .cf-dock-prim i { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--bg); font-style: normal; }
+        .cf-dock-prim:hover i { background: var(--accent-hover); }
+        .cf-dock-mode { min-width: 48px; height: 32px; padding: 0 6px; border-radius: 9px; font-size: var(--fs-1); font-weight: 600; color: var(--text-2); border: 1px solid var(--border); }
+        .cf-dock-mode:hover, .cf-dock-mode.on { color: var(--text); background: var(--raised); }
+        .cf-dock-v .cf-dock-mode { margin-top: 6px; }
+        .cf-dock-pop { top: auto; bottom: 0; right: auto; min-width: 220px; }
+        .cf-dock-v.cf-dock-left .cf-dock-pop { left: calc(100% + 10px); }
+        .cf-dock-v.cf-dock-right .cf-dock-pop { right: calc(100% + 10px); left: auto; }
+        .cf-dock-h .cf-dock-pop { bottom: calc(100% + 10px); right: 0; left: auto; }
+        .cf-dock-h .cf-dock-prim + .cf-dock-pop, .cf-dock-h .cf-dock-mods .cf-dock-pop { left: 50%; right: auto; transform: translateX(-50%); }
         .cf-tabbar { display: flex; flex-shrink: 0; background: var(--panel-2); border-top: 1px solid var(--border);
                      padding: 4px 6px env(safe-area-inset-bottom, 0px); }
         .cf-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -20785,6 +20814,82 @@
             return () => { document.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
           }, [headMenu]);
 
+          // ПОЛОСА У КРАЯ вместо шапки (планшет и компьютер), как у iPhone
+          // Duo: контенту отдана вся высота, органы управления — узкой
+          // полосой у края. Сторона — под свободную руку: перо в правой,
+          // полоса слева. Стоя (портрет) полоса ложится вниз — высоты
+          // и так хватает. Телефон живёт своей раскладкой (шапка + таб-бар).
+          const [dockSide, setDockSide] = useState(() => {
+            try { return localStorage.getItem('cf_dock_side') === 'right' ? 'right' : 'left'; } catch (e) { return 'left'; }
+          });
+          const flipDock = () => setDockSide(v => {
+            const n = v === 'left' ? 'right' : 'left';
+            try { localStorage.setItem('cf_dock_side', n); } catch (e) {}
+            return n;
+          });
+          const [dockModes, setDockModes] = useState(false);
+          const dockModesRef = useRef(null);
+          useEffect(() => {
+            if (!dockModes) return;
+            const away = (e) => { if (dockModesRef.current && !dockModesRef.current.contains(e.target)) setDockModes(false); };
+            const esc = (e) => { if (e.key === 'Escape') setDockModes(false); };
+            document.addEventListener('pointerdown', away);
+            window.addEventListener('keydown', esc);
+            return () => { document.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
+          }, [dockModes]);
+
+          // ЛИСТ СМЕНЫ (режим «Съёмка»): кадры ВСЕХ сцен смены подряд, а не
+          // одной сцены. Смена — сцены с той же датой, что у открытой; без
+          // даты смена — сама сцена. «Снят» в полосе отмечает ТЕКУЩИЙ кадр —
+          // первый неснятый по порядку — и лист сам едет к следующему.
+          const shiftScenes = useMemo(() => {
+            const cur = scenes.find(x => x.id === activeSceneId) || sortedScenes[0];
+            if (!cur) return [];
+            if (!cur.date) return [cur];
+            return sortedScenes.filter(x => x.date === cur.date);
+          }, [scenes, sortedScenes, activeSceneId]);
+          const shiftFrames = useMemo(() => {
+            const order = new Map(shiftScenes.map((x, i) => [x.id, i]));
+            return storyboard.filter(f => order.has(f.sceneId))
+              .sort((a, b) => order.get(a.sceneId) - order.get(b.sceneId)
+                || String(a.frameNum || '').localeCompare(String(b.frameNum || ''), undefined, { numeric: true }));
+          }, [storyboard, shiftScenes]);
+          // Сколько раз отметили «Снят» — лист смены по этому числу едет
+          // к следующему кадру (отметка могла прийти из полосы, а прокрутка
+          // живёт в самом листе).
+          const [shootJump, setShootJump] = useState(0);
+          const [shootTripod, setShootTripod] = useState(() => {
+            try { return localStorage.getItem('cf_shoot_tripod') === '1'; } catch (e) { return false; }
+          });
+          const toggleTripod = () => setShootTripod(v => {
+            try { localStorage.setItem('cf_shoot_tripod', v ? '0' : '1'); } catch (e) {}
+            return !v;
+          });
+          const setShot = (id, val) => {
+            if (READ_ONLY) return;
+            const up = (storyboardRef.current || storyboard).map(x => x.id === id ? { ...x, shot: val } : x);
+            storyboardRef.current = up; setStoryboard(up);
+            const f = up.find(x => x.id === id);
+            if (f) syncDoc('storyboard', id, f);
+          };
+          const shootMarkNext = () => {
+            if (READ_ONLY) return;
+            const f = shiftFrames.find(x => !x.shot);
+            if (!f) { showToast('Смена снята целиком'); return; }
+            setShot(f.id, true);
+            setShootJump(n => n + 1);
+            showToast(`Снят ${f.frameNum || 'кадр'}`);
+          };
+          const shootUndo = () => {
+            if (READ_ONLY) return;
+            const done = shiftFrames.filter(x => x.shot);
+            const f = done[done.length - 1];
+            if (!f) return;
+            setShot(f.id, false);
+            setShootJump(n => n + 1);
+            showToast(`Вернул ${f.frameNum || 'кадр'}`);
+          };
+
           // Поиск по всему проекту. Открывается ⌘K / Ctrl+K и нажатием
           // на поле в шапке. Ищет сцены, референсы (по подписи и тегам),
           // объекты, доски и документы — и ПЕРЕХОДИТ туда, а не только
@@ -21100,6 +21205,114 @@
                         </div>
           );
 
+          // ПОЛОСА У КРАЯ — разметка. Сверху ОДНО главное действие экрана
+          // (оно не прячется никогда), посередине модули, внизу поиск, связь
+          // и «···». Всё прочее — в «···»: места хватает — кнопка видна,
+          // не хватает — уходит туда, как у Duo.
+          const dockOn = !isPhone && !fullScout;
+          const dockVert = dockOn && !portraitScreen;
+          const plusSvg = <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>;
+          const checkSvg = <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>;
+          const dockPrimary = (() => {
+            if (READ_ONLY) return null;
+            if (currentView === 'notion' && sceneMode === 'shoot')
+              return { label: 'Снят', icon: checkSvg, onClick: shootMarkNext, cf: 'dock-shot' };
+            if (currentView === 'gallery')
+              return { label: 'Фото', icon: plusSvg, photo: (fs) => handleMultiFileUpload(fs, null, null, galleryDropLoc(), galleryDropFolder()),
+                       extra: [{ key: 'paste', label: 'Вставить из буфера', hint: 'скопированную картинку', icon: Icons.Paste,
+                                 onPick: () => pasteFromClipboard({ folder: galleryDropFolder(), locationId: galleryDropLoc() }) }] };
+            if (currentView === 'locations' && activeLocationId)
+              return { label: 'Фото', icon: plusSvg, photo: (fs) => handleMultiFileUpload(fs, null, null, activeLocationId) };
+            if (currentView === 'docs')
+              return { label: 'Гайд', icon: plusSvg, cf: 'dock-doc', onClick: () => {
+                const nD = { id: `doc-${Date.now()}`, title: 'Новый гайд', content: '' };
+                setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); syncDoc('docs', nD.id, nD);
+              } };
+            return null;
+          })();
+          const curMode = SCENE_MODES.find(m => m.id === sceneMode) || SCENE_MODES[0];
+          const renderDock = (vert) => (
+            <header className={`cf-dock ${vert ? 'cf-dock-v' : 'cf-dock-h'} cf-dock-${dockSide}`} data-cf="dock">
+              <div className="cf-dock-grp">
+                {dockPrimary && (dockPrimary.photo ? (
+                  <PhotoSourcePicker media onFiles={dockPrimary.photo} extra={dockPrimary.extra}
+                                     className="cf-dock-prim" title={dockPrimary.label + ': камера · плёнка · файлы'}>
+                    <i>{dockPrimary.icon}</i><span>{dockPrimary.label}</span>
+                  </PhotoSourcePicker>
+                ) : (
+                  <button onClick={dockPrimary.onClick} className="cf-dock-prim" data-cf={dockPrimary.cf} title={dockPrimary.label}>
+                    <i>{dockPrimary.icon}</i><span>{dockPrimary.label}</span>
+                  </button>
+                ))}
+              </div>
+              <nav className="cf-dock-grp cf-dock-mods">
+                {navItems.map(t => (
+                  <button key={t.id} onClick={() => setCurrentView(t.id)} title={t.label} aria-label={t.label}
+                          data-cf={'nav-' + t.id} className={'cf-dock-btn' + (currentView === t.id ? ' on' : '')}>{t.icon}</button>
+                ))}
+                <button onClick={toggleChat} title="Чат группы" aria-label="Чат группы"
+                        className={'cf-dock-btn relative' + (showChat ? ' on' : '') + (CF_CHAT ? '' : ' cf-edit-only')}>
+                  <Icons.Chat />
+                  {unreadCount > 0 && <span className="cf-dock-badge">{unreadCount}</span>}
+                </button>
+                {currentView === 'notion' && (
+                  <div className="relative" ref={dockModesRef}>
+                    <button onClick={() => setDockModes(v => !v)} data-cf="dock-mode" title={'Режим экрана: ' + curMode.label}
+                            className={'cf-dock-mode' + (dockModes ? ' on' : '')}>{curMode.label.slice(0, 5)}</button>
+                    {dockModes && (
+                      <div className="cf-menu cf-dock-pop">
+                        <span className="cf-meta block px-2.5 pb-1 pt-1">Режим экрана</span>
+                        {SCENE_MODES.map(m => (
+                          <button key={m.id} onClick={() => { setDockModes(false); setSceneMode(m.id); }} title={m.hint}
+                                  data-cf={'mode-' + m.id} style={sceneMode === m.id ? { color: 'var(--text)', background: 'var(--raised)' } : null}>
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </nav>
+              <div className="cf-dock-grp">
+                <button onClick={() => setShowSearch(true)} title="Поиск по всему проекту (⌘K)" aria-label="Поиск" className="cf-dock-btn">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                </button>
+                <button onClick={kickSyncNow} title={syncTitle + ' · нажмите, чтобы обновить связь'} aria-label="Связь"
+                        className="cf-dock-btn" style={{ opacity: kicking ? 0.4 : 1 }}>
+                  <span className="rounded-full block" style={{ width: 8, height: 8, background: syncDot }}></span>
+                </button>
+                {READ_ONLY ? (
+                  <button onClick={() => setShowViewInfo(true)} title="Почему нельзя ничего менять"
+                          className="cf-dock-btn" style={{ color: 'var(--accent)', fontWeight: 700 }}>?</button>
+                ) : (
+                  <div className="relative" ref={headMenuRef}>
+                    <button onClick={() => setHeadMenu(v => !v)} title="Проект, доступ, агент КПП" aria-label="Ещё"
+                            data-cf="dock-more" className={'cf-dock-btn' + (headMenu ? ' on' : '')} style={{ fontSize: 'var(--fs-3)', letterSpacing: 1 }}>···</button>
+                    {headMenu && (
+                      <div className="cf-menu cf-dock-pop">
+                        {projectTitle && <span className="cf-meta block px-2.5 pt-1 pb-1 truncate">{projectTitle}</span>}
+                        <button onClick={() => { setHeadMenu(false); setShowProjectModal(true); }}><Icons.Folder /> Проект</button>
+                        <button onClick={() => { setHeadMenu(false); setShowShareModal(true); }}><Icons.Link /> Доступ</button>
+                        <hr />
+                        <button onClick={() => { setHeadMenu(false); setShowAgentModal(true); }}><Icons.Bot /> Агент КПП</button>
+                        {currentView === 'notion' && sceneMode === 'shoot' && (
+                          <button onClick={() => { setHeadMenu(false); toggleTripod(); }} data-cf="menu-tripod">
+                            <Icons.Camera /> На штативе{shootTripod ? ' ✓' : ''}
+                          </button>
+                        )}
+                        <hr />
+                        <button onClick={() => { setHeadMenu(false); flipDock(); }} data-cf="dock-flip">
+                          {dockSide === 'left' ? 'Полоса справа' : 'Полоса слева'}
+                        </button>
+                        <span className="cf-meta block px-2.5 py-1.5">{scenes.length} сцен · {storyboard.length} кадров</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </header>
+          );
+
           if (showWelcome && !READ_ONLY) return <WelcomeModal onComplete={(name, role) => { setUserName(name); setUserRole(role); setShowWelcome(false); }} />;
 
           // ВЫСОТА ПО ВИДИМОЙ ЧАСТИ, а не по h-screen.
@@ -21362,7 +21575,7 @@
                 </div>
               )}
 
-              <div className="flex flex-col flex-1 min-w-0">
+              <div className="flex flex-col flex-1 min-w-0" style={dockOn ? { paddingTop: 'env(safe-area-inset-top, 0px)' } : null}>
                 {/* ШАПКА ТЕЛЕФОНА — не навигация, а заголовок места.
                     Навигация уехала вниз, в таб-бар: строка иконок 14px
                     в шапке телефона нечитаема и не попадаема пальцем.
@@ -21475,129 +21688,10 @@
                       </React.Fragment>
                     )}
                   </header>
-                ) : (
-                <React.Fragment>
-                {/* ШАПКА — ЕДИНСТВЕННАЯ НАВИГАЦИЯ (планшет и компьютер).
-                    Раньше их было две: рельс с модулями слева и список
-                    сущностей рядом с ним. Теперь модули живут здесь строкой
-                    иконок, а слева остаётся только список сцен / папок /
-                    досок. Порядок слева направо: модули · поиск ⌘K ·
-                    режимы экрана · точка связи · ···  */}
-                <header className="flex items-center shrink-0 z-40 gap-2.5"
-                        style={{ height: 'calc(var(--header-h) + env(safe-area-inset-top, 0px))', padding: 'env(safe-area-inset-top, 0px) 12px 0', background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
-                  <nav className="flex items-center gap-0.5 min-w-0 overflow-x-auto hide-scrollbar">
-                    {navItems.map(t => (
-                      currentView === t.id ? (
-                        <span key={t.id} className="cf-navtab cf-navtab-on" title={t.label}>
-                          <span className="cf-navtab-key">{t.label.charAt(0)}</span>{t.label.slice(1)}
-                        </span>
-                      ) : (
-                        <button key={t.id} onClick={() => setCurrentView(t.id)} title={t.label}
-                                className="cf-navtab transition-colors">{t.icon}</button>
-                      )
-                    ))}
-                    {/* Чат — здесь же: раньше он жил только в рельсе, а на
-                        телефоне рельса не было вовсе, и до чата (а вместе
-                        с ним и до запроса разрешения на уведомления) было
-                        не добраться. Одна строка — один путь для всех. */}
-                    <button onClick={toggleChat} title="Чат группы"
-                            className={'cf-navtab relative transition-colors' + (CF_CHAT ? '' : ' cf-edit-only')}
-                            style={showChat ? { color: 'var(--accent)' } : null}>
-                      <Icons.Chat />
-                      {unreadCount > 0 && (
-                        <span className="absolute flex items-center justify-center font-bold rounded-full"
-                              style={{ top: -1, right: 0, minWidth: 16, height: 16, padding: '0 4px', fontSize: 'var(--fs-1)', background: 'var(--accent)', color: 'var(--bg)' }}>{unreadCount}</span>
-                      )}
-                    </button>
-                  </nav>
-
-                  <button onClick={() => setShowSearch(true)} className="cf-search transition-colors"
-                          title="Поиск по всему проекту — сцены, кадры, объекты, доски (⌘K)">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                    <span className="flex-1 truncate text-left">Поиск…</span>
-                    <span className="cf-kbd hidden sm:inline">⌘K</span>
-                  </button>
-
-                  {/* Режимы — четыре пресета экрана сцены под разный момент
-                      работы: придумываем · едем смотреть место · снимаем ·
-                      показываем режиссёру. На других экранах их нет. */}
-                  {currentView === 'notion' && (
-                    <div className="cf-seg cf-wide-only">
-                      {SCENE_MODES.map(m => (
-                        <button key={m.id} onClick={() => setSceneMode(m.id)} title={m.hint}
-                                className={sceneMode === m.id ? 'on' : ''}>{m.label}</button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Точка связи заодно и кнопка: нажать, если кажется,
-                      что телефон показывает вчерашнее. Площадь нажатия
-                      сделана пальцем, сама точка осталась мелкой. Слова
-                      «Сохранено 15:42» ушли в подсказку — на 924 точках
-                      строка из них не помещалась. */}
-                  {/* Название проекта. Рисуется, только если оно задано:
-                      пустая подпись в покое — это интерфейс ради интерфейса.
-                      Нужно оно затем, что комнат у оператора за сезон
-                      несколько, а код комнаты не говорит ничего. */}
-                  {projectTitle && (
-                    <span className="cf-wide-only truncate ml-auto" title={'Проект: ' + projectTitle}
-                          style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)', maxWidth: 200 }}>{projectTitle}</span>
-                  )}
-
-                  <button onClick={kickSyncNow} title={syncTitle + ' · нажмите, чтобы обновить связь'}
-                          className="shrink-0 ml-auto flex items-center justify-center -m-2 p-2"
-                          style={{ opacity: kicking ? 0.4 : 1, minWidth: 'var(--tap-sm)', minHeight: 'var(--tap-sm)' }}>
-                    <span className="rounded-full block" style={{ width: 7, height: 7, background: syncDot }}></span>
-                  </button>
-
-                  {READ_ONLY ? (
-                    // Надпись сделана КНОПКОЙ намеренно. Раньше человек,
-                    // которому прислали ссылку для просмотра, видел пустой
-                    // проект без «Проекта» и «Доступа» и не понимал, почему
-                    // ничего не нажимается и куда делись кнопки. Выхода
-                    // из этого режима не было вовсе.
-                    <button onClick={() => setShowViewInfo(true)}
-                            title="Почему нельзя ничего менять"
-                            className="cf-meta shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
-                            style={{ color: 'var(--accent)', border: '1px solid var(--accent-line)', minHeight: 28 }}>
-                      Просмотр{CF_SNAPSHOT ? ' · снимок' : CF_CHAT ? ' · чат' : ''} <span style={{ opacity: .7 }}>?</span>
-                    </button>
-                  ) : (
-                    <div className="relative shrink-0" ref={headMenuRef}>
-                      <button onClick={() => setHeadMenu(v => !v)} title="Проект, доступ, агент КПП"
-                              className={`cf-circ ${headMenu ? 'on' : ''}`} style={{ fontSize: 'var(--fs-3)', letterSpacing: 1 }}>···</button>
-                      {headMenu && (
-                        <div className="cf-menu">
-                          <button onClick={() => { setHeadMenu(false); setShowProjectModal(true); }}><Icons.Folder /> Проект</button>
-                          <button onClick={() => { setHeadMenu(false); setShowShareModal(true); }}><Icons.Link /> Доступ</button>
-                          <hr />
-                          <button onClick={() => { setHeadMenu(false); setShowAgentModal(true); }}><Icons.Bot /> Агент КПП</button>
-                          {/* На телефоне режимы в шапку не помещаются — они
-                              здесь. Прятать их совсем нельзя: «Съёмка» нужна
-                              как раз с телефона, на площадке. */}
-                          {currentView === 'notion' && (
-                            <div className="md:hidden">
-                              <hr />
-                              <span className="cf-meta block px-2.5 pb-1">Режим экрана</span>
-                              {SCENE_MODES.map(m => (
-                                <button key={m.id} onClick={() => { setHeadMenu(false); setSceneMode(m.id); }}
-                                        style={sceneMode === m.id ? { color: 'var(--accent)' } : null}>
-                                  {sceneMode === m.id ? '● ' : '○ '}{m.label}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          <hr />
-                          <span className="cf-meta block px-2.5 py-1.5">{scenes.length} сцен · {storyboard.length} кадров</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </header>
-                </React.Fragment>
-                )}
+                ) : null}
 
               <div className="flex flex-1 overflow-hidden relative z-10">
+                {dockVert && renderDock(true)}
                 <div className="flex-1 overflow-hidden relative">
 
                   {/* ЭКРАН «СЦЕНА».
@@ -25979,6 +26073,7 @@
                 </div>
               </div>
 
+              {dockOn && !dockVert && renderDock(false)}
               {/* ТАБ-БАР ТЕЛЕФОНА. Пять вкладок — предел, за которым подписи
                   перестают читаться: четыре главных модуля площадки и «Ещё»
                   для остального. Стоит в потоке, а не поверх содержимого:
