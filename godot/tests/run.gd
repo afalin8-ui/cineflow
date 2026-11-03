@@ -67,7 +67,11 @@ func _run_file(f: String) -> void:
 		var mname: String = m["name"]
 		if mname.begins_with("test_") and (_fn_only == "" or mname.contains(_fn_only)):
 			_test.current = "%s · %s" % [f.get_basename(), mname]
+			var tf := Time.get_ticks_msec()
 			await _test.call(mname)
+			# время каждой проверки — в журнал CI (строки «    · » он показывает): без него медленный
+			# ярус в CI не разобрать, какая проверка съела время (так было с «Столом» в 0.12)
+			print("    · время %s: %d мс" % [mname, Time.get_ticks_msec() - tf])
 	print("%-34s проверок %4d, провалов %d, %d мс" % [f.get_basename(), _test.checks, _test.fails, Time.get_ticks_msec() - _test.started])
 	_checks += _test.checks
 	_fails += _test.fails
