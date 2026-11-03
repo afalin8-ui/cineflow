@@ -58,13 +58,13 @@ func _run() -> void:
 	for i in 20:
 		await process_frame
 		if i == 0 or i == 19:
-			_mark("кадр %d" % (i + 1))
+			_mark("кадр %d, треугольников %d" % [i + 1, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)])
 	var before := compilations()
 	for i in 70:
 		sc.drive(float(i) * 0.85)
 		await process_frame
 		if i % 10 == 9:
-			_mark("облёт, кадр %d" % (i + 1))
+			_mark("облёт, кадр %d, треугольников %d" % [i + 1, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)])
 	var after := compilations()
 	var res := {"mode": mode, "before": before, "after": after, "renderer": RenderingServer.get_current_rendering_method()}
 	if out != "":
