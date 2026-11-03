@@ -951,22 +951,12 @@ const SEED = () => ({
   ok('другое устройство: переведённая доска та же', X7.length === nOld && X7.some(e => e.id === 'o~shC' && e.sb === 'o~shA'), `${X7.length} из ${nOld}`);
   ok('другое устройство: второй раз ничего не переводит', !(await writes(c7)).some(w => w.coll === 'boardEls'));
   await ctx7.close();
-  // Обратно.
-  const mb = await menuHit(c6, 'board-from-exc');
-  ok('«Вернуть прежнюю доску» в «···» нажимается', !!mb && mb.hit, JSON.stringify(mb));
-  await c6.click('[data-cf="confirm-ok"]');
-  await settle(c6, 1500);
-  const back = await c6.evaluate(() => { const w = document.getElementById('whiteboard-canvas'); return { own: !!w && w.getBoundingClientRect().width > 0, exc: !!document.querySelector('[data-cf="exc-board"]') }; });
-  ok('вернули — открылась прежняя доска', back.own && !back.exc && (await store(c6, 'boards'))['board-main'].engine === '', JSON.stringify(back));
+  // Обратно НЕ возвращаемся: с ноября 2026 рабочая доска — только Excalidraw,
+  // строки «Вернуть прежнюю доску» нет. Прежние данные при этом целы.
+  const noBack = await c6.evaluate(() => !document.querySelector('[data-cf="board-from-exc"]'));
+  ok('строки «Вернуть прежнюю доску» нет', noBack);
   const K6b = await store(c6, 'canvas');
-  ok('и её фигуры и рисунок на месте', K6b['shape-board-main'].shapes === JSON.stringify(OLD_SHAPES) && K6b['ink-board-main'].strokes === JSON.stringify(OLD_INK));
-  // Снова перевели — ничего не задвоилось.
-  await menuHit(c6, 'board-to-exc');
-  await c6.click('[data-cf="confirm-ok"]');
-  await c6.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'board-main', { timeout: 60000 }).catch(() => {});
-  await settle(c6, 2500);
-  const again6 = live(await els(c6)).filter(e => /^o~/.test(e.id));
-  ok('перевели снова — ничего не задвоилось', again6.length === nOld && new Set(again6.map(e => e.id)).size === nOld, `${again6.length} из ${nOld}`);
+  ok('прежние фигуры и рисунок в облаке целы', K6b['shape-board-main'].shapes === JSON.stringify(OLD_SHAPES) && K6b['ink-board-main'].strokes === JSON.stringify(OLD_INK));
   ok('ни одной ошибки страницы', cerr.length === 0, cerr.join(' | '));
   await ctx6.close();
 

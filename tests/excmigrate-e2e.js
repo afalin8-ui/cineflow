@@ -98,7 +98,7 @@ const SEED = () => ({
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 300)));
     await page.goto(`http://127.0.0.1:${PORT}${url}`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(900);
     return { page, errs };
   };
@@ -237,28 +237,12 @@ const SEED = () => ({
   const nSpot = E.filter(e => e.cd && e.cd.fx === 'spot').length;
   ok('после переоткрытия на схеме всё: перевод, подложка и прожекторы', !!E.find(e => e.id === 's~e1') && !!E.find(e => e.id === 'ls1~bg') && nSpot >= 3, String(nSpot));
 
-  // --- «Вернуть прежнюю схему»: прежний редактор, прежняя картинка ---
+  // --- «Вернуть прежнюю схему» больше НЕТ: рабочий редактор — Excalidraw ---
   await press(p, 'button[title^="Выгрузить доску"]');
   await p.waitForTimeout(250);
-  const rv = await press(p, '[data-cf="scheme-from-exc"]');
-  ok('строка «Вернуть прежнюю схему» в «···» нажимается', !!rv && rv.hit);
-  await p.waitForTimeout(300);
-  await press(p, '[data-cf="confirm-ok"]');
-  await p.waitForTimeout(1200);
-  const LS3 = (await store(p, 'lightSchemes')).ls1;
-  ok('схема вернулась в прежний редактор, нарисованное на Excalidraw цело', LS3.engine === '' && Object.values(await store(p, 'boardEls')).filter(d => d.b === 'ls1').length >= 13
-     && await p.evaluate(() => [...document.querySelectorAll('span')].some(s => s.textContent.trim() === 'Схема света' && s.closest('.fixed'))));
-  ok('картинка схемы снова прежняя (её собрал прежний редактор)', LS3.preview && LS3.preview !== LS2.preview && /^data:image\/jpeg/.test(LS3.preview));
-  await p.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Закрыть'); b && b.click(); });
-  await p.waitForTimeout(400);
-  // Снова на Excalidraw: прибор, поставленный там, не задвоился и не пропал.
-  await press(p, '[data-cf="scheme-tab"]');
-  await p.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'ls1', { timeout: 30000 }).catch(() => {});
-  await p.waitForTimeout(1500);
-  E = live(await els(p));
-  const dupS = E.filter(e => e.id === 's~e1').length;
-  ok('перевели снова — ничего не задвоилось, прибор с Excalidraw на месте', dupS === 1 && E.filter(e => e.cd && e.cd.fx === 'spot').length === nSpot
-     && (await store(p, 'lightSchemes')).ls1.engine === 'excalidraw', `s~e1 ×${dupS}`);
+  ok('строки «Вернуть прежнюю схему» нет', await p.evaluate(() => !document.querySelector('[data-cf="scheme-from-exc"]')));
+  await p.keyboard.press('Escape');
+  await p.waitForTimeout(250);
 
   // --- «+ схема»: новая сразу на Excalidraw и открыта ---
   const nS0 = Object.keys(await store(p, 'lightSchemes')).length;

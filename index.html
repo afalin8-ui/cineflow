@@ -682,15 +682,15 @@
            Касание по кадру, фото или карточке — рядом всплывают его
            действия; касание мимо — пилюля уходит. Встаёт у края под
            свободной рукой (со стороны полосы). */
-        .cf-pill { position: absolute; z-index: 6; bottom: -22px; display: flex; gap: 2px; padding: 4px; white-space: nowrap;
+        .cf-actpill { position: absolute; z-index: 6; bottom: -22px; display: flex; gap: 2px; padding: 4px; white-space: nowrap;
                    background: var(--raised); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-2); animation: cfPop .14s ease-out; }
-        .cf-pill.l { left: 16px; } .cf-pill.r { right: 16px; }
-        .cf-pill-inline { position: relative; bottom: auto; display: inline-flex; margin-top: 12px; }
-        .cf-pill button { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 13px; border-radius: 10px; font-size: var(--fs-2); color: var(--text); }
-        .cf-pill button:hover { background: var(--card); }
-        .cf-pill button.acc { color: var(--accent); font-weight: 600; }
+        .cf-actpill.l { left: 16px; } .cf-actpill.r { right: 16px; }
+        .cf-actpill-inline { position: relative; bottom: auto; display: inline-flex; margin-top: 12px; }
+        .cf-actpill button { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 13px; border-radius: 10px; font-size: var(--fs-2); color: var(--text); }
+        .cf-actpill button:hover { background: var(--card); }
+        .cf-actpill button.acc { color: var(--accent); font-weight: 600; }
         @keyframes cfPop { from { transform: translateY(5px) scale(.96); opacity: 0; } }
-        @media (prefers-reduced-motion: reduce) { .cf-pill { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .cf-actpill { animation: none; } }
 
         /* ---------- лист смены (режим «Съёмка») ---------- */
         .cf-shoot { position: relative; overflow-anchor: none; }
@@ -11002,7 +11002,7 @@
           }
           return (
             <main ref={boxRef} className={'flex-1 min-w-0 overflow-y-auto cf-shoot' + (narrow ? ' narrow' : '')} data-cf="shoot-sheet"
-                  onClick={(e) => { if (!e.target.closest('[data-shoot-frame], .cf-pill')) setSel(null); }}>
+                  onClick={(e) => { if (!e.target.closest('[data-shoot-frame], .cf-actpill')) setSel(null); }}>
               <div className="cf-shoot-head">
                 <div className="flex items-center gap-3 min-w-0">
                   <b style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>Смена</b>
@@ -11048,7 +11048,7 @@
                               </div>
                               <p className="cf-shoot-cap">{f.description || <span className="cf-meta">без описания</span>}</p>
                               {isSel && (
-                                <div className="cf-pill cf-pill-inline" role="toolbar" onClick={(e) => e.stopPropagation()}>
+                                <div className="cf-actpill cf-actpill-inline" role="toolbar" onClick={(e) => e.stopPropagation()}>
                                   {!readOnly && (
                                     <button className="acc" data-cf="pill-shot" onClick={() => { onShot(f.id, !f.shot); setSel(null); }}>{f.shot ? '↺ Вернуть' : '✓ Снят'}</button>
                                   )}
