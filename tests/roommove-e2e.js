@@ -85,7 +85,7 @@ const seed = () => {
     return { ctx, page, errs };
   };
   const boot = async (page) => {
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(1200);
   };
   const click = async (page, find, name) => {

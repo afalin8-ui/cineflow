@@ -90,7 +90,7 @@ const SAID = 'Ставим кей на журавль, тень не глубж�
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     page.on('response', r => { const h = r.headers()['x-cf-seen']; if (h) seen.push(JSON.parse(Buffer.from(h, 'base64').toString())); });
     await page.goto(`http://127.0.0.1:${PORT}/index.html${query || ''}`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(900);
     return { page, errs, seen, ctx };
   };

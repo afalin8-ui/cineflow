@@ -46,7 +46,7 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     await page.goto(`http://127.0.0.1:${PORT}/index.html`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(900);
     await page.evaluate(async () => {
       const b = [...document.querySelectorAll('.cf-tabbar button, header button')].find(x => /Галере/i.test((x.textContent || '') + (x.title || '')));

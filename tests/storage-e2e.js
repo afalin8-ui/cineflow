@@ -63,7 +63,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   const page = await ctx.newPage();
   page.on('pageerror', e => console.log('PAGEERROR', e.message));
   await page.goto(`http://127.0.0.1:${PORT}/index.html`);
-  await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 90000 });
+  await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 90000 });
   await page.waitForTimeout(1500);
 
   const toastText = () => page.evaluate(() => {
@@ -90,7 +90,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   // Перезапуск: полоска НЕ должна появиться снова
   const page2 = await ctx.newPage();
   await page2.goto(`http://127.0.0.1:${PORT}/index.html`);
-  await page2.waitForFunction(() => window.__CF_APP_OK, { timeout: 90000 });
+  await page2.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 90000 });
   await page2.waitForTimeout(2500);
   const again = await page2.evaluate(() => {
     const t = document.querySelector('[data-cf="toast"]');
@@ -129,7 +129,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   });
   const page3 = await ctx2.newPage();
   await page3.goto(`http://127.0.0.1:${PORT}/index.html`);
-  await page3.waitForFunction(() => window.__CF_APP_OK, { timeout: 90000 });
+  await page3.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 90000 });
   await page3.waitForTimeout(2500);
   const cleared = await page3.evaluate(() => localStorage.getItem('cf_light_warned'));
   ok('проект снова влез целиком — флаг снят, будущее переполнение опять новость',

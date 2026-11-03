@@ -51,7 +51,7 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     await page.goto(`http://127.0.0.1:${PORT}/index.html${query}`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(1000);
     return { page, errs, ctx };
   };
@@ -211,7 +211,7 @@ const SRC = JSON.parse(fs.readFileSync(path.join(ROOT, 'handbook', 'fixtures.jso
   // ---- ПРОСМОТР ПО ССЫЛКЕ
   const { page: pv, errs: errs3 } = await mk(1194, 834, '?view=handbook&room=hb-room');
   const v = await pv.evaluate(() => ({
-    tabs: [...document.querySelectorAll('header nav .cf-navtab')].filter(e => e.offsetParent).map(e => e.title),
+    tabs: [...document.querySelectorAll('[data-cf^="nav-"]')].filter(e => e.offsetParent).map(e => e.title),
     add: [...document.querySelectorAll('[data-cf="hb-add"]')].filter(e => e.offsetParent).length,
     rows: document.querySelectorAll('[data-cf="hb-row"]').length
   }));

@@ -50,7 +50,7 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     await page.goto(`http://127.0.0.1:${PORT}/index.html`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(1000);
     return { ctx, page, errs };
   };
@@ -100,7 +100,7 @@ const IPAD_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605
     ok('касание, сменившее шкалу, открыло меню, в которое целили', menuOpen && s.touch, JSON.stringify({ menuOpen, ...s }));
     await p.keyboard.press('Escape');
 
-    await p.reload(); await p.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await p.waitForTimeout(800);
+    await p.reload(); await p.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 }); await p.waitForTimeout(800);
     s = await state(p);
     ok('после перезапуска — та шкала, которой работали последней', s.touch, JSON.stringify(s));
 

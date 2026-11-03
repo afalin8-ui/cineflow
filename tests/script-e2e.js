@@ -70,7 +70,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     await page.goto(`http://127.0.0.1:${PORT}/index.html`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(900);
     return { page, errs, ctx };
   };
@@ -89,7 +89,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
     // Каждый файл — с чистого листа: вторая загрузка легла бы в те же номера.
     await page.evaluate(() => localStorage.setItem('cf_scenes', JSON.stringify([{ id: 'scene-x', number: '1', title: '',
       content: 'своя экспликация', date: '', gear: {}, lightGear: {}, lightSchemeId: null }])));
-    await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await page.waitForTimeout(700);
+    await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 }); await page.waitForTimeout(700);
     await pick(page, file);
     const okBtn = page.locator('[data-cf="script-apply"]');
     await okBtn.waitFor({ timeout: 30000 }).catch(() => {});
@@ -135,7 +135,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
       ({ id, number, title, script, date, content: 'экспликация ' + id, gear: { cam: 1 }, lightGear: {}, lightSchemeId: null }))));
     localStorage.setItem('cf_storyboard', JSON.stringify([{ id: 'f-c1', sceneId: 's-c', frameNum: '3.1', description: 'дверь' }]));
   }, OLD);
-  await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await page.waitForTimeout(700);
+  await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 }); await page.waitForTimeout(700);
   await pick(page, 'v2.txt');
   await page.locator('[data-cf="script-apply"]').waitFor({ timeout: 20000 });
   const sum = await page.locator('[data-cf="script-summary"]').innerText();
@@ -165,7 +165,7 @@ const ok = (n, c, d) => { console.log((c ? '  ok  ' : '  FAIL') + ' ' + n + (d ?
   // Пару можно сменить руками: новая сцена ЛИФТ → «Не загружать».
   await page.evaluate((OLD) => localStorage.setItem('cf_scenes', JSON.stringify(OLD.map(([id, number, title, script, date]) =>
     ({ id, number, title, script, date, content: '', gear: {}, lightGear: {}, lightSchemeId: null })))), OLD);
-  await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 }); await page.waitForTimeout(700);
+  await page.reload(); await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 }); await page.waitForTimeout(700);
   await pick(page, 'v2.txt');
   await page.locator('[data-cf="script-apply"]').waitFor({ timeout: 20000 });
   const lift = page.locator('[data-cf="script-row"][data-kind="new"] select').first();

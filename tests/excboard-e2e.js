@@ -116,7 +116,7 @@ const SEED = () => ({
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 300)));
     await page.goto(`http://127.0.0.1:${PORT}${url}`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(700);
     // На доски — через строку модулей (на телефоне через «Ещё»).
     await page.evaluate(async () => {
@@ -874,7 +874,7 @@ const SEED = () => ({
   const cerr = [];
   c6.on('pageerror', e => cerr.push(String(e).slice(0, 300)));
   await c6.goto(`http://127.0.0.1:${PORT}/index.html`);
-  await c6.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+  await c6.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
   await c6.waitForTimeout(700);
   const toBoards = (pg, tab) => pg.evaluate(async (tab) => {
     const d = [...document.querySelectorAll('button')].find(x => x.title === 'Доски'); if (d) d.click();
@@ -942,7 +942,7 @@ const SEED = () => ({
   const ctx7 = await mkCtx(1440, 900, await c6.evaluate(() => JSON.parse(JSON.stringify(window.__cfStore))), `localStorage.setItem('cf_active_board', 'board-main');`);
   const c7 = await ctx7.newPage();
   await c7.goto(`http://127.0.0.1:${PORT}/index.html`);
-  await c7.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+  await c7.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
   await c7.waitForTimeout(700);
   await toBoards(c7, 'Основная');
   await c7.waitForFunction(() => window.__cfExc && window.__cfExc.api && window.__cfExc.boardId === 'board-main', { timeout: 60000 }).catch(() => {});

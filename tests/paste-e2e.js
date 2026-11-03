@@ -38,7 +38,7 @@ const server = spawn('python3', ['-m','http.server',PORT,'--bind','127.0.0.1'], 
   });
   const page = await ctx.newPage();
   await page.goto(`http://127.0.0.1:${PORT}/index.html`);
-  await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+  await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
   await page.waitForTimeout(900);
   await page.evaluate(async () => {
     const b = [...document.querySelectorAll('.cf-tabbar button, header button')].find(x => /Галере/i.test((x.textContent||'') + (x.title||'')));

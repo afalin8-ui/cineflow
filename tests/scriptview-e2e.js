@@ -64,7 +64,7 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     await page.goto(`http://127.0.0.1:${PORT}/index.html${q}`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(1200);
     return { page, errs, ctx };
   };
@@ -75,7 +75,7 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
 
   // ---- НОУТБУК
   const { page: p, errs } = await mk(1440, 900);
-  ok('режим «Сценарий» в шапке и он включён', await p.evaluate(() => { const b = [...document.querySelectorAll('header .cf-seg button')].find(x => x.textContent === 'Сценарий'); return !!b && b.classList.contains('on'); }));
+  ok('режим «Сценарий» в полосе и он включён', await p.evaluate(() => { const b = document.querySelector('[data-cf="dock-mode"]'); return !!b && /Сцен/.test(b.textContent) && !!document.querySelector('[data-cf="script-view"]'); }));
   ok('сценарий подряд — все восемь сцен', await p.$$eval('[data-sr]', a => a.length) === 8);
   const kinds = await p.$$eval('[data-sr="sc1"] [data-li]', a => a.map(x => x.className.replace('cf-sl-', '')).join(','));
   ok('вёрстка: описание, имя, ремарка, реплика, переход', kinds === 'a,g,c,p,d,g,a,g,t', kinds);
@@ -186,12 +186,12 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
   // заголовок сцены ведёт на прежний экран сцены
   await p.click('[data-sr="sc4"] .cf-sr-head');
   await p.waitForTimeout(500);
-  ok('нажатие по заголовку открывает экран сцены', await p.evaluate(() => !document.querySelector('[data-cf="script-view"]') && [...document.querySelectorAll('header .cf-seg button')].find(x => x.textContent === 'Творческий').classList.contains('on')));
+  ok('нажатие по заголовку открывает экран сцены', await p.evaluate(() => !document.querySelector('[data-cf="script-view"]') && /Твор/.test((document.querySelector('[data-cf="dock-mode"]') || {}).textContent || '')));
   ok('ошибок нет', errs.length === 0, errs.join(' | '));
 
   // ---- 1280: шапка помещается
   const { page: w, errs: ew } = await mk(1280, 800);
-  ok('1280: шапка без вылезания за край', await w.evaluate(() => { const h = document.querySelector('header'); return h.scrollWidth <= h.clientWidth + 1; }));
+  ok('1280: полоса без вылезания за край', await w.evaluate(() => { const h = document.querySelector('[data-cf="dock"]'); return !!h && h.scrollHeight <= h.clientHeight + 1 && h.scrollWidth <= h.clientWidth + 1; }));
 
   // ---- ГОСТЬ ПО ССЫЛКЕ
   const { page: g, errs: eg } = await mk(1440, 900, '?view=all&room=scriptview-room');
