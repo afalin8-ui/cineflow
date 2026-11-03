@@ -750,6 +750,12 @@
         .cf-locgrid { columns: 260px; column-gap: 14px; }
         .cf-locph { break-inside: avoid; margin: 0 0 16px; }
         .cf-locph-cap { margin-top: 7px; font-size: var(--fs-2); color: var(--text-2); line-height: 1.4; cursor: text; min-height: 22px; }
+        .cf-pip { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; align-items: center; gap: 10px;
+                  padding: 6px; background: var(--raised); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-2); animation: cfPop .14s ease-out; }
+        .cf-pip img { height: 72px; max-width: 160px; object-fit: cover; border-radius: 8px; cursor: pointer; display: block; }
+        .cf-pip span { font-size: var(--fs-1); color: var(--text-2); max-width: 170px; line-height: 1.3; }
+        .cf-pip button { width: 32px; height: 32px; border-radius: 8px; color: var(--muted); }
+        .cf-pip button:hover { color: var(--text); background: var(--card); }
         .cf-tabbar { display: flex; flex-shrink: 0; background: var(--panel-2); border-top: 1px solid var(--border);
                      padding: 4px 6px env(safe-area-inset-bottom, 0px); }
         .cf-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -4884,7 +4890,7 @@
         };
 
         const Lightbox = ({ refs, initialId, onClose, scopeLabel, hints, onAddTag, onRemoveTag, onSetPano, onSetLabel,
-                            onStill, onResend, onReload, onProxy, videoStateOf, sceneOf, onToast }) => {
+                            onStill, onResend, onReload, onProxy, videoStateOf, sceneOf, onToast, onPin }) => {
             const [currentId, setCurrentId] = useState(initialId);
             const currentIndex = refs.findIndex(r => r.id === currentId);
             const currentRef = refs[currentIndex];
@@ -5015,26 +5021,19 @@
             // прятать не от чего, а исчезающие кнопки только путают.
             // Крестик закрытия НЕ прячется никогда: «нечем закрыть» —
             // ровно та беда, которую мы только что чинили в окнах.
-            const [chromeOn, setChromeOn] = useState(true);
+            // НОЯБРЬ 2026, раскладка «как у Duo»: в покое — ТОЛЬКО кадр,
+            // на любом устройстве. Касание (щелчок) показывает управление
+            // и подпись с тегами, второе — прячет. Само по таймеру больше
+            // не уходит: показал — значит нужно, пока не убрал сам.
+            // Видео — исключение: без кнопок ролик не запустить.
+            const [chromeOn, setChromeOn] = useState(() => !!(refs.find(r => r.id === initialId) || {}).video);
             const chromeTimer = useRef(0);
-            const touchUI = useRef(typeof matchMedia === 'function' && matchMedia('(hover: none)').matches);
-            const showChrome = () => {
-                clearTimeout(chromeTimer.current);
-                setChromeOn(true);
-                // Пока открыто окошко тегов, прятать нечего: человек размечает кадр.
-                // У видео по таймеру не прячем: уходят по запуску ролика,
-                // возвращаются по паузе — пока стоит на паузе, кнопки нужны.
-                if (touchUI.current && !tagsOpen && !isVideo) chromeTimer.current = setTimeout(() => setChromeOn(false), 2800);
-            };
+            const showChrome = () => { clearTimeout(chromeTimer.current); setChromeOn(true); };
             const toggleChrome = () => {
-                if (!touchUI.current) return;
-                if (chromeOn) { clearTimeout(chromeTimer.current); setChromeOn(false); }
+                if (chromeOn && !tagsOpen && !isVideo) setChromeOn(false);
                 else showChrome();
             };
-            useEffect(() => {
-                showChrome();
-                return () => clearTimeout(chromeTimer.current);
-            }, [currentId, tagsOpen]);
+            useEffect(() => { if (tagsOpen || isVideo) showChrome(); }, [currentId, tagsOpen]);
 
             // Ролик HEVC у зрителя без декодера — играем совместимую копию,
             // если она есть; адрес у неё свой.
@@ -5230,6 +5229,14 @@
 
                     <div className={'absolute flex items-center gap-1.5 md:gap-2 max-w-[94vw] ' + chromeCls} style={{ bottom: 'calc(24px + var(--sab))' }}>
                         <span className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-mono font-bold text-zinc-300 shrink-0">{currentIndex + 1} / {refs.length}</span>
+                        {/* «Закрепить сверху»: кадр остаётся висеть поверх других
+                            экранов — смотришь на него, пока работаешь в доске или КПП. */}
+                        {onPin && !isVideo && (
+                            <button onClick={(e) => { e.stopPropagation(); onPin(currentRef); }} data-cf="lb-pin"
+                                    className="glass-panel rounded-full px-3 md:px-4 py-1.5 md:py-2 text-xs font-semibold shrink-0 whitespace-nowrap text-zinc-300 hover:text-white">
+                                Закрепить сверху
+                            </button>
+                        )}
                         {/* Подсказка нужна и в режиме просмотра: человеку,
                             которому прислали ссылку, иначе неоткуда узнать,
                             что кадр можно крутить. */}
@@ -20416,6 +20423,8 @@
           // ради чего фотографии со скаута везли.
           const [locPhotosOpen, setLocPhotosOpen] = useState(false);
           const [locCapEdit, setLocCapEdit] = useState(null);
+          // Закреплённый кадр (id референса) висит сверху поверх экранов.
+          const [pinnedRef, setPinnedRef] = useState(null);
           const locMenuRef = useRef(null);
           useEffect(() => {
             if (!locMenu) return;
@@ -22003,6 +22012,17 @@
               <div className="flex flex-1 overflow-hidden relative z-10">
                 {dockVert && renderDock(true)}
                 <div className="flex-1 overflow-hidden relative">
+                  {(() => {
+                    const pr = pinnedRef && references.find(r => r.id === pinnedRef);
+                    if (!pr || lightboxData) return null;
+                    return (
+                      <div className="cf-pip" data-cf="pip">
+                        <img src={pr.url} alt="" onClick={() => setLightboxData({ scope: [pr.id], scopeLabel: 'Закреплено', currentId: pr.id })} />
+                        <span>Закреплено{refCaption(pr) ? <React.Fragment><br />{refCaption(pr)}</React.Fragment> : null}</span>
+                        <button onClick={() => setPinnedRef(null)} title="Открепить" aria-label="Открепить">✕</button>
+                      </div>
+                    );
+                  })()}
 
                   {/* ЭКРАН «СЦЕНА».
                       Три колонки: список сцен (сворачивается в полоску) ·
@@ -27734,6 +27754,7 @@
                                    onSetPano={setRefPano} onSetLabel={setRefLabel}
                                    onStill={stillFromVideo} onResend={resendVideo} onReload={reloadVideoInto} onProxy={requestProxy}
                                    videoStateOf={videoState} onToast={showToast}
+                                   onPin={(r) => { setPinnedRef(r.id); setLightboxData(null); showToast('Закреплено сверху — видно на всех экранах'); }}
                                    sceneOf={(r) => scenes.find(s => s.id === (lightboxData.sceneId || (r && r.sceneId) || activeSceneId)) || null} />;
               })()}
 
