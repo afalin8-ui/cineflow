@@ -214,7 +214,7 @@ const readZip = (file) => JSON.parse(execSync(`python3 ${PY} ${file}`).toString(
   await open(po, `?room=${ROOM}`);
   // У неактивной вкладки в шапке текста НЕТ, только значок, — жмём
   // по подсказке.
-  await po.evaluate(() => { const b = document.querySelector('.cf-navtab[title="Объекты"]'); if (b) b.click(); });
+  await po.evaluate(() => { const b = (document.querySelector('[data-cf="nav-locations"]') || document.querySelector('.cf-navtab[title="Объекты"]')); if (b) b.click(); });
   await po.waitForTimeout(1000);
   const own = await po.evaluate(hits, 'Все фото архивом');
   ok('у хозяина проекта кнопка тоже есть', own.found && own.hit, JSON.stringify(own));
@@ -230,7 +230,7 @@ const readZip = (file) => JSON.parse(execSync(`python3 ${PY} ${file}`).toString(
   `);
   const pd = await ctxD.newPage();
   await open(pd, `?room=${ROOM}`);
-  await pd.evaluate(() => { const b = document.querySelector('.cf-navtab[title="Объекты"]'); if (b) b.click(); });
+  await pd.evaluate(() => { const b = (document.querySelector('[data-cf="nav-locations"]') || document.querySelector('.cf-navtab[title="Объекты"]')); if (b) b.click(); });
   await pd.waitForTimeout(1000);
   const dlD = pd.waitForEvent('download', { timeout: 120000 });
   await pd.evaluate(() => [...document.querySelectorAll('button')].find(x => /Все фото архивом/.test(x.textContent)).click());
