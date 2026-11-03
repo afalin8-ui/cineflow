@@ -1429,1189 +1429,1580 @@
   },
   "plektor": {
    "corvette": {
-    "file": "res://view/ships/plektor_corvette.glb",
-    "len": 41.993,
-    "len_z": 41.993,
-    "width": 27.225,
-    "height": 8.827,
+    "file": "res://view/hero/plektor_corvette.glb",
+    "len": 37.1,
+    "len_z": 37.1,
+    "width": 29.91,
+    "height": 10.33,
     "aabb": [
      [
-      -13.613,
-      -4.207,
-      -25.163
+      -14.957,
+      -4.531,
+      -18.076
      ],
      [
-      13.613,
-      4.62,
-      16.83
+      14.957,
+      5.798,
+      19.024
      ]
     ],
-    "tris": 2084,
-    "surfaces": 9,
-    "bytes": 219268,
+    "tris": 4516,
+    "surfaces": 16,
+    "bytes": 921332,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "glow_ffe8b0_effcc70_i220",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "skin_3f444c",
-     "mat_30231a"
+     "trim_hull",
+     "glow_engine",
+     "trim_soft",
+     "glow_engine_lo",
+     "glow_throat",
+     "trim_paint",
+     "glow_red",
+     "glow_amber",
+     "glow_white",
+     "trim_dark"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 7,
-      "tris": 1924
+      "tris": 3398,
+      "surfaces": 7
      },
      "engines": {
       "pos": [
-       0,
-       -0.495,
-       16.479
+       0.0,
+       0.0,
+       13.951
       ],
-      "surfaces": 2,
-      "tris": 160
-     },
-     "engine_0": {
-      "pos": [
-       -5.309,
-       -0.495,
-       16.479
-      ],
-      "parent": "engines",
-      "size": 7.012
-     },
-     "engine_1": {
-      "pos": [
-       5.309,
-       -0.495,
-       16.479
-      ],
-      "parent": "engines",
-      "size": 7.012
+      "tris": 686,
+      "surfaces": 5
      },
      "pd_0": {
       "pos": [
-       -7.425,
-       1.32,
-       0
+       -9.965,
+       4.53,
+       -3.624
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_1": {
       "pos": [
-       7.425,
-       1.32,
-       0
+       9.965,
+       4.53,
+       -3.624
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
-     "pd_2": {
+     "engine_0": {
       "pos": [
-       0,
-       -1.98,
-       5.61
+       -9.965,
+       0.812,
+       19.071
       ],
-      "parent": null
+      "parent": "engines",
+      "size": 11.17
+     },
+     "engine_1": {
+      "pos": [
+       9.965,
+       0.812,
+       19.071
+      ],
+      "parent": "engines",
+      "size": 11.17
+     },
+     "rev_0": {
+      "pos": [
+       -9.965,
+       0.0,
+       -18.076
+      ],
+      "parent": "engines",
+      "size": 6.34,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 6.34
+      }
+     },
+     "rev_1": {
+      "pos": [
+       9.965,
+       0.0,
+       -18.076
+      ],
+      "parent": "engines",
+      "size": 6.34,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 6.34
+      }
      },
      "muzzle_0": {
       "pos": [
-       0,
-       2.475,
-       -15.428
+       1.449,
+       3.047,
+       -4.968
       ],
       "parent": null
      },
      "bay": {
       "pos": [
-       0,
-       -3.3,
-       0
+       0.0,
+       -2.355,
+       0.453
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "00ca9782d3fc15c8cd2b8ac0fd72876ae7f7fe4966b1bfefad38ad8d54498c5f",
+     "raw_len": 37.1,
+     "fit": "none",
+     "source": "corvette_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "frigate": {
-    "file": "res://view/ships/plektor_frigate.glb",
-    "len": 54.59,
-    "len_z": 54.59,
-    "width": 35.393,
-    "height": 11.476,
+    "file": "res://view/hero/plektor_frigate.glb",
+    "len": 48.0,
+    "len_z": 48.0,
+    "width": 19.7,
+    "height": 10.27,
     "aabb": [
      [
-      -17.696,
-      -5.47,
-      -32.711
+      -9.852,
+      -4.37,
+      -22.728
      ],
      [
-      17.696,
-      6.006,
-      21.879
+      9.852,
+      5.902,
+      25.272
      ]
     ],
-    "tris": 2084,
-    "surfaces": 9,
-    "bytes": 219256,
+    "tris": 6012,
+    "surfaces": 17,
+    "bytes": 993280,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "glow_ffe8b0_effcc70_i220",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "skin_3f444c",
-     "mat_30231a"
+     "trim_hull",
+     "glow_engine",
+     "trim_soft",
+     "glow_engine_lo",
+     "glow_throat",
+     "trim_paint",
+     "glow_white",
+     "trim_dark",
+     "glow_rail"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 7,
-      "tris": 1924
+      "tris": 4678,
+      "surfaces": 6
      },
      "engines": {
       "pos": [
-       0,
-       -0.643,
-       21.423
+       0.0,
+       0.0,
+       19.952
       ],
-      "surfaces": 2,
-      "tris": 160
-     },
-     "engine_0": {
-      "pos": [
-       -6.902,
-       -0.643,
-       21.423
-      ],
-      "parent": "engines",
-      "size": 9.116
-     },
-     "engine_1": {
-      "pos": [
-       6.902,
-       -0.643,
-       21.423
-      ],
-      "parent": "engines",
-      "size": 9.116
+      "tris": 686,
+      "surfaces": 5
      },
      "pd_0": {
       "pos": [
-       -9.652,
-       1.716,
-       0
+       -5.225,
+       4.228,
+       0.95
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_1": {
       "pos": [
-       9.652,
-       1.716,
-       0
+       5.225,
+       4.228,
+       0.95
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_2": {
       "pos": [
-       0,
-       -2.574,
-       7.293
+       5.225,
+       4.655,
+       19.572
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
+     },
+     "engine_0": {
+      "pos": [
+       -5.225,
+       0.844,
+       25.322
+      ],
+      "parent": "engines",
+      "size": 11.4
+     },
+     "engine_1": {
+      "pos": [
+       5.225,
+       0.844,
+       25.322
+      ],
+      "parent": "engines",
+      "size": 11.4
+     },
+     "rev_0": {
+      "pos": [
+       -5.225,
+       0.0,
+       -7.165
+      ],
+      "parent": "engines",
+      "size": 6.18,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 6.18
+      }
+     },
+     "rev_1": {
+      "pos": [
+       5.225,
+       0.0,
+       -7.165
+      ],
+      "parent": "engines",
+      "size": 6.18,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 6.18
+      }
      },
      "muzzle_0": {
       "pos": [
-       0,
-       3.217,
-       -20.056
+       0.0,
+       3.861,
+       -22.802
       ],
       "parent": null
      },
      "bay": {
       "pos": [
-       0,
-       -4.29,
-       0
+       0.0,
+       -2.66,
+       7.601
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "42df4bd7aa4485464e0927912840be4fc980f485b6f0f47231c51ee34331e01a",
+     "raw_len": 48.0,
+     "fit": "none",
+     "source": "frigate_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "ecm": {
-    "file": "res://view/ships/plektor_ecm.glb",
-    "len": 55.361,
-    "len_z": 55.361,
-    "width": 37.662,
-    "height": 35.772,
+    "file": "res://view/hero/plektor_ecm.glb",
+    "len": 48.8,
+    "len_z": 48.8,
+    "width": 28.28,
+    "height": 24.75,
     "aabb": [
      [
-      -18.831,
-      -10.296,
-      -31.39
+      -14.142,
+      -4.27,
+      -23.74
      ],
      [
-      18.831,
-      25.476,
-      23.971
+      14.142,
+      20.478,
+      25.06
      ]
     ],
-    "tris": 2848,
-    "surfaces": 13,
-    "bytes": 298960,
+    "tris": 6252,
+    "surfaces": 20,
+    "bytes": 1045688,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "skin_3f444c",
-     "glow_e0b34e_ee0b34e_i110",
-     "glow_ffe8b0_effcc70_i220",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "mat_30231a"
+     "trim_hull",
+     "glow_clan",
+     "glow_white",
+     "trim_soft",
+     "glow_throat",
+     "glow_engine",
+     "glow_engine_lo",
+     "trim_paint",
+     "glow_red",
+     "trim_dark"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 8,
-      "tris": 2488
+      "tris": 4056,
+      "surfaces": 6
      },
      "engines": {
       "pos": [
-       0,
-       0.352,
-       22.669
+       0.0,
+       0.0,
+       19.863
       ],
-      "surfaces": 2,
-      "tris": 240
+      "tris": 686,
+      "surfaces": 5
      },
      "emitter": {
       "pos": [
-       0,
-       -9.9,
-       1.32
+       0.0,
+       11.695,
+       -11.695
       ],
-      "surfaces": 3,
-      "tris": 120
-     },
-     "engine_0": {
-      "pos": [
-       -1.584,
-       -0.66,
-       23.443
-      ],
-      "parent": "engines",
-      "size": 10.56
-     },
-     "engine_1": {
-      "pos": [
-       1.584,
-       -0.66,
-       23.443
-      ],
-      "parent": "engines",
-      "size": 10.56
-     },
-     "engine_2": {
-      "pos": [
-       0,
-       2.376,
-       21.12
-      ],
-      "parent": "engines",
-      "size": 8.448
+      "tris": 1078,
+      "surfaces": 5
      },
      "pd_0": {
       "pos": [
-       -9.504,
-       2.64,
-       6.732
+       -5.755,
+       4.13,
+       1.392
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_1": {
       "pos": [
-       9.504,
-       2.64,
-       6.732
+       5.755,
+       4.13,
+       1.392
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
+     },
+     "engine_0": {
+      "pos": [
+       -5.755,
+       0.824,
+       25.108
+      ],
+      "parent": "engines",
+      "size": 11.14
+     },
+     "engine_1": {
+      "pos": [
+       5.755,
+       0.824,
+       25.108
+      ],
+      "parent": "engines",
+      "size": 11.14
+     },
+     "rev_0": {
+      "pos": [
+       -9.01,
+       0.0,
+       -6.022
+      ],
+      "parent": "engines",
+      "size": 6.03,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        12.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 6.03
+      }
+     },
+     "rev_1": {
+      "pos": [
+       9.01,
+       0.0,
+       -6.022
+      ],
+      "parent": "engines",
+      "size": 6.03,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        -12.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 6.03
+      }
+     },
+     "emit": {
+      "pos": [
+       0.0,
+       12.835,
+       -12.493
+      ],
+      "parent": "emitter"
      },
      "bay": {
       "pos": [
-       0,
-       -5.28,
-       0
+       0.0,
+       -2.599,
+       7.425
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "eaccbee244b286d830f136678fe9329ba3438efe7f0da1ea1042fbf7013b5eb2",
+     "raw_len": 48.8,
+     "fit": "none",
+     "source": "ecm_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "cruiser": {
-    "file": "res://view/ships/plektor_cruiser.glb",
-    "len": 112.86,
-    "len_z": 112.86,
-    "width": 74.745,
-    "height": 59.598,
+    "file": "res://view/hero/plektor_cruiser.glb",
+    "len": 114.75,
+    "len_z": 114.75,
+    "width": 42.84,
+    "height": 18.09,
     "aabb": [
      [
-      -37.373,
-      -16.038,
-      -69.3
+      -21.42,
+      -7.902,
+      -58.35
      ],
      [
-      37.373,
-      43.56,
-      43.56
+      21.42,
+      10.19,
+      56.4
      ]
     ],
-    "tris": 5848,
-    "surfaces": 20,
-    "bytes": 610328,
+    "tris": 19748,
+    "surfaces": 29,
+    "bytes": 2841144,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "glow_ffe8b0_effcc70_i220",
-     "skin_3f444c",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "mat_30231a"
+     "trim_hull",
+     "trim_soft",
+     "trim_paint",
+     "glow_engine",
+     "glow_engine_lo",
+     "glow_throat",
+     "glow_clan",
+     "glow_red",
+     "glow_amber",
+     "glow_white",
+     "trim_dark",
+     "glow_rail"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 8,
-      "tris": 5312
+      "tris": 15786,
+      "surfaces": 8
      },
      "turret_0": {
       "pos": [
-       0,
-       14.256,
-       -21.384
+       0.0,
+       -1.2,
+       -3.5
       ],
+      "tris": 1056,
       "surfaces": 3,
-      "tris": 132
+      "fixed": true,
+      "fixed_note": "спинальная рельсовая пушка между корпусами: не поворачивать вокруг вертикали"
      },
      "engines": {
       "pos": [
-       0,
-       0.528,
-       41.118
+       0.0,
+       0.0,
+       48.0
       ],
+      "tris": 914,
+      "surfaces": 6
+     },
+     "reactor": {
+      "pos": [
+       0.0,
+       0.2,
+       35.0
+      ],
+      "tris": 756,
       "surfaces": 2,
-      "tris": 240
+      "spin_axis": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "spin_note": "rotate_object_local(Vector3(0,0,1), w*delta); начало узла на оси"
      },
      "pd_0": {
       "pos": [
-       -13.781,
-       5.544,
-       -24.948
+       -13.2,
+       7.82,
+       -44.0
       ],
-      "surfaces": 1,
-      "tris": 12
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_1": {
       "pos": [
-       13.781,
-       5.544,
-       -24.948
+       13.2,
+       7.82,
+       -44.0
       ],
-      "surfaces": 1,
-      "tris": 12
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_2": {
       "pos": [
-       -13.781,
-       5.544,
-       24.948
+       -13.2,
+       6.45,
+       35.5
       ],
-      "surfaces": 1,
-      "tris": 12
+      "tris": 216,
+      "surfaces": 2
      },
      "aux_0": {
       "pos": [
-       -10.93,
-       8.118,
-       0
+       -3.6,
+       6.8,
+       -0.2
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_1": {
       "pos": [
-       10.93,
-       8.118,
-       0
+       3.6,
+       6.8,
+       -0.2
       ],
-      "surfaces": 2,
-      "tris": 64
-     },
-     "engine_0": {
-      "pos": [
-       -4.752,
-       -0.99,
-       42.57
-      ],
-      "parent": "engines",
-      "size": 19.8
-     },
-     "engine_1": {
-      "pos": [
-       4.752,
-       -0.99,
-       42.57
-      ],
-      "parent": "engines",
-      "size": 19.8
-     },
-     "engine_2": {
-      "pos": [
-       0,
-       3.564,
-       38.214
-      ],
-      "parent": "engines",
-      "size": 15.84
+      "tris": 294,
+      "surfaces": 2
      },
      "muzzle_0": {
       "pos": [
-       0,
-       17.424,
-       -53.064
+       0.0,
+       2.0,
+       -58.5
       ],
       "parent": "turret_0"
      },
+     "engine_0": {
+      "pos": [
+       -13.2,
+       1.008,
+       56.468
+      ],
+      "parent": "engines",
+      "size": 17.0
+     },
+     "engine_1": {
+      "pos": [
+       13.2,
+       1.008,
+       56.468
+      ],
+      "parent": "engines",
+      "size": 17.0
+     },
+     "rev_0": {
+      "pos": [
+       -13.2,
+       0.0,
+       -57.598
+      ],
+      "parent": "engines",
+      "size": 12.0,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 12.0
+      }
+     },
+     "rev_1": {
+      "pos": [
+       13.2,
+       0.0,
+       -57.598
+      ],
+      "parent": "engines",
+      "size": 12.0,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 12.0
+      }
+     },
      "bay": {
       "pos": [
-       0,
-       -7.92,
-       0
+       0.0,
+       -5.8,
+       4.0
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "0f18a734c2cfc63977392df44afc56425fffe8c3ae923661f4483b33f68d0840",
+     "raw_len": 114.75,
+     "fit": "none",
+     "source": "cruiser_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "carrier": {
-    "file": "res://view/ships/plektor_carrier.glb",
-    "len": 95.783,
-    "len_z": 94.396,
-    "width": 95.783,
-    "height": 66.33,
+    "file": "res://view/hero/plektor_carrier.glb",
+    "len": 84.5,
+    "len_z": 84.5,
+    "width": 50.23,
+    "height": 23.11,
     "aabb": [
      [
-      -47.891,
-      -11.88,
-      -43.312
+      -25.115,
+      -6.454,
+      -41.283
      ],
      [
-      47.891,
-      54.45,
-      51.084
+      25.115,
+      16.656,
+      43.217
      ]
     ],
-    "tris": 5480,
-    "surfaces": 11,
-    "bytes": 566960,
+    "tris": 14400,
+    "surfaces": 22,
+    "bytes": 2209408,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "skin_3f444c",
-     "glow_ffe8b0_effcc70_i220",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "mat_30231a"
+     "trim_hull",
+     "glow_engine",
+     "trim_soft",
+     "glow_engine_lo",
+     "glow_throat",
+     "trim_paint",
+     "glow_red",
+     "glow_amber",
+     "glow_white",
+     "trim_dark"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 8,
-      "tris": 5308
+      "tris": 12530,
+      "surfaces": 7
      },
      "engines": {
       "pos": [
-       0,
-       -1.485,
-       49.846
+       0.0,
+       0.0,
+       36.333
       ],
-      "surfaces": 2,
-      "tris": 160
+      "tris": 790,
+      "surfaces": 5
+     },
+     "pd_0": {
+      "pos": [
+       -18.166,
+       6.215,
+       -26.771
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_1": {
+      "pos": [
+       18.166,
+       6.215,
+       -26.771
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_2": {
+      "pos": [
+       -18.166,
+       6.215,
+       3.824
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_3": {
+      "pos": [
+       18.166,
+       6.215,
+       -0.956
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_4": {
+      "pos": [
+       0.0,
+       4.589,
+       34.42
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "engine_0": {
+      "pos": [
+       -18.166,
+       0.941,
+       43.278
+      ],
+      "parent": "engines",
+      "size": 15.3
+     },
+     "engine_1": {
+      "pos": [
+       18.166,
+       0.941,
+       43.278
+      ],
+      "parent": "engines",
+      "size": 15.3
+     },
+     "rev_0": {
+      "pos": [
+       -18.166,
+       0.0,
+       -41.283
+      ],
+      "parent": "engines",
+      "size": 8.61,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 8.61
+      }
+     },
+     "rev_1": {
+      "pos": [
+       18.166,
+       0.0,
+       -41.283
+      ],
+      "parent": "engines",
+      "size": 8.61,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 8.61
+      }
      },
      "bay": {
       "pos": [
-       0,
-       1.98,
-       -43.56
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "engine_0": {
-      "pos": [
-       -17.375,
-       -1.485,
-       49.846
-      ],
-      "parent": "engines",
-      "size": 24.75
-     },
-     "engine_1": {
-      "pos": [
-       17.375,
-       -1.485,
-       49.846
-      ],
-      "parent": "engines",
-      "size": 24.75
-     },
-     "pd_0": {
-      "pos": [
-       -25.74,
-       8.415,
-       -19.008
-      ],
-      "parent": null
-     },
-     "pd_1": {
-      "pos": [
-       25.74,
-       8.415,
-       -19.008
-      ],
-      "parent": null
-     },
-     "pd_2": {
-      "pos": [
-       -25.74,
-       8.415,
-       19.008
-      ],
-      "parent": null
-     },
-     "pd_3": {
-      "pos": [
-       25.74,
-       8.415,
-       19.008
-      ],
-      "parent": null
-     },
-     "pd_4": {
-      "pos": [
-       0,
-       -8.415,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "718b68e6b56b3b0e59ebdc619763545292132b85d44e058f743590a12a1b3cce",
+     "raw_len": 84.5,
+     "fit": "none",
+     "source": "carrier_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "capital": {
-    "file": "res://view/ships/plektor_capital.glb",
-    "len": 206.91,
-    "len_z": 206.91,
-    "width": 137.033,
-    "height": 109.263,
+    "file": "res://view/hero/plektor_capital.glb",
+    "len": 182.1,
+    "len_z": 182.1,
+    "width": 86.28,
+    "height": 44.47,
     "aabb": [
      [
-      -68.516,
-      -29.403,
-      -127.05
+      -43.141,
+      -11.403,
+      -88.528
      ],
      [
-      68.516,
-      79.86,
-      79.86
+      43.141,
+      33.062,
+      93.572
      ]
     ],
-    "tris": 6248,
-    "surfaces": 30,
-    "bytes": 658276,
+    "tris": 26504,
+    "surfaces": 42,
+    "bytes": 3641516,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "glow_ffe8b0_effcc70_i220",
-     "skin_3f444c",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "mat_30231a"
+     "trim_hull",
+     "trim_soft",
+     "glow_engine",
+     "glow_engine_lo",
+     "glow_throat",
+     "trim_paint",
+     "glow_clan",
+     "glow_red",
+     "glow_amber",
+     "glow_white",
+     "trim_dark",
+     "glow_rail"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 8,
-      "tris": 5336
-     },
-     "turret_0": {
-      "pos": [
-       0,
-       26.136,
-       -39.204
-      ],
-      "surfaces": 3,
-      "tris": 132
-     },
-     "turret_1": {
-      "pos": [
-       0,
-       26.136,
-       -13.068
-      ],
-      "surfaces": 3,
-      "tris": 132
+      "tris": 19470,
+      "surfaces": 8
      },
      "engines": {
       "pos": [
-       0,
-       1.089,
-       73.144
+       0.0,
+       0.0,
+       82.85
       ],
+      "tris": 998,
+      "surfaces": 5
+     },
+     "turret_0": {
+      "pos": [
+       0.0,
+       2.924,
+       -3.899
+      ],
+      "tris": 1056,
+      "surfaces": 3,
+      "fixed": true,
+      "fixed_note": "спинальное орудие между корпусами: не поворачивать вокруг вертикали"
+     },
+     "turret_1": {
+      "pos": [
+       0.0,
+       8.772,
+       23.393
+      ],
+      "tris": 1752,
+      "surfaces": 4
+     },
+     "reactor": {
+      "pos": [
+       0.0,
+       14.036,
+       44.349
+      ],
+      "tris": 756,
       "surfaces": 2,
-      "tris": 320
-     },
-     "pd_0": {
-      "pos": [
-       -31.581,
-       10.164,
-       -45.738
+      "spin_axis": [
+       0.0,
+       0.0,
+       1.0
       ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_1": {
-      "pos": [
-       31.581,
-       10.164,
-       -45.738
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_2": {
-      "pos": [
-       -31.581,
-       10.164,
-       0
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_3": {
-      "pos": [
-       31.581,
-       10.164,
-       0
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_4": {
-      "pos": [
-       -31.581,
-       10.164,
-       45.738
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_5": {
-      "pos": [
-       31.581,
-       10.164,
-       45.738
-      ],
-      "surfaces": 1,
-      "tris": 12
+      "spin_note": "rotate_object_local(Vector3(0,0,1), w*delta); начало узла на оси"
      },
      "aux_0": {
       "pos": [
-       -25.047,
-       14.883,
-       -22.216
+       -30.216,
+       9.747,
+       62.381
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_1": {
       "pos": [
-       25.047,
-       14.883,
-       -22.216
+       30.216,
+       9.747,
+       62.381
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_2": {
       "pos": [
-       -25.047,
-       14.883,
-       22.216
+       -30.216,
+       9.747,
+       31.191
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_3": {
       "pos": [
-       25.047,
-       14.883,
-       22.216
+       30.216,
+       9.747,
+       31.191
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
+     },
+     "pd_0": {
+      "pos": [
+       -30.216,
+       11.502,
+       -42.887
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_1": {
+      "pos": [
+       30.216,
+       11.502,
+       -42.887
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_2": {
+      "pos": [
+       -30.216,
+       11.502,
+       -19.494
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_3": {
+      "pos": [
+       30.216,
+       11.502,
+       -19.494
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_4": {
+      "pos": [
+       -30.216,
+       10.917,
+       83.825
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_5": {
+      "pos": [
+       30.216,
+       10.917,
+       83.825
+      ],
+      "tris": 216,
+      "surfaces": 2
      },
      "engine_0": {
       "pos": [
-       -40.837,
-       -3.63,
-       78.045
+       -30.216,
+       1.255,
+       93.67
       ],
       "parent": "engines",
-      "size": 36.3
+      "size": 27.94
      },
      "engine_1": {
       "pos": [
-       -22.869,
-       5.808,
-       68.244
+       30.216,
+       1.255,
+       93.67
       ],
       "parent": "engines",
-      "size": 29.04
+      "size": 27.94
      },
-     "engine_2": {
+     "rev_0": {
       "pos": [
-       40.837,
-       -3.63,
-       78.045
+       -30.216,
+       0.0,
+       -68.967
       ],
       "parent": "engines",
-      "size": 36.3
+      "size": 17.54,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 17.54
+      }
      },
-     "engine_3": {
+     "rev_1": {
       "pos": [
-       22.869,
-       5.808,
-       68.244
+       30.216,
+       0.0,
+       -68.967
       ],
       "parent": "engines",
-      "size": 29.04
+      "size": 17.54,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 17.54
+      }
      },
      "muzzle_0": {
       "pos": [
-       0,
-       31.944,
-       -97.284
+       0.0,
+       7.603,
+       -88.747
       ],
       "parent": "turret_0"
      },
      "muzzle_1": {
       "pos": [
-       0,
-       31.944,
-       -71.148
+       0.0,
+       13.719,
+       -19.421
       ],
       "parent": "turret_1"
      },
      "bay": {
       "pos": [
-       0,
-       -14.52,
-       0
+       0.0,
+       -8.188,
+       29.241
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "ae8e0ef2b4d0bcf6a23829273c397f93c5d3454b7be9550cec4fe4ef9fd3b68f",
+     "raw_len": 182.1,
+     "fit": "none",
+     "source": "capital_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "sinho": {
-    "file": "res://view/ships/plektor_sinho.glb",
-    "len": 169.29,
-    "len_z": 169.29,
-    "width": 112.118,
-    "height": 89.397,
+    "file": "res://view/hero/plektor_sinho.glb",
+    "len": 149.0,
+    "len_z": 149.0,
+    "width": 83.98,
+    "height": 27.39,
     "aabb": [
      [
-      -56.059,
-      -24.057,
-      -103.95
+      -41.99,
+      -8.92,
+      -61.984
      ],
      [
-      56.059,
-      65.34,
-      65.34
+      41.99,
+      18.469,
+      87.016
      ]
     ],
-    "tris": 6108,
-    "surfaces": 26,
-    "bytes": 641452,
+    "tris": 20596,
+    "surfaces": 37,
+    "bytes": 3003304,
     "materials": [
-     "skin_8d8676",
-     "skin_6d5a44",
-     "glow_ffe8b0_effcc70_i220",
-     "skin_3f444c",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150",
-     "mat_30231a"
+     "trim_hull",
+     "trim_soft",
+     "glow_engine",
+     "glow_engine_lo",
+     "glow_throat",
+     "trim_paint",
+     "glow_red",
+     "glow_amber",
+     "glow_white",
+     "trim_dark",
+     "glow_clan"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 8,
-      "tris": 5312
-     },
-     "turret_0": {
-      "pos": [
-       0,
-       21.384,
-       -32.076
-      ],
-      "surfaces": 3,
-      "tris": 132
+      "tris": 14254,
+      "surfaces": 7
      },
      "engines": {
       "pos": [
-       0,
-       0.792,
-       61.677
+       0.0,
+       0.0,
+       79.022
       ],
-      "surfaces": 2,
-      "tris": 240
-     },
-     "pd_0": {
-      "pos": [
-       -20.671,
-       8.316,
-       -37.422
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_1": {
-      "pos": [
-       20.671,
-       8.316,
-       -37.422
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_2": {
-      "pos": [
-       -20.671,
-       8.316,
-       0
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_3": {
-      "pos": [
-       20.671,
-       8.316,
-       0
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "pd_4": {
-      "pos": [
-       -20.671,
-       8.316,
-       37.422
-      ],
-      "surfaces": 1,
-      "tris": 12
-     },
-     "aux_0": {
-      "pos": [
-       -16.394,
-       12.177,
-       -18.176
-      ],
-      "surfaces": 2,
-      "tris": 64
-     },
-     "aux_1": {
-      "pos": [
-       16.394,
-       12.177,
-       -18.176
-      ],
-      "surfaces": 2,
-      "tris": 64
-     },
-     "aux_2": {
-      "pos": [
-       -16.394,
-       12.177,
-       18.176
-      ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 894,
+      "surfaces": 5
      },
      "launcher_0": {
       "pos": [
-       0,
-       24.473,
-       -8.554
+       0.0,
+       6.096,
+       41.769
       ],
+      "tris": 1244,
+      "surfaces": 3
+     },
+     "turret_0": {
+      "pos": [
+       0.0,
+       7.902,
+       -3.387
+      ],
+      "tris": 1550,
+      "surfaces": 4
+     },
+     "reactor": {
+      "pos": [
+       0.0,
+       0.226,
+       72.813
+      ],
+      "tris": 756,
       "surfaces": 2,
-      "tris": 172
+      "spin_axis": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "spin_note": "rotate_object_local(Vector3(0,0,1), w*delta); начало узла на оси"
+     },
+     "aux_0": {
+      "pos": [
+       -25.716,
+       7.902,
+       31.609
+      ],
+      "tris": 294,
+      "surfaces": 2
+     },
+     "aux_1": {
+      "pos": [
+       25.716,
+       7.902,
+       31.609
+      ],
+      "tris": 294,
+      "surfaces": 2
+     },
+     "aux_2": {
+      "pos": [
+       0.0,
+       4.064,
+       -41.769
+      ],
+      "tris": 230,
+      "surfaces": 2
+     },
+     "pd_0": {
+      "pos": [
+       -16.381,
+       8.918,
+       -31.609
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_1": {
+      "pos": [
+       16.381,
+       8.918,
+       -31.609
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_2": {
+      "pos": [
+       -20.715,
+       8.918,
+       -2.258
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_3": {
+      "pos": [
+       20.715,
+       8.918,
+       -2.258
+      ],
+      "tris": 216,
+      "surfaces": 2
+     },
+     "pd_4": {
+      "pos": [
+       29.383,
+       8.128,
+       56.444
+      ],
+      "tris": 216,
+      "surfaces": 2
      },
      "engine_0": {
       "pos": [
-       -7.128,
-       -1.485,
-       63.855
+       -33.777,
+       1.183,
+       86.198
       ],
       "parent": "engines",
-      "size": 29.7
+      "size": 21.07
      },
      "engine_1": {
       "pos": [
-       7.128,
-       -1.485,
-       63.855
+       33.777,
+       1.183,
+       86.198
       ],
       "parent": "engines",
-      "size": 29.7
+      "size": 21.07
      },
-     "engine_2": {
+     "rev_0": {
       "pos": [
-       0,
-       5.346,
-       57.321
+       -11.948,
+       0.0,
+       -61.628
       ],
       "parent": "engines",
-      "size": 23.76
+      "size": 13.55,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 13.55
+      }
      },
-     "missile_0": {
+     "rev_1": {
       "pos": [
-       0,
-       28.631,
-       -8.554
+       11.948,
+       0.0,
+       -61.628
       ],
-      "parent": "launcher_0"
+      "parent": "engines",
+      "size": 13.55,
+      "dir": "forward",
+      "plume": {
+       "rot_deg": [
+        -90.0,
+        0.0,
+        0.0
+       ],
+       "len_from": "thrust_rev",
+       "size": 13.55
+      }
      },
      "muzzle_0": {
       "pos": [
-       0,
-       26.136,
-       -79.596
+       0.0,
+       12.158,
+       -34.352
       ],
       "parent": "turret_0"
      },
+     "missile_0": {
+      "pos": [
+       0.0,
+       8.354,
+       41.769
+      ],
+      "parent": "launcher_0"
+     },
      "bay": {
       "pos": [
-       0,
-       -11.88,
-       0
+       0.0,
+       -5.87,
+       41.769
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "0d887c104f929e67e21aaa8d315bbbfc402034a40e4e8c093b1fa2b89afca1cf",
+     "raw_len": 149.0,
+     "fit": "none",
+     "source": "sinho_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    },
    "station": {
-    "file": "res://view/ships/plektor_station.glb",
-    "len": 121.836,
-    "len_z": 121.836,
-    "width": 121.836,
-    "height": 79.708,
+    "file": "res://view/hero/plektor_station.glb",
+    "len": 107.0,
+    "len_z": 61.13,
+    "width": 107.0,
+    "height": 27.73,
     "aabb": [
      [
-      -60.918,
-      -34.32,
-      -60.918
+      -53.5,
+      -6.701,
+      -34.034
      ],
      [
-      60.918,
-      45.388,
-      60.918
+      53.5,
+      21.033,
+      27.098
      ]
     ],
-    "tris": 6004,
-    "surfaces": 16,
-    "bytes": 623720,
+    "tris": 21430,
+    "surfaces": 38,
+    "bytes": 2949860,
     "materials": [
-     "skin_8d8676",
-     "skin_3f444c",
-     "glow_e0b34e_ee0b34e_i110",
-     "skin_8e97a3",
-     "mat_2a2e35",
-     "glow_e0b34e_ee0b34e_i150"
+     "trim_hull",
+     "trim_soft",
+     "trim_paint",
+     "glow_red",
+     "glow_amber",
+     "glow_white",
+     "trim_dark",
+     "glow_throat",
+     "glow_clan"
     ],
     "nodes": {
      "hull": {
       "pos": [
-       0,
-       0,
-       0
+       0.0,
+       0.0,
+       -0.0
       ],
-      "surfaces": 6,
-      "tris": 5616
+      "tris": 16018,
+      "surfaces": 8
      },
      "turret_0": {
       "pos": [
-       0,
-       37.666,
-       0
+       0.0,
+       10.467,
+       0.978
       ],
+      "tris": 1752,
+      "surfaces": 4
+     },
+     "reactor": {
+      "pos": [
+       -26.902,
+       0.0,
+       -0.0
+      ],
+      "tris": 756,
       "surfaces": 2,
-      "tris": 132
+      "spin_note2": "реактор стоит в ступице левого кольца СТОЙМЯ: ось z узла (glTF) — вертикаль станции",
+      "spin_axis": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "spin_note": "rotate_object_local(Vector3(0,0,1), w*delta); начало узла на оси"
      },
      "aux_0": {
       "pos": [
-       47.561,
-       11.583,
-       19.701
+       -37.566,
+       3.326,
+       -18.469
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_1": {
       "pos": [
-       -19.701,
-       11.583,
-       47.561
+       37.566,
+       3.326,
+       -18.469
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_2": {
       "pos": [
-       -47.561,
-       11.583,
-       -19.701
+       -37.566,
+       3.326,
+       18.469
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "aux_3": {
       "pos": [
-       19.701,
-       11.583,
-       -47.561
+       37.566,
+       3.326,
+       18.469
       ],
-      "surfaces": 2,
-      "tris": 64
+      "tris": 294,
+      "surfaces": 2
      },
      "pd_0": {
       "pos": [
-       51.48,
-       0,
-       0
+       -16.239,
+       3.326,
+       -18.469
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_1": {
       "pos": [
-       36.402,
-       0,
-       36.402
+       -45.372,
+       3.326,
+       -10.663
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_2": {
       "pos": [
-       0,
-       0,
-       51.48
+       -37.566,
+       3.326,
+       18.469
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_3": {
       "pos": [
-       -36.402,
-       0,
-       36.402
+       -8.433,
+       3.326,
+       10.663
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_4": {
       "pos": [
-       -51.48,
-       0,
-       0
+       37.566,
+       3.326,
+       -18.469
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_5": {
       "pos": [
-       -36.402,
-       0,
-       -36.402
+       8.433,
+       3.326,
+       -10.663
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_6": {
       "pos": [
-       0,
-       0,
-       -51.48
+       16.239,
+       3.326,
+       18.469
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "pd_7": {
       "pos": [
-       36.402,
-       0,
-       -36.402
+       45.372,
+       3.326,
+       10.663
       ],
-      "parent": null
+      "tris": 216,
+      "surfaces": 2
      },
      "muzzle_0": {
       "pos": [
-       0,
-       41.785,
-       -41.184
+       0.0,
+       14.723,
+       -34.386
       ],
       "parent": "turret_0"
      },
      "bay": {
       "pos": [
-       0,
-       -30.03,
-       0
+       0.0,
+       -6.75,
+       -0.0
       ],
       "parent": null
      }
+    },
+    "scale": 1.0,
+    "hand": {
+     "by": "godot/tools/install_model.py",
+     "sha256": "286c83267f7b992b0bcbc064e5b81cc4b892e6c275444fe9e5f6abbf6ba7483c",
+     "raw_len": 107.0,
+     "fit": "none",
+     "source": "station_shared.glb",
+     "note": "ручная модель: выгрузка export_ships.mjs её не перезаписывает; обмер — в единицах боя, scale — во сколько вид уменьшает модель"
     }
    }
   }

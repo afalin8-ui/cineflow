@@ -153,11 +153,13 @@ func test_models_rollback() -> void:
 	root.free()
 
 
-# ───────────────── ручные модели флота Тройдена (раздел 15) ─────────────────
+# ───────────────── ручные модели флотов (раздел 15) ─────────────────
 
 ## Ручные модели клана Тройден: весь флот и станция (с 0.11). Каждая стоит своей записью
 ## установщика (`hand`) и файлом в view/hero/.
 const HERO_IDS: Array[StringName] = [&"corvette", &"frigate", &"ecm", &"cruiser", &"carrier", &"capital", &"station"]
+## Ручные модели клана Плэктор (с 0.12): тот же флот плюс «Синхо» — катамараны.
+const HERO_IDS_PLK: Array[StringName] = [&"corvette", &"frigate", &"ecm", &"cruiser", &"carrier", &"sinho", &"capital", &"station"]
 
 
 ## Беды ручной модели против СВОЕЙ записи — то, что Godot импортировал, а не то, что обещает
@@ -201,32 +203,34 @@ static func hero_problems(root: Node3D, rec: Dictionary, model_len: float) -> Pa
 
 func test_hero_fleet_models() -> void:
 	var defs := Defs.load_default({}) as Defs
-	var hand_ids: Array[StringName] = []
-	for id: StringName in dict(dict(ShipModels.data().get("ships")).get("troyden")):
-		if ShipModels.ship(&"troyden", id).get("hand") != null:
-			hand_ids.append(id)
-	hand_ids.sort()
-	var want_ids := HERO_IDS.duplicate()
-	want_ids.sort()
-	eq(hand_ids, want_ids, "ручные модели Тройдена — весь флот и станция")
-	for id in HERO_IDS:
-		var rec := ShipModels.ship(&"troyden", id)
-		var s: Defs.ShipDef = defs.station if id == &"station" else defs.ship(&"troyden", id)
-		var file: String = rec.get("file", "")
-		eq(file, "res://view/hero/troyden_%s.glb" % id, "troyden.%s: файл ручной модели" % id)
-		var ps := ShipModels.scene(file)
-		if not ok(ps != null, "troyden.%s: %s импортирован" % [id, file]):
-			continue
-		var root := ps.instantiate() as Node3D
-		var bad := hero_problems(root, rec, s.model_len)
-		ok(bad.is_empty(), "troyden.%s: узлы записи, масштаб, длина %.2f: %s" % [id, num(rec.get("len")), "; ".join(bad)])
-		var revs := 0
-		for key: String in dict(rec.get("nodes")):
-			if key.begins_with("rev_"):
-				revs += 1
-		# раструбы реверса — у всех кораблей флота (по два), у станции их нет
-		eq(revs, 0 if id == &"station" else 2, "troyden.%s: раструбов реверса rev_*" % id)
-		root.free()
+	for clan: StringName in [&"troyden", &"plektor"]:
+		var ids: Array[StringName] = HERO_IDS if clan == &"troyden" else HERO_IDS_PLK
+		var hand_ids: Array[StringName] = []
+		for id: StringName in dict(dict(ShipModels.data().get("ships")).get(clan)):
+			if ShipModels.ship(clan, id).get("hand") != null:
+				hand_ids.append(id)
+		hand_ids.sort()
+		var want_ids := ids.duplicate()
+		want_ids.sort()
+		eq(hand_ids, want_ids, "ручные модели %s — весь флот и станция" % clan)
+		for id in ids:
+			var rec := ShipModels.ship(clan, id)
+			var s: Defs.ShipDef = defs.station if id == &"station" else defs.ship(clan, id)
+			var file: String = rec.get("file", "")
+			eq(file, "res://view/hero/%s_%s.glb" % [clan, id], "%s.%s: файл ручной модели" % [clan, id])
+			var ps := ShipModels.scene(file)
+			if not ok(ps != null, "%s.%s: %s импортирован" % [clan, id, file]):
+				continue
+			var root := ps.instantiate() as Node3D
+			var bad := hero_problems(root, rec, s.model_len)
+			ok(bad.is_empty(), "%s.%s: узлы записи, масштаб, длина %.2f: %s" % [clan, id, num(rec.get("len")), "; ".join(bad)])
+			var revs := 0
+			for key: String in dict(rec.get("nodes")):
+				if key.begins_with("rev_"):
+					revs += 1
+			# раструбы реверса — у всех кораблей флота (по два), у станции их нет
+			eq(revs, 0 if id == &"station" else 2, "%s.%s: раструбов реверса rev_*" % [clan, id])
+			root.free()
 	# откаты — на флагмане: каждый бьёт в свою строку
 	var rec0 := ShipModels.ship(&"troyden", &"capital")
 	var ml := defs.ship(&"troyden", &"capital").model_len
@@ -252,3 +256,13 @@ func test_hero_fleet_models() -> void:
 	var pl_bad := hero_problems(root0, str_plume, ml)
 	ok(pl_bad.size() == 1 and pl_bad[0].contains("plume у rev_1"), "откат «plume строкой, как в extras» краснеет: %s" % "; ".join(pl_bad))
 	root0.free()
+	# откат на Плэкторе: у «Синхо» в .glb нет ракетного пакета launcher_0 — краснеет на узле
+	var rec1 := ShipModels.ship(&"plektor", &"sinho")
+	var root1 := ShipModels.scene(str(rec1.get("file", ""))).instantiate() as Node3D
+	var ml1 := defs.ship(&"plektor", &"sinho").model_len
+	ok(hero_problems(root1, rec1, ml1).is_empty(), "«Синхо» Плэктора годится как есть")
+	var l0 := root1.find_child("launcher_0", true, false)
+	l0.name = "launcher_9"
+	var l_bad := hero_problems(root1, rec1, ml1)
+	ok(l_bad.size() >= 1 and l_bad[0].contains("launcher_0"), "откат «у «Синхо» в .glb нет launcher_0» краснеет на узле: %s" % "; ".join(l_bad))
+	root1.free()
