@@ -744,6 +744,12 @@
         @media (max-width: 1000px) { .cf-kpp-grid { grid-template-columns: minmax(0, 1fr); } .cf-kpp-field { position: static; border-left: 0; padding-left: 8px; border-top: 1px solid var(--line); } }
         .cf-eyebrow-sm { font-size: var(--fs-1); font-weight: 600; color: var(--muted); letter-spacing: .02em; }
         .cf-kpp-add { align-self: flex-start; color: var(--accent); font-size: var(--fs-2); min-height: var(--tap-sm); }
+        /* Строка поиска галереи НЕ уезжает: пролистал двести кадров —
+           сменить тег можно, не листая наверх. Фон непрозрачный. */
+        .cf-galsearch { position: sticky; top: 0; z-index: 6; background: var(--bg); padding-block: 10px; box-shadow: 0 1px 0 var(--line); }
+        .cf-locgrid { columns: 260px; column-gap: 14px; }
+        .cf-locph { break-inside: avoid; margin: 0 0 16px; }
+        .cf-locph-cap { margin-top: 7px; font-size: var(--fs-2); color: var(--text-2); line-height: 1.4; cursor: text; min-height: 22px; }
         .cf-tabbar { display: flex; flex-shrink: 0; background: var(--panel-2); border-top: 1px solid var(--border);
                      padding: 4px 6px env(safe-area-inset-bottom, 0px); }
         .cf-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -12032,9 +12038,11 @@
           // поле — `locationId`: есть объект, значит кадр привезён
           // со скаута. Записи те же, разделён только ВЗГЛЯД на них,
           // и переключатель помнится между заходами.
-          const [galleryScope, setGalleryScope] = useState(() => {
-            try { return localStorage.getItem('cf_gal_scope') === 'scout' ? 'scout' : 'refs'; } catch (e) { return 'refs'; }
-          });
+          // ГНЕЗДО ОДНО — референсы. Фото объектов живут в «Объектах»
+          // (так решили в ноябре 2026: в галерее они не нужны). Разделение
+          // по `locationId` осталось — оно и отсекает фото объектов отсюда.
+          const galleryScope = 'refs';
+          const setGalleryScope = () => {};
           // Какой объект смотрим в гнезде скаута. Пустое — все.
           const [scoutLoc, setScoutLoc] = useState('');
           const switchGalleryScope = (v) => {
@@ -20407,6 +20415,7 @@
           // десятков, и листать ленту вбок, чтобы увидеть все, — не то,
           // ради чего фотографии со скаута везли.
           const [locPhotosOpen, setLocPhotosOpen] = useState(false);
+          const [locCapEdit, setLocCapEdit] = useState(null);
           const locMenuRef = useRef(null);
           useEffect(() => {
             if (!locMenu) return;
@@ -23333,14 +23342,6 @@
                                   `cf-edit-only` тут НЕТ намеренно: это
                                   чтение, и гостю по ссылке оно нужно
                                   не меньше. */}
-                              <div className="cf-seg">
-                                <button onClick={() => switchGalleryScope('refs')}
-                                        className={galleryScope === 'refs' ? 'on' : ''}
-                                        title="Референсы: всё, что не привязано к объекту">Референсы · {references.length - scoutRefsCount}</button>
-                                <button onClick={() => switchGalleryScope('scout')}
-                                        className={galleryScope === 'scout' ? 'on' : ''}
-                                        title="Фото объектов — то, что привезли со скаутинга">Со скаута · {scoutRefsCount}</button>
-                              </div>
                               <span className="cf-eyebrow truncate">{(galleryScope === 'scout'
                                   ? [scoutLoc ? ((sortedLocations.find(l => l.id === scoutLoc) || {}).name || 'Объект') : null, tagSearch.trim() ? `поиск: ${tagSearch.trim().replace(/,$/, '')}` : null]
                                   : [activeFolder === '' ? null : (activeFolder === '__none__' ? 'Без папки' : activeFolder), tagSearch.trim() ? `поиск: ${tagSearch.trim().replace(/,$/, '')}` : null]
@@ -23480,8 +23481,8 @@
                                       className="cf-chip" style={{ marginTop: 14 }}>Показать все</button>
                             )}
                             {scopeRefs.length === 0 && galleryScope === 'refs' && scoutRefsCount > 0 && (
-                              <button onClick={() => switchGalleryScope('scout')}
-                                      className="cf-chip" style={{ marginTop: 14 }}>Открыть «Со скаута» · {scoutRefsCount}</button>
+                              <button onClick={() => setCurrentView('locations')}
+                                      className="cf-chip" style={{ marginTop: 14 }}>Фото объектов — в «Объектах» · {scoutRefsCount}</button>
                             )}
                           </div>
                         )}
@@ -23856,58 +23857,54 @@
                                 Место узнают по фотографии, а не по адресу.
                                 Раньше они лежали в самом низу, под четырьмя
                                 формами, и до них надо было доскроллить. */}
+                            {/* ФОТО ОБЪЕКТА — СЕТКОЙ В РОДНЫХ ПРОПОРЦИЯХ, без прокрутки
+                                вбок и без поля поверх каждого кадра. Подпись в покое —
+                                текст под кадром, поле по касанию. */}
                             <div className="flex items-center gap-2.5 flex-wrap" style={{ marginBottom: 7 }}>
                               <span style={eyebrow}>Фотографии · {photos.length}</span>
-                              {photos.length > 1 && (
-                                <button onClick={() => setLocPhotosOpen(v => !v)} style={linkish}>
-                                  {locPhotosOpen ? 'свернуть ⤡' : 'развернуть все ⤢'}
-                                </button>
-                              )}
                             </div>
-                            <div className={locPhotosOpen ? 'grid gap-2.5 pb-1.5' : 'flex gap-2.5 overflow-x-auto pb-1.5'}
-                                 style={locPhotosOpen ? { gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' } : null}>
+                            <div className="cf-locgrid" data-cf="loc-grid">
                               {photos.map(r => (
-                                <div key={r.id} className="relative shrink-0 group cursor-pointer"
-                                     style={{ width: locPhotosOpen ? 'auto' : 320, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}
-                                     onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
-                                  <img src={r.url} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} {...refDrag(r)} data-cf="loc-photo" loading="lazy" />
-                                  {/* Метка слева сверху: правый верх занят крестиком, низ — подписью */}
-                                  {videoBadge(r, { left: 6, top: 6 })}
-                                  {/* Отвязываем от объекта, а НЕ удаляем из проекта —
-                                      это правило всего приложения */}
-                                  <button onClick={(e) => { e.stopPropagation(); setRefLocation(r.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
-                                          title="Убрать из объекта — фото останется в галерее"
-                                          className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
-                                          style={{ top: 6, right: 6, width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: 999, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
-                                  <div className="absolute" style={{ left: 6, bottom: 6, right: 6 }} onClick={e => e.stopPropagation()}>
-                                    <input type="text" value={r.label || ''}
-                                           onChange={(e) => { const up = references.map(x => x.id === r.id ? { ...x, label: e.target.value } : x); setReferences(up); syncDoc('references', r.id, up.find(x => x.id === r.id)); }}
-                                           placeholder="точка А · с обрыва"
-                                           className="cf-overlay w-full focus:outline-none" style={{ border: 'none' }} />
+                                <figure key={r.id} className="relative group cf-locph">
+                                  <div className="relative cursor-pointer" style={{ borderRadius: 'var(--r-md)', overflow: 'hidden' }}
+                                       onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
+                                    <img src={r.url} style={{ width: '100%', display: 'block' }} {...refDrag(r)} data-cf="loc-photo" loading="lazy" />
+                                    {videoBadge(r, { left: 6, top: 6 })}
+                                    {/* Отвязываем от объекта, а НЕ удаляем из проекта — правило всего приложения */}
+                                    <button onClick={(e) => { e.stopPropagation(); setRefLocation(r.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
+                                            title="Убрать из объекта — фото останется в галерее"
+                                            className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
+                                            style={{ top: 6, right: 6, width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: 999, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
                                   </div>
-                                </div>
+                                  {locCapEdit === r.id && !READ_ONLY ? (
+                                    <input type="text" autoFocus value={r.label || ''} data-cf="loc-cap-input"
+                                           onChange={(e) => { const up = references.map(x => x.id === r.id ? { ...x, label: e.target.value } : x); setReferences(up); syncDoc('references', r.id, up.find(x => x.id === r.id)); }}
+                                           onBlur={() => setTimeout(() => setLocCapEdit(v => v === r.id ? null : v), 200)}
+                                           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
+                                           placeholder="точка А · с обрыва" className="cf-locph-cap w-full focus:outline-none" style={{ background: 'var(--card)', borderRadius: 6, padding: '4px 6px' }} />
+                                  ) : (
+                                    <figcaption className="cf-locph-cap" data-cf="loc-cap" onClick={() => { if (!READ_ONLY) setLocCapEdit(r.id); }}>
+                                      {refCaption(r) || (READ_ONLY ? '' : <span style={{ color: 'var(--muted-2)' }}>подпись</span>)}
+                                    </figcaption>
+                                  )}
+                                </figure>
                               ))}
-                              {/* Спрашиваем, откуда взять фото: камера · фотоплёнка ·
-                                  файлы. Раньше кнопка уводила прямо в камеру, и
-                                  снимок, уже лежащий в телефоне, положить сюда
-                                  было нечем. */}
-                              <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
-                                     hint="камера · плёнка · файлы"
-                                     className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
-                                     style={{ width: locPhotosOpen ? 'auto' : 160, height: 190, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', boxSizing: 'border-box' }}>
-                                <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>+</span>
-                                <span style={{ fontSize: 'var(--fs-2)' }}>фото со скаутинга</span>
-                              </PhotoSourcePicker>
-                              {/* Отдельная кнопка вставки нужна планшету: Ctrl+V
-                                  там нет вовсе, а картинку из браузера копируют
-                                  долгим нажатием. Спрашивать буфер можно только
-                                  из обработчика нажатия. */}
-                              <button onClick={() => pasteFromClipboard({ locationId: l.id })}
-                                      title="Вставить картинку из буфера обмена"
-                                      className="cf-edit-only shrink-0 flex flex-col items-center justify-center gap-1.5"
-                                      style={{ width: locPhotosOpen ? 'auto' : 120, height: 190, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', boxSizing: 'border-box' }}>
-                                <Icons.Paste /> вставить
-                              </button>
+                              {/* Откуда взять фото: камера · фотоплёнка · файлы. Вставка
+                                  из буфера — для планшета, где Ctrl+V нет. */}
+                              <div className="cf-locph cf-edit-only flex gap-2.5">
+                                <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
+                                       hint="камера · плёнка · файлы"
+                                       className="flex-1 flex flex-col items-center justify-center gap-1.5"
+                                       style={{ height: 120, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', boxSizing: 'border-box' }}>
+                                  <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>+</span>
+                                  <span style={{ fontSize: 'var(--fs-2)' }}>фото со скаутинга</span>
+                                </PhotoSourcePicker>
+                                <button onClick={() => pasteFromClipboard({ locationId: l.id })} title="Вставить картинку из буфера обмена"
+                                        className="flex flex-col items-center justify-center gap-1.5"
+                                        style={{ width: 96, height: 120, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', boxSizing: 'border-box' }}>
+                                  <Icons.Paste /> вставить
+                                </button>
+                              </div>
                             </div>
 
                             <div className="grid gap-3.5 mt-3.5 items-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))' }}>
