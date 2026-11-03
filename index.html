@@ -728,6 +728,22 @@
         .cf-shoot-big { height: 76px; padding: 0 24px; border-radius: 18px; background: var(--card); font-size: var(--fs-5); font-weight: 600; color: var(--text); }
         .cf-shoot-big.go { background: var(--accent); color: var(--bg); padding: 0 32px; }
         .cf-shoot-big:disabled { opacity: .4; }
+        /* ---------- КПП: лист с полями ---------- */
+        .cf-kpp-dates { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center; height: 58px; box-sizing: border-box; margin: 0 -8px;
+                        padding: 0 8px; background: var(--bg); border-bottom: 1px solid var(--line); overflow-x: auto; }
+        .cf-kpp-dates button { display: flex; align-items: baseline; gap: 6px; padding: 6px 14px; min-height: 36px; border-radius: 99px; border: 1px solid var(--border);
+                               color: var(--muted); font-size: var(--fs-2); flex-shrink: 0; }
+        .cf-kpp-dates button b { font-family: var(--font-mono); font-size: var(--fs-4); color: var(--text-2); }
+        .cf-kpp-dates button.on { background: var(--raised); color: var(--text-2); }
+        .cf-kpp-dates button.on b { color: var(--text); }
+        .cf-kpp-shh { position: sticky; top: 58px; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+                      padding: 14px 8px 12px; margin: 0 -8px; background: var(--bg); border-bottom: 1px solid var(--border); }
+        .cf-kpp-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 0 28px; align-items: start; }
+        .cf-kpp-field { position: sticky; top: 130px; display: flex; flex-direction: column; gap: 12px; padding: 18px 0 18px 22px; border-left: 1px solid var(--line); }
+        @container (max-width: 900px) { .cf-kpp-grid { grid-template-columns: minmax(0, 1fr); } .cf-kpp-field { position: static; border-left: 0; padding-left: 8px; border-top: 1px solid var(--line); } }
+        @media (max-width: 1000px) { .cf-kpp-grid { grid-template-columns: minmax(0, 1fr); } .cf-kpp-field { position: static; border-left: 0; padding-left: 8px; border-top: 1px solid var(--line); } }
+        .cf-eyebrow-sm { font-size: var(--fs-1); font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+        .cf-kpp-add { align-self: flex-start; color: var(--accent); font-size: var(--fs-2); min-height: var(--tap-sm); }
         .cf-tabbar { display: flex; flex-shrink: 0; background: var(--panel-2); border-top: 1px solid var(--border);
                      padding: 4px 6px env(safe-area-inset-bottom, 0px); }
         .cf-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -20905,6 +20921,33 @@
               </button>
             );
           };
+          // ЗАМЕТКИ К СМЕНЕ — на полях КПП. Смена — сущность (день съёмки),
+          // своей записи у неё нет, поэтому заметка — обычный стикер с полем
+          // `shiftDate` (без доски: на холст смена не ложится).
+          const addShiftNote = (dk) => {
+            if (READ_ONLY) return;
+            const ns = { id: `st-${Date.now()}`, boardId: '', shiftDate: dk, text: '', x: 0, y: 0, w: STICKY_W, h: STICKY_H, color: '#fef08a' };
+            setStickies([...stickies, ns]); syncDoc('stickies', ns.id, ns);
+            setNoteFresh(ns.id);
+          };
+          const shiftNotesList = (dk) => {
+            const notes = stickies.filter(st => st.shiftDate === dk);
+            if (!notes.length) return <p className="cf-meta" style={{ lineHeight: 1.5 }}>Сбор, выезд, запасной вариант, «12-ю первой».</p>;
+            return notes.map(st => (
+              <div key={st.id} data-cf="kpp-note" className="cf-note relative" style={{ borderLeftColor: st.color || STICKY_COLORS[0] }}>
+                <button onClick={() => setConfirmAction({ title: 'Удалить заметку?', message: 'Заметка к смене удалится совсем.',
+                                    onConfirm: () => { setStickies(stickies.filter(x => x.id !== st.id)); deleteNetDoc('stickies', st.id); } })}
+                        title="Удалить заметку" className="cf-edit-only absolute flex items-center justify-center rounded-full cf-act1"
+                        style={{ top: 0, right: 0, width: 'var(--tap-sm)', height: 'var(--tap-sm)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
+                <textarea rows={1} value={st.text} autoFocus={noteFresh === st.id} placeholder="Текст заметки"
+                          onChange={(e) => { const up = stickies.map(x => x.id === st.id ? { ...x, text: e.target.value } : x); setStickies(up); syncDoc('stickies', st.id, up.find(x => x.id === st.id)); }}
+                          ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
+                          onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
+                          className="w-full bg-transparent border-none focus:outline-none resize-none block"
+                          style={{ fontSize: 'var(--fs-3)', lineHeight: 1.55, color: 'var(--text-2)', minHeight: 26, padding: 0, paddingRight: 'calc(var(--tap-sm) + 4px)' }} />
+              </div>
+            ));
+          };
           const sceneNotesList = (s) => {
             const notes = s ? stickies.filter(st => st.sceneId === s.id) : [];
             if (notes.length === 0) return (
@@ -21080,6 +21123,21 @@
             window.addEventListener('keydown', esc);
             return () => { document.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
           }, [dockModes]);
+
+          // КПП: оглавление смен следит за прокруткой листа.
+          const kppBoxRef = useRef(null);
+          const [kppOn, setKppOn] = useState(null);
+          useEffect(() => {
+            const box = kppBoxRef.current;
+            if (!box || currentView !== 'table') return;
+            const upd = () => {
+              const y = box.scrollTop + 70; let a = null;
+              box.querySelectorAll('[data-kpp-shift]').forEach((n, i) => { if (i === 0 || n.offsetTop <= y) a = n.getAttribute('data-kpp-shift'); });
+              setKppOn(a);
+            };
+            box.addEventListener('scroll', upd, { passive: true }); upd();
+            return () => box.removeEventListener('scroll', upd);
+          }, [currentView, tableSubView, scenes.length]);
 
           // ЛИСТ СМЕНЫ (режим «Съёмка»): кадры ВСЕХ сцен смены подряд, а не
           // одной сцены. Смена — сцены с той же датой, что у открытой; без
@@ -25763,7 +25821,7 @@
                       Содержимое собирается ТОЛЬКО когда экран открыт: в виде
                       «Все сцены» лежат картинки всех кадров проекта, и держать
                       их в памяти круглосуточно незачем. */}
-                  <div className={`h-full w-full overflow-y-auto ${currentView === 'table' ? 'block' : 'hidden'}`}>
+                  <div ref={kppBoxRef} className={`h-full w-full overflow-y-auto ${currentView === 'table' ? 'block' : 'hidden'}`} style={{ overflowAnchor: 'none' }}>
                     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 pb-24">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-[var(--border)] pb-5 gap-4">
                         <div className="flex items-baseline gap-3 flex-wrap">
@@ -25860,6 +25918,18 @@
                         });
                         return (
                           <div className="space-y-12">
+                            {/* ОГЛАВЛЕНИЕ СМЕН — липкая полоса дат. Нажатие ведёт
+                                к смене, прокрутка подсвечивает ту, что читается. */}
+                            {sortedDates.length > 1 && (
+                              <div className="cf-kpp-dates" data-cf="kpp-dates">
+                                {sortedDates.map(dk => (
+                                  <button key={dk || 'none'} data-cf="kpp-date" className={kppOn === (dk || 'none') ? 'on' : ''}
+                                          onClick={() => { const box = kppBoxRef.current; const n = box && box.querySelector(`[data-kpp-shift="${dk || 'none'}"]`); if (box && n) box.scrollTo({ top: n.offsetTop - 58, behavior: 'smooth' }); }}>
+                                    {dk ? <React.Fragment><b>{new Date(dk + 'T12:00').getDate()}</b>{new Date(dk + 'T12:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</React.Fragment> : 'вне смен'}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             {/* Стандартный комплект — один раз на весь план, а не в каждой
                                 смене: он на всех сменах один, и у сцен ниже — только доборы. */}
                             {String(lightBase || '').trim() && (
@@ -25876,28 +25946,15 @@
                               const dayScenes = grouped[dateKey];
                               const camSum = sumOf(dayScenes, 'gear'), lightSum = sumOf(dayScenes, 'lightGear');
                               return (
-                                <div key={dateKey || 'unassigned'} className="cf-shift">
-                                  <div className="px-2 pb-3 flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ borderBottom: '1px solid var(--border)' }}>
+                                <div key={dateKey || 'unassigned'} className="cf-shift cf-kpp-shift" data-kpp-shift={dateKey || 'none'}>
+                                  <div className="cf-kpp-shh">
                                     <div className="flex items-center space-x-4">
                                       <span style={{ fontSize: 'var(--fs-4)', fontWeight: 700, color: 'var(--text)', letterSpacing: '-.01em' }}>{dateKey ? `Смена · ${formatDateDisplay(dateKey)}` : 'Сцены вне смен'}</span>
                                       <span className="cf-meta">{dayScenes.length} {plur(dayScenes.length, 'сцена', 'сцены', 'сцен')}</span>
                                     </div>
-                                    <div className="flex flex-col gap-2 md:items-end">
-                                      {Object.keys(camSum).length > 0 && (
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">Итого техника</span>
-                                          {totalChips(camSum, gearTypes || DEFAULT_GEAR, { chip: 'bg-indigo-950/60 text-indigo-200', num: 'bg-indigo-600' })}
-                                        </div>
-                                      )}
-                                      {Object.keys(lightSum).length > 0 && (
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">{String(lightBase || '').trim() ? 'Доборы света' : 'Итого свет'}</span>
-                                          {totalChips(lightSum, lightGearTypes || DEFAULT_LIGHT_GEAR, { chip: 'bg-amber-950/60 text-amber-200', num: 'bg-amber-700' })}
-                                        </div>
-                                      )}
-                                    </div>
                                   </div>
-                                  <div className="divide-y divide-[var(--line)]">
+                                  <div className="cf-kpp-grid">
+                                  <div className="divide-y divide-[var(--line)] min-w-0">
                                     {dayScenes.map(s => {
                                       const cam = gearLine(s.gear, gearTypes || DEFAULT_GEAR);
                                       const lig = gearLine(s.lightGear, lightGearTypes || DEFAULT_LIGHT_GEAR);
@@ -25917,7 +25974,10 @@
                                                    placeholder="—" maxLength="12" title="Номер сцены — правится прямо здесь"
                                                    className={`cf-inline-field shrink-0 mt-0.5 w-14 text-center font-mono font-black text-sm placeholder-zinc-600 ${duplicateNumbers[String(s.number || '').trim()] ? 'text-amber-300' : 'text-indigo-400'}`} />
                                             <div className="space-y-1.5 min-w-0">
-                                              <h4 className="text-sm font-bold text-white tracking-wide">{s.title || 'Без названия'}</h4>
+                                              <button onClick={() => { setActiveSceneId(s.id); setSceneMode('shoot'); setCurrentView('notion'); }} data-cf="kpp-open"
+                                                      title="Открыть сцену в листе смены" className="text-left text-sm font-bold text-white tracking-wide hover:text-[var(--accent)] transition-colors">
+                                                {s.title || 'Без названия'} <span style={{ color: 'var(--accent)' }}>→</span>
+                                              </button>
                                               <p className="text-xs text-zinc-400 font-medium line-clamp-2 leading-relaxed max-w-3xl">{s.content || ''}</p>
                                               {(cam || lig) && (
                                                 <div className="flex flex-col gap-1 pt-1">
@@ -25936,6 +25996,26 @@
                                         </div>
                                       );
                                     })}
+                                  </div>
+                                  <aside className="cf-kpp-field" data-cf="kpp-field">
+                                    <div className="flex flex-col gap-2">
+                                      {Object.keys(camSum).length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">Итого техника</span>
+                                          {totalChips(camSum, gearTypes || DEFAULT_GEAR, { chip: 'bg-indigo-950/60 text-indigo-200', num: 'bg-indigo-600' })}
+                                        </div>
+                                      )}
+                                      {Object.keys(lightSum).length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-[length:var(--fs-1)] text-zinc-400 font-bold tracking-wider mr-1">{String(lightBase || '').trim() ? 'Доборы света' : 'Итого свет'}</span>
+                                          {totalChips(lightSum, lightGearTypes || DEFAULT_LIGHT_GEAR, { chip: 'bg-amber-950/60 text-amber-200', num: 'bg-amber-700' })}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span className="cf-eyebrow-sm">Заметки к смене</span>
+                                    {shiftNotesList(dateKey || 'none')}
+                                    <button onClick={() => addShiftNote(dateKey || 'none')} className="cf-edit-only cf-kpp-add" data-cf="kpp-add-note">+ заметка</button>
+                                  </aside>
                                   </div>
                                 </div>
                               );
