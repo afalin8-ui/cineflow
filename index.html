@@ -8815,7 +8815,7 @@
         const excSig = (type, r, ratio, d) => {
           const g = excGeo(type, r, ratio, d);
           return [g.x, g.y, g.w, g.h, type === 'sticky' ? r.color : '', excLabel(type, r), excUrlKey(excImage(type, r)),
-                  d ? d.w + 'x' + d.h : '', r.video ? 'v' + (r.dur || 0) + (r.full ? 'c' : '') : ''].join('|');
+                  d ? d.w + 'x' + d.h : '', r.video ? 'v' + (r.dur || 0) + (r.full ? 'c' : '') : '', r.pdf || ''].join('|');
         };
         // Строим элементы одной карточки. `prev` — то, что сейчас лежит
         // в сцене под этими id: версия новой обязана быть выше, иначе
@@ -8894,6 +8894,10 @@
             const gid = 'g~' + r.id;
             out.forEach(e => { e.groupIds = [gid]; });
           }
+          // СТРАНИЦЫ ОДНОГО PDF — ОДНОЙ ГРУППОЙ: двигаются и выделяются
+          // вместе, как документ, а не россыпь фотографий. Группа внешняя —
+          // своя группа карточки (видео, подпись кадра) остаётся внутри.
+          if (type === 'ref' && r.pdf) out.forEach(e => { e.groupIds = [...(e.groupIds || []), 'pdf~' + r.pdf]; });
           out.forEach(e => { e.version = ver(e.id); e.seed = excSeed(e.id); e.index = null; e.locked = false; });
           return out;
         };
@@ -17814,6 +17818,10 @@
                 for (const f of pdfs) {
                   try {
                     const r = await pdfToImages(f);
+                    // Метка документа у каждой страницы: на доске они одна
+                    // группа, в просмотре — по порядку.
+                    const docId = 'pdf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+                    r.files.forEach((pf, pi) => { try { pf.__cfExtra = { pdf: docId, page: pi + 1, pdfName: String(f.name || '').replace(/\.pdf$/i, '') }; } catch (e) {} });
                     pages.push(...r.files);
                     if (r.total > r.files.length) cut += r.total - r.files.length;
                   } catch (err) {
@@ -18018,7 +18026,8 @@
                     file: file.name,
                     folder: locFolder,
                     tags: [...(locationId ? [SCOUT_TAG] : []), ...(video ? [VIDEO_TAG] : [])],
-                    ...(extra || {})
+                    ...(extra || {}),
+                    ...(file.__cfExtra || {})
               }));
               // Показываем сразу, не дожидаясь облака: на площадке связь
               // медленная, и стоять над кружком загрузки никто не будет.
