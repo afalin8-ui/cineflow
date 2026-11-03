@@ -1,4 +1,4 @@
-// Два гнезда галереи: референсы отдельно, фото со скаута отдельно.
+// Галерея — только референсы (одно гнездо), фото объектов — сеткой в «Объектах».
 const fs = require('fs'), os = require('os'), path = require('path');
 const { execSync, spawn } = require('child_process');
 const ROOT = require('path').resolve(__dirname, '..'), LIBS = path.join(os.tmpdir(), 'cineflow-libs'), PORT = '8141';
@@ -37,7 +37,7 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
     const errs = [];
     page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
     await page.goto(`http://127.0.0.1:${PORT}/index.html`);
-    await page.waitForFunction(() => window.__CF_APP_OK, { timeout: 180000 });
+    await page.waitForFunction(() => window.__CF_APP_OK, null, { timeout: 180000 });
     await page.waitForTimeout(900);
     await page.evaluate(async () => {
       const b = [...document.querySelectorAll('.cf-tabbar button, header button')].find(x => /Галере/i.test((x.textContent||'') + (x.title||'')));
@@ -52,55 +52,44 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
     count: (document.querySelector('.cf-meta') || {}).textContent
   });
 
-  // ---- НОУТБУК
+  // ---- НОУТБУК. С ноября 2026 гнездо ОДНО — референсы; фото объектов
+  // живут в «Объектах» (см. CLAUDE.md, «Раскладка как у iPhone Duo»).
   const { page: p, errs } = await mk(1440, 900);
   const a = await p.evaluate(seg);
-  ok('по умолчанию гнездо «Референсы» — скаут не показан',
-     a.cards === 4 && /Референсы · 4/.test(a.seg.join(' ')) && /Со скаута · 6/.test(a.seg.join(' ')), JSON.stringify(a));
-  const folders = await p.evaluate(() => [...document.querySelectorAll('aside, div')].length && [...document.querySelectorAll('button')]
+  ok('в галерее только референсы, без переключателя гнёзд',
+     a.cards === 4 && !/Со скаута/.test(a.seg.join(' ')), JSON.stringify(a));
+  const folders = await p.evaluate(() => [...document.querySelectorAll('button')]
     .filter(b => /Квартира на Горской|Двор школы/.test(b.textContent||'')).map(b => b.textContent.trim()));
-  ok('папки скаута не мешаются в референсах', folders.length === 0, folders.join(' | '));
-  const b = await p.evaluate(async () => {
-    [...document.querySelectorAll('.cf-seg button')].find(x => /Со скаута/.test(x.textContent||'')).click();
-    await new Promise(r => setTimeout(r, 600));
-    return { cards: document.querySelectorAll('.cf-ref-card').length,
-             locs: [...document.querySelectorAll('button')].filter(x => /Квартира на Горской · |Двор школы/.test(x.textContent||'')).map(x => x.textContent.trim()).slice(0, 4),
-             head: (document.querySelector('.cf-eyebrow') || {}).textContent };
-  });
-  ok('в гнезде скаута — только фото объектов', b.cards === 6, JSON.stringify({ cards: b.cards }));
-  ok('вместо папок — объекты со счётчиком', b.locs.some(x => /Квартира на Горской/.test(x)) && b.locs.some(x => /Двор школы/.test(x)), b.locs.join(' | '));
-  const c = await p.evaluate(async () => {
-    const btn = [...document.querySelectorAll('button')].find(x => /^Двор школы/.test((x.textContent||'').trim()));
-    const r = btn.getBoundingClientRect();
+  ok('папки объектов не мешаются в галерее', folders.length === 0, folders.join(' | '));
+  const st = await p.evaluate(() => { const s = document.querySelector('.cf-galsearch'); return s ? getComputedStyle(s).position : ''; });
+  ok('строка поиска липкая', st === 'sticky', st);
+  const lb = await p.evaluate(async () => {
+    const img = document.querySelector('.cf-ref-card img');
+    const box = img.closest('.cursor-pointer') || img;
+    const r = box.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    btn.click();
-    await new Promise(r2 => setTimeout(r2, 600));
-    return { cards: document.querySelectorAll('.cf-ref-card').length, hits: !!(hit && (hit === btn || btn.contains(hit))),
-             upload: [...document.querySelectorAll('button, label')].map(x => x.textContent.trim()).find(t => /Загрузить в /.test(t)) };
-  });
-  ok('нажатие по объекту попадает и фильтрует', c.hits && c.cards === 2, JSON.stringify(c));
-  ok('загрузка адресована выбранному объекту', /Двор школы/.test(c.upload || ''), c.upload || 'кнопки нет');
-  const d = await p.evaluate(async () => {
-    localStorage.setItem('cf_gal_scope', 'scout');
-    [...document.querySelectorAll('.cf-seg button')].find(x => /Референсы/.test(x.textContent||'')).click();
-    await new Promise(r => setTimeout(r, 500));
-    return { cards: document.querySelectorAll('.cf-ref-card').length, saved: localStorage.getItem('cf_gal_scope') };
-  });
-  ok('возврат в референсы и выбор помнится', d.cards === 4 && d.saved === 'refs', JSON.stringify(d));
-
-  // ---- ТЕЛЕФОН: гнёзда и лента объектов
-  const { page: ph } = await mk(390, 844);
-  const e = await ph.evaluate(async () => {
-    const s = [...document.querySelectorAll('.cf-seg button')];
-    const r = s[1].getBoundingClientRect();
-    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    s[1].click();
+    box.click();
     await new Promise(x => setTimeout(x, 600));
-    return { hits: !!(hit && (hit === s[1] || s[1].contains(hit))), cards: document.querySelectorAll('.cf-ref-card').length,
-             chips: [...document.querySelectorAll('.cf-chip')].map(x => x.textContent.trim()).filter(t => /Горской|школы|Все объекты/.test(t)) };
+    const pin = document.querySelector('[data-cf="lb-pin"]');
+    return { hits: !!(hit && (hit === box || box.contains(hit))), open: !!pin,
+             quiet: pin ? getComputedStyle(pin.parentElement).opacity === '0' : null };
   });
-  ok('телефон: переключатель нажимается, лента объектов на месте',
-     e.hits && e.cards === 6 && e.chips.length >= 2, JSON.stringify(e));
+  ok('касание по фото сразу открывает его на весь экран', lb.hits && lb.open, JSON.stringify(lb));
+  ok('в просмотре в покое управление спрятано', lb.quiet === true, JSON.stringify(lb));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  const lo = await p.evaluate(async () => {
+    const b = document.querySelector('[data-cf="nav-locations"]'); b && b.click();
+    await new Promise(x => setTimeout(x, 700));
+    const g = document.querySelector('[data-cf="loc-grid"]');
+    return { grid: !!g, photos: document.querySelectorAll('[data-cf="loc-photo"]').length, scroll: g ? getComputedStyle(g).overflowX : '' };
+  });
+  ok('фото объекта — сеткой, без прокрутки вбок', lo.grid && lo.photos === 4 && lo.scroll !== 'auto', JSON.stringify(lo));
+
+  // ---- ТЕЛЕФОН: тоже одно гнездо
+  const { page: ph } = await mk(390, 844);
+  const e = await ph.evaluate(() => ({ cards: document.querySelectorAll('.cf-ref-card').length,
+    seg: [...document.querySelectorAll('.cf-seg button')].map(b => b.textContent.trim()).join(' ') }));
+  ok('телефон: только референсы, гнёзд нет', e.cards === 4 && !/Со скаута/.test(e.seg), JSON.stringify(e));
   if (errs.length) ok('без ошибок в консоли', false, errs.join(' | '));
   console.log(bad ? `\nПЛОХО: ${bad}` : '\nВсё сошлось');
   await browser.close(); server.kill(); process.exit(bad ? 1 : 0);
