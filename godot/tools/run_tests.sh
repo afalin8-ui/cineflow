@@ -50,7 +50,10 @@ mkdir -p "$XDG_DATA_HOME"
 # (test_tempo_old). Отдельно от sim: с ним sim доходил до 893 с из 900
 # ярус table (02.11.2026) — «Стол» (tests/test_table_render.gd, прежний test_render_table): свой ярус
 # по той же причине. В CI (прогон 41475770043) render Forward+ шёл 806 с из 900, из них «Стол» 448
-ALL_TIERS=(sim tempo ui render:forward_plus render:gl_compatibility table:forward_plus table:gl_compatibility air:forward_plus air:gl_compatibility hud:forward_plus hud:gl_compatibility fx:forward_plus fx:gl_compatibility)
+# ярус warm (0.12) — прогрев «Стола» (tests/test_warm_table.gd): две пробы отдельными процессами. С ручными
+# моделями Плэктора на «Столе» они в CI шли по ~180 с в Forward+, и ярус table — 734 с из 900 (прогон
+# 41583526844); вынесены своим ярусом и своей веткой матрицы
+ALL_TIERS=(sim tempo ui render:forward_plus render:gl_compatibility table:forward_plus table:gl_compatibility warm:forward_plus warm:gl_compatibility air:forward_plus air:gl_compatibility hud:forward_plus hud:gl_compatibility fx:forward_plus fx:gl_compatibility)
 MODE="${1:-}"
 case "$MODE" in
   "") TIERS=(sim tempo ui) ;;

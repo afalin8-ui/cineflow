@@ -299,6 +299,10 @@ jobs:
             tiers: 'hud:forward_plus hud:gl_compatibility render:gl_compatibility'
           - name: table-fx-gl
             tiers: 'table:gl_compatibility fx:gl_compatibility'
+          # прогрев «Стола» — две пробы отдельными процессами; с ручными моделями Плэктора (0.12)
+          # вместе с остальным «Столом» шли 734 с из 900 (прогон 41583526844), поэтому своим ярусом
+          - name: warm
+            tiers: 'warm:forward_plus warm:gl_compatibility'
     name: ярусы ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4

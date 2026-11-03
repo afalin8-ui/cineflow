@@ -7,8 +7,9 @@
 #   нет, кольцо венца не чёрное; при обычном небе и пурпурном цвете очистки —
 #   пурпура нет нигде. Откаты: дальняя плоскость 4000, фон без неба;
 # - стартовый кадр (09, 11.4): своя линия около 0,57 высоты, чужая около 0,13;
-# - прогрев (07, ловушка 29; 08, ловушка 15): счётчики сборок конвейеров не
-#   растут после первых кадров (откат — эффекты впервые на 30-м кадре);
+# - прогрев (07, ловушка 29; 08, ловушка 15) — с 0.12 своим ярусом `warm`
+#   (tests/test_warm_table.gd): две пробы отдельными процессами не помещались с остальным «Столом»
+#   в 900 с CI;
 # - сканер кнопок (07, ловушка 10): щелчок в центр каждой видимой кнопки доходит
 #   до неё (откат — прозрачная панель STOP поверх);
 # - строка «Замер кадров…» не ложится ни на подсказку, ни на счётчик F3 — на 1920
@@ -271,60 +272,6 @@ func test_start_frame() -> void:
 		var gown: float = g["own"]
 		ok(absf(gown - 0.57) > 0.03, "откат «взгляд в центр поля» краснеет: своя линия на %.2f" % gown)
 		await _drop(sc)
-
-
-# ───────────────────────── прогрев ─────────────────────────
-
-const PROBE_WAIT_MS := 240000
-
-
-## Проба прогрева в своём процессе (tests/probe_warmup.gd): тот же отрисовщик.
-func _warm_probe(mode: String) -> Dictionary:
-	var out := tmp("probe_warmup_%s.json" % mode)
-	DirAccess.remove_absolute(out)
-	var args := PackedStringArray(["--path", ProjectSettings.globalize_path("res://"), "--rendering-method", renderer(),
-		"-s", "res://tests/probe_warmup.gd", "--", mode, out])
-	var pid := OS.create_process(OS.get_executable_path(), args)
-	if not ok(pid > 0, "проба прогрева %s запустилась" % mode):
-		return {}
-	var t0 := Time.get_ticks_msec()
-	while OS.is_process_running(pid) and Time.get_ticks_msec() - t0 < PROBE_WAIT_MS:
-		await hooks.frames(1)
-	var steps := FileAccess.get_file_as_string(out + ".log").strip_edges().replace("\n", "; ")
-	DirAccess.remove_absolute(out + ".log")
-	if OS.is_process_running(pid):
-		OS.kill(pid)                      # только свой PID, никакого pkill
-		ok(false, "проба прогрева %s зависла; её ход: %s" % [mode, steps])
-		return {}
-	note("проба прогрева %s: %s" % [mode, steps.get_slice("; ", steps.get_slice_count("; ") - 1)])
-	var j := JSON.new()
-	var text := FileAccess.get_file_as_string(out)
-	DirAccess.remove_absolute(out)
-	if not ok(j.parse(text) == OK and typeof(j.data) == TYPE_DICTIONARY, "проба прогрева %s оставила итог: «%s»" % [mode, text]):
-		return {}
-	return dict(j.data)
-
-
-func test_warmup_no_compilations_mid_game() -> void:
-	var r := await _warm_probe("warm")
-	if r.is_empty():
-		return
-	var before := whole(r["before"])
-	var after := whole(r["after"])
-	if renderer() != "forward_plus":
-		# в Compatibility конвейеров Vulkan нет — счётчики сборок молчат; проверка — в Forward+
-		note("%s: сборок конвейеров %d → %d (проверка — в Forward+)" % [renderer(), before, after])
-		ok(true, "Compatibility: проверка прогрева не применима")
-		return
-	ok(before > 0, "счётчики сборок конвейеров отвечают (%d к 20-му кадру)" % before)
-	eq(after, before, "после первых кадров новых сборок конвейеров нет (облёт по пути замера)")
-	var rb := await _warm_probe("cold")
-	if rb.is_empty():
-		return
-	var b2 := whole(rb["before"])
-	var a2 := whole(rb["after"])
-	ok(a2 > b2, "откат «эффекты впервые на 30-м кадре» краснеет: %d → %d" % [b2, a2])
-	note("прогрев: как в игре %d → %d, откат %d → %d" % [before, after, b2, a2])
 
 
 # ───────────────────────── сканер кнопок и замер кадров ─────────────────────────
