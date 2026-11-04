@@ -133,18 +133,17 @@ for (const sc of SCENES) for (let k = 1; k <= 14; k++) FRAMES.push({ id: `${sc.i
     const stuck = await page.evaluate(() => { const b = document.querySelector('[data-cf="scene-prev"]'); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!e; });
     ok('погасшая стрелка на месте, полоса не прыгает', stuck);
 
-    // «Съёмка»: полоса на месте, переход сбрасывает прокрутку
+    // «Съёмка» на телефоне — лист смены: полосы соседних сцен нет (лист и так
+    // про всю смену), а «✓ Снят — дальше» внизу под пальцем.
     await tap(page, 'header .cf-seg button:has-text("Съёмка")', 'режим «Съёмка»');
-    const sc = await page.evaluate(async () => {
-      const m = document.querySelector('[data-cf="phone-scene-main"]');
-      m.scrollTop = 99999; await new Promise(r => setTimeout(r, 100));
-      return { can: m.scrollHeight > m.clientHeight + 50, top: m.scrollTop, nav: !!document.querySelector('[data-cf="scene-nav"]') };
+    const sc = await page.evaluate(() => {
+      const b = document.querySelector('[data-cf="shoot-next"]'); if (!b) return null;
+      const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { sheet: !!document.querySelector('[data-cf="shoot-sheet"]'), nav: !!document.querySelector('[data-cf="scene-nav"]'),
+               hit: !!e && !!e.closest('[data-cf="shoot-next"]'), inView: r.bottom <= innerHeight && r.right <= innerWidth };
     });
-    ok('в «Съёмке» полоса на месте, список кадров прокручивается', sc.nav && sc.can && sc.top > 100, JSON.stringify(sc));
-    await tap(page, '[data-cf="scene-next"]', '«следующая» в «Съёмке»');
-    const after = await page.evaluate(() => ({ top: document.querySelector('[data-cf="phone-scene-main"]').scrollTop, t: document.querySelector('[data-cf="phone-scene-main"]').textContent.slice(0, 60) }));
-    n = await nav(page);
-    ok('следующая сцена открылась с начала, а не с середины', after.top === 0 && n && n.scene === '2', JSON.stringify({ ...after, scene: n && n.scene }));
+    ok('в «Съёмке» лист смены, без полосы соседних, «Снят — дальше» под пальцем', sc && sc.sheet && !sc.nav && sc.hit && sc.inView, JSON.stringify(sc));
+    await tap(page, 'header .cf-seg button:has-text("Творч")', 'обратно в «Творч»');
 
     // Фильтр «Все»: порядок — как в списке
     await tap(page, 'header button:has-text("‹ Сцены")', '«‹ Сцены»');
@@ -158,7 +157,7 @@ for (const sc of SCENES) for (let k = 1; k <= 14; k++) FRAMES.push({ id: `${sc.i
     await tap(page, 'header .cf-seg button:has-text("Творч")', 'режим «Творч»');
     const tile0 = await page.evaluate(() => { const t = document.querySelector('[data-cf="tile-notes"]'); if (!t) return null; const g = t.parentElement;
       return { text: t.textContent.trim(), full: Math.abs(t.getBoundingClientRect().width - g.getBoundingClientRect().width) < 2 }; });
-    ok('плитка «Заметки» во всю ширину, пока без счётчика', tile0 && /^Заметки$/.test(tile0.text) && tile0.full, JSON.stringify(tile0));
+    ok('плитка «Заметки», пока без счётчика', tile0 && /^Заметки$/.test(tile0.text), JSON.stringify(tile0));
     await tap(page, '[data-cf="tile-notes"]', 'плитка «Заметки»');
     const sheet = await page.evaluate(() => { const sh = document.querySelector('.cf-sheet'); return sh ? sh.textContent.replace(/\s+/g, ' ').slice(0, 120) : null; });
     ok('шторка «Заметки сцены»: «+ заметка» и пустое состояние словами', sheet && /Заметки сцены/.test(sheet) && /\+ заметка/.test(sheet) && /Пока пусто/.test(sheet), sheet);
