@@ -75,7 +75,7 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
 
   // ---- НОУТБУК
   const { page: p, errs } = await mk(1440, 900);
-  ok('режим «Сценарий» в полосе и он включён', await p.evaluate(() => { const b = document.querySelector('[data-cf="dock-mode"]'); return !!b && /Сцен/.test(b.textContent) && !!document.querySelector('[data-cf="script-view"]'); }));
+  ok('режим «Сценарий» в полосе и он включён', await p.evaluate(() => { const b = document.querySelector('[data-cf="modebar"] .on'); return !!b && /Сценарий/.test(b.textContent) && !!document.querySelector('[data-cf="script-view"]'); }));
   ok('сценарий подряд — все восемь сцен', await p.$$eval('[data-sr]', a => a.length) === 8);
   const kinds = await p.$$eval('[data-sr="sc1"] [data-li]', a => a.map(x => x.className.replace('cf-sl-', '')).join(','));
   ok('вёрстка: описание, имя, ремарка, реплика, переход', kinds === 'a,g,c,p,d,g,a,g,t', kinds);
@@ -186,7 +186,7 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
   // заголовок сцены ведёт на прежний экран сцены
   await p.click('[data-sr="sc4"] .cf-sr-head');
   await p.waitForTimeout(500);
-  ok('нажатие по заголовку открывает экран сцены', await p.evaluate(() => !document.querySelector('[data-cf="script-view"]') && /Твор/.test((document.querySelector('[data-cf="dock-mode"]') || {}).textContent || '')));
+  ok('нажатие по заголовку открывает экран сцены', await p.evaluate(() => !document.querySelector('[data-cf="script-view"]') && /Твор/.test((document.querySelector('[data-cf="modebar"] .on') || {}).textContent || '')));
   ok('ошибок нет', errs.length === 0, errs.join(' | '));
 
   // ---- 1280: шапка помещается

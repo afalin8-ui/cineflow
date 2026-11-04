@@ -81,7 +81,7 @@ const seed = {
   ok('строка «Съёмка» нажимается', (await tap('[data-cf="more-mode-shoot"]')) === 'ok');
   let s = await screen();
   ok('выбор режима со списка ОТКРЫЛ сцену', s.back, s.text.slice(0, 60));
-  ok('и открыл её в «Съёмке»', s.mode === 'shoot' && /Съёмка/.test(s.text) && /СЦ 6/.test(s.text), s.text.slice(0, 60));
+  ok('и открыл её в «Съёмке»', s.mode === 'shoot' && /Смена/.test(s.text) && /снято/.test(s.text) && /\b6\b/.test(s.text), s.text.slice(0, 60));
 
   // 2. Внутри сцены: шапка переключает режимы.
   for (const [lbl, re] of [['Презент', /СЦЕНА 6/], ['Творч', /Текст сцены/], ['Съёмка', /снято/]]) {

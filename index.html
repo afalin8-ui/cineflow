@@ -475,7 +475,9 @@
         html.cf-touch .cf-script { --sr-fs: 15.5px; --sr-mg: 13.5px; --sr-w: 284px; }
         .cf-script-bar { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 10px;
                          min-height: calc(var(--tap) + 12px); background: var(--bg); border-bottom: 1px solid var(--line); }
-        .cf-sr { display: grid; grid-template-columns: minmax(0, 64ch) var(--sr-w); gap: clamp(24px, 3vw, 48px);
+        /* justify-content: center — со свёрнутым списком сцен лист не
+           прижимается влево с пустым полем справа, а стоит по середине. */
+        .cf-sr { display: grid; grid-template-columns: minmax(0, 64ch) var(--sr-w); gap: clamp(24px, 3vw, 48px); justify-content: center;
                  padding: 40px 0 44px; border-bottom: 1px solid var(--line); scroll-margin-top: calc(var(--tap) + 14px); }
         .cf-sr-page { min-width: 0; font-family: 'Courier Prime', 'Courier New', Courier, ui-monospace, monospace;
                       font-size: var(--sr-fs); line-height: 1.62; color: var(--text); }
@@ -665,6 +667,15 @@
         .cf-dock-btn svg { width: 21px; height: 21px; }
         .cf-dock-btn:hover { color: var(--text-2); background: var(--raised); }
         .cf-dock-btn.on { color: var(--text); background: var(--raised); }
+        /* У активного модуля — подпись: по одному значку «где я» не читалось
+           (у «Сцен» и «КПП» значки вдобавок были одинаковые). Подписан
+           только активный — остальные ряд значков, как и были. */
+        .cf-dock-btn.lab { width: 58px; height: 54px; flex-direction: column; gap: 3px; }
+        .cf-dock-btn.lab span { font-size: 10.5px; font-weight: 600; line-height: 1; letter-spacing: .01em; white-space: nowrap; }
+        .cf-modebar { flex-shrink: 0; display: flex; justify-content: center; align-items: center; height: calc(var(--tap) + 10px);
+                      padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
+        .cf-modeseg > * { font-size: var(--fs-2); padding: 0 16px; min-height: calc(var(--tap-sm) - 4px); display: flex; align-items: center; }
+        .cf-modeseg > :hover:not(.on) { color: var(--text-2); }
         .cf-dock-badge { position: absolute; top: 4px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; font-size: var(--fs-1); font-weight: 700; line-height: 16px; background: var(--accent); color: var(--bg); }
         .cf-dock-prim { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: var(--fs-1); color: var(--text-2); }
         .cf-dock-h .cf-dock-prim { flex-direction: row; gap: 10px; font-size: var(--fs-3); }
@@ -728,6 +739,19 @@
         .cf-shoot-big { height: 76px; padding: 0 24px; border-radius: 18px; background: var(--card); font-size: var(--fs-5); font-weight: 600; color: var(--text); }
         .cf-shoot-big.go { background: var(--accent); color: var(--bg); padding: 0 32px; }
         .cf-shoot-big:disabled { opacity: .4; }
+        /* Телефон: тот же лист, плотнее, и «Снят» внизу под большим пальцем */
+        .cf-shoot.phone .cf-shoot-head { padding: 10px 16px; }
+        .cf-shoot.phone .cf-shoot-pbar { width: 64px; }
+        .cf-shoot.phone .cf-shoot-sch { padding: 10px 16px; }
+        .cf-shoot.phone .cf-shoot-row { grid-template-columns: 104px minmax(0, 1fr) 44px; gap: 12px; padding: 12px 16px 14px; }
+        .cf-shoot.phone .cf-shoot-cap { font-size: var(--fs-3); }
+        .cf-shoot.phone .cf-shoot-ok, .cf-shoot.phone .cf-shoot-tick { width: 44px; height: 44px; }
+        .cf-shoot.phone .cf-shoot-now { font-size: 11px; padding: 3px 8px; }
+        .cf-shoot.phone .cf-shoot-body { padding-bottom: 30vh; }
+        .cf-shoot-phbar { position: sticky; bottom: 0; z-index: 5; display: flex; gap: 8px; padding: 10px 16px; background: var(--bg); border-top: 1px solid var(--border); }
+        .cf-shoot-phb { min-height: 52px; min-width: 52px; border-radius: 14px; background: var(--card); color: var(--text); font-size: var(--fs-5); font-weight: 600; }
+        .cf-shoot-phb.go { flex: 1; background: var(--accent); color: var(--bg); font-size: var(--fs-4); font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        .cf-shoot-phb:disabled { opacity: .45; }
         /* ---------- КПП: лист с полями ---------- */
         .cf-kpp-dates { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center; height: 58px; box-sizing: border-box; margin: 0 -8px;
                         padding: 0 8px; background: var(--bg); border-bottom: 1px solid var(--line); overflow-x: auto; }
@@ -748,6 +772,7 @@
            сменить тег можно, не листая наверх. Фон непрозрачный. */
         .cf-galsearch { position: sticky; top: 0; z-index: 6; background: var(--bg); padding-block: 10px; box-shadow: 0 1px 0 var(--line); }
         .cf-locgrid { columns: 260px; column-gap: 14px; }
+        @media (max-width: 767px) { .cf-locgrid { columns: 2; column-gap: 8px; } }
         .cf-locph { break-inside: avoid; margin: 0 0 16px; }
         .cf-locph-cap { margin-top: 7px; font-size: var(--fs-2); color: var(--text-2); line-height: 1.4; cursor: text; min-height: 22px; }
         .cf-pip { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; align-items: center; gap: 10px;
@@ -992,10 +1017,10 @@
 
         const Icons = {
             Mic: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>,
-            Scene: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>,
+            Scene: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8Z"/><path d="m4 11-.88-2.87a2 2 0 0 1 1.33-2.5l11.48-3.5a2 2 0 0 1 2.5 1.32l.87 2.87L4 11.01Z"/><path d="m6.6 4.99 3.38 4.2"/><path d="m11.86 3.38 3.38 4.2"/></svg>,
             Master: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>,
             Board: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 3v18"/></svg>,
-            Table: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>,
+            Table: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/></svg>,
             Docs: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
             Gallery: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
             Place: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>,
@@ -10892,7 +10917,7 @@
         // снизу: планшет стоит, а на него смотрят издалека.
         // Своих записей у листа нет: отметка — то же поле `shot` у кадра.
         const shootLens = (l) => { const t = String(l || '').trim(); return /^\d+([.,]\d+)?$/.test(t) ? t + ' мм' : t; };
-        const ShootSheet = ({ scenes, frames, ratio, readOnly, jump, tripod, side, onShot, onMarkNext, onUndo,
+        const ShootSheet = ({ scenes, frames, ratio, readOnly, jump, tripod, side, phone, onShot, onMarkNext, onUndo,
                               onOpenScene, headLine, sunNote, lightOf }) => {
           const boxRef = useRef(null);
           const [sel, setSel] = useState(null);
@@ -11002,13 +11027,13 @@
             );
           }
           return (
-            <main ref={boxRef} className={'flex-1 min-w-0 overflow-y-auto cf-shoot' + (narrow ? ' narrow' : '')} data-cf="shoot-sheet"
+            <main ref={boxRef} className={'flex-1 min-w-0 overflow-y-auto cf-shoot' + (narrow ? ' narrow' : '') + (phone ? ' phone' : '')} data-cf="shoot-sheet"
                   onClick={(e) => { if (!e.target.closest('[data-shoot-frame], .cf-actpill')) setSel(null); }}>
               <div className="cf-shoot-head">
                 <div className="flex items-center gap-3 min-w-0">
                   <b style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>Смена</b>
                   <span className="truncate" style={{ color: 'var(--muted)', fontSize: 'var(--fs-3)' }}>{headLine}</span>
-                  {sunNote && <span className="shrink-0 cf-meta" style={{ color: 'var(--warn)' }}>{sunNote}</span>}
+                  {sunNote && !phone && <span className="shrink-0 cf-meta" style={{ color: 'var(--warn)' }}>{sunNote}</span>}
                   <span className="ml-auto shrink-0" data-cf="shoot-count" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: 'var(--text-2)' }}>снято {done} из {frames.length}</span>
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
@@ -11020,7 +11045,8 @@
                       </button>
                     ))}
                   </div>
-                  <span className="cf-shoot-pbar ml-auto"><i style={{ width: Math.round(done / frames.length * 100) + '%' }} /></span>
+                  {sunNote && phone && <span className="ml-auto shrink-0 cf-meta" style={{ color: 'var(--warn)' }}>{sunNote}</span>}
+                  <span className={'cf-shoot-pbar' + (phone && sunNote ? '' : ' ml-auto')}><i style={{ width: Math.round(done / frames.length * 100) + '%' }} /></span>
                 </div>
               </div>
               <div className="cf-shoot-body">
@@ -11072,6 +11098,14 @@
                   );
                 })}
               </div>
+              {phone && !readOnly && (
+                <div className="cf-shoot-phbar" data-cf="shoot-phbar">
+                  <button onClick={onUndo} className="cf-shoot-phb" data-cf="shoot-undo" title="Вернуть последний снятый" aria-label="Назад">‹</button>
+                  <button onClick={onMarkNext} className="cf-shoot-phb go" data-cf="shoot-next" disabled={!cur}>
+                    {cur ? <React.Fragment>✓ Снят — дальше <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500, opacity: .75 }}>{cur.frameNum}</span></React.Fragment> : 'Смена снята'}
+                  </button>
+                </div>
+              )}
             </main>
           );
         };
@@ -20358,8 +20392,8 @@
             { id: 'locations',  label: 'Объекты',      icon: <Icons.Place /> },
             { id: 'scout',      label: 'Скаут',        icon: <Icons.Scout /> },
             { id: 'table',      label: 'КПП',          icon: <Icons.Table /> },
-            { id: 'docs',       label: 'Экспликации',  icon: <Icons.Docs /> },
-            { id: 'handbook',   label: 'Справочник',   icon: <Icons.Book /> }
+            { id: 'docs',       label: 'Экспликации',  short: 'Гайды', icon: <Icons.Docs /> },
+            { id: 'handbook',   label: 'Справочник',   short: 'Справка', icon: <Icons.Book /> }
           ].filter(t => {
             return CF_VIEWS.indexOf(t.id) >= 0;
           });
@@ -21583,30 +21617,15 @@
               <nav className="cf-dock-grp cf-dock-mods">
                 {navItems.map(t => (
                   <button key={t.id} onClick={() => setCurrentView(t.id)} title={t.label} aria-label={t.label}
-                          data-cf={'nav-' + t.id} className={'cf-dock-btn' + (currentView === t.id ? ' on' : '')}>{t.icon}</button>
+                          data-cf={'nav-' + t.id} className={'cf-dock-btn' + (currentView === t.id ? ' on lab' : '')}>
+                    {t.icon}{currentView === t.id && <span>{t.short || t.label}</span>}
+                  </button>
                 ))}
                 <button onClick={toggleChat} title="Чат группы" aria-label="Чат группы"
                         className={'cf-dock-btn relative' + (showChat ? ' on' : '') + (CF_CHAT ? '' : ' cf-edit-only')}>
                   <Icons.Chat />
                   {unreadCount > 0 && <span className="cf-dock-badge">{unreadCount}</span>}
                 </button>
-                {currentView === 'notion' && (
-                  <div className="relative" ref={dockModesRef}>
-                    <button onClick={() => setDockModes(v => !v)} data-cf="dock-mode" title={'Режим экрана: ' + curMode.label}
-                            className={'cf-dock-mode' + (dockModes ? ' on' : '')}>{curMode.label.slice(0, 5)}</button>
-                    {dockModes && (
-                      <div className="cf-menu cf-dock-pop">
-                        <span className="cf-meta block px-2.5 pb-1 pt-1">Режим экрана</span>
-                        {SCENE_MODES.map(m => (
-                          <button key={m.id} onClick={() => { setDockModes(false); setSceneMode(m.id); }} title={m.hint}
-                                  data-cf={'mode-' + m.id} style={sceneMode === m.id ? { color: 'var(--text)', background: 'var(--raised)' } : null}>
-                            {m.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </nav>
               <div className="cf-dock-grp">
                 <button onClick={() => setShowSearch(true)} title="Поиск по всему проекту (⌘K)" aria-label="Поиск" className="cf-dock-btn">
@@ -21887,7 +21906,7 @@
                         скопированные настройки — во всю ширину: в сжатом по
                         содержимому контейнере текст в две строки получал
                         колонку в сто точек (замер на 390). */
-                     style={{ bottom: `calc(${toast ? 76 : isPhone ? 12 : 24}px + var(--sab)${isPhone && !fullScout ? ' + var(--tabbar-h)' + (currentView === 'notion' && phoneSceneOpen ? ' + var(--tap) + 1px' : '') : ''})`,
+                     style={{ bottom: `calc(${toast ? 76 : isPhone ? 12 : 24}px + var(--sab)${isPhone && !fullScout ? ' + var(--tabbar-h)' + (currentView === 'notion' && phoneSceneOpen && sceneMode !== 'shoot' ? ' + var(--tap) + 1px' : '') : ''})`,
                               maxWidth: 'calc(100vw - 32px)', width: undoBin.kind === 'settings' ? 'min(calc(100vw - 32px), 600px)' : undefined }}>
                   {/* Скопированные настройки перечисляются целиком, в две строки
                       на узком экране: что поехало, человек должен видеть. */}
@@ -22047,7 +22066,23 @@
                       придумывают, на выезде смотрят место, в смену снимают,
                       на показе показывают. Материал во всех четырёх один
                       и тот же — меняется только то, что вынесено вперёд. */}
-                  <div className={`h-full w-full relative ${currentView === 'notion' ? 'flex' : 'hidden'}`}>
+                  <div className={`h-full w-full relative ${currentView === 'notion' ? 'flex flex-col' : 'hidden'}`}>
+                    {/* РЕЖИМЫ ЭКРАНА СЦЕНЫ — над самим материалом, а не в полосе
+                        у края: они меняют то, что под ними, и искать их надо
+                        там, куда смотришь. В полосе была кнопка «Сцена»
+                        (обрезанное «Сценарий») внизу экрана — жалоба
+                        «не интуитивно». На телефоне режимы в своей шапке. */}
+                    {dockOn && (
+                      <div className="cf-modebar" data-cf="modebar">
+                        <div className="cf-seg cf-modeseg" role="tablist" aria-label="Режим экрана сцены">
+                          {SCENE_MODES.map(m => (
+                            <button key={m.id} role="tab" aria-selected={sceneMode === m.id} onClick={() => setSceneMode(m.id)} title={m.hint}
+                                    data-cf={'mode-' + m.id} className={sceneMode === m.id ? 'on' : ''}>{m.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 min-h-0 w-full relative flex">
                     {(() => {
                       const s = scenes.find(sc => sc.id === activeSceneId) || sortedScenes[0] || null;
                       const lookbook = sceneMode === 'present';
@@ -22225,72 +22260,27 @@
                         }
 
                         // --- РЕЖИМ «СЪЁМКА» НА ТЕЛЕФОНЕ ---
-                        // Главный экран площадки. Текущий кадр развёрнут
-                        // и с большой кнопкой на всю ширину; снятое гаснет
-                        // и зачёркивается; очередь приглушена. Смотреть
-                        // на это будут между дублями, одним взглядом.
+                        // Тот же лист смены, что на планшете (ShootSheet):
+                        // кадры всех сцен дня подряд. Свой у телефона только
+                        // низ: «✓ Снят — дальше» во всю ширину над таб-баром,
+                        // под большим пальцем, — полосы у края тут нет.
+                        // Прежний экран показывал одну сцену и вылезал за
+                        // правый край на 390 точках.
                         if (sceneMode === 'shoot') {
-                          const doneCount = frames.filter(f => f.shot).length;
-                          const current = frames.find(f => !f.shot);
+                          const shDate = s.date ? new Date(s.date + 'T12:00') : null;
+                          const shLocs = Array.from(new Set(shiftScenes.flatMap(x => locations.filter(l => (l.sceneIds || []).includes(x.id)).map(l => l.name)).filter(Boolean)));
+                          const shSun = (() => {
+                            if (!locCoords || !s.date) return '';
+                            const t = sunTimes(locCoords.lat, locCoords.lon, s.date);
+                            return t && t.sun && t.sun.set ? 'свет до ' + hhmm(t.sun.set) : '';
+                          })();
                           return (
-                            <main data-cf="phone-scene-main" className="flex-1 min-w-0 overflow-y-auto" style={{ padding: '0 16px 20px' }}>
-                              <div className="flex items-baseline gap-2.5 flex-wrap pb-1">
-                                <span style={{ fontSize: 'var(--fs-5)', fontWeight: 700, letterSpacing: '-.02em' }}>Съёмка</span>
-                                <span className="cf-meta">СЦ {s.number}{s.date ? ' · ' + formatDateDisplay(s.date) : ''}</span>
-                                {locCoords && s.date && (() => {
-                                  const t = sunTimes(locCoords.lat, locCoords.lon, s.date);
-                                  if (!t || t.sun.polar || !t.sun.set) return null;
-                                  return <span className="ml-auto" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', color: 'var(--warn)' }}>свет до {hhmm(t.sun.set)}</span>;
-                                })()}
-                              </div>
-                              <div className="cf-meta pb-2">снято {doneCount} из {frames.length}</div>
-                              <div className="grid gap-2">
-                                {frames.length === 0 && (
-                                  <p style={{ fontSize: 'var(--fs-3)', color: 'var(--muted-2)', lineHeight: 1.7 }}>
-                                    В сцене нет кадров. Заведите их в режиме «Творч» — здесь они станут чек-листом смены.
-                                  </p>
-                                )}
-                                {frames.map(f => {
-                                  const isCurrent = current && f.id === current.id;
-                                  if (isCurrent) return (
-                                    <div key={f.id} style={{ ...cardBox, padding: 12, borderLeft: '3px solid var(--accent)' }}>
-                                      <div className="flex gap-2 items-baseline flex-wrap">
-                                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-3)', fontWeight: 600, color: 'var(--text)' }}>{f.frameNum} · сейчас</span>
-                                        {f.lens && <span className="cf-meta">{f.lens}</span>}
-                                      </div>
-                                      <div style={{ fontSize: 'var(--fs-4)', color: 'var(--text)', marginTop: 5, lineHeight: 1.4 }}>{f.description || 'без описания'}</div>
-                                      {gearLine(s.lightGear, lightGearTypes) && (
-                                        <div style={{ fontSize: 'var(--fs-2)', color: 'var(--muted)', marginTop: 4 }}>свет: {gearLine(s.lightGear, lightGearTypes)}</div>
-                                      )}
-                                      {/* Кнопка во всю ширину: на площадке
-                                          в перчатке целятся плохо, а промах
-                                          по «снято» стоит дубля. */}
-                                      <button onClick={() => patchFrame(f.id, { shot: true })}
-                                              className="cf-edit-only w-full rounded-lg mt-2.5"
-                                              style={{ minHeight: 46, background: 'var(--accent)', color: 'var(--bg)', fontSize: 'var(--fs-3)', fontWeight: 700 }}>
-                                        Снят ✓
-                                      </button>
-                                    </div>
-                                  );
-                                  return (
-                                    <div key={f.id} className="flex items-center gap-2.5"
-                                         style={{ ...cardBox, padding: 10, opacity: f.shot ? 1 : .8,
-                                                  borderLeft: `3px solid ${f.shot ? 'var(--ok)' : 'var(--border)'}` }}>
-                                      <div className="shrink-0" style={{ width: 110, opacity: f.shot ? .5 : 1 }}>{frameThumb(f)}</div>
-                                      <div className="flex-1 min-w-0">
-                                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2)', fontWeight: 600, color: f.shot ? 'var(--ok)' : 'var(--text-2)' }}>{f.frameNum}{f.shot ? ' ✓' : ''}</div>
-                                        <div className="truncate" style={{ fontSize: 'var(--fs-2)', marginTop: 2, color: f.shot ? 'var(--muted-2)' : 'var(--muted)', textDecoration: f.shot ? 'line-through' : 'none' }}>{f.description || 'без описания'}</div>
-                                      </div>
-                                      {f.shot && (
-                                        <button onClick={() => patchFrame(f.id, { shot: false })} title="Снять отметку"
-                                                className="cf-edit-only shrink-0 flex items-center justify-center"
-                                                style={{ width: 44, height: 44, borderRadius: 'var(--r-lg)', background: 'var(--ok)', color: 'var(--bg)', fontSize: 'var(--fs-5)', fontWeight: 700 }}>✓</button>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </main>
+                            <ShootSheet phone key={'shift-' + (s.date || s.id)} scenes={shiftScenes} frames={shiftFrames} ratio={SHOT_RATIO}
+                                        readOnly={READ_ONLY} jump={shootJump} tripod={false} side="left"
+                                        onShot={setShot} onMarkNext={shootMarkNext} onUndo={shootUndo}
+                                        onOpenScene={(id) => { setActiveSceneId(id); setSceneMode('creative'); setPhoneSceneOpen(true); }}
+                                        headLine={[shDate ? shDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : 'без даты', ...shLocs].join(' · ')}
+                                        sunNote={shSun} />
                           );
                         }
 
@@ -22439,6 +22429,28 @@
                               </button>
                             </div>
 
+                            {/* ЗАМЫСЕЛ — как на планшете: заметка про творчество,
+                                пустая зовёт написать. Это поле `content`; плитки
+                                «Экспликация» больше нет — то же поле в шторке
+                                было бы второй дверью к нему. ИИ — ссылкой тут же. */}
+                            <div className="cf-note cf-intent" data-cf="scene-intent" style={{ borderLeftColor: 'var(--accent)', marginTop: 18, marginBottom: 0 }}>
+                              <span className="flex items-center gap-2">
+                                <span className="cf-intent-k" style={{ marginBottom: 0 }}>Замысел</span>
+                                {(s.content || '').trim() && (
+                                  <button onClick={() => enhanceSceneWithAI(s.id, s.content, s.title, s.script)} disabled={isAILoading}
+                                          className="cf-edit-only ml-auto" style={{ fontSize: 'var(--fs-1)', color: 'var(--muted)', minHeight: 32 }}>
+                                    {isAILoading ? 'думаю…' : 'расширить с ИИ'}
+                                  </button>
+                                )}
+                              </span>
+                              <textarea rows={1} value={s.content || ''} readOnly={READ_ONLY}
+                                        onChange={(e) => updateScene(s.id, 'content', e.target.value)}
+                                        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; } }}
+                                        onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }}
+                                        placeholder="Что эта сцена должна сделать со зрителем? Свет, движение камеры, ритм — пара фраз."
+                                        className="w-full bg-transparent border-none focus:outline-none resize-none block"
+                                        style={{ fontSize: 'var(--fs-4)', lineHeight: 1.55, color: 'var(--text)', minHeight: 30, padding: 0, marginTop: 4 }} />
+                            </div>
                             {/* ЧЕТЫРЕ ПЛИТКИ вместо панели-вкладок: каждая
                                 открывает шторку снизу. Панель сбоку на
                                 телефоне съела бы весь экран. */}
@@ -22455,14 +22467,7 @@
                                 <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Place /></span>
                                 <span className="truncate">{loc ? loc.name : 'Объект'}</span>
                               </button>
-                              <button onClick={() => setPhoneSheet('expl')} className="cf-tile">
-                                <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Pen /></span>
-                                Экспликация
-                              </button>
-                              {/* Пятая плитка — заметки сцены, во всю ширину:
-                                  четыре стоят парами, и пятая в полклетки
-                                  оставила бы рядом пустую. */}
-                              <button onClick={() => setPhoneSheet('notes')} className="cf-tile" data-cf="tile-notes" style={{ gridColumn: '1 / -1' }}>
+                              <button onClick={() => setPhoneSheet('notes')} className="cf-tile" data-cf="tile-notes">
                                 <span style={{ display: 'flex', color: 'var(--muted)' }}><Icons.Sticky /></span>
                                 Заметки{sceneNotes.length ? ` · ${sceneNotes.length}` : ''}
                               </button>
@@ -23221,6 +23226,7 @@
                         </React.Fragment>
                       );
                     })()}
+                    </div>
                   </div>
 
                   {/* ГАЛЕРЕЯ РЕФЕРЕНСОВ */}
@@ -26428,7 +26434,7 @@
                   поиска), идём по всем. У края стрелка гаснет, а не исчезает:
                   полоса не должна прыгать. Это чтение — у гостя по ссылке
                   полоса есть. */}
-              {isPhone && !fullScout && currentView === 'notion' && phoneSceneOpen && (() => {
+              {isPhone && !fullScout && currentView === 'notion' && phoneSceneOpen && sceneMode !== 'shoot' && (() => {
                 const cur = scenes.find(x => x.id === activeSceneId);
                 if (!cur) return null;
                 const shown = sortedScenes.filter(phoneKeep);
