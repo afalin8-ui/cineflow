@@ -4541,6 +4541,13 @@ front matter (плагин jekyll-optional-front-matter), — и две фигу
 (https://afalin8-ui.github.io/cineflow/game/). Все заметки по игре —
 в `game/CLAUDE.md`: работая с игрой, читай его, а не этот файл.
 
+## Капелла — новая RTS на Godot (папка capella/)
+
+Космический бой против компьютера, Godot 4.5, сборка под Windows. Начата
+04.11.2026 с нуля, к игре в `game/` отношения не имеет. Спецификация —
+`capella/PLAN.md`, заметки для работы — `capella/CLAUDE.md`. Exe собирает
+GitHub Actions (`.github/workflows/capella.yml`) и выкладывает в Releases.
+
 ## Бросить и вставить картинку (вкладка «Объекты»)
 - Путей загрузки ТРИ, и все ведут в один `handleMultiFileUpload`: кнопка
   выбора файла (как было), бросок на лист объекта и вставка из буфера.

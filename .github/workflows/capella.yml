@@ -1,0 +1,67 @@
+# Сборка игры «Капелла» под Windows: на каждый пуш в capella/ выкладывает exe в Releases.
+name: Капелла — сборка exe
+
+on:
+  push:
+    branches: [capella, master]
+    paths: ["capella/**", ".github/workflows/capella.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GODOT: "4.5.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Godot и шаблоны (из кэша)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT }}
+
+      - name: Скачать Godot
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot ~/.local/share/godot/export_templates
+          cd ~/godot
+          curl -sSL -o g.zip https://github.com/godotengine/godot/releases/download/${GODOT}-stable/Godot_v${GODOT}-stable_linux.x86_64.zip
+          unzip -q g.zip && rm g.zip
+          curl -sSL -o t.tpz https://github.com/godotengine/godot/releases/download/${GODOT}-stable/Godot_v${GODOT}-stable_export_templates.tpz
+          unzip -q t.tpz && rm t.tpz
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT}.stable
+          mv templates/windows_release_x86_64.exe templates/version.txt ~/.local/share/godot/export_templates/${GODOT}.stable/
+          rm -rf templates
+
+      - name: Собрать Capella.exe
+        run: |
+          G=~/godot/Godot_v${GODOT}-stable_linux.x86_64
+          cd capella
+          $G --headless --path . --import || true
+          mkdir -p ../build
+          $G --headless --path . --export-release "Windows Desktop" ../build/Capella.exe
+          ls -la ../build
+          test -s ../build/Capella.exe
+
+      - name: Упаковать
+        run: |
+          cd build
+          cp ../capella/BUILD_NOTES.md "Что нового.md"
+          zip -9 Capella-win64.zip Capella.exe "Что нового.md"
+
+      - name: Выложить в Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: capella-build-${{ github.run_number }}
+          name: "Капелла — сборка ${{ github.run_number }}"
+          body_path: capella/BUILD_NOTES.md
+          files: build/Capella-win64.zip
+          target_commitish: ${{ github.sha }}
+          prerelease: true
