@@ -151,7 +151,9 @@ const NOTE = [
     };
   }, pm());
   ok('заметка открыта живым редактором и свёрстана, знаков не видно', view && !view.ta && !view.raw, JSON.stringify(view && { ta: view.ta, raw: view.raw }));
-  ok('в покое кнопок нет', view && !view.bar);
+  ok('полоса кнопок видна сразу, «Готово» — только во время правки', view && view.bar && !(await page.evaluate(() => !!document.querySelector('[data-cf="note-done"]'))));
+  const tb = await page.evaluate(() => { const b = document.querySelector('[data-cf="note-bar"]'); const r = b.getBoundingClientRect(); const kids = [...b.querySelectorAll('button')]; return { inside: kids.every(k => { const q = k.getBoundingClientRect(); return q.right <= r.right + 1 && q.left >= r.left - 1; }), style: (document.querySelector('[data-cf="note-style"]') || {}).textContent }; });
+  ok('все кнопки полосы в её рамке (ничего не уехало вбок), вид строки подписан словами', tb.inside && /Обычный текст/.test(tb.style || ''), JSON.stringify(tb));
   ok('заголовок крупнее текста, «мелкий» мельче', view && view.h === '1й бой' && view.hfs > view.pfs && view.sfs < view.pfs, view && `${view.hfs}/${view.pfs}/${view.sfs}`);
   ok('галочки: две, одна отмечена', view && view.boxes === 2 && view.done === 1);
   ok('ссылка на сцену — ЖИВЫМ именем', view && view.refs[0] === '#2 · ИНТ. КУХНЯ — ВЕЧЕР', view && view.refs.join('|'));
@@ -164,14 +166,26 @@ const NOTE = [
 
   // Нажатие по абзацу — курсор в нём и кнопки.
   await press(page, () => [...document.querySelectorAll('[data-cf="note-live"] p')].find(p => /Последний/.test(p.textContent)), 'последний абзац');
-  const caret = await page.evaluate(() => { const s = getSelection(); const n = s.anchorNode; return { inP: !!n && /Последний/.test((n.nodeType === 3 ? n.parentElement : n).closest('p')?.textContent || ''), bar: !!document.querySelector('[data-cf="note-bar"]') }; });
-  ok('нажатие по абзацу ставит курсор в него и показывает кнопки', caret.inP && caret.bar, JSON.stringify(caret));
+  const caret = await page.evaluate(() => { const s = getSelection(); const n = s.anchorNode; return { inP: !!n && /Последний/.test((n.nodeType === 3 ? n.parentElement : n).closest('p')?.textContent || ''), done: !!document.querySelector('[data-cf="note-done"]') }; });
+  ok('нажатие по абзацу ставит курсор в него, появляется «Готово»', caret.inP && caret.done, JSON.stringify(caret));
   const btn = (k) => new Function(`return document.querySelector('[data-cf="note-bar"] [data-tool="${k}"]')`);
-  const step = async (k, re, name) => { await press(page, btn(k), name); await flush(page); const c = await content(page); ok(name, re.test(c), JSON.stringify(c.slice(-45))); };
+  // Вид строки — в выпадающем списке «Обычный текст ▾», списки и галочки — значками.
+  const STYLE = ['p', 'h1', 'h2', 'h3', 's', 'q'];
+  const step = async (k, re, name) => {
+    if (STYLE.includes(k)) {
+      await press(page, () => document.querySelector('[data-cf="note-style"]'), name + ' (открыть список)');
+      await press(page, new Function(`return document.querySelector('[data-cf="note-style-menu"] [data-tool="${k}"]')`), name);
+    } else await press(page, btn(k), name);
+    await flush(page); const c = await content(page); ok(name, re.test(c), JSON.stringify(c.slice(-45)));
+  };
+  const mk2 = await page.evaluate(async () => { document.querySelector('[data-cf="note-style"]').dispatchEvent(new MouseEvent('click', { bubbles: true })); await new Promise(r => setTimeout(r, 100)); const m = document.querySelector('[data-cf="note-style-menu"]'); const t = m ? m.innerText : ''; document.querySelector('[data-cf="note-style"]').dispatchEvent(new MouseEvent('click', { bubbles: true })); return t; });
+  ok('в списке видов подписаны знаки # ## ###', /Заголовок\s*#\s/.test(mk2) && /##/.test(mk2) && /###/.test(mk2), JSON.stringify(mk2));
   await step('h1', /\n# Последний абзац \*\*жирно\*\*\.$/, '«Заголовок» — строка стала заголовком, в тексте «# »');
   const isH = await page.evaluate(() => [...document.querySelectorAll('[data-cf="note-live"] h1')].some(h => /Последний/.test(h.textContent)));
   ok('и на экране это заголовок, без знаков', isH);
-  await step('h1', /\nПоследний абзац \*\*жирно\*\*\.$/, 'повторное нажатие снимает заголовок');
+  await step('h1', /\nПоследний абзац \*\*жирно\*\*\.$/, 'повторный выбор снимает заголовок');
+  await step('h3', /\n### Последний абзац/, '«Заголовок 3» — «### »');
+  await step('p', /\nПоследний абзац \*\*жирно\*\*\.$/, '«Обычный текст» возвращает строку');
   await step('s', /\n-# Последний абзац/, '«мелкий» — в тексте «-# »');
   await step('cl', /\n\[ \] Последний абзац/, '«Галочки» — в тексте «[ ] »');
   await step('p', /\nПоследний абзац \*\*жирно\*\*\.$/, '«Текст» снимает список');
@@ -181,6 +195,7 @@ const NOTE = [
   // Знаки при наборе становятся оформлением.
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
+  await page.keyboard.type('### Мелкий раздел'); await page.keyboard.press('Enter');
   await page.keyboard.type('# Новый раздел'); await page.keyboard.press('Enter');
   await page.keyboard.type('- раз'); await page.keyboard.press('Enter'); await page.keyboard.type('два');
   await page.keyboard.press('Enter'); await page.keyboard.press('Enter');
@@ -189,8 +204,8 @@ const NOTE = [
   await page.keyboard.type('Объект: ');
   await flush(page);
   let c = await content(page);
-  ok('«# », «- », «[ ] » при наборе становятся заголовком, списком, галочкой', /\n# Новый раздел\n\n- раз\n- два\n\n\[ \] проверить\n\nИНТ КУХНЯ/.test(c), JSON.stringify(c.slice(-80)));
-  const shown = await page.evaluate(() => { const v = document.querySelector('[data-cf="note-live"]'); return { h: [...v.querySelectorAll('h1')].some(h => h.textContent === 'Новый раздел'), li: [...v.querySelectorAll('ul:not([data-type]) li')].map(l => l.textContent).join(','), raw: /^# |^- раз/m.test(v.innerText) }; });
+  ok('«# », «- », «[ ] » при наборе становятся заголовком, списком, галочкой', /\n### Мелкий раздел\n\n# Новый раздел\n\n- раз\n- два\n\n\[ \] проверить\n\nИНТ КУХНЯ/.test(c), JSON.stringify(c.slice(-80)));
+  const shown = await page.evaluate(() => { const v = document.querySelector('[data-cf="note-live"]'); return { h: [...v.querySelectorAll('h1')].some(h => h.textContent === 'Новый раздел') && [...v.querySelectorAll('h3')].some(h => h.textContent === 'Мелкий раздел'), li: [...v.querySelectorAll('ul:not([data-type]) li')].map(l => l.textContent).join(','), raw: /^# |^- раз/m.test(v.innerText) }; });
   ok('и на экране — без знаков', shown.h && shown.li === 'раз,два' && !shown.raw, JSON.stringify(shown));
 
   // Ссылка кнопкой.
@@ -213,7 +228,7 @@ const NOTE = [
   // По СЕРЕДИНЕ ссылки: у самого её начала курсор стоит ещё перед ней.
   const lc = await page.evaluate(() => { const a = document.querySelector('[data-cf="note-live"] a[href="cf:loc/loc-1"]'); a.scrollIntoView({ block: 'center' }); const r = a.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.click(lc.x, lc.y); await page.waitForTimeout(300);
-  const lo = await page.evaluate(() => { const b = document.querySelector('[data-cf="note-link-open"]'); return { b: !!b, t: b && b.textContent, still: !!document.querySelector('[data-cf="note-bar"]') }; });
+  const lo = await page.evaluate(() => { const b = document.querySelector('[data-cf="note-link-open"]'); return { b: !!b, t: b && b.textContent, still: !!document.querySelector('[data-cf="note-done"]') }; });
   ok('нажатие по ссылке во время правки не уводит, а показывает «→ имя»', lo.b && /Квартира на Горской/.test(lo.t) && lo.still, JSON.stringify(lo));
 
   // «Ж» по выделенному слову (двойной щелчок выделяет слово).
@@ -225,7 +240,7 @@ const NOTE = [
   ok('«Ж» делает выделенное жирным', (await content(page)).startsWith('**Кадры** посчитаны'), (await content(page)).slice(0, 22));
 
   await press(page, () => document.querySelector('[data-cf="note-done"]'), '«Готово»');
-  ok('«Готово» убирает кнопки', await page.evaluate(() => !document.querySelector('[data-cf="note-bar"]')));
+  ok('«Готово» выходит из правки', await page.evaluate(() => !document.querySelector('[data-cf="note-done"]') && !document.activeElement.closest('[data-cf="note-live"]')));
   const rec = await page.evaluate(() => JSON.parse(localStorage.getItem('cf_docs')).find(d => d.id === 'doc-1'));
   ok('у заметки из живого редактора стоит метка md', rec && rec.md === 1);
 
@@ -248,6 +263,12 @@ const NOTE = [
   ok('старый гайд открывается свёрстанным как был', old && old.h === 'СВЕТ НА ИНТЕРЬЕРАХ' && old.li === 2, JSON.stringify(old));
   await flush(page);
   ok('и его текст не тронут', (await content(page, 'doc-2')) === OLD);
+  const crewNote = await page.evaluate(() => /Состав съёмочной группы/.test(document.querySelector('[data-cf="note"]').closest('.flex-1').innerText));
+  await press(page, () => document.querySelector('[data-cf="crew-open"]'), '«Состав группы» в списке');
+  const crewPanel = await page.evaluate(() => { const p = document.querySelector('[data-cf="crew-panel"]'); return { p: !!p, note: !!document.querySelector('[data-cf="note"]'), add: !!(p && /Добавить участника/.test(p.innerText)) }; });
+  ok('состав группы — свой пункт в списке, а не таблица под каждой заметкой', !crewNote && crewPanel.p && !crewPanel.note && crewPanel.add, JSON.stringify({ crewNote, ...crewPanel }));
+  await press(page, () => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Старый гайд'), 'снова старый гайд');
+  await page.waitForTimeout(300);
   ok('короткая заметка не срезана и без «развернуть»', await page.evaluate(() => !document.querySelector('[data-cf="note-view"]').classList.contains('cf-md-clip') && !document.querySelector('[data-cf="note-open"]')));
   await press(page, () => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Длинная'), 'длинная заметка в списке');
   await page.waitForTimeout(400);
@@ -330,7 +351,7 @@ const NOTE = [
       const r = bar && bar.getBoundingClientRect(), d = done && done.getBoundingClientRect();
       const hit = d && document.elementFromPoint(d.left + d.width / 2, d.top + d.height / 2);
       return { bar: !!bar, inScreen: !!r && r.right <= 391 && r.left >= -1, done: !!hit && (hit === done || done.contains(hit)), ta: document.activeElement && !!document.activeElement.closest('[data-cf="note-live"]'),
-               tool: (() => { const h = document.querySelector('[data-cf="note-bar"] [data-tool="h1"]'); if (!h) return 0; return Math.round(h.getBoundingClientRect().height); })() };
+               tool: (() => { const h = document.querySelector('[data-cf="note-style"]'); if (!h) return 0; return Math.round(h.getBoundingClientRect().height); })() };
     });
     ok('телефон: касание ставит курсор в текст, кнопки в экране, «Готово» нажимается', ph2.ta && ph2.bar && ph2.inScreen && ph2.done && ph2.tool >= 36, JSON.stringify(ph2));
     if (t.errs.length) ok('без ошибок в консоли (телефон)', false, t.errs.join(' | '));
