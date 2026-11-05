@@ -23919,109 +23919,13 @@
                                      placeholder="Название объекта"
                                      className="bg-transparent focus:outline-none min-w-0"
                                      style={{ fontSize: isPhone ? 'var(--fs-5x)' : 'var(--fs-6)', fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)', flex: isPhone ? '1 1 100%' : '1 1 240px' }} />
-                              {photos.length > 0 && <span className="cf-chip shrink-0">{photos.length} фото</span>}
+                              {/* Фото теперь ниже справки — метка ведёт к ним одним касанием */}
+                              {photos.length > 0 && <button className="cf-chip shrink-0" data-cf="loc-photos-jump"
+                                     onClick={() => { const h = document.querySelector('[data-cf="loc-photos-head"]'); if (h) h.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>{photos.length} фото ↓</button>}
                               {linkedScenes.length > 0 && <span className="cf-chip shrink-0">{linkedScenes.length} сц</span>}
                             </div>
 
-                            {/* ФОТО ТОЧЕК СЪЁМКИ — ПЕРВЫМ БЛОКОМ.
-                                Место узнают по фотографии, а не по адресу.
-                                Раньше они лежали в самом низу, под четырьмя
-                                формами, и до них надо было доскроллить. */}
-                            {/* ФОТО ОБЪЕКТА — СЕТКОЙ В РОДНЫХ ПРОПОРЦИЯХ, без прокрутки
-                                вбок и без поля поверх каждого кадра. Подпись в покое —
-                                текст под кадром, поле по касанию. */}
-                            <div className="flex items-center gap-2.5 flex-wrap" style={{ marginBottom: 7 }}>
-                              <span style={eyebrow}>Фотографии · {photos.length}</span>
-                            </div>
-                            <div className="cf-locgrid" data-cf="loc-grid">
-                              {photos.map(r => (
-                                <figure key={r.id} className="relative group cf-locph">
-                                  <div className="relative cursor-pointer" style={{ borderRadius: 'var(--r-md)', overflow: 'hidden' }}
-                                       onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
-                                    <img src={r.url} style={{ width: '100%', display: 'block' }} {...refDrag(r)} data-cf="loc-photo" loading="lazy" />
-                                    {videoBadge(r, { left: 6, top: 6 })}
-                                    {/* Отвязываем от объекта, а НЕ удаляем из проекта — правило всего приложения */}
-                                    <button onClick={(e) => { e.stopPropagation(); setRefLocation(r.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
-                                            title="Убрать из объекта — фото останется в галерее"
-                                            className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
-                                            style={{ top: 6, right: 6, width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: 999, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
-                                  </div>
-                                  {locCapEdit === r.id && !READ_ONLY ? (
-                                    <input type="text" autoFocus value={r.label || ''} data-cf="loc-cap-input"
-                                           onChange={(e) => { const up = references.map(x => x.id === r.id ? { ...x, label: e.target.value } : x); setReferences(up); syncDoc('references', r.id, up.find(x => x.id === r.id)); }}
-                                           onBlur={() => setTimeout(() => setLocCapEdit(v => v === r.id ? null : v), 200)}
-                                           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
-                                           placeholder="точка А · с обрыва" className="cf-locph-cap w-full focus:outline-none" style={{ background: 'var(--card)', borderRadius: 6, padding: '4px 6px' }} />
-                                  ) : (
-                                    <figcaption className="cf-locph-cap" data-cf="loc-cap" onClick={() => { if (!READ_ONLY) setLocCapEdit(r.id); }}>
-                                      {refCaption(r) || (READ_ONLY ? '' : <span style={{ color: 'var(--muted-2)' }}>подпись</span>)}
-                                    </figcaption>
-                                  )}
-                                </figure>
-                              ))}
-                              {/* Откуда взять фото: камера · фотоплёнка · файлы. Вставка
-                                  из буфера — для планшета, где Ctrl+V нет. */}
-                              <div className="cf-locph cf-edit-only flex gap-2.5">
-                                <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
-                                       hint="камера · плёнка · файлы"
-                                       className="flex-1 flex flex-col items-center justify-center gap-1.5"
-                                       style={{ height: 120, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', boxSizing: 'border-box' }}>
-                                  <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>+</span>
-                                  <span style={{ fontSize: 'var(--fs-2)' }}>фото со скаутинга</span>
-                                </PhotoSourcePicker>
-                                <button onClick={() => pasteFromClipboard({ locationId: l.id })} title="Вставить картинку из буфера обмена"
-                                        className="flex flex-col items-center justify-center gap-1.5"
-                                        style={{ width: 96, height: 120, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', boxSizing: 'border-box' }}>
-                                  <Icons.Paste /> вставить
-                                </button>
-                              </div>
-                            </div>
-
                             <div className="grid gap-3.5 mt-3.5 items-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))' }}>
-                              {/* СОЛНЦЕ СЛОВАМИ, А НЕ ТАБЛИЦЕЙ. Компас отвечает
-                                  «откуда светит», дуга — «сколько осталось»,
-                                  строчка внизу переводит это на язык площадки. */}
-                              <div style={{ ...cardBox, padding: '14px 16px' }}>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span style={eyebrow}>Солнце · {shiftDate ? formatDateDisplay(shiftDate) : 'сегодня'}</span>
-                                  {!shiftDate && c && <span className="ml-auto cf-meta">у сцен нет смены</span>}
-                                </div>
-                                {!c ? (
-                                  <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 10, lineHeight: 1.6 }}>
-                                    Впишите координаты в карточке справа — и здесь появится компас и раскладка дня по свету: сумерки, восход, золотой час, закат.
-                                  </p>
-                                ) : (() => {
-                                  const now = new Date();
-                                  const p = sunPosition(c.lat, c.lon, now);
-                                  const day = shiftDate || localDay(now);
-                                  const t = sunTimes(c.lat, c.lon, day);
-                                  const rad = p.az * Math.PI / 180;
-                                  const R = 40;
-                                  const sx = 60 + R * Math.sin(rad), sy = 60 - R * Math.cos(rad);
-                                  return (
-                                    <React.Fragment>
-                                      <div className="flex gap-3.5 items-center mt-2.5">
-                                        <svg width="96" height="96" viewBox="0 0 120 120" className="shrink-0">
-                                          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
-                                          <text x="60" y="16" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)">С</text>
-                                          <text x="60" y="112" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">Ю</text>
-                                          <text x="10" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">З</text>
-                                          <text x="110" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">В</text>
-                                          {p.alt > 0 && <path d={`M60 60 L${sx.toFixed(1)} ${sy.toFixed(1)}`} stroke="var(--warn)" strokeWidth="2" />}
-                                          {p.alt > 0 && <circle cx={sx.toFixed(1)} cy={sy.toFixed(1)} r="5" fill="var(--warn)" />}
-                                          <circle cx="60" cy="60" r="3" fill="var(--accent)" />
-                                        </svg>
-                                        <div className="flex-1 min-w-0">
-                                          <div className="cf-meta">сейчас · {hhmm(now)}</div>
-                                          <div style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', marginTop: 2, lineHeight: 1.55 }}>{sunWords(p)}</div>
-                                        </div>
-                                      </div>
-                                      <SunDay t={t} date={day} now={now} />
-                                    </React.Fragment>
-                                  );
-                                })()}
-                              </div>
-
                               {/* КАРТА И ПОДЪЕЗД. Здесь же адрес и координаты:
                                   они нужны ровно двум вещам — открыть точку
                                   на карте и посчитать солнце. */}
@@ -24099,6 +24003,50 @@
                                   </div>
                                 )}
                               </div>
+                              {/* СОЛНЦЕ СЛОВАМИ, А НЕ ТАБЛИЦЕЙ. Компас отвечает
+                                  «откуда светит», дуга — «сколько осталось»,
+                                  строчка внизу переводит это на язык площадки. */}
+                              <div style={{ ...cardBox, padding: '14px 16px' }}>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span style={eyebrow}>Солнце · {shiftDate ? formatDateDisplay(shiftDate) : 'сегодня'}</span>
+                                  {!shiftDate && c && <span className="ml-auto cf-meta">у сцен нет смены</span>}
+                                </div>
+                                {!c ? (
+                                  <p style={{ fontSize: 'var(--fs-2)', color: 'var(--muted-2)', marginTop: 10, lineHeight: 1.6 }}>
+                                    Впишите координаты в карточке справа — и здесь появится компас и раскладка дня по свету: сумерки, восход, золотой час, закат.
+                                  </p>
+                                ) : (() => {
+                                  const now = new Date();
+                                  const p = sunPosition(c.lat, c.lon, now);
+                                  const day = shiftDate || localDay(now);
+                                  const t = sunTimes(c.lat, c.lon, day);
+                                  const rad = p.az * Math.PI / 180;
+                                  const R = 40;
+                                  const sx = 60 + R * Math.sin(rad), sy = 60 - R * Math.cos(rad);
+                                  return (
+                                    <React.Fragment>
+                                      <div className="flex gap-3.5 items-center mt-2.5">
+                                        <svg width="96" height="96" viewBox="0 0 120 120" className="shrink-0">
+                                          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="1" />
+                                          <text x="60" y="16" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted)">С</text>
+                                          <text x="60" y="112" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">Ю</text>
+                                          <text x="10" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">З</text>
+                                          <text x="110" y="63" textAnchor="middle" fontFamily="var(--font-mono)" fontSize="9" fill="var(--muted-2)">В</text>
+                                          {p.alt > 0 && <path d={`M60 60 L${sx.toFixed(1)} ${sy.toFixed(1)}`} stroke="var(--warn)" strokeWidth="2" />}
+                                          {p.alt > 0 && <circle cx={sx.toFixed(1)} cy={sy.toFixed(1)} r="5" fill="var(--warn)" />}
+                                          <circle cx="60" cy="60" r="3" fill="var(--accent)" />
+                                        </svg>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="cf-meta">сейчас · {hhmm(now)}</div>
+                                          <div style={{ fontSize: 'var(--fs-2)', color: 'var(--text-2)', marginTop: 2, lineHeight: 1.55 }}>{sunWords(p)}</div>
+                                        </div>
+                                      </div>
+                                      <SunDay t={t} date={day} now={now} />
+                                    </React.Fragment>
+                                  );
+                                })()}
+                              </div>
+
                             </div>
 
                             {/* СЦЕНЫ ОБЪЕКТА — КАРТОЧКАМИ С ПРЕВЬЮ, а не чипами.
@@ -24186,6 +24134,61 @@
                                         style={{ border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', minHeight: 80, color: 'var(--muted-2)', fontSize: 'var(--fs-2)' }}>+ заметка</button>
                               )}
                             </div>
+                            {/* ФОТО — ПОСЛЕ СПРАВКИ. Были первым блоком («место узнают
+                                по фотографии»), но сеткой в родных пропорциях они
+                                занимали весь экран, и до адреса, солнца и сцен
+                                приходилось листать. Жалоба: «нужно сначала
+                                информация об объекте, а потом фото». */}
+                            {/* ФОТО ОБЪЕКТА — СЕТКОЙ В РОДНЫХ ПРОПОРЦИЯХ, без прокрутки
+                                вбок и без поля поверх каждого кадра. Подпись в покое —
+                                текст под кадром, поле по касанию. */}
+                            <div className="flex items-center gap-2.5 flex-wrap" style={{ marginTop: 28, marginBottom: 7 }} data-cf="loc-photos-head">
+                              <span style={eyebrow}>Фотографии · {photos.length}</span>
+                            </div>
+                            <div className="cf-locgrid" data-cf="loc-grid">
+                              {photos.map(r => (
+                                <figure key={r.id} className="relative group cf-locph">
+                                  <div className="relative cursor-pointer" style={{ borderRadius: 'var(--r-md)', overflow: 'hidden' }}
+                                       onClick={() => setLightboxData({ scope: photos.map(p => p.id), scopeLabel: `Объект · ${l.name || 'без названия'}`, currentId: r.id })}>
+                                    <img src={r.url} style={{ width: '100%', display: 'block' }} {...refDrag(r)} data-cf="loc-photo" loading="lazy" />
+                                    {videoBadge(r, { left: 6, top: 6 })}
+                                    {/* Отвязываем от объекта, а НЕ удаляем из проекта — правило всего приложения */}
+                                    <button onClick={(e) => { e.stopPropagation(); setRefLocation(r.id, ''); showToast('Фото отвязано · осталось в галерее'); }}
+                                            title="Убрать из объекта — фото останется в галерее"
+                                            className="cf-edit-only absolute cf-act1 transition-all flex items-center justify-center"
+                                            style={{ top: 6, right: 6, width: 'var(--tap-sm)', height: 'var(--tap-sm)', borderRadius: 999, background: 'rgba(26,25,24,.8)', color: 'var(--muted)', fontSize: 'var(--fs-2)' }}>✕</button>
+                                  </div>
+                                  {locCapEdit === r.id && !READ_ONLY ? (
+                                    <input type="text" autoFocus value={r.label || ''} data-cf="loc-cap-input"
+                                           onChange={(e) => { const up = references.map(x => x.id === r.id ? { ...x, label: e.target.value } : x); setReferences(up); syncDoc('references', r.id, up.find(x => x.id === r.id)); }}
+                                           onBlur={() => setTimeout(() => setLocCapEdit(v => v === r.id ? null : v), 200)}
+                                           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
+                                           placeholder="точка А · с обрыва" className="cf-locph-cap w-full focus:outline-none" style={{ background: 'var(--card)', borderRadius: 6, padding: '4px 6px' }} />
+                                  ) : (
+                                    <figcaption className="cf-locph-cap" data-cf="loc-cap" onClick={() => { if (!READ_ONLY) setLocCapEdit(r.id); }}>
+                                      {refCaption(r) || (READ_ONLY ? '' : <span style={{ color: 'var(--muted-2)' }}>подпись</span>)}
+                                    </figcaption>
+                                  )}
+                                </figure>
+                              ))}
+                              {/* Откуда взять фото: камера · фотоплёнка · файлы. Вставка
+                                  из буфера — для планшета, где Ctrl+V нет. */}
+                              <div className="cf-locph cf-edit-only flex gap-2.5">
+                                <PhotoSourcePicker media onFiles={(fs) => handleMultiFileUpload(fs, null, null, l.id)}
+                                       hint="камера · плёнка · файлы"
+                                       className="flex-1 flex flex-col items-center justify-center gap-1.5"
+                                       style={{ height: 120, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', boxSizing: 'border-box' }}>
+                                  <span style={{ fontSize: 'var(--fs-5)', lineHeight: 1 }}>+</span>
+                                  <span style={{ fontSize: 'var(--fs-2)' }}>фото со скаутинга</span>
+                                </PhotoSourcePicker>
+                                <button onClick={() => pasteFromClipboard({ locationId: l.id })} title="Вставить картинку из буфера обмена"
+                                        className="flex flex-col items-center justify-center gap-1.5"
+                                        style={{ width: 96, height: 120, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)', color: 'var(--muted-2)', fontSize: 'var(--fs-2)', boxSizing: 'border-box' }}>
+                                  <Icons.Paste /> вставить
+                                </button>
+                              </div>
+                            </div>
+
                           </main>)}
                         </React.Fragment>
                       );
