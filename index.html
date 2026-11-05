@@ -647,6 +647,41 @@
         .cf-md-ref:hover { background: var(--border); }
         .cf-md-ref:disabled { color: var(--muted-2); text-decoration: line-through; cursor: default; }
         .cf-md-empty { color: var(--muted-2); }
+        /* Живой редактор: то же оформление, что у свёрстанного вида, но
+           внутри поля ProseMirror (свои теги вместо наших классов). Tailwind
+           снимает у заголовков и списков размеры и маркеры — задаём явно. */
+        .cf-live-pm { outline: none; min-height: 3em; }
+        .cf-live-pm > * + * { margin-top: .6em; }
+        .cf-live-pm h1, .cf-live-pm h2, .cf-live-pm h3 { color: var(--text); font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+        .cf-live-pm > h1:not(:first-child), .cf-live-pm > h2:not(:first-child), .cf-live-pm > h3:not(:first-child) { margin-top: 1.05em; }
+        .cf-live-pm h1 { font-size: var(--fs-5x); }
+        .cf-live-pm h2 { font-size: var(--fs-5); }
+        .cf-live-pm h3 { font-size: var(--fs-4); }
+        .cf-live-pm > .cf-md-s + * { margin-top: .15em; }
+        .cf-live-pm ul:not([data-type="taskList"]) { list-style: disc; padding-left: 1.3em; }
+        .cf-live-pm ol { list-style: decimal; padding-left: 1.5em; }
+        .cf-live-pm li > p { margin: 0; }
+        .cf-live-pm li + li { margin-top: .2em; }
+        .cf-live-pm blockquote { border-left: 2px solid var(--border); padding-left: 14px; color: var(--muted); }
+        .cf-live-pm hr { border: 0; border-top: 1px solid var(--border); margin: 1.1em 0; }
+        .cf-live-pm hr.ProseMirror-selectednode { border-top-color: var(--accent); }
+        .cf-live-pm a { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(204,122,95,.4); text-underline-offset: 3px; cursor: pointer; }
+        .cf-live-pm a[href^="cf:"] { text-decoration: none; background: var(--raised); border-radius: 6px; padding: 1px 6px; font-size: .92em; font-weight: 500; }
+        .cf-live-pm ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+        .cf-live-pm ul[data-type="taskList"] > li { display: flex; align-items: flex-start; gap: 10px; }
+        .cf-live-pm ul[data-type="taskList"] > li > div { flex: 1; min-width: 0; }
+        .cf-live-pm ul[data-type="taskList"] > li[data-checked="true"] > div { color: var(--muted-2); text-decoration: line-through; }
+        /* Галочка — та же, что в свёрстанном виде: квадрат 20, отмеченная
+           зелёная --ok. Цель крупнее квадрата: отмечают пальцем. */
+        .cf-live-pm ul[data-type="taskList"] > li > label { flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+                     width: var(--tap-sm); height: var(--tap-sm); margin: calc((1.55em - var(--tap-sm)) / 2) -6px 0 -6px; cursor: pointer; }
+        .cf-live-pm ul[data-type="taskList"] > li > label > input { appearance: none; -webkit-appearance: none; width: 20px; height: 20px; margin: 0;
+                     border: 1.5px solid var(--muted-2); border-radius: 6px; background: transparent; cursor: pointer; }
+        .cf-live-pm ul[data-type="taskList"] > li > label > input:checked { background: var(--ok) center / 14px no-repeat; border-color: var(--ok);
+                     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3 3 7-7' fill='none' stroke='%231a1918' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+        .cf-live-pm ul[data-type="taskList"] > li > label > span { display: none; }
+        .cf-live-pm p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; color: var(--muted-2); pointer-events: none; }
+        .cf-md-linkopen { color: var(--accent); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
         .cf-md-raw { font-size: var(--fs-3); line-height: 1.6; }
         /* Кнопки разметки — над полем и прилипают к верху при прокрутке:
            длинную заметку пишут, листая экран. Прокручивается только
@@ -655,7 +690,11 @@
            меню доски). */
         .cf-md-barwrap { position: sticky; top: -1px; z-index: 6; display: flex; align-items: center; gap: 6px;
                          background: var(--card); padding: 6px 0; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
-        .cf-md-bar { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
+        /* Кнопки за краем полосы — затухание справа: без него на узком
+           экране не видно, что полоса листается и кнопок больше. */
+        .cf-md-bar { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; padding-right: 18px;
+                     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+                     mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
         .cf-md-btn { flex-shrink: 0; min-height: var(--tap-sm); min-width: var(--tap-sm); padding: 0 10px; border-radius: var(--r-sm);
                      color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; transition: background .12s; }
         .cf-md-btn:hover { background: var(--raised); }
@@ -3395,7 +3434,11 @@
         // Блоки помнят номер СТРОКИ, с которой начались (`line`): нажатие
         // по блоку открывает поле с курсором ровно в этом месте, а галочка
         // переключается правкой одной строки.
-        const docBlocks = (text) => {
+        // `strict` — заметка написана живым редактором (поле `md` у записи):
+        // там заголовок ставят кнопкой, и прописную строку без точки
+        // заголовком НЕ считаем — иначе набранное «ИНТ КУХНЯ» после
+        // перезагрузки само стало бы заголовком.
+        const docBlocks = (text, strict) => {
           const out = [];
           let para = null;
           const flush = () => { if (para) { out.push(para); para = null; } };
@@ -3429,7 +3472,7 @@
               else out.push({ k: 'q', text: t, line: i, end: i });
               return;
             }
-            const head = docHead(line);
+            const head = strict ? null : docHead(line);
             if (head) { flush(); out.push({ k: 'h', lv: 2, text: head, line: i }); return; }
             const bullet = DOC_BULLET.test(line), num = DOC_NUM.test(line);
             if (bullet || num) {
@@ -6174,8 +6217,67 @@
         // кодом, исполненным у каждого, кто по ней нажмёт.
         const NOTE_SAFE_HREF = /^(https?:|mailto:|tel:)/i;
 
+        // Куда ведёт ссылка и как её назвать сейчас — одна функция на оба
+        // редактора и на выбор ссылки: имя всегда ЖИВОЕ.
+        const noteTarget = (links, cf) => {
+          if (!links || !cf) return null;
+          if (cf.kind === 'scene') { const s = (links.scenes || []).find(x => x.id === cf.id); return s && { label: `#${s.number}${s.title ? ' · ' + s.title : ''}` }; }
+          if (cf.kind === 'loc') { const l = (links.locations || []).find(x => x.id === cf.id); return l && { label: l.name || 'Объект без названия' }; }
+          if (cf.kind === 'doc') { const d = (links.docs || []).find(x => x.id === cf.id); return d && { label: d.title || 'Заметка без названия' }; }
+          return null;
+        };
+        // Выбор ссылки: сцены, объекты, другие заметки и адрес сайта.
+        // Свои набранные буквы живут здесь, а не в редакторе: поиск по
+        // каждому нажатию не должен перерисовывать заметку.
+        const NoteLinkPicker = ({ links, selfId, selLabel, onChoose, onClose }) => {
+          const [q0, setQ] = useState('');
+          const q = q0.trim().toLowerCase();
+          const rows = useMemo(() => {
+            const hit = (v) => !q || String(v || '').toLowerCase().indexOf(q.replace(/^#/, '')) >= 0;
+            const out = [];
+            (links && links.scenes || []).filter(s => hit(`${s.number} ${s.title}`)).slice(0, 8)
+              .forEach(s => out.push({ key: 's' + s.id, kind: 'Сцена', label: `#${s.number}${s.title ? ' · ' + s.title : ''}`, href: `cf:scene/${s.id}` }));
+            (links && links.locations || []).filter(l => hit(`${l.name} ${l.address}`)).slice(0, 6)
+              .forEach(l => out.push({ key: 'l' + l.id, kind: 'Объект', label: l.name || 'Объект без названия', href: `cf:loc/${l.id}` }));
+            (links && links.docs || []).filter(d => d.id !== selfId && hit(d.title)).slice(0, 6)
+              .forEach(d => out.push({ key: 'd' + d.id, kind: 'Заметка', label: d.title || 'Заметка без названия', href: `cf:doc/${d.id}` }));
+            return out;
+          }, [q, links, selfId]);
+          const web = (() => {
+            const t = q0.trim();
+            if (!t || /\s/.test(t)) return '';
+            if (NOTE_SAFE_HREF.test(t)) return t;
+            if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(t)) return 'https://' + t;
+            return '';
+          })();
+          return (
+            <div className="cf-md-pick" data-cf="note-pick" role="dialog" aria-label="Ссылка">
+              <input autoFocus value={q0} onChange={(e) => setQ(e.target.value)} data-ro-ok="1"
+                     onKeyDown={(e) => {
+                       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+                       if (e.key === 'Enter') { e.preventDefault(); if (web) onChoose(web, selLabel); else if (rows[0]) onChoose(rows[0].href, rows[0].label); }
+                     }}
+                     autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                     placeholder="Сцена, объект, заметка или адрес сайта…" className="cf-md-pick-q" />
+              <div className="cf-md-pick-list">
+                {web && (
+                  <button type="button" className="cf-md-pick-row" onClick={() => onChoose(web, selLabel)}>
+                    <span className="cf-md-pick-k">Сайт</span><span className="truncate">{web.replace(/^https?:\/\//, '')}</span>
+                  </button>
+                )}
+                {rows.map(r => (
+                  <button key={r.key} type="button" className="cf-md-pick-row" onClick={() => onChoose(r.href, r.label)}>
+                    <span className="cf-md-pick-k">{r.kind}</span><span className="truncate">{r.label}</span>
+                  </button>
+                ))}
+                {!web && !rows.length && <div className="cf-md-pick-none">Ничего не нашлось. Адрес сайта можно вставить сюда же.</div>}
+              </div>
+            </div>
+          );
+        };
+
         const NOTE_CLIP = 460;
-        const NoteEditor = ({ value, onChange, readOnly, open, onToggleOpen, footer, links, selfId, onGo, emptyText }) => {
+        const NoteEditor = ({ value, onChange, readOnly, open, onToggleOpen, footer, links, selfId, onGo, emptyText, strict }) => {
           const [edit, setEdit] = useState(false);
           // Длинная ли — по НАСТОЯЩЕЙ высоте свёрстанного текста: заголовки
           // и мелкий текст делают «12 строк» то экраном, то полуэкраном,
@@ -6184,11 +6286,10 @@
           const [over, setOver] = useState(false);
           const viewRef = useRef(null);
           const [pick, setPick] = useState(null);       // {start, end, label}
-          const [pickQ, setPickQ] = useState('');
           const [cur, setCur] = useState('p');          // вид строки под курсором — для подсветки кнопки
           const taRef = useRef(null), rootRef = useRef(null), selRef = useRef([0, 0]);
           const text = value || '';
-          const blocks = useMemo(() => docBlocks(text), [text]);
+          const blocks = useMemo(() => docBlocks(text, strict), [text, strict]);
           useEffect(() => {
             const v = viewRef.current;
             if (!v) return;
@@ -6334,16 +6435,9 @@
           };
           const openPick = () => {
             const s = regain(); if (!s) return;
-            setPickQ('');
             setPick({ start: s[0], end: s[1], label: text.slice(s[0], s[1]).split('\n')[0] });
           };
-          const target = (cf) => {
-            if (!links) return null;
-            if (cf.kind === 'scene') { const s = (links.scenes || []).find(x => x.id === cf.id); return s && { label: `#${s.number}${s.title ? ' · ' + s.title : ''}` }; }
-            if (cf.kind === 'loc') { const l = (links.locations || []).find(x => x.id === cf.id); return l && { label: l.name || 'Объект без названия' }; }
-            if (cf.kind === 'doc') { const d = (links.docs || []).find(x => x.id === cf.id); return d && { label: d.title || 'Заметка без названия' }; }
-            return null;
-          };
+          const target = (cf) => noteTarget(links, cf);
           const choose = (href, label) => {
             const p = pick;
             setPick(null);
@@ -6351,27 +6445,6 @@
             const md = label ? `[${label.replace(/[\[\]]/g, '')}](${href})` : href;
             replace(p.start, p.end, md);
           };
-          const pickRows = useMemo(() => {
-            if (!pick) return [];
-            const q = pickQ.trim().toLowerCase();
-            const hit = (s) => !q || String(s || '').toLowerCase().indexOf(q.replace(/^#/, '')) >= 0;
-            const rows = [];
-            (links && links.scenes || []).filter(s => hit(`${s.number} ${s.title}`)).slice(0, 8)
-              .forEach(s => rows.push({ key: 's' + s.id, kind: 'Сцена', label: `#${s.number}${s.title ? ' · ' + s.title : ''}`, href: `cf:scene/${s.id}` }));
-            (links && links.locations || []).filter(l => hit(`${l.name} ${l.address}`)).slice(0, 6)
-              .forEach(l => rows.push({ key: 'l' + l.id, kind: 'Объект', label: l.name || 'Объект без названия', href: `cf:loc/${l.id}` }));
-            (links && links.docs || []).filter(d => d.id !== selfId && hit(d.title)).slice(0, 6)
-              .forEach(d => rows.push({ key: 'd' + d.id, kind: 'Заметка', label: d.title || 'Заметка без названия', href: `cf:doc/${d.id}` }));
-            return rows;
-          }, [pick, pickQ, links, selfId]);
-          const webHref = (() => {
-            const q = pickQ.trim();
-            if (!q || /\s/.test(q)) return '';
-            if (NOTE_SAFE_HREF.test(q)) return q;
-            if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(q)) return 'https://' + q;
-            return '';
-          })();
-
           const onKeyDown = (e) => {
             if (e.key === 'Escape') { if (pick) { e.preventDefault(); setPick(null); } else { e.currentTarget.blur(); endEdit(); } return; }
             if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
@@ -6397,7 +6470,6 @@
             // [[ — тот же выбор ссылки, что и кнопкой.
             const c = e.target.selectionStart;
             if (c >= 2 && v.slice(c - 2, c) === '[[' && v.length > text.length) {
-              setPickQ('');
               setPick({ start: c - 2, end: c, label: '' });
             }
           };
@@ -6474,30 +6546,8 @@
                     <button type="button" {...keep} className="cf-md-btn cf-md-done" data-cf="note-done"
                             onClick={() => { if (taRef.current) taRef.current.blur(); endEdit(); }}>Готово</button>
                   </div>
-                  {pick && (
-                    <div className="cf-md-pick" data-cf="note-pick" role="dialog" aria-label="Ссылка">
-                      <input autoFocus value={pickQ} onChange={(e) => setPickQ(e.target.value)} data-ro-ok="1"
-                             onKeyDown={(e) => {
-                               if (e.key === 'Escape') { e.preventDefault(); setPick(null); regain(); }
-                               if (e.key === 'Enter') { e.preventDefault(); if (webHref) choose(webHref, pick.label); else if (pickRows[0]) choose(pickRows[0].href, pickRows[0].label); }
-                             }}
-                             autoCapitalize="off" autoCorrect="off" spellCheck={false}
-                             placeholder="Сцена, объект, заметка или адрес сайта…" className="cf-md-pick-q" />
-                      <div className="cf-md-pick-list">
-                        {webHref && (
-                          <button type="button" className="cf-md-pick-row" onClick={() => choose(webHref, pick.label)}>
-                            <span className="cf-md-pick-k">Сайт</span><span className="truncate">{webHref.replace(/^https?:\/\//, '')}</span>
-                          </button>
-                        )}
-                        {pickRows.map(r => (
-                          <button key={r.key} type="button" className="cf-md-pick-row" onClick={() => choose(r.href, r.label)}>
-                            <span className="cf-md-pick-k">{r.kind}</span><span className="truncate">{r.label}</span>
-                          </button>
-                        ))}
-                        {!webHref && !pickRows.length && <div className="cf-md-pick-none">Ничего не нашлось. Адрес сайта можно вставить сюда же.</div>}
-                      </div>
-                    </div>
-                  )}
+                  {pick && <NoteLinkPicker links={links} selfId={selfId} selLabel={pick.label}
+                                           onChoose={choose} onClose={() => { setPick(null); regain(); }} />}
                   <textarea ref={el => { taRef.current = el; if (el) autosize(el); }} value={text} data-cf="note-input"
                             onChange={onInput} onKeyDown={onKeyDown} onSelect={remember} onKeyUp={remember} onBlur={onBlur}
                             rows={4} className="w-full cf-doc-body cf-doc-edit cf-md-raw resize-none"
@@ -6522,6 +6572,343 @@
               </div>
             </div>
           );
+        };
+
+        // ЖИВОЙ РЕДАКТОР ЗАМЕТОК. Жалоба на поле со знаками: «мне лучше
+        // живой редактор, я плохо понимаю, когда всё в markdown». Заголовок
+        // видно заголовком, галочку — галочкой прямо при наборе, как в Notion
+        // и «Заметках» iPhone. Движок — Tiptap (ProseMirror), собранный
+        // ОДИН раз в готовый файл (vendor/tiptap/build.mjs), как Excalidraw:
+        // сборщика у приложения по-прежнему нет. Грузится, только когда
+        // открыли заметку, и лежит в кэше service worker'а — без связи
+        // работает. Не загрузился (первый запуск без связи) — остаётся
+        // прежний редактор со знаками: заметку обязано быть можно править.
+        //
+        // ХРАНИТСЯ ПО-ПРЕЖНЕМУ ТЕКСТ СО ЗНАКАМИ: редактор переводит его
+        // в свой документ при открытии (`noteToDoc`) и обратно на каждую
+        // правку (`noteFromDoc`). Печать, поиск, доска, голос и ИИ читают
+        // тот же текст и про редактор не знают ничего. Знаки при наборе
+        // тоже работают — «# » сам становится заголовком, «- » списком,
+        // «[ ] » галочкой, «-# » мелким текстом, — но видны они только
+        // в момент набора.
+        const TIPTAP_FILE = 'tiptap-3.33.0.min.js';
+        let tiptapLoading = null;
+        const loadTiptap = () => {
+          if (window.CFTiptap) return Promise.resolve(window.CFTiptap);
+          if (tiptapLoading) return tiptapLoading;
+          tiptapLoading = new Promise((resolve, reject) => {
+            const sc = document.createElement('script');
+            sc.src = new URL('vendor/tiptap/' + TIPTAP_FILE, (CF_SNAPSHOT && CF_SNAPSHOT.app) || document.baseURI).href;
+            sc.onload = () => window.CFTiptap ? resolve(window.CFTiptap) : (tiptapLoading = null, reject(new Error('редактор не завёлся')));
+            sc.onerror = () => { tiptapLoading = null; sc.remove(); reject(new Error('файл редактора не загрузился')); };
+            document.head.appendChild(sc);
+          });
+          return tiptapLoading;
+        };
+
+        // Текст со знаками → документ редактора. Разбор тот же, что у печати
+        // и свёрстанного вида (`docBlocks`), поэтому три места не разъедутся.
+        const noteInline = (text, links, marks) => {
+          const out = [];
+          const s = String(text || '');
+          const re = new RegExp(MD_INLINE.source, 'g');
+          const lines = (t, mk) => t.split('\n').forEach((ln, i) => {
+            if (i) out.push({ type: 'hardBreak' });
+            if (ln) out.push(mk.length ? { type: 'text', text: ln, marks: mk } : { type: 'text', text: ln });
+          });
+          let last = 0, m;
+          while ((m = re.exec(s))) {
+            lines(s.slice(last, m.index), marks);
+            if (m[1] != null) out.push(...noteInline(m[1], links, [...marks, { type: 'bold' }]));
+            else if (m[3] != null || m[4] != null) {
+              const href = m[3] != null ? m[3] : m[4];
+              const cf = docLinkOf(href);
+              const live = cf && noteTarget(links, cf);
+              // Опасный адрес (javascript: и прочее) ссылкой не становится
+              // вовсе — остаётся подписью, как в свёрстанном виде.
+              if (!cf && !NOTE_SAFE_HREF.test(href)) lines(m[2] || href, marks);
+              else lines((live && live.label) || m[2] || href, [...marks, { type: 'link', attrs: { href } }]);
+            }
+            else if (m[5] != null) out.push(...noteInline(m[5], links, [...marks, { type: 'italic' }]));
+            last = re.lastIndex;
+          }
+          lines(s.slice(last), marks);
+          return out;
+        };
+        const noteToDoc = (text, links, strict) => {
+          const para = (t, type = 'paragraph') => { const c = noteInline(t, links, []); return c.length ? { type, content: c } : { type }; };
+          const content = docBlocks(text, strict).map(b => {
+            if (b.k === 'h') return { type: 'heading', attrs: { level: Math.min(3, b.lv) }, content: noteInline(b.text, links, []) };
+            if (b.k === 's') return para(b.text, 'small');
+            if (b.k === 'q') return { type: 'blockquote', content: [para(b.text)] };
+            if (b.k === 'hr') return { type: 'horizontalRule' };
+            if (b.k === 'ul') return { type: 'bulletList', content: b.items.map(t => ({ type: 'listItem', content: [para(t)] })) };
+            if (b.k === 'ol') return { type: 'orderedList', attrs: { start: b.start || 1 }, content: b.items.map(t => ({ type: 'listItem', content: [para(t)] })) };
+            if (b.k === 'cl') return { type: 'taskList', content: b.items.map(it => ({ type: 'taskItem', attrs: { checked: it.done }, content: [para(it.text)] })) };
+            return para(b.text);
+          });
+          return { type: 'doc', content: content.length ? content : [{ type: 'paragraph' }] };
+        };
+        // Документ редактора → текст со знаками.
+        const noteFromInline = (nodes) => (nodes || []).map(n => {
+          if (n.type === 'hardBreak') return '\n';
+          if (n.type !== 'text') return '';
+          const mk = n.marks || [];
+          // Пробелы по краям выносим ЗА знаки: «** жирно**» разметкой
+          // уже не читается и при следующем открытии осталось бы звёздочками.
+          const wrap = (t, w) => { const m = t.match(/^(\s*)([\s\S]*?)(\s*)$/); return m[2] ? m[1] + w + m[2] + w + m[3] : t; };
+          let t = n.text;
+          if (mk.some(x => x.type === 'italic')) t = wrap(t, '*');
+          if (mk.some(x => x.type === 'bold')) t = wrap(t, '**');
+          const ln = mk.find(x => x.type === 'link');
+          if (ln && ln.attrs && ln.attrs.href) {
+            const h = ln.attrs.href;
+            t = (n.text === h && !docLinkOf(h)) ? h : `[${t.replace(/[\[\]]/g, '')}](${h})`;
+          }
+          return t;
+        }).join('');
+        const noteFromDoc = (doc) => {
+          const flat = (t) => t.replace(/\n/g, ' ');
+          const item = (li) => {
+            const parts = (li.content || []);
+            const head = parts[0] && parts[0].type === 'paragraph' ? flat(noteFromInline(parts[0].content)) : '';
+            const rest = parts.slice(parts[0] && parts[0].type === 'paragraph' ? 1 : 0).map(block).filter(Boolean)
+              .join('\n').split('\n').map(l => '  ' + l).join('\n');
+            return head + (rest.trim() ? '\n' + rest : '');
+          };
+          const block = (n) => {
+            const c = n.content || [];
+            switch (n.type) {
+              case 'heading': return '#'.repeat((n.attrs && n.attrs.level) || 1) + ' ' + flat(noteFromInline(c));
+              case 'small': { const t = noteFromInline(c); return t ? t.split('\n').map(l => '-# ' + l).join('\n') : ''; }
+              case 'bulletList': return c.map(li => '- ' + item(li)).join('\n');
+              case 'orderedList': return c.map((li, i) => `${((n.attrs && n.attrs.start) || 1) + i}. ` + item(li)).join('\n');
+              case 'taskList': return c.map(li => (li.attrs && li.attrs.checked ? '[x] ' : '[ ] ') + item(li)).join('\n');
+              case 'blockquote': { const t = c.map(block).filter(Boolean).join('\n'); return t ? t.split('\n').map(l => '> ' + l).join('\n') : ''; }
+              case 'horizontalRule': return '---';
+              default: return noteFromInline(c);
+            }
+          };
+          return (doc.content || []).map(block).filter(t => t.trim()).join('\n\n');
+        };
+
+        const LIVE_TOOLS = {
+          // «Текст» снимает всё: и заголовок, и список, и выдержку.
+          p: (c) => c.clearNodes(), h1: (c) => c.toggleHeading({ level: 1 }), h2: (c) => c.toggleHeading({ level: 2 }),
+          s: (c) => c.toggleSmall(), ul: (c) => c.toggleBulletList(), ol: (c) => c.toggleOrderedList(),
+          cl: (c) => c.toggleTaskList(), q: (c) => c.toggleBlockquote(), '**': (c) => c.toggleBold(), '*': (c) => c.toggleItalic(),
+        };
+        const liveActive = (ed, k) => {
+          if (!ed) return false;
+          if (k === 'p') return ed.isActive('paragraph') && !ed.isActive('bulletList') && !ed.isActive('orderedList') && !ed.isActive('taskList') && !ed.isActive('blockquote');
+          if (k === 'h1') return ed.isActive('heading', { level: 1 });
+          if (k === 'h2') return ed.isActive('heading', { level: 2 });
+          return ed.isActive({ s: 'small', ul: 'bulletList', ol: 'orderedList', cl: 'taskList', q: 'blockquote', '**': 'bold', '*': 'italic' }[k]);
+        };
+
+        const LiveNoteEd = ({ lib: T, value, onChange, open, onToggleOpen, footer, links, selfId, onGo, strict, emptyText }) => {
+          const hostRef = useRef(null), rootRef = useRef(null), edRef = useRef(null);
+          const lastRef = useRef(value || '');
+          const linksRef = useRef(links); linksRef.current = links;
+          const goRef = useRef(onGo); goRef.current = onGo;
+          const changeRef = useRef(onChange); changeRef.current = onChange;
+          const [focused, setFocused] = useState(false);
+          const [, tick] = useState(0);
+          const [pick, setPick] = useState(null);   // {from, to, label}
+          const [over, setOver] = useState(false);
+          const focusAtDown = useRef(false);
+
+          const openHref = (href) => {
+            const cf = docLinkOf(href);
+            if (cf) { if (noteTarget(linksRef.current, cf)) goRef.current && goRef.current(cf.kind, cf.id); return; }
+            if (NOTE_SAFE_HREF.test(href)) window.open(href, '_blank', 'noopener');
+          };
+
+          useEffect(() => {
+            const Small = T.Node.create({
+              name: 'small', group: 'block', content: 'inline*',
+              parseHTML() { return [{ tag: 'p.cf-md-s' }]; },
+              renderHTML({ HTMLAttributes }) { return ['p', T.mergeAttributes(HTMLAttributes, { class: 'cf-md-s' }), 0]; },
+              addCommands() { return { toggleSmall: () => ({ commands }) => commands.toggleNode(this.name, 'paragraph') }; },
+              addInputRules() { return [T.textblockTypeInputRule({ find: /^-#\s$/, type: this.type })]; },
+            });
+            const ed = new T.Editor({
+              element: hostRef.current,
+              extensions: [
+                T.StarterKit.configure({
+                  codeBlock: false, code: false, strike: false, underline: false,
+                  heading: { levels: [1, 2, 3] },
+                  link: { openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { target: null, rel: null, class: null },
+                          isAllowedUri: (url) => /^(https?:|mailto:|tel:|cf:)/i.test(url) },
+                }),
+                T.TaskList, T.TaskItem.configure({ nested: false, a11y: { checkboxLabel: (node, checked) => `${checked ? 'Снять галочку' : 'Отметить'}: ${node.textContent}` } }), Small,
+                T.Placeholder.configure({ placeholder: emptyText || 'Пишите…' }),
+              ],
+              content: noteToDoc(value || '', links, strict),
+              editorProps: { attributes: { class: 'cf-live-pm', 'data-cf': 'note-live', spellcheck: 'true' } },
+            });
+            ed.on('update', ({ editor }) => {
+              // [[ — тот же выбор ссылки, что кнопка «Ссылка».
+              const { from } = editor.state.selection;
+              if (from >= 2 && editor.state.doc.textBetween(from - 2, from) === '[[') {
+                editor.chain().deleteRange({ from: from - 2, to: from }).run();
+                setPick({ from: from - 2, to: from - 2, label: '' });
+                return;
+              }
+              const md = noteFromDoc(editor.getJSON());
+              if (md === lastRef.current) return;
+              lastRef.current = md;
+              changeRef.current(md, true);
+            });
+            ed.on('transaction', () => tick(n => n + 1));
+            ed.on('focus', () => setFocused(true));
+            ed.on('blur', () => setTimeout(() => {
+              const r = rootRef.current;
+              if (r && !r.contains(document.activeElement)) { setFocused(false); setPick(null); }
+            }, 200));
+            edRef.current = ed;
+            tick(n => n + 1);
+            return () => { ed.destroy(); edRef.current = null; };
+          }, []);
+
+          // Правка пришла СНАРУЖИ (голос, другое устройство, доска) — кладём
+          // её в редактор. Своя же, вернувшаяся из записи, — не событие.
+          useEffect(() => {
+            const ed = edRef.current;
+            const v = value || '';
+            if (!ed || v === lastRef.current) return;
+            lastRef.current = v;
+            const at = ed.state.selection.from;
+            ed.commands.setContent(noteToDoc(v, linksRef.current, strict), { emitUpdate: false });
+            if (ed.isFocused) ed.commands.setTextSelection(Math.min(at, ed.state.doc.content.size));
+          }, [value]);
+
+          // Длинная ли — по настоящей высоте, как у прежнего вида.
+          useEffect(() => {
+            const h = hostRef.current;
+            if (!h) return;
+            const o = h.scrollHeight > NOTE_CLIP + 10;
+            if (o !== over) setOver(o);
+          });
+
+          // Ссылка в ПОКОЕ открывается одним нажатием; во время правки
+          // нажатие ставит в неё курсор, а открыть — кнопкой в полосе
+          // (иначе текст ссылки было бы не поправить).
+          // Мышью нажатие по ссылке в покое не отдаём редактору вовсе
+          // (preventDefault на нажатии): иначе он встаёт в правку, над
+          // текстом появляются кнопки, и отпускание приходится уже не на
+          // ссылку. Пальцем так не выйдет — там ловим само нажатие (click).
+          const downLink = useRef('');
+          const onDownCap = (e) => {
+            const ed = edRef.current;
+            focusAtDown.current = !!(ed && ed.isFocused);
+            const a = e.target.closest && e.target.closest('a[href]');
+            downLink.current = a && !focusAtDown.current ? a.getAttribute('href') : '';
+            if (downLink.current && e.pointerType === 'mouse') e.preventDefault();
+          };
+          const onClickCap = (e) => {
+            const a = e.target.closest && e.target.closest('a[href]');
+            const href = (a && hostRef.current && hostRef.current.contains(a) && a.getAttribute('href')) || downLink.current;
+            downLink.current = '';
+            if (!href) return;
+            e.preventDefault();
+            if (!focusAtDown.current) { e.stopPropagation(); const ed = edRef.current; if (ed) ed.commands.blur(); openHref(href); }
+          };
+          // Полоса кнопок появляется НАД текстом и сдвигала бы его вниз ровно
+          // в момент, когда в него нажали: буквы уезжают из-под пальца.
+          // Прокрутку подвигаем на её высоту — текст стоит на месте.
+          const barH = useRef(0);
+          React.useLayoutEffect(() => {
+            const r = rootRef.current;
+            if (!r) return;
+            let box = null;
+            for (let n = r.parentElement; n; n = n.parentElement) {
+              const o = getComputedStyle(n).overflowY;
+              if (o === 'auto' || o === 'scroll') { box = n; break; }
+            }
+            box = box || document.scrollingElement;
+            const bar = r.querySelector('[data-cf="note-bar"]');
+            if (focused && bar) {
+              const cs = getComputedStyle(bar);
+              barH.current = bar.offsetHeight + parseFloat(cs.marginBottom || 0);
+              box.scrollTop += barH.current;
+            } else if (!focused && barH.current) {
+              box.scrollTop -= barH.current;
+              barH.current = 0;
+            }
+          }, [focused]);
+
+          const ed = edRef.current;
+          const run = (k) => { if (!ed) return; LIVE_TOOLS[k](ed.chain().focus()).run(); };
+          const linkHere = ed && ed.isActive('link') ? ed.getAttributes('link').href : '';
+          const openPick = () => {
+            if (!ed) return;
+            const { from, to } = ed.state.selection;
+            setPick({ from, to, label: ed.state.doc.textBetween(from, to, ' ') });
+          };
+          const choose = (href, label) => {
+            const p = pick; setPick(null);
+            if (!ed || !p) return;
+            const ch = ed.chain().focus().setTextSelection({ from: p.from, to: p.to });
+            if (p.to > p.from) ch.setLink({ href }).setTextSelection(p.to).unsetMark('link').run();
+            else ch.insertContent([{ type: 'text', text: label || href.replace(/^https?:\/\//, ''), marks: [{ type: 'link', attrs: { href } }] }, { type: 'text', text: ' ' }]).run();
+          };
+          const keep = { onPointerDown: (e) => e.preventDefault(), onMouseDown: (e) => e.preventDefault() };
+          const cfHere = docLinkOf(linkHere);
+          const hereLabel = cfHere ? ((noteTarget(links, cfHere) || {}).label || 'нет в проекте') : linkHere.replace(/^https?:\/\//, '');
+
+          return (
+            <div ref={rootRef} className="cf-note-ed shrink-0" data-cf="note"
+                 onKeyDown={(e) => { if (e.key === 'Escape' && !pick && ed) { e.preventDefault(); ed.commands.blur(); setFocused(false); } }}>
+              {focused && (
+                <div className="cf-md-barwrap" data-cf="note-bar">
+                  <div className="cf-md-bar hide-scrollbar">
+                    {NOTE_TOOLS.map(t => (
+                      <button key={t.label} type="button" {...keep} title={t.title.replace(/\s*\([^)]*\)$/, '')} data-tool={t.k || t.w || 'link'}
+                              className={`cf-md-btn ${t.cls || ''} ${t.small ? 'cf-md-btn-s' : ''} ${liveActive(ed, t.k || t.w) ? 'cf-sel' : ''}`}
+                              onClick={() => t.link ? openPick() : run(t.k || t.w)}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Курсор в ссылке — рядом с «Готово» её имя: нажал — перешёл.
+                      Отдельной строкой ниже не ставим: текст прыгал бы вниз
+                      каждый раз, как курсор заходит в ссылку. */}
+                  {linkHere && !pick && (
+                    <React.Fragment>
+                      <button type="button" {...keep} className="cf-md-btn cf-md-linkopen" data-cf="note-link-open"
+                              onClick={() => openHref(linkHere)} title={`Открыть: ${hereLabel}`}>→ {hereLabel}</button>
+                      <button type="button" {...keep} className="cf-md-btn cf-md-btn-s" data-cf="note-link-off" title="Убрать ссылку, текст останется"
+                              onClick={() => ed && ed.chain().focus().extendMarkRange('link').unsetLink().run()}>✕</button>
+                    </React.Fragment>
+                  )}
+                  <button type="button" {...keep} className="cf-md-btn cf-md-done" data-cf="note-done"
+                          onClick={() => { if (ed) ed.commands.blur(); setFocused(false); setPick(null); }}>Готово</button>
+                </div>
+              )}
+              {pick && <NoteLinkPicker links={links} selfId={selfId} selLabel={pick.label} onChoose={choose}
+                                       onClose={() => { setPick(null); if (ed) ed.chain().focus().run(); }} />}
+              <div ref={hostRef} onPointerDownCapture={onDownCap} onClickCapture={onClickCap}
+                   className={`cf-md cf-live cf-doc-body ${over && !open && !focused ? 'cf-md-clip' : ''}`} data-cf="note-view" />
+              <div className="flex items-center gap-2 mt-2">
+                {footer}
+                {!focused && over && onToggleOpen && (
+                  <button type="button" onClick={onToggleOpen} className="cf-chip shrink-0" data-cf="note-open">
+                    {open ? 'свернуть ⤡' : 'развернуть ⤢'}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        };
+        // Пока файл редактора едет (обычно доли секунды из кэша) — свёрстанный
+        // вид без правки; не доехал вовсе — прежний редактор со знаками.
+        const LiveNote = (props) => {
+          const [lib, setLib] = useState(() => window.CFTiptap || null);
+          const [fail, setFail] = useState(false);
+          useEffect(() => { if (!lib) loadTiptap().then(setLib, () => setFail(true)); }, []);
+          if (lib) return <LiveNoteEd lib={lib} {...props} />;
+          return <NoteEditor {...props} readOnly={!fail} />;
         };
 
         // ГОЛОСОВАЯ ЗАМЕТКА (гайд · заметки с выезда)
@@ -26290,19 +26677,23 @@
                             <div className="flex-1 p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative" style={{ background: 'var(--card)' }}>
                               <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название заметки..." />
                               {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем дочитать: текст в полторы тысячи знаков — это тысяча точек по высоте, а поле было 460, и вторая половина пряталась во ВНУТРЕННЮЮ прокрутку. */}
-                              <NoteEditor key={activeDoc.id} value={activeDoc.content || ''} readOnly={READ_ONLY}
-                                          open={!!docOpen[activeDoc.id]}
-                                          onToggleOpen={() => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] }))}
-                                          links={noteLinks} selfId={activeDoc.id} onGo={goNoteLink}
-                                          emptyText={READ_ONLY ? 'Заметка пока пустая' : 'Нажмите, чтобы писать'}
-                                          onChange={(v) => { const up = docs.map(d => d.id === activeDoc.id ? { ...d, content: v } : d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d => d.id === activeDoc.id)); }}
-                                          footer={
+                              {React.createElement(READ_ONLY ? NoteEditor : LiveNote, {
+                                key: activeDoc.id, value: activeDoc.content || '', readOnly: READ_ONLY, strict: !!activeDoc.md,
+                                open: !!docOpen[activeDoc.id],
+                                onToggleOpen: () => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] })),
+                                links: noteLinks, selfId: activeDoc.id, onGo: goNoteLink,
+                                emptyText: READ_ONLY ? 'Заметка пока пустая' : 'Нажмите, чтобы писать',
+                                // live — правка из живого редактора: у такой заметки заголовок ставят кнопкой,
+                                // и прописная строка заголовком больше не считается (поле md, см. docBlocks).
+                                onChange: (v, live) => { const up = docs.map(d => d.id === activeDoc.id ? { ...d, content: v, ...(live ? { md: 1 } : {}) } : d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d => d.id === activeDoc.id)); },
+                                footer: (
                                             /* Голосом — под текстом: надиктованное ложится в конец
                                                заметки. Кнопка — правка, у гостя её нет. */
                                             <VoiceNoteButton transcribe={transcribeVoice} showToast={showToast}
                                                              style={{ display: READ_ONLY ? 'none' : '' }}
                                                              onText={(t) => appendToDoc(activeDoc.id, t)} />
-                                          } />
+                                )
+                              })}
 
                               <div className="space-y-4 border-t border-[var(--border)] pt-6">
                                 <div className="flex justify-between items-center px-1">
@@ -27937,7 +28328,7 @@
                   // Текст гайда разбирается на заголовки, списки и абзацы
                   // (docBlocks): сплошной простынёй его читать на площадке
                   // нечем. Что не распознано — остаётся абзацем как было.
-                  const blocks = docBlocks(d.content);
+                  const blocks = docBlocks(d.content, !!d.md);
                   return (
                     <div className="print-doc">
                       <div className="print-head">
