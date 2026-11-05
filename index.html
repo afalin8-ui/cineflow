@@ -682,6 +682,38 @@
         .cf-live-pm ul[data-type="taskList"] > li > label > span { display: none; }
         .cf-live-pm p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; color: var(--muted-2); pointer-events: none; }
         .cf-md-linkopen { color: var(--accent); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+        /* Полоса живого редактора: рамка-строка, кнопки в ней — значки и
+           выпадающий «вид строки». Переносится на вторую строку, а не
+           уезжает вбок: на ноутбуке листать полосу вбок нечем. */
+        .cf-md-tb { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+                    padding: 4px; margin-bottom: 14px; background: var(--card); border: 1px solid var(--border);
+                    border-radius: var(--r-md); }
+        .cf-md-tbtn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex-shrink: 0;
+                      min-width: var(--tap-sm); height: var(--tap-sm); padding: 0 6px; border-radius: var(--r-sm);
+                      color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; transition: background .12s; }
+        .cf-md-tbtn:hover { background: var(--raised); color: var(--text); }
+        .cf-md-tlabel { font-size: var(--fs-2); }
+        .cf-md-style { min-width: 132px; justify-content: space-between; font-weight: 500; }
+        .cf-md-caret { color: var(--muted-2); font-size: 11px; }
+        .cf-md-tsep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+        .cf-md-tb .cf-md-done { margin-left: auto; color: var(--accent); font-weight: 600; }
+        .cf-md-menu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 8; min-width: 230px; padding: 4px;
+                      background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+                      box-shadow: 0 12px 32px rgba(0,0,0,.45); }
+        .cf-md-menu-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+                          min-height: var(--tap-sm); padding: 4px 10px; border-radius: var(--r-sm); color: var(--text-2);
+                          text-align: left; font-size: var(--fs-3); }
+        .cf-md-menu-row:hover { background: var(--raised); }
+        .cf-md-menu-mark { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--muted-2); }
+        .cf-md-opt-h1 { font-size: 1.25em; font-weight: 700; color: var(--text); }
+        .cf-md-opt-h2 { font-size: 1.1em; font-weight: 700; color: var(--text); }
+        .cf-md-opt-h3 { font-weight: 700; color: var(--text); }
+        .cf-md-opt-s { font-size: var(--fs-2); color: var(--muted); }
+        .cf-md-opt-q { border-left: 2px solid var(--border); padding-left: 8px; color: var(--muted); }
+        /* Пустая заметка — лист, а не щель в одну строку: место, куда
+           писать, обязано быть видно. Нажатие в любом месте листа ставит
+           курсор. */
+        .cf-live-pm { min-height: 30vh; }
         .cf-md-raw { font-size: var(--fs-3); line-height: 1.6; }
         /* Кнопки разметки — над полем и прилипают к верху при прокрутке:
            длинную заметку пишут, листая экран. Прокручивается только
@@ -6694,7 +6726,7 @@
 
         const LIVE_TOOLS = {
           // «Текст» снимает всё: и заголовок, и список, и выдержку.
-          p: (c) => c.clearNodes(), h1: (c) => c.toggleHeading({ level: 1 }), h2: (c) => c.toggleHeading({ level: 2 }),
+          p: (c) => c.clearNodes(), h1: (c) => c.toggleHeading({ level: 1 }), h2: (c) => c.toggleHeading({ level: 2 }), h3: (c) => c.toggleHeading({ level: 3 }),
           s: (c) => c.toggleSmall(), ul: (c) => c.toggleBulletList(), ol: (c) => c.toggleOrderedList(),
           cl: (c) => c.toggleTaskList(), q: (c) => c.toggleBlockquote(), '**': (c) => c.toggleBold(), '*': (c) => c.toggleItalic(),
         };
@@ -6703,8 +6735,34 @@
           if (k === 'p') return ed.isActive('paragraph') && !ed.isActive('bulletList') && !ed.isActive('orderedList') && !ed.isActive('taskList') && !ed.isActive('blockquote');
           if (k === 'h1') return ed.isActive('heading', { level: 1 });
           if (k === 'h2') return ed.isActive('heading', { level: 2 });
+          if (k === 'h3') return ed.isActive('heading', { level: 3 });
           return ed.isActive({ s: 'small', ul: 'bulletList', ol: 'orderedList', cl: 'taskList', q: 'blockquote', '**': 'bold', '*': 'italic' }[k]);
         };
+
+        // ВИД СТРОКИ — ОДНИМ СПИСКОМ, как «Обычный текст ▾» в любом текстовом
+        // редакторе. Первая выкладка ставила его словами в ряд («Текст
+        // Заголовок Подзаг. мелкий • Список 1. Сп…»), и это не читалось как
+        // кнопки вовсе: ряд уходил за край, а на ноутбуке листать его вбок
+        // нечем. Знак каждого вида подписан справа — «#», «##», «###»:
+        // набрал его в начале строки, и строка сама стала таким видом.
+        const NOTE_STYLES = [
+          { k: 'p', label: 'Обычный текст', mark: '' },
+          { k: 'h1', label: 'Заголовок', mark: '#', cls: 'cf-md-opt-h1' },
+          { k: 'h2', label: 'Подзаголовок', mark: '##', cls: 'cf-md-opt-h2' },
+          { k: 'h3', label: 'Заголовок 3', mark: '###', cls: 'cf-md-opt-h3' },
+          { k: 's', label: 'Мелкий серый', mark: '-#', cls: 'cf-md-opt-s' },
+          { k: 'q', label: 'Выдержка', mark: '>', cls: 'cf-md-opt-q' },
+        ];
+        const NI = (d) => <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
+        const NOTE_ICON_TOOLS = [
+          { k: 'ul', title: 'Список (- в начале строки)', icon: NI(<React.Fragment><circle cx="3.5" cy="5" r="1" fill="currentColor"/><circle cx="3.5" cy="9" r="1" fill="currentColor"/><circle cx="3.5" cy="13" r="1" fill="currentColor"/><path d="M7 5h8M7 9h8M7 13h8"/></React.Fragment>) },
+          { k: 'ol', title: 'Нумерованный список (1. в начале строки)', icon: NI(<React.Fragment><path d="M2.5 3.5h1v3M2.3 6.5h2.2M2.5 10.5c.4-.6 2-.6 2 .3 0 .8-2 1.4-2 2.2h2M7 5h8M7 9h8M7 13h8"/></React.Fragment>) },
+          { k: 'cl', title: 'Галочки ([ ] в начале строки)', icon: NI(<React.Fragment><rect x="2" y="3" width="5" height="5" rx="1.2"/><path d="M3.2 5.5l1 1 1.7-2"/><rect x="2" y="10.5" width="5" height="5" rx="1.2"/><path d="M10 5.5h6M10 13h6"/></React.Fragment>) },
+          { sep: true },
+          { k: '**', title: 'Жирный (**текст**)', icon: <b style={{ fontSize: 15 }}>Ж</b> },
+          { k: '*', title: 'Курсив (*текст*)', icon: <i style={{ fontSize: 15, fontFamily: 'Georgia, serif' }}>К</i> },
+          { k: 'link', title: 'Ссылка на сцену, объект, заметку или сайт (или наберите [[)', icon: NI(<React.Fragment><path d="M7.5 10.5l3-3"/><path d="M8.5 5.5l1.3-1.3a3 3 0 014.2 4.2l-1.3 1.3"/><path d="M9.5 12.5l-1.3 1.3a3 3 0 01-4.2-4.2l1.3-1.3"/></React.Fragment>), label: 'Ссылка' },
+        ];
 
         const LiveNoteEd = ({ lib: T, value, onChange, open, onToggleOpen, footer, links, selfId, onGo, strict, emptyText }) => {
           const hostRef = useRef(null), rootRef = useRef(null), edRef = useRef(null);
@@ -6715,6 +6773,16 @@
           const [focused, setFocused] = useState(false);
           const [, tick] = useState(0);
           const [pick, setPick] = useState(null);   // {from, to, label}
+          const [styleMenu, setStyleMenu] = useState(false);
+          // Меню вида строки закрывается нажатием мимо него: открыть его можно
+          // и не стоя в тексте, и тогда ухода фокуса, который его закрыл бы,
+          // не будет вовсе.
+          useEffect(() => {
+            if (!styleMenu) return;
+            const off = (e) => { if (!(e.target.closest && e.target.closest('[data-cf="note-style-menu"], [data-cf="note-style"]'))) setStyleMenu(false); };
+            document.addEventListener('pointerdown', off, true);
+            return () => document.removeEventListener('pointerdown', off, true);
+          }, [styleMenu]);
           const [over, setOver] = useState(false);
           const focusAtDown = useRef(false);
 
@@ -6742,7 +6810,7 @@
                           isAllowedUri: (url) => /^(https?:|mailto:|tel:|cf:)/i.test(url) },
                 }),
                 T.TaskList, T.TaskItem.configure({ nested: false, a11y: { checkboxLabel: (node, checked) => `${checked ? 'Снять галочку' : 'Отметить'}: ${node.textContent}` } }), Small,
-                T.Placeholder.configure({ placeholder: emptyText || 'Пишите…' }),
+                T.Placeholder.configure({ placeholder: 'Пишите здесь. # — заголовок, ## — подзаголовок, - — список, [ ] — галочка' }),
               ],
               content: noteToDoc(value || '', links, strict),
               editorProps: { attributes: { class: 'cf-live-pm', 'data-cf': 'note-live', spellcheck: 'true' } },
@@ -6764,7 +6832,7 @@
             ed.on('focus', () => setFocused(true));
             ed.on('blur', () => setTimeout(() => {
               const r = rootRef.current;
-              if (r && !r.contains(document.activeElement)) { setFocused(false); setPick(null); }
+              if (r && !r.contains(document.activeElement)) { setFocused(false); setPick(null); setStyleMenu(false); }
             }, 200));
             edRef.current = ed;
             tick(n => n + 1);
@@ -6814,29 +6882,6 @@
             e.preventDefault();
             if (!focusAtDown.current) { e.stopPropagation(); const ed = edRef.current; if (ed) ed.commands.blur(); openHref(href); }
           };
-          // Полоса кнопок появляется НАД текстом и сдвигала бы его вниз ровно
-          // в момент, когда в него нажали: буквы уезжают из-под пальца.
-          // Прокрутку подвигаем на её высоту — текст стоит на месте.
-          const barH = useRef(0);
-          React.useLayoutEffect(() => {
-            const r = rootRef.current;
-            if (!r) return;
-            let box = null;
-            for (let n = r.parentElement; n; n = n.parentElement) {
-              const o = getComputedStyle(n).overflowY;
-              if (o === 'auto' || o === 'scroll') { box = n; break; }
-            }
-            box = box || document.scrollingElement;
-            const bar = r.querySelector('[data-cf="note-bar"]');
-            if (focused && bar) {
-              const cs = getComputedStyle(bar);
-              barH.current = bar.offsetHeight + parseFloat(cs.marginBottom || 0);
-              box.scrollTop += barH.current;
-            } else if (!focused && barH.current) {
-              box.scrollTop -= barH.current;
-              barH.current = 0;
-            }
-          }, [focused]);
 
           const ed = edRef.current;
           const run = (k) => { if (!ed) return; LIVE_TOOLS[k](ed.chain().focus()).run(); };
@@ -6860,32 +6905,60 @@
           return (
             <div ref={rootRef} className="cf-note-ed shrink-0" data-cf="note"
                  onKeyDown={(e) => { if (e.key === 'Escape' && !pick && ed) { e.preventDefault(); ed.commands.blur(); setFocused(false); } }}>
-              {focused && (
-                <div className="cf-md-barwrap" data-cf="note-bar">
-                  <div className="cf-md-bar hide-scrollbar">
-                    {NOTE_TOOLS.map(t => (
-                      <button key={t.label} type="button" {...keep} title={t.title.replace(/\s*\([^)]*\)$/, '')} data-tool={t.k || t.w || 'link'}
-                              className={`cf-md-btn ${t.cls || ''} ${t.small ? 'cf-md-btn-s' : ''} ${liveActive(ed, t.k || t.w) ? 'cf-sel' : ''}`}
-                              onClick={() => t.link ? openPick() : run(t.k || t.w)}>
-                        {t.label}
+              {/* Полоса кнопок стоит ВСЕГДА, а не только пока курсор в тексте:
+                  пустая заметка без единой кнопки не говорила, что тут вообще
+                  можно оформлять. Она и не сдвигает текст при нажатии —
+                  значит, нажатие по ссылке попадает туда, куда целили. */}
+              <div className="cf-md-tb" data-cf="note-bar">
+                {(() => {
+                  const cur = NOTE_STYLES.slice(1).find(o => liveActive(ed, o.k)) || NOTE_STYLES[0];
+                  return (
+                    <div className="relative">
+                      <button type="button" {...keep} data-cf="note-style" className="cf-md-tbtn cf-md-style"
+                              title="Вид строки: обычный текст, заголовок, мелкий…"
+                              onClick={() => setStyleMenu(v => !v)}>
+                        <span className="truncate">{cur.label}</span><span className="cf-md-caret">▾</span>
                       </button>
-                    ))}
-                  </div>
-                  {/* Курсор в ссылке — рядом с «Готово» её имя: нажал — перешёл.
-                      Отдельной строкой ниже не ставим: текст прыгал бы вниз
-                      каждый раз, как курсор заходит в ссылку. */}
-                  {linkHere && !pick && (
-                    <React.Fragment>
-                      <button type="button" {...keep} className="cf-md-btn cf-md-linkopen" data-cf="note-link-open"
-                              onClick={() => openHref(linkHere)} title={`Открыть: ${hereLabel}`}>→ {hereLabel}</button>
-                      <button type="button" {...keep} className="cf-md-btn cf-md-btn-s" data-cf="note-link-off" title="Убрать ссылку, текст останется"
-                              onClick={() => ed && ed.chain().focus().extendMarkRange('link').unsetLink().run()}>✕</button>
-                    </React.Fragment>
-                  )}
-                  <button type="button" {...keep} className="cf-md-btn cf-md-done" data-cf="note-done"
-                          onClick={() => { if (ed) ed.commands.blur(); setFocused(false); setPick(null); }}>Готово</button>
-                </div>
-              )}
+                      {styleMenu && (
+                        <div className="cf-md-menu" data-cf="note-style-menu" role="menu">
+                          {NOTE_STYLES.map(o => (
+                            <button key={o.k} type="button" {...keep} role="menuitem" data-tool={o.k}
+                                    className={`cf-md-menu-row ${o.k === cur.k ? 'cf-sel' : ''}`}
+                                    onClick={() => { setStyleMenu(false); if (o.k === cur.k && o.k !== 'p') run('p'); else run(o.k); }}>
+                              <span className={o.cls || ''}>{o.label}</span>
+                              <span className="cf-md-menu-mark">{o.mark}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                <span className="cf-md-tsep" />
+                {NOTE_ICON_TOOLS.map((t, i) => t.sep ? <span key={'s' + i} className="cf-md-tsep" /> : (
+                  <button key={t.k} type="button" {...keep} title={t.title} aria-label={t.title} data-tool={t.k}
+                          className={`cf-md-tbtn ${t.k !== 'link' && liveActive(ed, t.k) ? 'cf-sel' : ''}`}
+                          onClick={() => { setStyleMenu(false); t.k === 'link' ? openPick() : run(t.k); }}>
+                    {t.icon}{t.label && <span className="cf-md-tlabel">{t.label}</span>}
+                  </button>
+                ))}
+                {/* Курсор в ссылке — её имя: нажал — перешёл. */}
+                {focused && linkHere && !pick && (
+                  <React.Fragment>
+                    <span className="cf-md-tsep" />
+                    <button type="button" {...keep} className="cf-md-tbtn cf-md-linkopen" data-cf="note-link-open"
+                            onClick={() => openHref(linkHere)} title={`Открыть: ${hereLabel}`}>→ {hereLabel}</button>
+                    <button type="button" {...keep} className="cf-md-tbtn" data-cf="note-link-off" title="Убрать ссылку, текст останется"
+                            onClick={() => ed && ed.chain().focus().extendMarkRange('link').unsetLink().run()}>✕</button>
+                  </React.Fragment>
+                )}
+                {/* Место под «Готово» держится всегда (невидимой кнопкой):
+                    появись она только на нажатии — полоса переносилась бы
+                    на вторую строку, и текст прыгал бы из-под пальца. */}
+                <button type="button" {...keep} className="cf-md-tbtn cf-md-done" data-cf={focused ? 'note-done' : undefined}
+                        style={focused ? null : { visibility: 'hidden' }} tabIndex={focused ? 0 : -1} aria-hidden={!focused}
+                        onClick={() => { if (ed) ed.commands.blur(); setFocused(false); setPick(null); setStyleMenu(false); }}>Готово</button>
+              </div>
               {pick && <NoteLinkPicker links={links} selfId={selfId} selLabel={pick.label} onChoose={choose}
                                        onClose={() => { setPick(null); if (ed) ed.chain().focus().run(); }} />}
               <div ref={hostRef} onPointerDownCapture={onDownCap} onClickCapture={onClickCap}
@@ -21159,7 +21232,7 @@
             if (CF_VIEWS.indexOf(view) < 0) { showToast('По этой ссылке этот раздел не открывается'); return; }
             if (kind === 'scene') { setActiveSceneId(id); if (isPhone) setPhoneSceneOpen(true); }
             if (kind === 'loc') { setActiveLocationId(id); if (isPhone) setPhoneLocOpen(true); }
-            if (kind === 'doc') { setActiveDocId(id); setActiveSchemeId(null); setPhoneDocOpen(true); }
+            if (kind === 'doc') { setActiveDocId(id); setActiveSchemeId(null); setCrewOpen(false); setPhoneDocOpen(true); }
             setCurrentView(view);
           };
 
@@ -21215,6 +21288,9 @@
           }, [activeSceneId, activeScript]);
           // «Экспликации» на телефоне — тоже два экрана, а не один свиток: список гайдов и схем занимал весь первый экран, и чтобы дойти до самого гайда, его каждый раз приходилось пролистывать.
           const [phoneDocOpen, setPhoneDocOpen] = useState(false);
+          // Состав группы — свой пункт в списке «Экспликаций», а не таблица под
+          // КАЖДОЙ заметкой: там она путала, к чему относится («что куда»).
+          const [crewOpen, setCrewOpen] = useState(false);
           // «Объекты» на телефоне — тоже два экрана: список во всю ширину,
           // по нажатию объект с «‹ Объекты» в шапке. Полоска в 40 точек с
           // вертикальной подписью отнимала десятую часть экрана ради «›».
@@ -26637,7 +26713,7 @@
                                 <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Заметки</span>
                                 {docs.map(doc => (
                                   <div key={doc.id} className="group relative mb-2">
-                                    <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
+                                    <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setCrewOpen(false); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId && !crewOpen ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
                                     {/* Документ можно вынести на доску и связать со сценой */}
                                     <button onClick={(e) => { e.stopPropagation(); if (doc.boardId === activeBoardId) removeDocFromBoard(doc.id); else putDocOnBoard(doc.id); }}
                                             title={doc.boardId === activeBoardId ? 'Убрать с доски — документ останется здесь' : 'Положить на текущую доску'}
@@ -26650,17 +26726,24 @@
                                     {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeDocId === doc.id ? 'on' : ''}`}><Icons.Trash/></button>)}
                                   </div>
                                 ))}
-                                <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новая заметка`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); setPhoneDocOpen(true); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая заметка</span></button>
+                                <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новая заметка`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); setCrewOpen(false); setPhoneDocOpen(true); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая заметка</span></button>
+                            </div>
+                            <div className="pt-4 border-t border-[var(--border)]">
+                                <button onClick={() => { setCrewOpen(true); setActiveSchemeId(null); setPhoneDocOpen(true); }} data-cf="crew-open"
+                                        className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${crewOpen && !activeSchemeId ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>
+                                  <Icons.User/> <span className="truncate">Состав группы</span>
+                                  <span className="ml-auto text-zinc-500 font-mono text-[length:var(--fs-1)]">{crew.filter(c => c.name || c.role || c.phone).length || ''}</span>
+                                </button>
                             </div>
                             <div className="pt-4 border-t border-[var(--border)]">
                                 <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы света</span>
                                 {lightSchemes.map(sch => (
                                   <div key={sch.id} className="group relative mb-2">
-                                    <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
+                                    <button onClick={() => {setActiveSchemeId(sch.id); setActiveDocId(null); setCrewOpen(false); setPhoneDocOpen(true);}} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-all border flex items-center gap-2 ${activeSchemeId === sch.id ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}><Icons.Lightbulb/> <span className="truncate">{sch.title}</span></button>
                                     <button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить схему?', message:'Схема отвяжется от всех связанных сцен.', onConfirm:()=> { const rem = lightSchemes.filter(d=>d.id !== sch.id); setLightSchemes(rem); setActiveSchemeId(null); setActiveDocId(docs[0].id); deleteNetDoc('lightSchemes', sch.id); if (sch.engine === EXC_ENGINE || sch.from === 'own') purgeExcBoard(sch.id); if (schemeOpen === sch.id) setSchemeOpen(null); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeSchemeId === sch.id ? 'on' : ''}`}><Icons.Trash/></button>
                                   </div>
                                 ))}
-                                <button onClick={() => { const nS = newScheme('Схема света'); setActiveSchemeId(nS.id); setActiveDocId(null); setPhoneDocOpen(true); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
+                                <button onClick={() => { const nS = newScheme('Схема света'); setActiveSchemeId(nS.id); setActiveDocId(null); setCrewOpen(false); setPhoneDocOpen(true); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая схема</span></button>
                             </div>
                           </div>
                         </div>
@@ -26671,33 +26754,12 @@
                       {(!isPhone || phoneDocOpen) && (
                         <React.Fragment>
                         {/* Текстовый документ */}
-                        {activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
-                          const activeDoc = docs.find(d => d.id === activeDocId);
-                          return (
-                            <div className="flex-1 p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative" style={{ background: 'var(--card)' }}>
-                              <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название заметки..." />
-                              {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем дочитать: текст в полторы тысячи знаков — это тысяча точек по высоте, а поле было 460, и вторая половина пряталась во ВНУТРЕННЮЮ прокрутку. */}
-                              {React.createElement(READ_ONLY ? NoteEditor : LiveNote, {
-                                key: activeDoc.id, value: activeDoc.content || '', readOnly: READ_ONLY, strict: !!activeDoc.md,
-                                open: !!docOpen[activeDoc.id],
-                                onToggleOpen: () => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] })),
-                                links: noteLinks, selfId: activeDoc.id, onGo: goNoteLink,
-                                emptyText: READ_ONLY ? 'Заметка пока пустая' : 'Нажмите, чтобы писать',
-                                // live — правка из живого редактора: у такой заметки заголовок ставят кнопкой,
-                                // и прописная строка заголовком больше не считается (поле md, см. docBlocks).
-                                onChange: (v, live) => { const up = docs.map(d => d.id === activeDoc.id ? { ...d, content: v, ...(live ? { md: 1 } : {}) } : d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d => d.id === activeDoc.id)); },
-                                footer: (
-                                            /* Голосом — под текстом: надиктованное ложится в конец
-                                               заметки. Кнопка — правка, у гостя её нет. */
-                                            <VoiceNoteButton transcribe={transcribeVoice} showToast={showToast}
-                                                             style={{ display: READ_ONLY ? 'none' : '' }}
-                                                             onText={(t) => appendToDoc(activeDoc.id, t)} />
-                                )
-                              })}
-
-                              <div className="space-y-4 border-t border-[var(--border)] pt-6">
+                        {/* Состав группы — свой экран, а не хвост каждой заметки */}
+                        {crewOpen && !activeSchemeId && (
+                            <div className="flex-1 p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative" style={{ background: 'var(--card)' }} data-cf="crew-panel">
+                              <div className="space-y-4">
                                 <div className="flex justify-between items-center px-1">
-                                  <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съёмочной группы</span>
+                                  <span className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3">Состав съёмочной группы</span>
                                   <button onClick={() => { const nc = { id: `cr-${Date.now()}`, name: '', role: '', phone: '' }; setCrew([...crew, nc]); setCrewEdit(nc.id); syncDoc('crew', nc.id, nc); }} className="cf-edit-only text-xs font-bold text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-4 py-2 rounded-lg transition-colors">+ Добавить участника</button>
                                 </div>
                                 <div className="glass-panel rounded-lg overflow-x-auto border border-[var(--line)]">
@@ -26731,6 +26793,32 @@
                                   </table>
                                 </div>
                               </div>
+                            </div>
+                        )}
+                        {!crewOpen && activeDocId && !activeSchemeId && docs.find(d => d.id === activeDocId) && (() => {
+                          const activeDoc = docs.find(d => d.id === activeDocId);
+                          return (
+                            <div className="flex-1 p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative" style={{ background: 'var(--card)' }}>
+                              <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название заметки..." />
+                              {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем дочитать: текст в полторы тысячи знаков — это тысяча точек по высоте, а поле было 460, и вторая половина пряталась во ВНУТРЕННЮЮ прокрутку. */}
+                              {React.createElement(READ_ONLY ? NoteEditor : LiveNote, {
+                                key: activeDoc.id, value: activeDoc.content || '', readOnly: READ_ONLY, strict: !!activeDoc.md,
+                                open: !!docOpen[activeDoc.id],
+                                onToggleOpen: () => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] })),
+                                links: noteLinks, selfId: activeDoc.id, onGo: goNoteLink,
+                                emptyText: READ_ONLY ? 'Заметка пока пустая' : 'Нажмите, чтобы писать',
+                                // live — правка из живого редактора: у такой заметки заголовок ставят кнопкой,
+                                // и прописная строка заголовком больше не считается (поле md, см. docBlocks).
+                                onChange: (v, live) => { const up = docs.map(d => d.id === activeDoc.id ? { ...d, content: v, ...(live ? { md: 1 } : {}) } : d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d => d.id === activeDoc.id)); },
+                                footer: (
+                                            /* Голосом — под текстом: надиктованное ложится в конец
+                                               заметки. Кнопка — правка, у гостя её нет. */
+                                            <VoiceNoteButton transcribe={transcribeVoice} showToast={showToast}
+                                                             style={{ display: READ_ONLY ? 'none' : '' }}
+                                                             onText={(t) => appendToDoc(activeDoc.id, t)} />
+                                )
+                              })}
+
                             </div>
                           );
                         })()}
