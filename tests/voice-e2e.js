@@ -127,9 +127,11 @@ const SAID = 'Ставим кей на журавль, тень не глубж�
   const ask = seen[seen.length - 1] || {};
   ok('в ИИ ушёл настоящий wav, а не пустышка', ask.mime === 'audio/wav' && ask.kb > 10, JSON.stringify(ask.mime) + ' ' + ask.kb + ' КБ');
   ok('и просьба НЕ переводить язык', /НЕ переводи/.test(ask.sys || ''), (ask.sys || '').slice(0, 40));
+  // Заметка в покое — свёрстанный текст: развёрнута — значит не срезана
+  // по высоте (у свёрнутой длинной стоит cf-md-clip) и надиктованное видно.
   const opened = await page.evaluate(() => {
-    const ta = document.querySelector('textarea.cf-doc-body');
-    return ta ? ta.scrollHeight - ta.clientHeight <= 4 : false;
+    const v = document.querySelector('[data-cf="note-view"]');
+    return !!v && !v.classList.contains('cf-md-clip') && /стопов\./.test(v.textContent || '');
   });
   ok('гайд развернулся — видно, что записалось', opened);
 

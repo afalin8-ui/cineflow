@@ -555,7 +555,7 @@ const SEED = () => ({
      JSON.stringify({ mime: ocrSeen && ocrSeen.mime, px: ocrPix }));
   const dlgText = await p.evaluate(() => { const t = [...document.querySelectorAll('[role="dialog"] textarea')][0]; return t ? t.value : null; });
   ok('расшифровка показана в окне до того, как лечь в гайд', dlgText === 'Контровой слева\nдиммер на 40', JSON.stringify(dlgText));
-  await p.evaluate(() => { const b = [...document.querySelectorAll('[role="dialog"] button')].find(x => /Новым гайдом/.test(x.textContent)); if (b) b.click(); });
+  await p.evaluate(() => { const b = [...document.querySelectorAll('[role="dialog"] button')].find(x => /Новой заметкой/.test(x.textContent)); if (b) b.click(); });
   await settle(p, 1500);
   const D = await store(p, 'docs'), nd = Object.values(D).find(d => d.title === 'Контровой слева');
   E = live(await els(p));

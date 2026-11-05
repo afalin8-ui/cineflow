@@ -602,6 +602,77 @@
         .cf-doc-edit:hover { border-color: var(--border); }
         .cf-doc-edit:focus { outline: none; border-color: var(--accent); background: var(--bg); }
         .cf-quote { border-left: 2px solid var(--border); padding-left: 14px; }
+        /* ---------- ЗАМЕТКА: свёрстанный текст ----------
+           Размер чтения (fs-4) — контент. Заголовки светлее и крупнее
+           текста, но мельче названия самой заметки. «Мелкий» — подпись
+           к тому, что под ней («всего кадров» над «21»), поэтому стоит
+           к следующей строке вплотную. Галочка сделанного — зелёная
+           --ok, а не акцент: заливка акцентом только у главного действия. */
+        .cf-md { color: var(--text-2); font-size: var(--fs-4); line-height: 1.55; overflow-wrap: break-word; }
+        .cf-md > * + * { margin-top: .6em; }
+        .cf-md-live { cursor: text; }
+        .cf-md-live:hover { border-color: var(--line); }
+        .cf-md-clip { max-height: 460px; overflow: hidden;
+                      -webkit-mask-image: linear-gradient(to bottom, #000 78%, transparent);
+                      mask-image: linear-gradient(to bottom, #000 78%, transparent); }
+        .cf-md-p, .cf-md-s, .cf-md-q { white-space: pre-wrap; }
+        .cf-md-h { color: var(--text); font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+        .cf-md > .cf-md-h:not(:first-child) { margin-top: 1.05em; }
+        .cf-md-h1 { font-size: var(--fs-5x); }
+        .cf-md-h2 { font-size: var(--fs-5); }
+        .cf-md-h3 { font-size: var(--fs-4); }
+        .cf-md-s { font-size: var(--fs-2); color: var(--muted); line-height: 1.4; }
+        .cf-md > .cf-md-s + * { margin-top: .15em; }
+        .cf-md-q { border-left: 2px solid var(--border); padding-left: 14px; color: var(--muted); }
+        .cf-md-hr { border: 0; border-top: 1px solid var(--border); margin: 1.1em 0; }
+        .cf-md-ul { list-style: disc; padding-left: 1.3em; }
+        .cf-md-ol { list-style: decimal; padding-left: 1.5em; }
+        .cf-md-ul li + li, .cf-md-ol li + li { margin-top: .2em; }
+        .cf-md-cl li { display: flex; align-items: flex-start; gap: 10px; }
+        .cf-md-cl li + li { margin-top: .25em; }
+        .cf-md-cl li.done > span { color: var(--muted-2); text-decoration: line-through; }
+        /* Цель галочки — --tap-sm, хотя квадрат 20: на площадке её
+           отмечают пальцем, не целясь. Поля отрицательные, чтобы
+           крупная цель не раздвигала строки. */
+        .cf-md-box { position: relative; isolation: isolate; flex-shrink: 0; width: var(--tap-sm); height: var(--tap-sm);
+                     margin: calc((1.55em - var(--tap-sm)) / 2) -6px 0 -6px; display: flex; align-items: center; justify-content: center;
+                     font-size: 13px; font-weight: 800; color: #1a1918; }
+        .cf-md-box::after { content: ''; position: absolute; left: calc(50% - 10px); top: calc(50% - 10px); width: 20px; height: 20px;
+                            border-radius: 6px; border: 1.5px solid var(--muted-2); z-index: -1; }
+        .cf-md-box[aria-pressed="true"]::after { background: var(--ok); border-color: var(--ok); }
+        .cf-md-box:not(:disabled):hover::after { border-color: var(--muted); }
+        .cf-md-a { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(204,122,95,.4); text-underline-offset: 3px; }
+        .cf-md-ref { display: inline; color: var(--accent); background: var(--raised); border-radius: 6px; padding: 1px 6px;
+                     font-size: .92em; font-weight: 500; cursor: pointer; }
+        .cf-md-ref:hover { background: var(--border); }
+        .cf-md-ref:disabled { color: var(--muted-2); text-decoration: line-through; cursor: default; }
+        .cf-md-empty { color: var(--muted-2); }
+        .cf-md-raw { font-size: var(--fs-3); line-height: 1.6; }
+        /* Кнопки разметки — над полем и прилипают к верху при прокрутке:
+           длинную заметку пишут, листая экран. Прокручивается только
+           полоса кнопок, а «Готово» и выбор ссылки стоят СНАРУЖИ неё:
+           у прокручиваемого контейнера всё за краем срезается (урок
+           меню доски). */
+        .cf-md-barwrap { position: sticky; top: -1px; z-index: 6; display: flex; align-items: center; gap: 6px;
+                         background: var(--card); padding: 6px 0; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+        .cf-md-bar { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
+        .cf-md-btn { flex-shrink: 0; min-height: var(--tap-sm); min-width: var(--tap-sm); padding: 0 10px; border-radius: var(--r-sm);
+                     color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; transition: background .12s; }
+        .cf-md-btn:hover { background: var(--raised); }
+        .cf-md-btn-s { font-size: var(--fs-1); color: var(--muted); }
+        .cf-md-done { color: var(--accent); font-weight: 600; }
+        .cf-note-ed { position: relative; }
+        .cf-md-pick { position: absolute; left: 0; right: 0; z-index: 7; max-width: 420px; margin-top: -2px;
+                      background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+                      box-shadow: 0 12px 32px rgba(0,0,0,.45); overflow: hidden; }
+        .cf-md-pick-q { width: 100%; background: transparent; border-bottom: 1px solid var(--line); padding: 0 12px;
+                        min-height: var(--tap); color: var(--text); font-size: var(--fs-3); outline: none; }
+        .cf-md-pick-list { max-height: 300px; overflow-y: auto; padding: 4px; }
+        .cf-md-pick-row { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; min-height: var(--tap-sm);
+                          padding: 0 8px; border-radius: var(--r-sm); color: var(--text-2); font-size: var(--fs-2); }
+        .cf-md-pick-row:hover { background: var(--raised); }
+        .cf-md-pick-k { flex-shrink: 0; width: 64px; color: var(--muted-2); font-size: var(--fs-1); }
+        .cf-md-pick-none { padding: 10px; color: var(--muted-2); font-size: var(--fs-2); }
         /* Текст сцены на экране сцены — та же выдержка, что в КПП: линейка
            слева вместо рамки вокруг. Что его можно править, говорит линейка
            под курсором и в фокусе. Отступ один во всех состояниях — иначе
@@ -790,6 +861,17 @@
             .print-doc ol.print-list { list-style: decimal; }
             .print-doc .print-list li { margin: 0 0 3pt; orphans: 2; widows: 2; }
             .print-doc .print-p:has(+ .print-list) { margin-bottom: 5pt; page-break-after: avoid; }
+            /* Заметка с разметкой: заголовок первого уровня, третьего,
+               мелкая подпись, галочки (значок — текстом, список без
+               маркера), линия. Мелкое — прозрачностью, а не цветом:
+               так оно верно и на светлом листе, и на тёмном. */
+            .print-doc .print-h1 { font-size: 15pt; font-weight: 700; letter-spacing: .005em; margin: 18pt 0 6pt; page-break-after: avoid; }
+            .print-doc .print-h3 { font-size: 11.5pt; font-weight: 700; margin: 12pt 0 4pt; page-break-after: avoid; }
+            .print-doc .print-h1:first-child, .print-doc .print-h3:first-child { margin-top: 0; }
+            .print-doc .print-small { font-size: 9.5pt; line-height: 1.4; opacity: .65; margin: 0 0 2pt; white-space: pre-line; page-break-after: avoid; }
+            .print-doc ul.print-check { list-style: none; padding-left: 0; }
+            .print-doc .print-hr { border: 0; border-top: 1px solid currentColor; opacity: .3; margin: 12pt 0; }
+            .print-doc .print-ref { font-style: italic; }
             /* ШРИФТ БУМАГИ. Интерфейс набран системным гротеском, и он
                там прав: подписи и кнопки СКАНИРУЮТ. А лист ЧИТАЮТ, и для
                длинного текста сериф с засечками ведёт строку лучше —
@@ -799,7 +881,7 @@
                Georgia на Windows, дальше обычный Times. Мелочь (надзаголовок,
                мета, таблицы) остаётся гротеском: там читать нечего,
                там смотрят. */
-            .print-title, .print-doc .print-h, .print-doc .print-p, .print-doc .print-list,
+            .print-title, .print-doc .print-h, .print-doc .print-h1, .print-doc .print-h3, .print-doc .print-p, .print-doc .print-list,
             .print-quote { font-family: Charter, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif; }
             .print-eyebrow, .print-meta { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
             /* ТЁМНЫЙ ЛИСТ — для экрана и для PDF, который отправляют
@@ -3276,13 +3358,30 @@
         // вторую правду о том же тексте. Правило узкое и предсказуемое,
         // и НИ ОДНА строка не пропадает: что не распознано, остаётся
         // абзацем ровно как было.
+        // ЗАМЕТКИ: ЛЁГКАЯ РАЗМЕТКА. Пишут их в обычном поле, а читают
+        // свёрстанными — заголовки, списки, галочки, мелкий текст, ссылки.
+        // Хранится САМ ТЕКСТ со знаками разметки («# », «- », «[ ] »,
+        // «-# »): старые гайды открываются как были, голос дописывает
+        // в конец как раньше, поиск и ИИ читают тот же текст. Второй
+        // правды о заметке (html, блоки) не заводим. Знаки ставят или
+        // руками, или кнопками над полем — кнопки пишут те же знаки.
+        // НИ ОДНА строка не пропадает: что не распознано, остаётся
+        // абзацем ровно как было.
         const DOC_BULLET = /^\s*[-–—•*+]\s+/;
         const DOC_NUM = /^\s*\d{1,2}[.)]\s+/;
-        // Заголовок — короткая строка БЕЗ строчных букв («СВЕТ НА
-        // ИНТЕРЬЕРАХ») или помеченная решёткой. Знак препинания в конце —
-        // признак обычной фразы: «ЭТО ВАЖНО.» заголовком не считаем,
-        // иначе гайд, набранный прописными целиком, стал бы лестницей
-        // из заголовков без единого абзаца.
+        const DOC_HASH = /^\s*(#{1,3})\s+(?=\S)/;
+        // «-# » — мелкий текст, как подпись в Discord: подписи вида
+        // «всего кадров» над числом. Пробел после «-» у списка обязателен,
+        // поэтому «-#» с пунктом не путается.
+        const DOC_SMALL = /^\s*-#\s+/;
+        const DOC_CHECK = /^\s*(?:[-–—•*+]\s+)?\[([ xXхХ])\](?:\s+|$)/;
+        const DOC_QUOTE = /^\s*>\s?/;
+        const DOC_HR = /^\s*(?:-{3,}|—{2,}|_{3,})\s*$/;
+        // Заголовок — помеченный решёткой или короткая строка БЕЗ строчных
+        // букв («СВЕТ НА ИНТЕРЬЕРАХ»): так их писали в гайдах до разметки.
+        // Знак препинания в конце — признак обычной фразы: «ЭТО ВАЖНО.»
+        // заголовком не считаем, иначе текст, набранный прописными целиком,
+        // стал бы лестницей из заголовков без единого абзаца.
         const docHead = (line) => {
           const t = line.trim();
           if (/^#{1,3}\s+\S/.test(t)) return t.replace(/^#{1,3}\s+/, '');
@@ -3293,29 +3392,110 @@
           if (!/\p{Lu}/u.test(t)) return null;
           return t;
         };
+        // Блоки помнят номер СТРОКИ, с которой начались (`line`): нажатие
+        // по блоку открывает поле с курсором ровно в этом месте, а галочка
+        // переключается правкой одной строки.
         const docBlocks = (text) => {
           const out = [];
-          let para = [];
-          const flush = () => { if (para.length) { out.push({ k: 'p', text: para.join('\n') }); para = []; } };
-          for (const line of String(text || '').split('\n')) {
-            if (!line.trim()) { flush(); continue; }
+          let para = null;
+          const flush = () => { if (para) { out.push(para); para = null; } };
+          const lines = String(text || '').split('\n');
+          lines.forEach((line, i) => {
+            if (!line.trim()) { flush(); return; }
+            if (DOC_HR.test(line)) { flush(); out.push({ k: 'hr', line: i }); return; }
+            const hm = line.match(DOC_HASH);
+            if (hm) { flush(); out.push({ k: 'h', lv: hm[1].length, text: line.replace(DOC_HASH, '').trim(), line: i }); return; }
+            if (DOC_SMALL.test(line)) {
+              flush();
+              const t = line.replace(DOC_SMALL, '');
+              const last = out[out.length - 1];
+              if (last && last.k === 's' && last.end === i - 1) { last.text += '\n' + t; last.end = i; }
+              else out.push({ k: 's', text: t, line: i, end: i });
+              return;
+            }
+            const cm = line.match(DOC_CHECK);
+            if (cm) {
+              flush();
+              const item = { text: line.replace(DOC_CHECK, ''), done: cm[1] !== ' ', line: i };
+              const last = out[out.length - 1];
+              if (last && last.k === 'cl') last.items.push(item); else out.push({ k: 'cl', items: [item], line: i });
+              return;
+            }
+            if (DOC_QUOTE.test(line)) {
+              flush();
+              const t = line.replace(DOC_QUOTE, '');
+              const last = out[out.length - 1];
+              if (last && last.k === 'q' && last.end === i - 1) { last.text += '\n' + t; last.end = i; }
+              else out.push({ k: 'q', text: t, line: i, end: i });
+              return;
+            }
             const head = docHead(line);
-            if (head) { flush(); out.push({ k: 'h', text: head }); continue; }
+            if (head) { flush(); out.push({ k: 'h', lv: 2, text: head, line: i }); return; }
             const bullet = DOC_BULLET.test(line), num = DOC_NUM.test(line);
             if (bullet || num) {
               flush();
               const kind = bullet ? 'ul' : 'ol';
               const item = line.replace(bullet ? DOC_BULLET : DOC_NUM, '').trim();
               const last = out[out.length - 1];
-              if (last && last.k === kind) last.items.push(item);
-              else out.push({ k: kind, items: [item] });
-              continue;
+              if (last && last.k === kind) { last.items.push(item); last.lines.push(i); }
+              else out.push({ k: kind, items: [item], lines: [i], line: i, start: num ? parseInt(line, 10) || 1 : 1 });
+              return;
             }
-            para.push(line);
-          }
+            if (para) { para.text += '\n' + line; para.end = i; }
+            else para = { k: 'p', text: line, line: i, end: i };
+          });
           flush();
           return out;
         };
+        // Где кончается блок — последняя его строка: туда ставим курсор.
+        const docBlockEnd = (b) => b.end != null ? b.end
+          : b.lines ? b.lines[b.lines.length - 1]
+          : b.items ? b.items[b.items.length - 1].line : b.line;
+
+        // Ссылка внутри проекта — обычная ссылка markdown с адресом
+        // `cf:scene/ID`, `cf:loc/ID`, `cf:doc/ID`. По id, а не по номеру
+        // или имени: сцену перенумеруют, объект переименуют, а ссылка
+        // обязана вести туда же. Подпись в тексте — запасная: показываем
+        // ЖИВОЕ имя, а записанное — только если цели уже нет в проекте.
+        const DOC_LINK_KINDS = { scene: 'Сцена', loc: 'Объект', doc: 'Заметка' };
+        const docLinkOf = (href) => {
+          const m = /^cf:(scene|loc|doc)\/(.+)$/.exec(href || '');
+          return m ? { kind: m[1], id: m[2] } : null;
+        };
+        // Жирный **…**, курсив *…*, ссылка [подпись](адрес) и голый адрес
+        // сайта. Порядок в выражении важен: жирный раньше курсива.
+        const MD_INLINE = /\*\*([^*\n]+?)\*\*|\[([^\]\n]*)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?»"'\]])|\*([^*\s][^*\n]*?)\*/g;
+        const mdInline = (text, link, depth = 0) => {
+          const s = String(text || '');
+          const out = [];
+          let last = 0, m, n = 0;
+          MD_INLINE.lastIndex = 0;
+          const re = new RegExp(MD_INLINE.source, 'g');
+          while ((m = re.exec(s))) {
+            if (m.index > last) out.push(s.slice(last, m.index));
+            const key = 'i' + depth + '-' + (n++);
+            if (m[1] != null) out.push(<strong key={key}>{depth < 3 ? mdInline(m[1], link, depth + 1) : m[1]}</strong>);
+            else if (m[3] != null) out.push(link(m[3], m[2], key));
+            else if (m[4] != null) out.push(link(m[4], '', key));
+            else if (m[5] != null) out.push(<em key={key}>{depth < 3 ? mdInline(m[5], link, depth + 1) : m[5]}</em>);
+            last = re.lastIndex;
+          }
+          if (last < s.length) out.push(s.slice(last));
+          return out;
+        };
+        // Для мест, где разметки быть не должно: карточка заметки на доске,
+        // холст Excalidraw, выгрузка доски, строка поиска. Знаки снимаются,
+        // галочки становятся ☐/☑, ссылка — своей подписью.
+        const mdPlain = (text) => String(text || '').split('\n').map(line => {
+          if (DOC_HR.test(line)) return '———';
+          let t = line;
+          const cm = t.match(DOC_CHECK);
+          if (cm) t = (cm[1] !== ' ' ? '☑ ' : '☐ ') + t.replace(DOC_CHECK, '');
+          else t = t.replace(DOC_SMALL, '').replace(DOC_HASH, '').replace(DOC_QUOTE, '').replace(DOC_BULLET, '• ');
+          return t.replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+                  .replace(/\[([^\]\n]*)\]\(([^)\s]+)\)/g, (_, l, h) => l || (docLinkOf(h) ? '' : h))
+                  .replace(/\*([^*\s][^*\n]*?)\*/g, '$1');
+        }).join('\n');
 
         // ГДЕ СОЛНЦЕ ПРЯМО СЕЙЧАС — высота над горизонтом и азимут
         // (0° = север, 90° = восток). Восход и закат из sunTimes отвечают
@@ -5874,7 +6054,7 @@
             });
             docs.forEach(d => {
               if (match(norm(`${d.title} ${d.content}`)))
-                push('Экспликация', 'dc' + d.id, d.title || 'без названия', (d.content || '').slice(0, 80), () => onGo('docs', { docId: d.id }));
+                push('Заметка', 'dc' + d.id, d.title || 'без названия', mdPlain(d.content).slice(0, 80), () => onGo('docs', { docId: d.id }));
             });
             return out.slice(0, 40);
           }, [q, scenes, references, locations, boards, docs, storyboard]);
@@ -5953,6 +6133,397 @@
         const SIM_LINE = '#38bdf8';
 
         // =====================================================================
+        // ЗАМЕТКА: В ПОКОЕ — СВЁРСТАННЫЙ ТЕКСТ, ПО НАЖАТИЮ — ПОЛЕ С КНОПКАМИ.
+        // То же правило покоя, что у состава группы и кадров: читают
+        // заметку свёрстанной (заголовки, галочки, ссылки), нажатие по
+        // абзацу открывает поле ВСЕЙ заметки с курсором в этом абзаце.
+        // Живой «редактор как в Notion» (contentEditable) НАМЕРЕННО не
+        // делали: на iPad такие поля теряют курсор и клавиатуру, а своё
+        // поле с прокруткой экрана, а не внутри, работает везде.
+        // Кнопки пишут те же знаки, что и руками: «# », «- », «[ ] ».
+        const NOTE_LINE_RE = /^(\s*)(#{1,3}\s+|-#\s+|(?:[-–—•*+]\s+)?\[[ xXхХ]\](?:\s+|$)|[-–—•*+]\s+|\d{1,2}[.)]\s+|>\s?)?/;
+        const noteKindOf = (line) => {
+          const m = (line || '').match(NOTE_LINE_RE);
+          const p = m && m[2] ? m[2] : '';
+          if (!p) return 'p';
+          if (/^###/.test(p)) return 'h3';
+          if (/^##/.test(p)) return 'h2';
+          if (/^#/.test(p)) return 'h1';
+          if (/^-#/.test(p)) return 's';
+          if (/\[/.test(p)) return 'cl';
+          if (/^\d/.test(p)) return 'ol';
+          if (/^>/.test(p)) return 'q';
+          return 'ul';
+        };
+        const NOTE_PREFIX = { p: '', h1: '# ', h2: '## ', h3: '### ', s: '-# ', ul: '- ', cl: '[ ] ', q: '> ' };
+        const NOTE_TOOLS = [
+          { k: 'p', label: 'Текст', title: 'Обычный текст' },
+          { k: 'h1', label: 'Заголовок', title: 'Заголовок (# в начале строки)', cls: 'font-bold' },
+          { k: 'h2', label: 'Подзаг.', title: 'Подзаголовок (## в начале строки)', cls: 'font-semibold' },
+          { k: 's', label: 'мелкий', title: 'Мелкий серый текст — подпись (-# в начале строки)', small: true },
+          { k: 'ul', label: '• Список', title: 'Список (- в начале строки)' },
+          { k: 'ol', label: '1. Список', title: 'Нумерованный список (1. в начале строки)' },
+          { k: 'cl', label: '☐ Галочки', title: 'Список с галочками ([ ] в начале строки)' },
+          { k: 'q', label: '❝', title: 'Цитата, выдержка (> в начале строки)' },
+          { w: '**', label: 'Ж', title: 'Жирный (**текст**)', cls: 'font-bold' },
+          { w: '*', label: 'К', title: 'Курсив (*текст*)', cls: 'italic' },
+          { link: true, label: 'Ссылка', title: 'Ссылка на сцену, объект, заметку или сайт (или наберите [[ )' },
+        ];
+        // Ссылкам наружу открываем ТОЛЬКО эти адреса: заметку пишет любой,
+        // у кого есть код комнаты, и «javascript:…» в ссылке был бы чужим
+        // кодом, исполненным у каждого, кто по ней нажмёт.
+        const NOTE_SAFE_HREF = /^(https?:|mailto:|tel:)/i;
+
+        const NOTE_CLIP = 460;
+        const NoteEditor = ({ value, onChange, readOnly, open, onToggleOpen, footer, links, selfId, onGo, emptyText }) => {
+          const [edit, setEdit] = useState(false);
+          // Длинная ли — по НАСТОЯЩЕЙ высоте свёрстанного текста: заголовки
+          // и мелкий текст делают «12 строк» то экраном, то полуэкраном,
+          // и счёт строк гасил низ у заметки, которая и так помещалась.
+          // Меряем только при смене текста и вида, не на каждую отрисовку.
+          const [over, setOver] = useState(false);
+          const viewRef = useRef(null);
+          const [pick, setPick] = useState(null);       // {start, end, label}
+          const [pickQ, setPickQ] = useState('');
+          const [cur, setCur] = useState('p');          // вид строки под курсором — для подсветки кнопки
+          const taRef = useRef(null), rootRef = useRef(null), selRef = useRef([0, 0]);
+          const text = value || '';
+          const blocks = useMemo(() => docBlocks(text), [text]);
+          useEffect(() => {
+            const v = viewRef.current;
+            if (!v) return;
+            const o = v.scrollHeight > NOTE_CLIP + 10;
+            if (o !== over) setOver(o);
+          }, [text, edit, open]);
+
+          const scrollBox = (el) => {
+            for (let n = el && el.parentElement; n; n = n.parentElement) {
+              const o = getComputedStyle(n).overflowY;
+              if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+            }
+            return document.scrollingElement;
+          };
+          // Поле растёт по тексту, без своей прокрутки: читают и пишут,
+          // листая экран. Сжатие до «auto» на миг укорачивает страницу,
+          // и прокрутка прыгала бы — её возвращаем как была.
+          const autosize = (el) => {
+            const box = scrollBox(el);
+            const top = box ? box.scrollTop : 0;
+            el.style.height = 'auto';
+            el.style.height = el.scrollHeight + 'px';
+            if (box && box.scrollTop !== top) box.scrollTop = top;
+          };
+          const offsetOfLine = (li, atEnd) => {
+            const L = text.split('\n');
+            let o = 0;
+            for (let i = 0; i < li && i < L.length; i++) o += L[i].length + 1;
+            return atEnd ? o + (L[li] || '').length : o;
+          };
+          // Где в поле окажется курсор — по зеркалу с тем же шрифтом
+          // и шириной: высоты свёрстанного и сырого текста разные, и без
+          // этого нажатый абзац уезжал бы из-под пальца.
+          const caretY = (ta, pos) => {
+            const cs = getComputedStyle(ta);
+            const m = document.createElement('div');
+            ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingLeft',
+             'paddingRight', 'borderTopWidth', 'borderLeftWidth', 'borderRightWidth', 'boxSizing', 'tabSize']
+              .forEach(k => { m.style[k] = cs[k]; });
+            m.style.position = 'absolute'; m.style.visibility = 'hidden'; m.style.left = '-9999px'; m.style.top = '0';
+            m.style.whiteSpace = 'pre-wrap'; m.style.overflowWrap = 'break-word'; m.style.width = ta.offsetWidth + 'px';
+            m.textContent = ta.value.slice(0, pos);
+            const mk = document.createElement('span'); mk.textContent = '​'; m.appendChild(mk);
+            document.body.appendChild(m);
+            const y = mk.offsetTop;
+            document.body.removeChild(m);
+            return y;
+          };
+          const beginEdit = (pos, tapY) => {
+            if (readOnly) return;
+            ReactDOM.flushSync(() => setEdit(true));
+            const ta = taRef.current;
+            if (!ta) return;
+            autosize(ta);
+            const c = pos == null ? ta.value.length : Math.min(pos, ta.value.length);
+            ta.focus({ preventScroll: true });
+            ta.setSelectionRange(c, c);
+            selRef.current = [c, c];
+            setCur(noteKindOf(ta.value.slice(ta.value.lastIndexOf('\n', c - 1) + 1).split('\n')[0]));
+            if (tapY != null) {
+              const box = scrollBox(ta);
+              const want = ta.getBoundingClientRect().top + caretY(ta, c);
+              if (box) box.scrollTop += want - tapY;
+            }
+          };
+          const endEdit = () => { setEdit(false); setPick(null); };
+          const onBlur = () => {
+            setTimeout(() => {
+              const r = rootRef.current;
+              if (r && !r.contains(document.activeElement)) endEdit();
+            }, 200);
+          };
+          const remember = () => {
+            const ta = taRef.current;
+            if (!ta) return;
+            selRef.current = [ta.selectionStart, ta.selectionEnd];
+            const ls = ta.value.lastIndexOf('\n', ta.selectionStart - 1) + 1;
+            const le = ta.value.indexOf('\n', ls);
+            const k = noteKindOf(ta.value.slice(ls, le < 0 ? undefined : le));
+            if (k !== cur) setCur(k);
+          };
+          // Правка идёт через execCommand('insertText'): так у поля
+          // остаётся родная отмена (⌘Z), а React получает обычное
+          // событие ввода. Где команды нет — меняем значение сами.
+          const replace = (start, end, str, selA, selB) => {
+            const ta = taRef.current;
+            if (!ta) return;
+            ta.focus({ preventScroll: true });
+            ta.setSelectionRange(start, end);
+            let done = false;
+            try { done = str ? document.execCommand('insertText', false, str) : document.execCommand('delete'); } catch (e) {}
+            if (!done || ta.value !== text.slice(0, start) + str + text.slice(end)) {
+              const nv = text.slice(0, start) + str + text.slice(end);
+              ta.value = nv;
+              onChange(nv);
+            }
+            // Курсор ставим СРАЗУ, а не кадром позже: пальцы быстрее кадра,
+            // и буквы, набранные за ним, ложились бы на старое место.
+            const a = selA == null ? start + str.length : selA;
+            const b = selB == null ? a : selB;
+            ta.setSelectionRange(a, b);
+            selRef.current = [a, b];
+            remember();
+          };
+          const regain = () => {
+            const ta = taRef.current;
+            if (!ta) return null;
+            if (document.activeElement !== ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(selRef.current[0], selRef.current[1]); }
+            return [ta.selectionStart, ta.selectionEnd];
+          };
+          // Вид строки — один для всех строк выделения. Все уже этого вида —
+          // кнопка снимает его (как «Ж» в любом редакторе).
+          const setLines = (kind) => {
+            const s = regain(); if (!s) return;
+            const ls = text.lastIndexOf('\n', s[0] - 1) + 1;
+            let le = text.indexOf('\n', Math.max(s[1] - (s[1] > s[0] && text[s[1] - 1] === '\n' ? 1 : 0), ls));
+            if (le < 0) le = text.length;
+            const lines = text.slice(ls, le).split('\n');
+            const filled = lines.filter(l => l.trim());
+            const all = filled.length > 0 && filled.every(l => noteKindOf(l) === kind);
+            const target = all ? 'p' : kind;
+            let n = 0;
+            const out = lines.map(l => {
+              if (!l.trim() && lines.length > 1) return l;
+              const m = l.match(NOTE_LINE_RE);
+              const indent = m ? m[1] : '';
+              const bare = l.slice(m ? m[0].length : 0);
+              const pre = target === 'ol' ? `${++n}. ` : NOTE_PREFIX[target];
+              return indent + pre + bare;
+            }).join('\n');
+            const fromEnd = le - s[1];
+            if (s[0] === s[1]) { const c = ls + out.length - fromEnd; replace(ls, le, out, c, c); }
+            else replace(ls, le, out, ls, ls + out.length);
+          };
+          const wrap = (w) => {
+            const s = regain(); if (!s) return;
+            const [a, b] = s;
+            const sel = text.slice(a, b);
+            if (text.slice(a - w.length, a) === w && text.slice(b, b + w.length) === w && (w !== '*' || text.slice(a - 2, a) !== '**'))
+              return replace(a - w.length, b + w.length, sel, a - w.length, b - w.length);
+            if (!sel) return replace(a, b, w + w, a + w.length, a + w.length);
+            replace(a, b, w + sel + w, a + w.length, b + w.length);
+          };
+          const openPick = () => {
+            const s = regain(); if (!s) return;
+            setPickQ('');
+            setPick({ start: s[0], end: s[1], label: text.slice(s[0], s[1]).split('\n')[0] });
+          };
+          const target = (cf) => {
+            if (!links) return null;
+            if (cf.kind === 'scene') { const s = (links.scenes || []).find(x => x.id === cf.id); return s && { label: `#${s.number}${s.title ? ' · ' + s.title : ''}` }; }
+            if (cf.kind === 'loc') { const l = (links.locations || []).find(x => x.id === cf.id); return l && { label: l.name || 'Объект без названия' }; }
+            if (cf.kind === 'doc') { const d = (links.docs || []).find(x => x.id === cf.id); return d && { label: d.title || 'Заметка без названия' }; }
+            return null;
+          };
+          const choose = (href, label) => {
+            const p = pick;
+            setPick(null);
+            if (!p) return;
+            const md = label ? `[${label.replace(/[\[\]]/g, '')}](${href})` : href;
+            replace(p.start, p.end, md);
+          };
+          const pickRows = useMemo(() => {
+            if (!pick) return [];
+            const q = pickQ.trim().toLowerCase();
+            const hit = (s) => !q || String(s || '').toLowerCase().indexOf(q.replace(/^#/, '')) >= 0;
+            const rows = [];
+            (links && links.scenes || []).filter(s => hit(`${s.number} ${s.title}`)).slice(0, 8)
+              .forEach(s => rows.push({ key: 's' + s.id, kind: 'Сцена', label: `#${s.number}${s.title ? ' · ' + s.title : ''}`, href: `cf:scene/${s.id}` }));
+            (links && links.locations || []).filter(l => hit(`${l.name} ${l.address}`)).slice(0, 6)
+              .forEach(l => rows.push({ key: 'l' + l.id, kind: 'Объект', label: l.name || 'Объект без названия', href: `cf:loc/${l.id}` }));
+            (links && links.docs || []).filter(d => d.id !== selfId && hit(d.title)).slice(0, 6)
+              .forEach(d => rows.push({ key: 'd' + d.id, kind: 'Заметка', label: d.title || 'Заметка без названия', href: `cf:doc/${d.id}` }));
+            return rows;
+          }, [pick, pickQ, links, selfId]);
+          const webHref = (() => {
+            const q = pickQ.trim();
+            if (!q || /\s/.test(q)) return '';
+            if (NOTE_SAFE_HREF.test(q)) return q;
+            if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(q)) return 'https://' + q;
+            return '';
+          })();
+
+          const onKeyDown = (e) => {
+            if (e.key === 'Escape') { if (pick) { e.preventDefault(); setPick(null); } else { e.currentTarget.blur(); endEdit(); } return; }
+            if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+            const ta = e.currentTarget;
+            const c = ta.selectionStart;
+            if (c !== ta.selectionEnd) return;
+            const ls = text.lastIndexOf('\n', c - 1) + 1;
+            let le = text.indexOf('\n', ls); if (le < 0) le = text.length;
+            if (c !== le) return;
+            const line = text.slice(ls, le);
+            const kind = noteKindOf(line);
+            if (!['ul', 'ol', 'cl', 'q'].includes(kind)) return;
+            e.preventDefault();
+            const m = line.match(NOTE_LINE_RE);
+            // Пустой пункт + Enter — конец списка, как везде.
+            if (!line.slice(m[0].length).trim()) return replace(ls, le, '');
+            const pre = kind === 'ol' ? `${(parseInt(line.trim(), 10) || 0) + 1}. ` : NOTE_PREFIX[kind];
+            replace(c, c, '\n' + m[1] + pre);
+          };
+          const onInput = (e) => {
+            const v = e.target.value;
+            onChange(v);
+            // [[ — тот же выбор ссылки, что и кнопкой.
+            const c = e.target.selectionStart;
+            if (c >= 2 && v.slice(c - 2, c) === '[[' && v.length > text.length) {
+              setPickQ('');
+              setPick({ start: c - 2, end: c, label: '' });
+            }
+          };
+          const keep = { onPointerDown: (e) => e.preventDefault(), onMouseDown: (e) => e.preventDefault() };
+
+          // --- свёрстанный вид
+          const link = (href, label, key) => {
+            const cf = docLinkOf(href);
+            if (cf) {
+              const t = target(cf);
+              return (
+                <button key={key} type="button" data-md-ui="1" data-cf="note-ref" className="cf-md-ref" disabled={!t}
+                        title={t ? `${DOC_LINK_KINDS[cf.kind]}: ${t.label}` : 'Этого больше нет в проекте'}
+                        onClick={(e) => { e.stopPropagation(); if (t && onGo) onGo(cf.kind, cf.id); }}>
+                  {t ? t.label : (label || 'нет в проекте')}
+                </button>
+              );
+            }
+            if (!NOTE_SAFE_HREF.test(href)) return <span key={key}>{label || href}</span>;
+            return <a key={key} href={href} target="_blank" rel="noopener noreferrer" data-md-ui="1" className="cf-md-a"
+                      onClick={(e) => e.stopPropagation()}>{label || href.replace(/^https?:\/\//, '')}</a>;
+          };
+          const toggleCheck = (li) => {
+            if (readOnly) return;
+            const L = text.split('\n');
+            L[li] = L[li].replace(/\[([ xXхХ])\]/, (_, x) => x === ' ' ? '[x]' : '[ ]');
+            onChange(L.join('\n'));
+          };
+          const tapAt = (b) => (e) => {
+            if (readOnly || e.target.closest('[data-md-ui]')) return;
+            e.stopPropagation();
+            beginEdit(offsetOfLine(docBlockEnd(b), true), e.clientY);
+          };
+          const inl = (t) => mdInline(t, link);
+          const render = (b, i) => {
+            const on = { onClick: tapAt(b), key: i };
+            if (b.k === 'h') return React.createElement(b.lv === 1 ? 'h2' : b.lv === 2 ? 'h3' : 'h4', { ...on, className: `cf-md-h cf-md-h${b.lv}` }, inl(b.text));
+            if (b.k === 's') return <p {...on} className="cf-md-s">{inl(b.text)}</p>;
+            if (b.k === 'q') return <blockquote {...on} className="cf-md-q">{inl(b.text)}</blockquote>;
+            if (b.k === 'hr') return <hr {...on} className="cf-md-hr" />;
+            if (b.k === 'ul') return <ul {...on} className="cf-md-ul">{b.items.map((t, j) => <li key={j}>{inl(t)}</li>)}</ul>;
+            if (b.k === 'ol') return <ol {...on} start={b.start} className="cf-md-ol">{b.items.map((t, j) => <li key={j}>{inl(t)}</li>)}</ol>;
+            if (b.k === 'cl') return (
+              <ul {...on} className="cf-md-cl">
+                {b.items.map((it, j) => (
+                  <li key={j} className={it.done ? 'done' : ''}>
+                    <button type="button" data-md-ui="1" data-cf="note-check" className="cf-md-box" disabled={readOnly}
+                            aria-pressed={it.done} title={it.done ? 'Снять галочку' : 'Отметить'}
+                            onClick={(e) => { e.stopPropagation(); toggleCheck(it.line); }}>
+                      {it.done ? '✓' : ''}
+                    </button>
+                    <span>{inl(it.text)}</span>
+                  </li>
+                ))}
+              </ul>
+            );
+            return <p {...on} className="cf-md-p">{inl(b.text)}</p>;
+          };
+
+          return (
+            <div ref={rootRef} className="cf-note-ed shrink-0" data-cf="note">
+              {edit ? (
+                <React.Fragment>
+                  <div className="cf-md-barwrap" data-cf="note-bar">
+                    <div className="cf-md-bar hide-scrollbar">
+                      {NOTE_TOOLS.map(t => (
+                        <button key={t.label} type="button" {...keep} title={t.title} data-tool={t.k || t.w || 'link'}
+                                className={`cf-md-btn ${t.cls || ''} ${t.small ? 'cf-md-btn-s' : ''} ${t.k && t.k === cur ? 'cf-sel' : ''}`}
+                                onClick={() => t.k ? setLines(t.k) : t.w ? wrap(t.w) : openPick()}>
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                    <button type="button" {...keep} className="cf-md-btn cf-md-done" data-cf="note-done"
+                            onClick={() => { if (taRef.current) taRef.current.blur(); endEdit(); }}>Готово</button>
+                  </div>
+                  {pick && (
+                    <div className="cf-md-pick" data-cf="note-pick" role="dialog" aria-label="Ссылка">
+                      <input autoFocus value={pickQ} onChange={(e) => setPickQ(e.target.value)} data-ro-ok="1"
+                             onKeyDown={(e) => {
+                               if (e.key === 'Escape') { e.preventDefault(); setPick(null); regain(); }
+                               if (e.key === 'Enter') { e.preventDefault(); if (webHref) choose(webHref, pick.label); else if (pickRows[0]) choose(pickRows[0].href, pickRows[0].label); }
+                             }}
+                             autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                             placeholder="Сцена, объект, заметка или адрес сайта…" className="cf-md-pick-q" />
+                      <div className="cf-md-pick-list">
+                        {webHref && (
+                          <button type="button" className="cf-md-pick-row" onClick={() => choose(webHref, pick.label)}>
+                            <span className="cf-md-pick-k">Сайт</span><span className="truncate">{webHref.replace(/^https?:\/\//, '')}</span>
+                          </button>
+                        )}
+                        {pickRows.map(r => (
+                          <button key={r.key} type="button" className="cf-md-pick-row" onClick={() => choose(r.href, r.label)}>
+                            <span className="cf-md-pick-k">{r.kind}</span><span className="truncate">{r.label}</span>
+                          </button>
+                        ))}
+                        {!webHref && !pickRows.length && <div className="cf-md-pick-none">Ничего не нашлось. Адрес сайта можно вставить сюда же.</div>}
+                      </div>
+                    </div>
+                  )}
+                  <textarea ref={el => { taRef.current = el; if (el) autosize(el); }} value={text} data-cf="note-input"
+                            onChange={onInput} onKeyDown={onKeyDown} onSelect={remember} onKeyUp={remember} onBlur={onBlur}
+                            rows={4} className="w-full cf-doc-body cf-doc-edit cf-md-raw resize-none"
+                            style={{ overflow: 'hidden' }}
+                            placeholder={'Пишите. # заголовок, - список, [ ] галочка, -# мелкий текст, [[ ссылка'} />
+                </React.Fragment>
+              ) : (
+                <div ref={viewRef} className={`cf-md cf-doc-body ${readOnly ? '' : 'cf-md-live'} ${over && !open ? 'cf-md-clip' : ''}`} data-cf="note-view"
+                     onClick={(e) => { if (!readOnly && !e.target.closest('[data-md-ui]')) beginEdit(null, null); }}>
+                  {blocks.length ? blocks.map(render) : <p className="cf-md-empty">{emptyText || 'Пусто'}</p>}
+                </div>
+              )}
+              {/* «развернуть» — чтение, поэтому без cf-edit-only: гостю оно
+                  нужно не меньше. В поле правки текст и так целиком. */}
+              <div className="flex items-center gap-2 mt-2">
+                {footer}
+                {!edit && over && onToggleOpen && (
+                  <button type="button" onClick={onToggleOpen} className="cf-chip shrink-0" data-cf="note-open">
+                    {open ? 'свернуть ⤡' : 'развернуть ⤢'}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        };
+
         // ГОЛОСОВАЯ ЗАМЕТКА (гайд · заметки с выезда)
         // =====================================================================
         // На площадке руки заняты, а мысль — одна фраза: «на двенадцатой
@@ -8693,7 +9264,7 @@
         };
         const excLabel = (type, r) => {
           if (type === 'scene') return `#${r.number || '—'}  ${r.title || 'Без названия'}` + (r.content ? '\n\n' + excClip(r.content, 160) : '');
-          if (type === 'doc') return (r.title || 'Без названия') + (r.content ? '\n\n' + excClip(r.content, 320) : '');
+          if (type === 'doc') return (r.title || 'Без названия') + (r.content ? '\n\n' + excClip(mdPlain(r.content), 320) : '');
           if (type === 'sticky') return String(r.text || '');
           if (type === 'frame') return excClip(`${r.frameNum || ''}${r.description ? ' · ' + r.description : ''}`, 90);
           return '';
@@ -12054,6 +12625,17 @@
             .print-doc ol.print-list { list-style: decimal; }
             .print-doc .print-list li { margin: 0 0 3pt; orphans: 2; widows: 2; }
             .print-doc .print-p:has(+ .print-list) { margin-bottom: 5pt; page-break-after: avoid; }
+            /* Заметка с разметкой: заголовок первого уровня, третьего,
+               мелкая подпись, галочки (значок — текстом, список без
+               маркера), линия. Мелкое — прозрачностью, а не цветом:
+               так оно верно и на светлом листе, и на тёмном. */
+            .print-doc .print-h1 { font-size: 15pt; font-weight: 700; letter-spacing: .005em; margin: 18pt 0 6pt; page-break-after: avoid; }
+            .print-doc .print-h3 { font-size: 11.5pt; font-weight: 700; margin: 12pt 0 4pt; page-break-after: avoid; }
+            .print-doc .print-h1:first-child, .print-doc .print-h3:first-child { margin-top: 0; }
+            .print-doc .print-small { font-size: 9.5pt; line-height: 1.4; opacity: .65; margin: 0 0 2pt; white-space: pre-line; page-break-after: avoid; }
+            .print-doc ul.print-check { list-style: none; padding-left: 0; }
+            .print-doc .print-hr { border: 0; border-top: 1px solid currentColor; opacity: .3; margin: 12pt 0; }
+            .print-doc .print-ref { font-style: italic; }
             /* ШРИФТ БУМАГИ. Интерфейс набран системным гротеском, и он
                там прав: подписи и кнопки СКАНИРУЮТ. А лист ЧИТАЮТ, и для
                длинного текста сериф с засечками ведёт строку лучше —
@@ -12063,7 +12645,7 @@
                Georgia на Windows, дальше обычный Times. Мелочь (надзаголовок,
                мета, таблицы) остаётся гротеском: там читать нечего,
                там смотрят. */
-            .print-title, .print-doc .print-h, .print-doc .print-p, .print-doc .print-list,
+            .print-title, .print-doc .print-h, .print-doc .print-h1, .print-doc .print-h3, .print-doc .print-p, .print-doc .print-list,
             .print-quote { font-family: Charter, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif; }
             .print-eyebrow, .print-meta { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
             /* ТЁМНЫЙ ЛИСТ — для экрана и для PDF, который отправляют
@@ -14062,14 +14644,14 @@
               ctx.fillStyle = '#ffffff'; ctx.font = `bold 14px ${FONT_UI}`;
               wrapText(ctx, c.o.title, c.w - 24).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 46 + i * 19));
               ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `12px ${FONT_UI}`;
-              wrapText(ctx, c.o.content, c.w - 24).slice(0, 3).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 92 + i * 16));
+              wrapText(ctx, mdPlain(c.o.content), c.w - 24).slice(0, 3).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 92 + i * 16));
               return;
             }
             if (c.t === 'doc') {
               ctx.fillStyle = '#ffffff'; ctx.font = `bold 13px ${FONT_UI}`;
               ctx.fillText(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 12);
               ctx.fillStyle = cssVar('--text-2', '#cfc9c0'); ctx.font = `12px ${FONT_UI}`;
-              wrapText(ctx, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 36 + i * 16));
+              wrapText(ctx, mdPlain(c.o.content), c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => ctx.fillText(ln, c.x + 12, c.y + 36 + i * 16));
               return;
             }
             const im = imgs[c.o.id];
@@ -14217,11 +14799,11 @@
                     mc.font = `bold 14px ${FONT_UI}`;
                     wrapText(mc, c.o.title, c.w - 24).slice(0, 2).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 58 + i * 19, 14, '#ffffff', 'bold')));
                     mc.font = `12px ${FONT_UI}`;
-                    wrapText(mc, c.o.content, c.w - 24).slice(0, 3).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 103 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
+                    wrapText(mc, mdPlain(c.o.content), c.w - 24).slice(0, 3).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 103 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
                   } else if (c.t === 'doc') {
                     parts.push(txt(String(c.o.title || 'Документ').slice(0, 40), c.x + 12, c.y + 24, 13, '#ffffff', 'bold'));
                     mc.font = `12px ${FONT_UI}`;
-                    wrapText(mc, c.o.content, c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
+                    wrapText(mc, mdPlain(c.o.content), c.w - 24).slice(0, Math.max(1, Math.floor((c.h - 44) / 16))).forEach((ln, i) => parts.push(txt(ln, c.x + 12, c.y + 48 + i * 16, 12, cssVar('--text-2', '#cfc9c0'))));
                   } else {
                     const src = cardImg(c);
                     // Полоса под подпись — только у кадра раскадровки:
@@ -14316,7 +14898,7 @@
                          x: r.box.x, y: r.box.y + r.box.h + 20, w: DOC_W, h: DOC_H };
             setDocs(prev => [...prev, nD]); syncDoc('docs', nD.id, nD);
             setOcrResult(null); setWbMode('select'); setSelectedWbItems([nD.id]);
-            showToast('Готово · гайд лежит на доске и в «Экспликациях»');
+            showToast('Готово · заметка лежит на доске и в «Экспликациях»');
           };
           const ocrAppend = () => {
             const r = ocrResult; if (!r || !r.into) return;
@@ -19124,7 +19706,7 @@
               <div data-card-field={READ_ONLY ? null : key} style={o.style}
                    className={(o.className || '') + ' cf-card-text'}
                    onDoubleClick={READ_ONLY ? undefined : (e) => { e.stopPropagation(); setEditCard({ id, key }); }}>
-                {value ? value : <span style={{ opacity: .45 }}>{o.placeholder || ''}</span>}
+                {value ? (o.display ? o.display(value) : value) : <span style={{ opacity: .45 }}>{o.placeholder || ''}</span>}
               </div>
             );
           };
@@ -20176,7 +20758,22 @@
             const up = docs.map(d => d.id === docId ? { ...d, content: next } : d);
             setDocs(up); syncDoc('docs', docId, up.find(d => d.id === docId));
             setDocOpen(prev => ({ ...prev, [docId]: true }));
-            showToast(`Записал ${text.length} ${plur(text.length, 'знак', 'знака', 'знаков')} в гайд`);
+            showToast(`Записал ${text.length} ${plur(text.length, 'знак', 'знака', 'знаков')} в заметку`);
+          };
+
+          // ССЫЛКИ ИЗ ЗАМЕТКИ ВЕДУТ ВНУТРЬ ПРОЕКТА — в сцену, объект или
+          // другую заметку. Тот же переход, что у поиска ⌘K, плюс второй
+          // экран телефона: там список и запись — два экрана, и без флага
+          // ссылка открыла бы список, а не сцену. Гостю по ссылке-просмотру
+          // скрытый раздел не открываем: экран без вкладки — тупик.
+          const noteLinks = useMemo(() => ({ scenes: sortedScenes, locations, docs }), [sortedScenes, locations, docs]);
+          const goNoteLink = (kind, id) => {
+            const view = kind === 'scene' ? 'notion' : kind === 'loc' ? 'locations' : 'docs';
+            if (CF_VIEWS.indexOf(view) < 0) { showToast('По этой ссылке этот раздел не открывается'); return; }
+            if (kind === 'scene') { setActiveSceneId(id); if (isPhone) setPhoneSceneOpen(true); }
+            if (kind === 'loc') { setActiveLocationId(id); if (isPhone) setPhoneLocOpen(true); }
+            if (kind === 'doc') { setActiveDocId(id); setActiveSchemeId(null); setPhoneDocOpen(true); }
+            setCurrentView(view);
           };
 
           // --- Экран сцены: панели, развороты, меню ---
@@ -21375,7 +21972,7 @@
                     {currentView === 'docs' && phoneDocOpen ? (
                       <React.Fragment>
                         <button onClick={() => setPhoneDocOpen(false)}
-                                className="cf-hbtn" style={{ paddingRight: 6 }}>‹ Гайды</button>
+                                className="cf-hbtn" style={{ paddingRight: 6 }}>‹ Заметки</button>
                         <button onClick={() => setShowSearch(true)} title="Поиск по всему проекту"
                                 className="cf-circ ml-auto">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -24925,7 +25522,7 @@
                                             className={`cf-edit-only shrink-0 w-6 h-6 flex items-center justify-center rounded text-[length:var(--fs-1)] text-zinc-500 hover:text-white hover:bg-[var(--raised)] transition-all cf-acts ${dSel ? 'on' : ''}`}>✕</button>
                                 </div>
                                 {cardField(d.id, 'content', d.content, (v) => patchDoc(d.id, { content: v }),
-                                  { multiline: true, placeholder: 'Текст документа…',
+                                  { multiline: true, placeholder: 'Текст заметки…', display: mdPlain,
                                     className: 'flex-1 w-full bg-transparent border-none text-[length:var(--fs-2)] leading-relaxed text-zinc-300 focus:outline-none resize-none p-3 placeholder-zinc-600' })}
 
                                 <div onPointerDown={(e) => { e.stopPropagation(); setLinkingFrom({ id: d.id, type: 'doc' }); }}
@@ -25650,7 +26247,7 @@
                         <div className="w-full lg:w-72 glass-panel p-5 rounded-lg flex flex-col shrink-0 relative border-t border-[var(--border)] overflow-hidden">
                           <div className="space-y-4 overflow-y-auto hide-scrollbar pb-4 flex-1">
                             <div>
-                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Операторские гайды</span>
+                                <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Заметки</span>
                                 {docs.map(doc => (
                                   <div key={doc.id} className="group relative mb-2">
                                     <button onClick={() => {setActiveDocId(doc.id); setActiveSchemeId(null); setPhoneDocOpen(true);}} className={`w-full text-left pl-4 pr-16 py-3 rounded-lg text-sm font-bold transition-all border ${activeDocId === doc.id && !activeSchemeId ? 'cf-sel border-transparent' : 'text-zinc-400 border-transparent hover:bg-[var(--raised)]'}`}>{doc.title}</button>
@@ -25663,10 +26260,10 @@
                                               : { color: 'var(--muted-2)' }}>
                                       <Icons.Board />
                                     </button>
-                                    {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить документ?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeDocId === doc.id ? 'on' : ''}`}><Icons.Trash/></button>)}
+                                    {docs.length > 1 && (<button onClick={(e) => { e.stopPropagation(); setConfirmAction({title:'Удалить заметку?', message:'', onConfirm:()=> { const rem = docs.filter(d=>d.id !== doc.id); setDocs(rem); setActiveDocId(rem[0].id); deleteNetDoc('docs', doc.id); }})}} className={`cf-edit-only cf-acts absolute right-3 top-3 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded-lg text-xs ${activeDocId === doc.id ? 'on' : ''}`}><Icons.Trash/></button>)}
                                   </div>
                                 ))}
-                                <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новый гайд`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); setPhoneDocOpen(true); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Создать гайд</span></button>
+                                <button onClick={() => { const nD = { id: `doc-${Date.now()}`, title: `Новая заметка`, content: '' }; setDocs([...docs, nD]); setActiveDocId(nD.id); setActiveSchemeId(null); setPhoneDocOpen(true); syncDoc('docs', nD.id, nD); }} className="cf-edit-only w-full mt-2 py-3 glass-panel hover:bg-[var(--raised)] text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"><span>+</span><span>Новая заметка</span></button>
                             </div>
                             <div className="pt-4 border-t border-[var(--border)]">
                                 <span className="text-[length:var(--fs-1)] font-bold text-zinc-500 block mb-3 ml-2">Схемы света</span>
@@ -25691,49 +26288,22 @@
                           const activeDoc = docs.find(d => d.id === activeDocId);
                           return (
                             <div className="flex-1 p-6 md:p-8 rounded-lg flex flex-col space-y-6 lg:overflow-y-auto relative" style={{ background: 'var(--card)' }}>
-                              <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Заголовок гайда..." />
+                              <input type="text" value={activeDoc.title} onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,title:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }} className="font-serif bg-transparent text-xl sm:text-2xl md:text-3xl font-bold w-full focus:outline-none text-white placeholder-zinc-600" placeholder="Название заметки..." />
                               {/* Гайд ЧИТАЮТ, а не только пишут, и до этого его было нечем дочитать: текст в полторы тысячи знаков — это тысяча точек по высоте, а поле было 460, и вторая половина пряталась во ВНУТРЕННЮЮ прокрутку. */}
-                              {(() => {
-                                const open = !!docOpen[activeDoc.id];
-                                const body = activeDoc.content || '';
-                                // Длинный ли он — считаем по строкам и знакам, а не по высоте: замерять DOM ради подписи на кнопке значит перерисовывать экран на каждую букву.
-                                const long = body.length > 700 || body.split('\n').length > 12;
-                                return (
-                                  <div className={`flex flex-col ${open ? 'shrink-0' : ''}`}
-                                       style={open ? null : { flex: '1 1 0%', minHeight: 0 }}>
-                                    {READ_ONLY ? (
-                                      // Гостю поле ввода не нужно вовсе, а неподвижное поле с обрезанным текстом — это тупик: прокрутить его нельзя.
-                                      <div className="w-full cf-doc-body text-base leading-relaxed overflow-y-auto"
-                                           style={open ? { whiteSpace: 'pre-wrap', flexShrink: 0 } : { whiteSpace: 'pre-wrap', maxHeight: 420 }}>
-                                        {body || 'Гайд пока пустой'}
-                                      </div>
-                                    ) : (
-                                      <textarea value={body}
-                                                ref={el => { if (el && open) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
-                                                onChange={(e) => { const up = docs.map(d=>d.id===activeDoc.id?{...d,content:e.target.value}:d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d=>d.id===activeDoc.id)); }}
-                                                className={`w-full cf-doc-body cf-doc-edit text-base leading-relaxed resize-none ${open ? '' : 'flex-1 min-h-[300px] lg:min-h-0'}`}
-                                                style={open ? { overflow: 'hidden', flexShrink: 0 } : null}
-                                                placeholder="Содержание документа..." />
-                                    )}
-                                    {/* Голосом — там же, где «развернуть»: и то и другое
-                                        про сам текст гайда. Кнопка помечена `cf-edit-only`
-                                        (это правка), а «развернуть» — нет: читать гайд
-                                        гостю нужно не меньше. */}
-                                    <div className="flex items-center gap-2 mt-2 shrink-0">
-                                      <VoiceNoteButton transcribe={transcribeVoice} showToast={showToast}
-                                                       style={{ display: READ_ONLY ? 'none' : '' }}
-                                                       onText={(t) => appendToDoc(activeDoc.id, t)} />
-                                      {long && (
-                                        <button onClick={() => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] }))}
-                                                className="cf-chip shrink-0">
-                                          {open ? 'свернуть ⤡' : 'развернуть ⤢'}
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })()}
-                            
+                              <NoteEditor key={activeDoc.id} value={activeDoc.content || ''} readOnly={READ_ONLY}
+                                          open={!!docOpen[activeDoc.id]}
+                                          onToggleOpen={() => setDocOpen(prev => ({ ...prev, [activeDoc.id]: !prev[activeDoc.id] }))}
+                                          links={noteLinks} selfId={activeDoc.id} onGo={goNoteLink}
+                                          emptyText={READ_ONLY ? 'Заметка пока пустая' : 'Нажмите, чтобы писать'}
+                                          onChange={(v) => { const up = docs.map(d => d.id === activeDoc.id ? { ...d, content: v } : d); setDocs(up); syncDoc('docs', activeDoc.id, up.find(d => d.id === activeDoc.id)); }}
+                                          footer={
+                                            /* Голосом — под текстом: надиктованное ложится в конец
+                                               заметки. Кнопка — правка, у гостя её нет. */
+                                            <VoiceNoteButton transcribe={transcribeVoice} showToast={showToast}
+                                                             style={{ display: READ_ONLY ? 'none' : '' }}
+                                                             onText={(t) => appendToDoc(activeDoc.id, t)} />
+                                          } />
+
                               <div className="space-y-4 border-t border-[var(--border)] pt-6">
                                 <div className="flex justify-between items-center px-1">
                                   <span className="text-xs font-bold text-zinc-400 flex items-center gap-2"><Icons.User/> Состав съёмочной группы</span>
@@ -25824,9 +26394,9 @@
                                     <Icons.Print/> <span>Весь план</span>
                                   </button>
                                   <button onClick={() => requestPrint('doc')} disabled={!openDoc || !!activeSchemeId}
-                                          title={openDoc && !activeSchemeId ? `Печать: ${openDoc.title}` : 'Сначала откройте гайд слева'}
+                                          title={openDoc && !activeSchemeId ? `Печать: ${openDoc.title}` : 'Сначала откройте заметку слева'}
                                           className={`${btn} ${openDoc && !activeSchemeId ? 'bg-zinc-800 hover:bg-zinc-700 text-white border-[var(--border)]' : 'bg-zinc-900/60 text-zinc-600 border-[var(--line)] cursor-not-allowed'}`}>
-                                    <Icons.Docs/> <span className="truncate">Гайд{openDoc && !activeSchemeId ? `: ${openDoc.title}` : ''}</span>
+                                    <Icons.Docs/> <span className="truncate">Заметка{openDoc && !activeSchemeId ? `: ${openDoc.title}` : ''}</span>
                                   </button>
                                   <button onClick={() => requestPrint('scheme')} disabled={!openScheme}
                                           title={openScheme ? `Печать: ${openScheme.title}` : 'Сначала откройте схему света слева'}
@@ -26213,7 +26783,7 @@
               {ocrResult && (
                 <Modal onClose={() => setOcrResult(null)} z={420} box="p-6 max-w-lg" label="Рукопись прочитана">
                   <h3 className="text-lg font-bold text-white mb-1">Рукопись прочитана</h3>
-                  <p className="text-sm text-zinc-400 mb-3 leading-relaxed">Проверьте и поправьте прямо здесь — потом положите в гайд.</p>
+                  <p className="text-sm text-zinc-400 mb-3 leading-relaxed">Проверьте и поправьте прямо здесь — потом положите в заметку.</p>
                   <textarea value={ocrResult.text}
                             onChange={e => setOcrResult({ ...ocrResult, text: e.target.value })}
                             rows={10}
@@ -26221,7 +26791,7 @@
                   <div className="flex flex-col gap-2">
                     <button onClick={ocrToDoc} className="w-full py-3 rounded-lg text-sm font-bold transition-colors"
                             style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
-                      Новым гайдом на доску
+                      Новой заметкой на доску
                     </button>
                     {docs.length > 0 && (
                       <div className="flex gap-2">
@@ -27371,17 +27941,35 @@
                   return (
                     <div className="print-doc">
                       <div className="print-head">
-                        <p className="print-eyebrow">Операторский гайд</p>
-                        <h1 className="print-title">{d.title || 'Гайд'}</h1>
+                        <p className="print-eyebrow">Заметка</p>
+                        <h1 className="print-title">{d.title || 'Заметка'}</h1>
                         <p className="print-meta">{projectTitle ? projectTitle + ' · ' : ''}CineFlow · {new Date().toLocaleDateString('ru-RU')}</p>
                       </div>
                       {blocks.length === 0 && <p className="print-p">Документ пуст.</p>}
-                      {blocks.map((b, i) => (
-                        b.k === 'h' ? <h2 key={i} className="print-h">{b.text}</h2>
-                        : b.k === 'ul' ? <ul key={i} className="print-list">{b.items.map((t, j) => <li key={j}>{t}</li>)}</ul>
-                        : b.k === 'ol' ? <ol key={i} className="print-list">{b.items.map((t, j) => <li key={j}>{t}</li>)}</ol>
-                        : <p key={i} className="print-p">{b.text}</p>
-                      ))}
+                      {(() => {
+                        // На бумаге ссылка — её подпись: сцена своим номером и
+                        // названием, сайт — адресом (нажать на листе нечего).
+                        const plink = (href, label, key) => {
+                          const cf = docLinkOf(href);
+                          if (cf) {
+                            const t = cf.kind === 'scene' ? scenes.find(x => x.id === cf.id) : cf.kind === 'loc' ? locations.find(x => x.id === cf.id) : docs.find(x => x.id === cf.id);
+                            const name = !t ? (label || '') : cf.kind === 'scene' ? `сцена #${t.number}${t.title ? ' · ' + t.title : ''}` : (t.name || t.title || label || '');
+                            return <span key={key} className="print-ref">{name}</span>;
+                          }
+                          return <span key={key}>{label ? `${label} (${href.replace(/^https?:\/\//, '')})` : href.replace(/^https?:\/\//, '')}</span>;
+                        };
+                        const inl = (t) => mdInline(t, plink);
+                        return blocks.map((b, i) => (
+                          b.k === 'h' ? <h2 key={i} className={b.lv === 1 ? 'print-h1' : b.lv === 3 ? 'print-h3' : 'print-h'}>{inl(b.text)}</h2>
+                          : b.k === 'ul' ? <ul key={i} className="print-list">{b.items.map((t, j) => <li key={j}>{inl(t)}</li>)}</ul>
+                          : b.k === 'ol' ? <ol key={i} className="print-list" start={b.start}>{b.items.map((t, j) => <li key={j}>{inl(t)}</li>)}</ol>
+                          : b.k === 'cl' ? <ul key={i} className="print-list print-check">{b.items.map((it, j) => <li key={j}>{it.done ? '☑ ' : '☐ '}{inl(it.text)}</li>)}</ul>
+                          : b.k === 's' ? <p key={i} className="print-small">{inl(b.text)}</p>
+                          : b.k === 'q' ? <p key={i} className="print-p print-quote">{inl(b.text)}</p>
+                          : b.k === 'hr' ? <hr key={i} className="print-hr" />
+                          : <p key={i} className="print-p">{inl(b.text)}</p>
+                        ));
+                      })()}
                     </div>
                   );
                 })()}
