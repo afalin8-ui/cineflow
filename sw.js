@@ -7,7 +7,7 @@
    свой офлайн-механизм (IndexedDB + очередь правок). Если их
    перехватывать или кэшировать, живая синхронизация сломается. */
 
-const VERSION = 'cineflow-v16';
+const VERSION = 'cineflow-v17';
 const APP_CACHE = VERSION + '-app';
 const LIB_CACHE = VERSION + '-lib';
 const FONT_CACHE = VERSION + '-font';
@@ -46,7 +46,9 @@ const LIBS = [
 // «всё остальное»): их девять семейств, а нужны обычно два.
 const VENDOR = [
   './vendor/excalidraw/excalidraw-0.18.1-cf2.min.js',
-  './vendor/excalidraw/excalidraw-0.18.1.css'
+  './vendor/excalidraw/excalidraw-0.18.1.css',
+  // Живой редактор заметок — тоже готовым файлом (vendor/tiptap/build.mjs).
+  './vendor/tiptap/tiptap-3.33.0.min.js'
 ];
 
 // Хосты, которые нельзя перехватывать (живой трафик Firebase)
