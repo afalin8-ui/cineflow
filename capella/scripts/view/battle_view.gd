@@ -31,6 +31,8 @@ var hover = null
 
 var shot_mesh: ImmediateMesh
 var proj_mm: MultiMeshInstance3D
+var shell_mm: MultiMeshInstance3D
+var flash_mm: MultiMeshInstance3D
 var hud
 
 func start(c: Dictionary) -> void:
@@ -96,6 +98,32 @@ func _build_scene() -> void:
 	pm.vertex_color_use_as_albedo = true
 	proj_mm.material_override = pm
 	add_child(proj_mm)
+	shell_mm = _mm_node(BoxMesh.new(), 400, false)
+	var fs := SphereMesh.new()
+	fs.radial_segments = 12
+	fs.rings = 6
+	flash_mm = _mm_node(fs, 200, true)
+
+## Слой одинаковых светящихся фигурок с цветом на каждую (снаряды, вспышки).
+func _mm_node(mesh: Mesh, count: int, transparent: bool) -> MultiMeshInstance3D:
+	var node := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = mesh
+	mm.instance_count = count
+	mm.visible_instance_count = 0
+	node.multimesh = mm
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.vertex_color_use_as_albedo = true
+	if transparent:
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	node.material_override = m
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(node)
+	return node
 
 func _stars() -> void:
 	var mm := MultiMesh.new()
@@ -296,7 +324,8 @@ func _draw_shots() -> void:
 	var now := world.time
 	var any := false
 	for s in world.shots:
-		if now - s.t > 0.25:
+		var life := 0.35 if s.cls == "laser" else 0.25
+		if now - s.t > life:
 			continue
 		var a: Vector2 = s.a
 		var b: Vector2 = s.b
@@ -306,8 +335,8 @@ func _draw_shots() -> void:
 			shot_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 			any = true
 		var c := _shot_col(s.cls, s.team)
-		c.a = 1.0 - (now - s.t) / 0.25
-		var reps := 3 if s.cls == "main" else 1
+		c.a = 1.0 - (now - s.t) / life
+		var reps := 2 if s.cls == "laser" else 1
 		for k in reps:
 			var o := Vector3(0, k * 2.0, 0)
 			shot_mesh.surface_set_color(c)
@@ -318,7 +347,25 @@ func _draw_shots() -> void:
 		shot_mesh.surface_end()
 	var mm := proj_mm.multimesh
 	var i := 0
+	var smm := shell_mm.multimesh
+	var si := 0
 	for p in world.projectiles:
+		if p.cls == "shell":
+			# Снаряд — светящийся штрих вдоль полёта, длиннее у главного калибра.
+			if si >= smm.instance_count:
+				continue
+			var d3 := Vector3(p.dir.x, 0, p.dir.y)
+			var ln := 90.0 if p.big else 55.0
+			var th := 9.0 if p.big else 5.0
+			var b := Basis.looking_at(d3, Vector3.UP) * Basis.from_scale(Vector3(th, th, ln))
+			var sp: Vector2 = p.pos
+			smm.set_instance_transform(si, Transform3D(b, Vector3(sp.x * S, p.h * S, sp.y * S)))
+			var sc: Color = TEAM_COL[p.team].lerp(Color(1, 1, 1), 0.3)
+			if p.big:
+				sc = Color(1, 1, 0.85)
+			smm.set_instance_color(si, sc * 1.6)
+			si += 1
+			continue
 		if i >= mm.instance_count:
 			break
 		var pos: Vector2 = p.pos
@@ -326,6 +373,24 @@ func _draw_shots() -> void:
 		mm.set_instance_color(i, Color(1, 0.9, 0.4) if not p.spoofed else Color(0.6, 0.6, 0.6))
 		i += 1
 	mm.visible_instance_count = i
+	smm.visible_instance_count = si
+	# Вспышки: попадание крупного калибра и гибель корабля.
+	var fmm := flash_mm.multimesh
+	var fi := 0
+	for f in world.flashes:
+		var age: float = now - f.t
+		var dur := 1.2 if f.has("die") else 0.5
+		if age > dur or age < 0 or fi >= fmm.instance_count:
+			continue
+		var k: float = age / dur
+		var rr: float = f.r * S * (0.4 + k * (1.6 if f.has("die") else 1.0))
+		var fp: Vector2 = f.pos
+		fmm.set_instance_transform(fi, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * rr), Vector3(fp.x * S, f.h * S, fp.y * S)))
+		var fc := Color(1, 0.75, 0.4) if f.has("die") else Color(1, 0.9, 0.6)
+		fc.a = (1.0 - k) * 0.9
+		fmm.set_instance_color(fi, fc)
+		fi += 1
+	fmm.visible_instance_count = fi
 
 func _shot_col(cls: String, team: int) -> Color:
 	match cls:

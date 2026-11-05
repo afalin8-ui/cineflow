@@ -153,7 +153,8 @@ static func _build() -> void:
 		"reverse": 0.6, "sensor": 15000.0,
 		"hps": [hp("main", "weapon", 3500, "главный калибр"), hp("sh", "shieldgen", 3000, "генератор щита"),
 			hp("eng", "engine", 3000, "двигатели")],
-		"weapons": [w("main", 650, 9.0, 4000, 15000, 0.85, "main", 25.0)],
+		"weapons": [w("main", 650, 6.0, 4000, 15000, 0.85, "main", 70.0),
+			w("flak", 8, 0.45, 0, 2500, 0.55, "", 360, 2)],
 		"abil": ["siege"], "cost": 2100, "pts": 10, "build": 65.0, "lvl": 4})
 	_add({"id": "lancelot", "name": "Ланселот", "fac": "troyden", "cls": "capital", "size": 2500.0,
 		"hull": 30000.0, "shield": 14000.0, "regen": 120.0, "armor": 0.15, "speed": 85.0, "turn": 4.0,

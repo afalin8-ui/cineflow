@@ -19,6 +19,7 @@ var teams: Array = []        # [{fac, ore, station, rally, ai, vis, mined, color
 var fields: Array = []       # [{pos, r, ore}]
 var nebulas: Array = []      # [{pos, r}]
 var planet := {"pos": Vector2.ZERO, "r": 4000.0}
+var flashes: Array = []     # для экрана: вспышки попаданий и гибели [{pos, h, t, r}]
 var projectiles: Array = []  # [{pos, tgt, dmg, cls, team, hp, life, spd, spoofed, dir}]
 var shots: Array = []        # для экрана: [{a, b, cls, t, team}]
 var reveals: Array = []      # [{team, pos, r, t}]
@@ -902,6 +903,9 @@ func _fire(u: Unit) -> void:
 		for i in n:
 			if rng.randf() < clamp(p, 0.0, 0.97):
 				total += dmg
+		if wp.cls == "heavy" or wp.cls == "main":
+			_launch_shell(u, tgt, wp.cls, total, hp_id)
+			continue
 		_shot(u, tgt, wp.cls)
 		if total > 0:
 			if u.is_squad() and tgt.is_squad():
@@ -950,11 +954,35 @@ func _launch_proj(u: Unit, tgt: Unit, wp: Dictionary, hp_id: String) -> void:
 		"tgt": tgt, "dmg": wp.dmg, "cls": wp.cls, "team": u.team, "hp": hp_id, "life": 9.0,
 		"spd": spd, "spoofed": false, "dir": (tgt.pos - u.pos).normalized(), "src": u, "h": u.height})
 
+## Снаряд крупного калибра: видно, как он летит, и урон приходит
+## в момент попадания. Попал ли — решено при выстреле; промах летит мимо.
+func _launch_shell(u: Unit, tgt: Unit, cls: String, dmg: float, hp_id: String) -> void:
+	var miss := dmg <= 0.0
+	var aim: Vector2 = tgt.pos
+	if miss:
+		aim += Vector2.from_angle(rng.randf() * TAU) * (tgt.radius() + rng.randf_range(300, 900))
+	var spd := 7000.0 if cls == "main" else 5000.0
+	var from: Vector2 = u.pos + Vector2.from_angle(u.heading) * u.radius() * 0.6
+	projectiles.append({"pos": from, "tgt": tgt, "dmg": dmg, "cls": "shell", "big": cls == "main",
+		"team": u.team, "hp": hp_id, "life": from.distance_to(aim) / spd + (1.5 if miss else 0.6),
+		"spd": spd, "spoofed": miss, "dir": (aim - from).normalized(), "src": u, "h": u.height})
+
 func _projectiles() -> void:
 	var keep := []
 	for p in projectiles:
 		p.life -= DT
 		if p.life <= 0:
+			continue
+		if p.cls == "shell":
+			var st: Unit = p.tgt
+			if not p.spoofed and st.alive and st.in_hyper <= 0:
+				p.dir = (st.pos - p.pos).normalized()
+			p.pos += p.dir * p.spd * DT
+			if not p.spoofed and st.alive and p.pos.distance_to(st.pos) < st.radius() + 120:
+				damage(st, p.dmg, p.hp, p.src if p.src.alive else null)
+				flashes.append({"pos": p.pos, "h": st.height, "t": time, "r": 250.0 if p.big else 120.0})
+				continue
+			keep.append(p)
 			continue
 		var t: Unit = p.tgt
 		if not p.spoofed and t.alive and t.in_hyper <= 0:
@@ -980,7 +1008,7 @@ func _spoof_check() -> void:
 		if u.def.ecm == "spoof":
 			var chance := 1.0 if u.abil_on.has("decoys") else 0.45
 			for p in projectiles:
-				if p.team != u.team and not p.spoofed and p.pos.distance_to(u.pos) < r:
+				if p.cls != "shell" and p.team != u.team and not p.spoofed and p.pos.distance_to(u.pos) < r:
 					if rng.randf() < chance:
 						p.spoofed = true
 						p.dir = p.dir.rotated(rng.randf_range(-1.2, 1.2))
@@ -1033,6 +1061,9 @@ func _hp_destroyed(u: Unit, h: Dictionary) -> void:
 		u.shield = 0.0
 
 func _kill(u: Unit, src) -> void:
+	flashes.append({"pos": u.pos, "h": u.height, "t": time, "r": max(150.0, u.def.size * (0.15 if u.is_squad() else 0.6)), "die": true})
+	if flashes.size() > 300:
+		flashes = flashes.slice(150)
 	u.alive = false
 	u.hull = 0.0
 	stats.lost[u.team] += 1
