@@ -84,6 +84,19 @@ const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAA
     return { grid: !!g, photos: document.querySelectorAll('[data-cf="loc-photo"]').length, scroll: g ? getComputedStyle(g).overflowX : '' };
   });
   ok('фото объекта — сеткой, без прокрутки вбок', lo.grid && lo.photos === 4 && lo.scroll !== 'auto', JSON.stringify(lo));
+  // Сначала справка об объекте, потом фото; метка «N фото ↓» ведёт к ним
+  const order = await p.evaluate(async () => {
+    const y = (sel) => { const e = document.querySelector(sel); return e ? e.getBoundingClientRect().top : null; };
+    const info = [...document.querySelectorAll('span')].find(x => /Сцены на объекте/.test(x.textContent));
+    const r = { info: info ? info.getBoundingClientRect().top : null, photos: y('[data-cf="loc-photos-head"]') };
+    const j = document.querySelector('[data-cf="loc-photos-jump"]');
+    if (j) { const b = j.getBoundingClientRect(); const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); r.jumpHit = !!hit && !!hit.closest('[data-cf="loc-photos-jump"]'); hit && hit.click(); }
+    await new Promise(x => setTimeout(x, 900));
+    const h = document.querySelector('[data-cf="loc-photos-head"]').getBoundingClientRect();
+    r.after = Math.round(h.top); r.inView = h.top >= 0 && h.top < innerHeight / 2;
+    return r;
+  });
+  ok('справка объекта выше фото, «N фото ↓» ведёт к фото', order.info != null && order.photos != null && order.info < order.photos && order.jumpHit && order.inView, JSON.stringify(order));
 
   // ---- ТЕЛЕФОН: тоже одно гнездо
   const { page: ph } = await mk(390, 844);
