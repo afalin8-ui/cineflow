@@ -469,6 +469,7 @@ func _draw_overlay() -> void:
 		if p != null:
 			o.draw_arc(p, 18.0 * (1.0 - f.t) + 6, 0, TAU, 24, Color(0.5, 1, 0.5) if f.has("p") else Color(1, 0.4, 0.3), 2.0)
 	flash = keep
+	_draw_hp_markers()
 	if v.drag_start != null:
 		var rr := Rect2(v.drag_start, v.drag_now - v.drag_start).abs()
 		if rr.size.length() > 6:
@@ -484,6 +485,84 @@ func _draw_overlay() -> void:
 			if v.hover.is_squad():
 				txt += " ×%d" % v.hover.craft_alive()
 			o.draw_string(ThemeDB.fallback_font, hp_ + Vector2(v.screen_radius(v.hover) + 8, -6), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.85))
+
+# ------------------------------------------------- хардпоинты на корпусе
+
+## Где на корпусе стоит хардпоинт (доля длины вдоль носа и поперёк).
+const HP_PLACE := {"engine": -0.42, "reactor": -0.22, "dock": -0.12, "shieldgen": -0.02,
+	"hangar": 0.08, "ecm": 0.05, "shieldproj": 0.05, "weapon": 0.3}
+
+func hp_markers(u: Unit) -> Array:
+	var out := []
+	if u == null or not u.alive or u.hps.is_empty() or not v.seen(u):
+		return out
+	var L: float = ShipMesh.vis_len(u.def) / v.S
+	var fwd := Vector2.from_angle(u.heading)
+	var side := Vector2(-sin(u.heading), cos(u.heading))
+	var used := {}
+	for h in u.hps:
+		var k: String = h.kind
+		var n: int = used.get(k, 0)
+		used[k] = n + 1
+		var x: float = HP_PLACE.get(k, 0.0) - (0.12 * n if k == "weapon" else 0.0)
+		var z: float = 0.0 if n == 0 and k != "weapon" else (0.1 if n % 2 == 0 else -0.1)
+		if u.is_station():
+			var a := TAU * out.size() / u.hps.size()
+			x = cos(a) * 0.32
+			z = sin(a) * 0.32
+		var p: Vector2 = u.pos + fwd * (x * L) + side * (z * L)
+		var p3 := Vector3(p.x * v.S, u.height * v.S + 3, p.y * v.S)
+		if v.cam.is_position_behind(p3):
+			continue
+		out.append({"h": h, "unit": u, "sp": v.cam.unproject_position(p3)})
+	return out
+
+## Цель для хардпоинтов: наведённый враг или цель выбранных.
+func hp_focus():
+	if v.me < 0 or v.mine_sel().is_empty():
+		return null
+	var hv = v.hover
+	if hv != null and hv.team != v.me and not hv.hps.is_empty():
+		return hv
+	if hp_target != null and hp_target.alive and v.seen(hp_target):
+		return hp_target
+	return null
+
+func hp_marker_at(m: Vector2):
+	var u = hp_focus()
+	for mk in hp_markers(u):
+		if mk.h.hp > 0 and (mk.sp - m).length() < 14:
+			return mk
+	return null
+
+func _draw_hp_markers() -> void:
+	var u = hp_focus()
+	if u == null:
+		return
+	var m := get_viewport().get_mouse_position()
+	var picked: String = ""
+	for s2 in v.mine_sel():
+		if s2.target == u:
+			picked = s2.target_hp
+	for mk in hp_markers(u):
+		var h: Dictionary = mk.h
+		var sp: Vector2 = mk.sp
+		var alive: bool = h.hp > 0
+		var frac: float = h.hp / h.max
+		var col := Color(0.4, 1, 0.5) if frac > 0.5 else (Color(1, 0.85, 0.3) if alive else Color(1, 0.35, 0.3))
+		var over: bool = alive and (sp - m).length() < 14
+		overlay.draw_circle(sp, 11, Color(0, 0, 0, 0.55))
+		overlay.draw_arc(sp, 9, -PI / 2, -PI / 2 + TAU * frac, 24, col, 3.0)
+		if not alive:
+			overlay.draw_line(sp + Vector2(-6, -6), sp + Vector2(6, 6), col, 2.0)
+			overlay.draw_line(sp + Vector2(-6, 6), sp + Vector2(6, -6), col, 2.0)
+		if h.id == picked and alive:
+			overlay.draw_circle(sp, 5, Color(1, 0.4, 0.3))
+		if over:
+			overlay.draw_arc(sp, 14, 0, TAU, 24, Color(1, 1, 1), 2.0)
+			overlay.draw_string(ThemeDB.fallback_font, sp + Vector2(16, 5), "%s %d%% — щёлкните, чтобы бить сюда" % [h.label, int(frac * 100)], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1))
+		elif v.hover == u or h.id == picked:
+			overlay.draw_string(ThemeDB.fallback_font, sp + Vector2(13, 4), h.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.75))
 
 func _ground_screen(p: Vector2):
 	var p3 := Vector3(p.x * v.S, 0, p.y * v.S)
@@ -580,7 +659,7 @@ func _make_help() -> void:
 	help_box = _panel()
 	var b := VBoxContainer.new()
 	var t := _lbl("""Управление
-ЛКМ — выбрать, рамкой — несколько. Shift — добавить к выбору.
+ЛКМ — выбрать, рамкой — несколько. Shift — добавить к выбору.\nДвойной щелчок или Ctrl+щелчок — все корабли этого типа на экране.
 ПКМ по месту — лететь. ПКМ по врагу — атаковать. Ctrl+ПКМ — атака-движение.
 A — атака-движение, S — стоп, R — отход (гиперпрыжок к своей станции).
 Z / X / C — способности выбранных. H — станция.

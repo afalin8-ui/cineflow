@@ -84,6 +84,24 @@ func _initialize() -> void:
 	Input.parse_input_event(dr)
 	await frames(3)
 	ok(v.sel.size() >= 1, "рамка выбирает несколько (%d)" % v.sel.size())
+	# 4б. Двойной щелчок — все такие же на экране
+	var same := []
+	for u in w.units:
+		if u.team == 0 and u.def.id == ship.def.id:
+			same.append(u)
+	if same.size() < 2:
+		var extra := w.spawn(ship.def.id, 0, ship.pos + Vector2(1500, 0))
+		same.append(extra)
+	v.focus(ship.pos)
+	await frames(5)
+	var sp2: Vector2 = v.screen_of(ship)
+	await click(sp2)
+	await click(sp2)
+	ok(v.sel.size() >= 2 and v.sel.all(func(x): return x.def.id == ship.def.id), "двойной щелчок — все %s на экране (%d)" % [ship.def.name, v.sel.size()])
+	await create_timer(0.6).timeout
+	sp2 = v.screen_of(ship)
+	await click(sp2)
+	ok(v.sel.size() == 1, "одиночный щелчок после паузы — один корабль (%d: %s)" % [v.sel.size(), v.sel.map(func(x): return x.def.name)])
 	# 5. Атака врага и выбор хардпоинта
 	var enemy := w.spawn("howard" if w.teams[1].fac == "troyden" else "whiteshark", 1, ship.pos + Vector2(9000, 0))
 	w._update_vis()
@@ -104,6 +122,29 @@ func _initialize() -> void:
 	if hp_btn:
 		await click(hp_btn.get_global_rect().get_center())
 		ok(ship.target_hp == enemy.hps[0].id, "нажатие по хардпоинту — цель «%s»" % enemy.hps[0].label)
+	# 5б. Хардпоинт кружком прямо на корабле
+	v.sel = [ship]
+	v.dist = 500.0
+	v.focus(enemy.pos)
+	await frames(8)
+	var hm: Array = hud.hp_markers(enemy)
+	ok(hm.size() == enemy.hps.size(), "на враге видны кружки хардпоинтов (%d)" % hm.size())
+	var eng = null
+	for mk in hm:
+		if mk.h.kind == "engine":
+			eng = mk
+	if eng:
+		var mm2 := InputEventMouseMotion.new()
+		mm2.position = eng.sp
+		Input.parse_input_event(mm2)
+		await frames(3)
+		hm = hud.hp_markers(enemy)
+		for mk in hm:
+			if mk.h.kind == "engine":
+				eng = mk
+		await click(eng.sp)
+		ok(ship.target == enemy and ship.target_hp == eng.h.id, "щелчок по кружку — бить по «%s» (%s)" % [eng.h.label, ship.target_hp])
+	root.get_viewport().get_texture().get_image().save_png("/tmp/claude-0/shots/hp.png")
 	# 6. Пауза, справка, меню
 	await key(KEY_SPACE)
 	ok(v.paused, "пробел — пауза")

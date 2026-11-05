@@ -118,13 +118,12 @@ func active_bays(c: Unit) -> int:
 func fleet_points(team: int) -> int:
 	var p := 0
 	for u in units:
-		if u.alive and u.team == team and not u.is_station():
+		# Звенья в лимит флота не входят: их число держит вместимость ангаров.
+		if u.alive and u.team == team and not u.is_station() and not u.is_squad():
 			p += u.points()
 		if u.alive and u.team == team:
 			for q in u.build_queue:
 				p += Defs.ship(q.id).pts
-			for b in u.bay_queue:
-				p += Defs.ship(b.type).pts
 	return p
 
 func fleet_cap(team: int) -> int:
@@ -211,8 +210,6 @@ func squad_block(c: Unit) -> String:
 	var d := Defs.ship(type_id)
 	if teams[c.team].ore < d.cost:
 		return "мало руды"
-	if fleet_points(c.team) + d.pts > fleet_cap(c.team):
-		return "лимит флота"
 	return ""
 
 func cmd_buy_squad(c: Unit) -> bool:
@@ -305,7 +302,7 @@ func cmd_ability(u: Unit, a: String) -> String:
 			if abs(angle_difference(u.heading, (t.pos - u.pos).angle())) > deg_to_rad(25):
 				return "развернитесь к цели"
 			_shot(u, t, "main")
-			damage(t, 4000.0 * Defs.EFF.main[t.target_class()], u.target_hp, u)
+			damage(t, 14000.0 * Defs.EFF.main[t.target_class()], u.target_hp, u)
 		"ram":
 			if u.target == null or not u.target.alive:
 				return "нет цели"
@@ -1086,8 +1083,7 @@ func _hangars() -> void:
 		b.t -= DT
 		if b.t <= 0:
 			u.bay_queue.pop_front()
-			if fleet_points(u.team) <= fleet_cap(u.team) + Defs.ship(b.type).pts:
-				_launch_squad(u, b.type)
+			_launch_squad(u, b.type)
 
 func _repair() -> void:
 	if tick % 5 != 0:

@@ -443,6 +443,16 @@ func _unhandled_input(ev: InputEvent) -> void:
 						_mark_player(sel)
 					attack_move = false
 					return
+				# Щелчок по кружку хардпоинта на вражеском корабле — бить в эту точку.
+				var mk = hud.hp_marker_at(mb.position) if me >= 0 else null
+				if mk != null:
+					var my := mine_sel()
+					world.cmd_attack(my, mk.unit, mk.h.id)
+					_mark_player(my)
+					hud.hp_target = mk.unit
+					hud.hp_choice = mk.h.id
+					hud.flash_target(mk.unit)
+					return
 				drag_start = mb.position
 				drag_now = mb.position
 			elif drag_start != null:
@@ -469,10 +479,17 @@ func _finish_select(add: bool) -> void:
 	var picked := []
 	if r.size.length() < 6:
 		var u = _pick(drag_start)
-		if u != null and (u.team == me or me < 0):
-			picked = [u]
+		var now := Time.get_ticks_msec()
+		var dbl: bool = u != null and last_click_id == u.def.id and now - last_click_t < 450
+		last_click_t = now
+		last_click_id = u.def.id if u != null else ""
+		if dbl and (u.team == me or me < 0):
+			# Двойной щелчок (или Ctrl+щелчок) — все такие же на экране.
+			picked = same_type_on_screen(u)
 		elif u != null:
-			picked = [u]   # чужой — только посмотреть
+			picked = [u]   # свой — выбрать, чужой — только посмотреть
+		if u != null and Input.is_key_pressed(KEY_CTRL) and (u.team == me or me < 0):
+			picked = same_type_on_screen(u)
 	else:
 		for u in world.units:
 			if not u.alive or u.in_hyper > 0 or (me >= 0 and u.team != me) or u.is_station():
@@ -491,6 +508,19 @@ func _finish_select(add: bool) -> void:
 	else:
 		sel = picked
 
+var last_click_t := 0
+var last_click_id := ""
+
+func same_type_on_screen(u: Unit) -> Array:
+	var vp := get_viewport().get_visible_rect()
+	var out := []
+	for o in world.units:
+		if o.alive and o.in_hyper <= 0 and o.team == u.team and o.def.id == u.def.id and seen(o):
+			var sp = screen_of(o)
+			if sp != null and vp.has_point(sp):
+				out.append(o)
+	return out
+
 func mine_sel() -> Array:
 	return sel.filter(func(u): return me >= 0 and u.team == me)
 
@@ -501,6 +531,13 @@ func _mark_player(list: Array) -> void:
 func _right_click(m: Vector2) -> void:
 	var my := mine_sel()
 	if my.is_empty():
+		return
+	var mk = hud.hp_marker_at(m)
+	if mk != null:
+		world.cmd_attack(my, mk.unit, mk.h.id)
+		_mark_player(my)
+		hud.hp_target = mk.unit
+		hud.hp_choice = mk.h.id
 		return
 	var u = _pick(m)
 	if u != null and u.team != me:

@@ -17,6 +17,10 @@ var waypoint := Vector2.ZERO
 var repairing := {}          # id -> true: ушёл чиниться
 var wave_ids := {}           # кто идёт в нынешней волне
 var wave_pts := 0
+var raid_ids := {}           # налётчики: охотятся за харвестерами и держат поля
+var raid_n := 2
+var raid_from := 150.0
+var route: Array = []        # путь волны: сначала фланг, потом станция
 
 func _init(world: World, t: int, d: String) -> void:
 	w = world
@@ -25,17 +29,23 @@ func _init(world: World, t: int, d: String) -> void:
 	fac = w.teams[t].fac
 	match diff:
 		"easy":
-			interval = 4.0
+			interval = 3.0
 			harv_target = 3
-			attack_pts = 14
+			attack_pts = 10
+			raid_n = 1
+			raid_from = 240.0
 		"medium":
 			interval = 2.0
 			harv_target = 4
-			attack_pts = 20
+			attack_pts = 14
+			raid_n = 2
+			raid_from = 150.0
 		"hard":
 			interval = 1.0
 			harv_target = 5
-			attack_pts = 24
+			attack_pts = 18
+			raid_n = 3
+			raid_from = 90.0
 
 func step(dt: float) -> void:
 	think -= dt
@@ -77,8 +87,14 @@ func _economy(st: Unit) -> void:
 		if w.time >= min_time and ore >= need:
 			w.cmd_upgrade(team)
 			return
-		if w.time >= min_time and ore < need:
-			return   # копим на улучшение, ничего не строим
+		# Копим на улучшение, только если есть чем защищаться: иначе руда лежит,
+		# а станцию в это время разбирают.
+		var army_pts := 0
+		for u in _mine():
+			if not u.is_squad() and not u.is_station() and u.cls != "harvester":
+				army_pts += u.points()
+		if w.time >= min_time and ore < need and army_pts >= 16:
+			return
 	if st.build_queue.size() >= 2:
 		return
 	var pick := _choose_ship(st)
@@ -208,6 +224,10 @@ func _army(st: Unit) -> void:
 				else:
 					w.cmd_move([u], st.pos + (w.teams[team].rally - st.pos).normalized() * 2500)
 	var enemy_st: Unit = w.teams[1 - team].station
+	army = _raiders(army, st)
+	pts = 0
+	for u in army:
+		pts += u.points()
 	# Оборона: враг у станции или у харвестеров.
 	var threat = null
 	for e in w.units:
@@ -221,9 +241,14 @@ func _army(st: Unit) -> void:
 		return
 	if state == "defend" and threat == null:
 		state = "gather"
-	var need := attack_pts + wave * 4
-	if w.time > 660.0:
-		need = min(need, int(w.fleet_cap(team) * 0.45))
+	var need: int = min(attack_pts + wave * 5, attack_pts + 15)
+	# Видно, что у врага флота почти нет, — идём сразу, а не копим дальше.
+	var seen_enemy := 0
+	for e in w.units:
+		if e.alive and e.team != team and not e.is_squad() and not e.is_station() and e.cls != "harvester" and w.visible_to(team, e):
+			seen_enemy += e.points()
+	if w.time > 420.0 and pts >= 10 and seen_enemy * 2 < pts and _enemy_known_weak():
+		need = min(need, pts)
 	if state == "gather":
 		if pts >= need or (w.time > 600 and pts >= 8):
 			state = "attack"
@@ -233,6 +258,9 @@ func _army(st: Unit) -> void:
 				wave_ids[u.id] = true
 			wave_pts = pts
 			waypoint = _center(army)
+			# Не в лоб: сначала через одно из спорных полей сбоку, потом к станции.
+			var side := 1.0 if w.rng.randf() < 0.5 else -1.0
+			route = [Vector2(0, side * 0.27 * w.map_w), enemy_st.pos]
 		else:
 			var idle := army.filter(func(u): return u.order == "idle" and u.pos.distance_to(w.teams[team].rally) > 4000)
 			if not idle.is_empty():
@@ -259,7 +287,9 @@ func _army(st: Unit) -> void:
 			state = "gather"
 			return
 		var c := _center(army)
-		var goal: Vector2 = enemy_st.pos
+		while route.size() > 1 and c.distance_to(route[0]) < 6000:
+			route.pop_front()
+		var goal: Vector2 = route[0] if not route.is_empty() else enemy_st.pos
 		# Двигаемся волной: следующая точка — только когда флот собрался у прежней.
 		var behind := 0
 		for u in army:
@@ -267,7 +297,7 @@ func _army(st: Unit) -> void:
 				behind += 1
 		if behind <= army.size() / 3:
 			waypoint = waypoint + (goal - waypoint).limit_length(7000)
-		var near_station: bool = c.distance_to(goal) < 16000
+		var near_station: bool = c.distance_to(enemy_st.pos) < 16000
 		for u in army:
 			if u.order == "attack" and u.target and u.target.alive:
 				_pick_hp(u, u.target)
@@ -277,6 +307,70 @@ func _army(st: Unit) -> void:
 				_pick_hp(u, enemy_st)
 			elif u.order != "amove" or u.order_pos.distance_to(waypoint) > 3000:
 				w.cmd_move([u], waypoint, true)
+
+## Налётчики — быстрые корветы и фрегаты: с первых минут ходят по полям,
+## бьют харвестеры врага и прикрывают свои. Без них ИИ сидит в своём углу.
+func _raiders(army: Array, st: Unit) -> Array:
+	if w.time < raid_from:
+		return army
+	for id in raid_ids.keys():
+		var r = w.by_id.get(id)
+		if r == null or not r.alive or repairing.has(id):
+			raid_ids.erase(id)
+	if raid_ids.size() < raid_n:
+		var cand := army.filter(func(u): return not raid_ids.has(u.id) and not wave_ids.has(u.id) and (u.cls == "corvette" or u.cls == "frigate") and u.def.bays == 0)
+		cand.sort_custom(func(a, b): return a.def.speed > b.def.speed)
+		for u in cand:
+			if raid_ids.size() >= raid_n:
+				break
+			raid_ids[u.id] = true
+	var rest := []
+	for u in army:
+		if not raid_ids.has(u.id):
+			rest.append(u)
+			continue
+		if u.hull < u.hull_max * 0.5:
+			raid_ids.erase(u.id)
+			repairing[u.id] = true
+			w.cmd_move([u], st.pos)
+			continue
+		# Видимый харвестер врага — главная цель.
+		var prey = null
+		var pd := INF
+		for e in w.units:
+			if e.alive and e.team != team and e.cls == "harvester" and w.visible_to(team, e):
+				var d: float = e.pos.distance_to(u.pos)
+				if d < pd:
+					pd = d
+					prey = e
+		if prey:
+			if u.target != prey:
+				w.cmd_attack([u], prey)
+			continue
+		if u.order == "idle" or (u.order == "amove" and u.pos.distance_to(u.order_pos) < 2500):
+			# Обход полей: следующее с ресурсом, ближе к врагу.
+			var opts := []
+			for f in w.fields:
+				if f.ore > 0:
+					opts.append(f.pos)
+			if not opts.is_empty():
+				w.cmd_move([u], opts[w.rng.randi() % opts.size()], true)
+	return rest
+
+## Флот врага знаем по последнему виду; без разведки слабым его не считаем.
+var last_enemy_pts := 999
+var last_enemy_t := -100.0
+func _enemy_known_weak() -> bool:
+	var ep := 0
+	var seen := false
+	for e in w.units:
+		if e.alive and e.team != team and not e.is_squad() and not e.is_station() and e.cls != "harvester" and w.visible_to(team, e):
+			ep += e.points()
+			seen = true
+	if seen:
+		last_enemy_pts = ep
+		last_enemy_t = w.time
+	return last_enemy_pts < 20 and w.time - last_enemy_t < 180.0
 
 func _losing(army: Array, pts: int) -> bool:
 	var c := _center(army)
